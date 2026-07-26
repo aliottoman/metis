@@ -2,6 +2,7 @@
   "name": "@metis/web",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "NEXT_TELEMETRY_DISABLED=1 next dev --hostname 127.0.0.1 --port 3000",

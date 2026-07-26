@@ -266,6 +266,10 @@ Metis refuses to follow symlinks or to overwrite an existing export. Keep the ar
 - [Backend service notes](apps/api/README.md)
 - [Web client notes](apps/web/README.md)
 
+## License
+
+Released under the [MIT License](LICENSE).
+
 ---
 
 Authored: Ali Ottoman
