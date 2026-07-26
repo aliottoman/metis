@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "waqil-api"
+version = "0.1.0"
+description = "Local-first Metis agent API"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "aiosqlite==0.21.0",
+  "deepagents==0.6.12",
+  "fastapi==0.116.1",
+  "langchain-ollama==0.3.10",
+  "langgraph==1.2.9",
+  "langgraph-checkpoint-sqlite==3.1.0",
+  "pydantic==2.11.7",
+  "pydantic-settings==2.10.1",
+  "python-multipart==0.0.20",
+  "uvicorn[standard]==0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "pytest==8.4.1",
+  "pytest-asyncio==1.1.0",
+]
+# Cloud retrieval (Cohere embed + rerank, Command A) via the OCI SDK. Kept as an
+# opt-in extra so the base, fully-local install carries no cloud dependency;
+# `make setup` installs it, and the code degrades to local FTS when it is absent.
+cloud = [
+  "oci==2.182.0",
+  "numpy==2.5.1",
+  "openai==2.46.0",
+  "oci-genai-auth==1.0.0",
+]
+
+[project.scripts]
+waqil-api = "waqil_api.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/waqil_api"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

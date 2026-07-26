@@ -1,0 +1,7 @@
+**
+!skills/
+!skills/reference-architecture-generator/
+!skills/reference-architecture-generator/requirements-runtime.lock
+!skills/reference-architecture-generator/src/
+!skills/reference-architecture-generator/src/architecture_tool.py
+!skills/reference-architecture-generator/src/validator.py

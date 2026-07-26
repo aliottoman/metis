@@ -1,0 +1,322 @@
+[
+  {
+    "folder": "Smart Invoice Extraction",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "SmartInvoiceExtraction.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "SmartInvoiceExtraction.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "agent-legal-due-diligence",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "agent_app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "agent_app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "agent-motor-claims-settlement",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "agent-tender-response-studio",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "complex-conversation-audio-generator",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "content-moderation-vlm",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "copilot-studio-oci-dac",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "diwan-agent-operations",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "src/api.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "uvicorn", "--", "python", "-m", "uvicorn", "src.api:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  },
+  {
+    "folder": "doc-understanding-and-llm",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "doc_llm.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "doc_llm.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "document-detective",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "src/api.py",
+      "launch": {
+        "command": [".venv/bin/python", "-m", "uvicorn", "src.api:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  },
+  {
+    "folder": "genai-use-case-architect",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "generative-ai-overview",
+    "manifest": {
+      "schema_version": "1",
+      "name": "OCI Enterprise AI Technical Deep Dive",
+      "summary": "Explore OCI enterprise AI models, deployment patterns, and reference architecture in a standalone technical primer.",
+      "category": "AI & Agents",
+      "tags": ["oci", "enterprise-ai", "architecture", "static"],
+      "entrypoint": "oci-enterprise-ai.html",
+      "launch": {
+        "command": ["{python}", "-m", "http.server", "--bind", "{host}", "--directory", ".", "{port}"],
+        "path": "/oci-enterprise-ai.html"
+      }
+    }
+  },
+  {
+    "folder": "hrsd-meeting-intelligence",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "uvicorn", "--", "python", "-m", "uvicorn", "app:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  },
+  {
+    "folder": "logivity-invoice-extraction",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "mizan-extraction-engine",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "src/api.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "uvicorn", "--", "python", "-m", "uvicorn", "src.api:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  },
+  {
+    "folder": "model-comparison-benchmark-document-exrtraction",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "new-models.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "new-models.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "new-models",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "new-models.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "new-models.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "newsletter",
+    "manifest": {
+      "schema_version": "1",
+      "name": "EMEA Generative AI Newsletter",
+      "summary": "Browse the EMEA Generative AI Platform Black Belts newsletter and its curated demos, customer stories, and enablement links.",
+      "category": "Content & Communications",
+      "tags": ["newsletter", "generative-ai", "emea", "static"],
+      "entrypoint": "newsletter.html",
+      "launch": {
+        "command": ["{python}", "-m", "http.server", "--bind", "{host}", "--directory", ".", "{port}"],
+        "path": "/newsletter.html"
+      }
+    }
+  },
+  {
+    "folder": "oci-agent-blueprint-studio",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "oci-doc-synthetic-studio",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "oci-voice-live",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "uvicorn", "--", "python", "-m", "uvicorn", "app:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  },
+  {
+    "folder": "oci-whisper-contact-center-intelligence",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "uvicorn", "--", "python", "-m", "uvicorn", "app:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  },
+  {
+    "folder": "oracle-djinn",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "uvicorn", "--", "python", "-m", "uvicorn", "app:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  },
+  {
+    "folder": "parallax-extraction-lab",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "src/api.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "uvicorn", "--", "python", "-m", "uvicorn", "src.api:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  },
+  {
+    "folder": "policy-gap-mapper",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "policy_gap_mapper.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "policy_gap_mapper.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "qatar-health-ai",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "symptoms-chatbot.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "symptoms-chatbot.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "shura-council-session-intelligence",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": [".venv/bin/python", "-m", "uvicorn", "app:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  },
+  {
+    "folder": "video-compliance-auditor",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "voice-outreach-studio",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "xai-tts-voice-canvas",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "app.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "streamlit", "--", "python", "-m", "streamlit", "run", "app.py", "--server.address", "{host}", "--server.port", "{port}", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+      }
+    }
+  },
+  {
+    "folder": "xai-voice-agent-studio",
+    "manifest": {
+      "schema_version": "1",
+      "entrypoint": "server.py",
+      "launch": {
+        "command": ["{uv}", "run", "--isolated", "--no-project", "--no-env-file", "--python", "3.11", "--with-requirements", "requirements.txt", "--with", "uvicorn", "--", "python", "-m", "uvicorn", "server:app", "--host", "{host}", "--port", "{port}"]
+      }
+    }
+  }
+]

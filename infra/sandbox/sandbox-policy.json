@@ -1,0 +1,48 @@
+{
+  "schema_version": "1",
+  "image": "localhost/metis/reference-architecture-tool:0.3.0",
+  "pull_policy": "never",
+  "network": "none",
+  "read_only_root": true,
+  "non_root": true,
+  "drop_capabilities": [
+    "ALL"
+  ],
+  "security_options": [
+    "no-new-privileges"
+  ],
+  "mounts": {
+    "/input": "read-only",
+    "/output": "read-write"
+  },
+  "tmpfs": {
+    "path": "/tmp",
+    "size_mib": 64,
+    "options": [
+      "rw",
+      "noexec",
+      "nosuid",
+      "nodev",
+      "mode=1777"
+    ]
+  },
+  "limits": {
+    "cpus": 2.0,
+    "memory_mib": 1536,
+    "pids": 64,
+    "timeout_seconds": 120,
+    "max_input_files": 512,
+    "max_input_bytes": 104857600,
+    "max_stdin_bytes": 1048576,
+    "max_logs_bytes": 20971520,
+    "max_artifacts_bytes": 104857600,
+    "open_files": 256
+  },
+  "allowed_artifacts": {
+    "architecture-spec.json": "application/json",
+    "diagram.py": "text/x-python",
+    "architecture.svg": "image/svg+xml",
+    "architecture.png": "image/png",
+    "validation-report.json": "application/json"
+  }
+}

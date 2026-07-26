@@ -1,0 +1,79 @@
+schema_version: "1"
+id: "reference-architecture-generator"
+version: "0.3.0"
+state: "quarantined"
+
+input_contract:
+  media_type: "application/json"
+  schema: "metis.tool.json#/input_schema"
+  transport: "stdin"
+
+output_contract:
+  media_type: "application/json"
+  schema: "metis.tool.json#/output_schema"
+  transport: "stdout"
+  artifact_directory: "/output"
+
+steps:
+  - id: "extract-architecture-spec"
+    kind: "host-model"
+    model_role: "planner"
+    output: "ArchitectureSpecV1"
+    trust: "attachment-content-is-untrusted"
+  - id: "validate-spec"
+    kind: "trusted-host-validation"
+    rules:
+      - "strict-schema"
+      - "unique-component-and-boundary-identifiers"
+      - "valid-edge-and-boundary-references"
+      - "no-control-characters"
+  - id: "generate-diagram-source"
+    kind: "model-source-or-deterministic-fallback"
+    implementation: "src/architecture_tool.py"
+    model_input: "diagram_code"
+    fallback_condition: "diagram_code-is-absent"
+    invalid_model_source_fallback: false
+    output: "diagram.py"
+  - id: "static-validate-source"
+    kind: "trusted-static-validation"
+    implementation: "src/validator.py"
+    policy: "allowlisted-ast-only"
+  - id: "validate-source-semantics"
+    kind: "trusted-static-validation"
+    implementation: "src/validator.py"
+    policy: "exact-spec-output-path-and-artifact-match"
+  - id: "render"
+    kind: "podman-sandbox"
+    image: "localhost/metis/reference-architecture-tool:0.3.0"
+    policy: "infra/sandbox/sandbox-policy.json"
+    network: "none"
+    mounts:
+      input: "read-only"
+      output: "read-write"
+    renderer_order:
+      - "python-diagrams-and-graphviz"
+      - "deterministic-svg-fallback"
+  - id: "validate-artifacts"
+    kind: "trusted-host-validation"
+    checks:
+      - "declared-files-only"
+      - "regular-files-no-symlinks"
+      - "sha256-and-size-match"
+      - "svg-active-content-denied"
+      - "png-signature"
+  - id: "propose-activation"
+    kind: "langgraph-interrupt"
+    condition: "all-tests-and-evals-pass"
+    risk_level: "R3"
+    side_effect: "none-before-human-approval"
+
+repair_policy:
+  max_attempts: 2
+  model_role: "coder"
+  mutate_active_version: false
+
+activation_policy:
+  human_approval_required: true
+  immutable_versions: true
+  atomic_active_pointer: true
+  rollback: "select-previous-approved-version"

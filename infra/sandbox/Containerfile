@@ -1,0 +1,47 @@
+FROM docker.io/library/python:3.13.5-slim-bookworm@sha256:4c2cf9917bd1cbacc5e9b07320025bdb7cdf2df7b0ceaccb55e9dd7e30987419
+
+LABEL org.opencontainers.image.title="Metis reference architecture sandbox" \
+      org.opencontainers.image.version="0.3.0" \
+      org.opencontainers.image.description="Offline renderer for validated architecture specifications" \
+      org.opencontainers.image.base.name="docker.io/library/python:3.13.5-slim-bookworm" \
+      org.opencontainers.image.base.digest="sha256:4c2cf9917bd1cbacc5e9b07320025bdb7cdf2df7b0ceaccb55e9dd7e30987419"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/tmp \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONHASHSEED=0 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+COPY skills/reference-architecture-generator/requirements-runtime.lock /tmp/requirements-runtime.lock
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends "graphviz=2.42.2-7+deb12u1" \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install \
+        --no-deps \
+        --no-compile \
+        --only-binary=:all: \
+        --require-hashes \
+        --requirement /tmp/requirements-runtime.lock \
+    && rm /tmp/requirements-runtime.lock \
+    && python -c 'from importlib.metadata import version; expected = {"diagrams": "0.25.1", "graphviz": "0.20.3", "Jinja2": "3.1.6", "MarkupSafe": "3.0.2"}; actual = {name: version(name) for name in expected}; assert actual == expected, (actual, expected)' \
+    && python -c 'from importlib.util import find_spec; forbidden = ("pre_commit", "virtualenv", "nodeenv"); found = [name for name in forbidden if find_spec(name) is not None]; assert not found, found' \
+    && dot -V
+
+RUN groupadd --gid 65532 metis \
+    && useradd --uid 65532 --gid 65532 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin metis \
+    && mkdir -p /opt/metis/tool /input /output \
+    && chown -R 65532:65532 /opt/metis/tool /input /output
+
+WORKDIR /opt/metis/tool
+
+COPY --chown=65532:65532 skills/reference-architecture-generator/src/architecture_tool.py /opt/metis/tool/architecture_tool.py
+COPY --chown=65532:65532 skills/reference-architecture-generator/src/validator.py /opt/metis/tool/validator.py
+
+USER 65532:65532
+
+ENTRYPOINT ["python", "/opt/metis/tool/architecture_tool.py", "--output-dir", "/output"]

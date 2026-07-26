@@ -1,0 +1,51 @@
+.DS_Store
+
+# Secrets and local state
+.env
+.env.local
+*.pem
+*.key
+.data/
+data/
+artifacts/
+uploads/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Editor and local workspace state
+.vscode/
+.idea/
+
+# Python
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+.pnpm-store/
+.next/
+*.tsbuildinfo
+
+# Build output and generated archives
+dist/
+build/
+coverage/
+metis-export*.zip
+metis-offline-bundle*.zip
+
+# Design exploration assets (not shipped; the product mark lives in metis-mark.tsx)
+design/
+
+# Internal phase-tracking design notes, kept local
+docs/tool-factory-v2-plan.md

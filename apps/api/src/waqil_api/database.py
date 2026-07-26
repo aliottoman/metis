@@ -1,0 +1,3596 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import sqlite3
+import threading
+import uuid
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Callable, Iterator, TypeVar
+
+from .contracts import (
+    ApprovalRequestV1,
+    ConversationProjectV1,
+    ConversationV1,
+    CorpusSourceV1,
+    EvalReportV1,
+    MemoryProposalV1,
+    MessageV1,
+    ProposalStatus,
+    RiskLevel,
+    RunEventV1,
+    RunStatus,
+    RunV1,
+    ToolDefinitionBuildV1,
+    ToolDefinitionProposalV1,
+    ToolDefinitionV1,
+    ToolManifestV1,
+    ToolRevisionRequestV1,
+    ToolImprovementProposalV1,
+    ToolProposalV1,
+    ToolState,
+    ToolV1,
+    ToolVersionV1,
+    UploadV1,
+)
+
+T = TypeVar("T")
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex}"
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _loads(value: str | None, default: T) -> Any | T:
+    return default if value is None else json.loads(value)
+
+
+def _corpus_source(row: sqlite3.Row) -> CorpusSourceV1:
+    """Map a corpus_sources row to its public contract, dropping internal columns."""
+    return CorpusSourceV1(
+        id=row["id"],
+        root_path=row["root_path"],
+        label=row["label"],
+        kind=row["kind"],
+        provider=row["provider"] if "provider" in row.keys() else "local",
+        consent=bool(row["consent"]),
+        status=row["status"],
+        file_count=row["file_count"],
+        chunk_count=row["chunk_count"],
+        last_indexed_at=row["last_indexed_at"],
+        last_error=row["last_error"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+SCHEMA_V1 = """
+CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS uploads (
+    id TEXT PRIMARY KEY,
+    sha256 TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK(size >= 0),
+    blob_path TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK(role IN ('user','assistant','system','tool')),
+    content TEXT NOT NULL,
+    attachments_json TEXT NOT NULL DEFAULT '[]',
+    run_id TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation
+    ON messages(conversation_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_one_assistant_per_run
+    ON messages(run_id) WHERE role = 'assistant' AND run_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    summary TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    user_message_id TEXT NOT NULL REFERENCES messages(id),
+    status TEXT NOT NULL,
+    graph_schema_version TEXT NOT NULL,
+    model_aliases_json TEXT NOT NULL,
+    prompt_versions_json TEXT NOT NULL,
+    tool_versions_json TEXT NOT NULL,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    result_json TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_runs_conversation ON runs(conversation_id, created_at);
+
+CREATE TABLE IF NOT EXISTS run_events (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL,
+    thread_id TEXT NOT NULL,
+    checkpoint_id TEXT,
+    type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(run_id, sequence)
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    sha256 TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK(size >= 0),
+    blob_path TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_run_name_hash
+    ON artifacts(run_id, filename, sha256);
+
+CREATE TABLE IF NOT EXISTS tools (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    active_version_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_versions (
+    id TEXT PRIMARY KEY,
+    tool_id TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
+    version TEXT NOT NULL,
+    state TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    manifest_json TEXT NOT NULL,
+    bundle_path TEXT NOT NULL,
+    eval_report_json TEXT,
+    source_run_id TEXT REFERENCES runs(id),
+    created_at TEXT NOT NULL,
+    UNIQUE(tool_id, version),
+    UNIQUE(tool_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_tool_versions_tool ON tool_versions(tool_id, created_at);
+
+CREATE TABLE IF NOT EXISTS tool_proposals (
+    id TEXT PRIMARY KEY,
+    tool_id TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
+    tool_version_id TEXT NOT NULL REFERENCES tool_versions(id) ON DELETE CASCADE,
+    source_run_id TEXT NOT NULL REFERENCES runs(id),
+    status TEXT NOT NULL,
+    risk_level TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    decision_reason TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tool_proposals_status
+    ON tool_proposals(status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_proposals_source_version
+    ON tool_proposals(source_run_id, tool_version_id);
+
+CREATE TABLE IF NOT EXISTS tool_improvement_proposals (
+    id TEXT PRIMARY KEY,
+    source_run_id TEXT NOT NULL REFERENCES runs(id),
+    tool_id TEXT NOT NULL REFERENCES tools(id),
+    tool_version_id TEXT NOT NULL REFERENCES tool_versions(id),
+    content_hash TEXT NOT NULL,
+    correction TEXT NOT NULL,
+    regression_eval_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_improvements_status
+    ON tool_improvement_proposals(status, created_at);
+
+CREATE TABLE IF NOT EXISTS tool_version_activation_log (
+    id TEXT PRIMARY KEY,
+    action_id TEXT NOT NULL UNIQUE,
+    tool_id TEXT NOT NULL REFERENCES tools(id),
+    target_version_id TEXT NOT NULL REFERENCES tool_versions(id),
+    prior_version_id TEXT REFERENCES tool_versions(id),
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS approvals (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    proposal_id TEXT REFERENCES tool_proposals(id),
+    action_id TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    request_json TEXT NOT NULL,
+    decision_json TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_run ON approvals(run_id, status);
+
+CREATE TABLE IF NOT EXISTS idempotency_actions (
+    action_id TEXT PRIMARY KEY,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_items (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    content TEXT NOT NULL,
+    source_run_id TEXT REFERENCES runs(id),
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+    content,
+    content='memory_items',
+    content_rowid='rowid'
+);
+CREATE TRIGGER IF NOT EXISTS memory_ai AFTER INSERT ON memory_items BEGIN
+    INSERT INTO memory_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_ad AFTER DELETE ON memory_items BEGIN
+    INSERT INTO memory_fts(memory_fts, rowid, content)
+    VALUES('delete', old.rowid, old.content);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_au AFTER UPDATE ON memory_items BEGIN
+    INSERT INTO memory_fts(memory_fts, rowid, content)
+    VALUES('delete', old.rowid, old.content);
+    INSERT INTO memory_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+CREATE TABLE IF NOT EXISTS memory_proposals (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    content TEXT NOT NULL,
+    source_run_id TEXT REFERENCES runs(id),
+    confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+    status TEXT NOT NULL,
+    decision_reason TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_memory_proposals_status
+    ON memory_proposals(status, created_at);
+
+CREATE TABLE IF NOT EXISTS feedback (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    rating TEXT NOT NULL,
+    correction TEXT,
+    created_at TEXT NOT NULL
+);
+"""
+
+# Idempotent so a fresh database uses the baseline above while a real v1
+# database receives every later object transactionally.
+SCHEMA_V2 = """
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    summary TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_improvement_proposals (
+    id TEXT PRIMARY KEY,
+    source_run_id TEXT NOT NULL REFERENCES runs(id),
+    tool_id TEXT NOT NULL REFERENCES tools(id),
+    tool_version_id TEXT NOT NULL REFERENCES tool_versions(id),
+    content_hash TEXT NOT NULL,
+    correction TEXT NOT NULL,
+    regression_eval_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_improvements_status
+    ON tool_improvement_proposals(status, created_at);
+
+CREATE TABLE IF NOT EXISTS tool_version_activation_log (
+    id TEXT PRIMARY KEY,
+    action_id TEXT NOT NULL UNIQUE,
+    tool_id TEXT NOT NULL REFERENCES tools(id),
+    target_version_id TEXT NOT NULL REFERENCES tool_versions(id),
+    prior_version_id TEXT REFERENCES tool_versions(id),
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_one_assistant_per_run
+    ON messages(run_id) WHERE role = 'assistant' AND run_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_run_name_hash
+    ON artifacts(run_id, filename, sha256);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_proposals_source_version
+    ON tool_proposals(source_run_id, tool_version_id);
+"""
+
+SCHEMA_V3 = """
+ALTER TABLE tool_improvement_proposals ADD COLUMN decision_reason TEXT;
+ALTER TABLE tool_improvement_proposals ADD COLUMN decided_at TEXT;
+ALTER TABLE tool_improvement_proposals ADD COLUMN outcome TEXT;
+ALTER TABLE tool_improvement_proposals ADD COLUMN revision_request_id TEXT;
+ALTER TABLE tool_improvement_proposals ADD COLUMN target_version_id TEXT;
+
+CREATE TABLE IF NOT EXISTS tool_revision_requests (
+    id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL UNIQUE REFERENCES tool_improvement_proposals(id),
+    tool_id TEXT NOT NULL REFERENCES tools(id),
+    base_version_id TEXT NOT NULL REFERENCES tool_versions(id),
+    base_content_hash TEXT NOT NULL,
+    correction TEXT NOT NULL,
+    regression_eval_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status = 'queued'),
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tool_improvement_decisions (
+    id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL UNIQUE REFERENCES tool_improvement_proposals(id),
+    action_id TEXT NOT NULL UNIQUE,
+    decision TEXT NOT NULL CHECK(decision IN ('approve','reject')),
+    reason TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('revision_queued','revision_activated','rejected')),
+    target_version_id TEXT REFERENCES tool_versions(id),
+    revision_request_id TEXT REFERENCES tool_revision_requests(id),
+    prior_version_id TEXT REFERENCES tool_versions(id),
+    created_at TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS tool_improvement_decisions_no_update
+BEFORE UPDATE ON tool_improvement_decisions BEGIN
+    SELECT RAISE(ABORT, 'tool improvement decisions are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS tool_improvement_decisions_no_delete
+BEFORE DELETE ON tool_improvement_decisions BEGIN
+    SELECT RAISE(ABORT, 'tool improvement decisions are immutable');
+END;
+"""
+
+# Corpus tables. A source stays unconsented until the user grants it, and the
+# indexer refuses to send text for any unconsented source.
+SCHEMA_V4 = """
+CREATE TABLE IF NOT EXISTS corpus_sources (
+    id TEXT PRIMARY KEY,
+    root_path TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('code','docs','notes','mixed')),
+    consent INTEGER NOT NULL DEFAULT 0 CHECK(consent IN (0,1)),
+    consent_reason TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','indexing','indexed','error','revoked')),
+    file_count INTEGER NOT NULL DEFAULT 0 CHECK(file_count >= 0),
+    chunk_count INTEGER NOT NULL DEFAULT 0 CHECK(chunk_count >= 0),
+    embed_model TEXT,
+    last_indexed_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS corpus_files (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES corpus_sources(id) ON DELETE CASCADE,
+    rel_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    lang TEXT NOT NULL,
+    chunk_count INTEGER NOT NULL DEFAULT 0 CHECK(chunk_count >= 0),
+    indexed_at TEXT NOT NULL,
+    UNIQUE(source_id, rel_path)
+);
+CREATE INDEX IF NOT EXISTS idx_corpus_files_source ON corpus_files(source_id);
+
+CREATE TABLE IF NOT EXISTS corpus_chunks (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES corpus_sources(id) ON DELETE CASCADE,
+    file_id TEXT NOT NULL REFERENCES corpus_files(id) ON DELETE CASCADE,
+    rel_path TEXT NOT NULL,
+    symbol TEXT,
+    start_line INTEGER,
+    text TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    dim INTEGER NOT NULL CHECK(dim > 0),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_corpus_chunks_source ON corpus_chunks(source_id);
+CREATE INDEX IF NOT EXISTS idx_corpus_chunks_file ON corpus_chunks(file_id);
+"""
+
+# Code graph, derived locally and keyed by file_id so it replaces incrementally
+# and cascade-deletes with the file, source, or consent.
+SCHEMA_V5 = """
+CREATE TABLE IF NOT EXISTS code_graph_nodes (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES corpus_sources(id) ON DELETE CASCADE,
+    file_id TEXT NOT NULL REFERENCES corpus_files(id) ON DELETE CASCADE,
+    rel_path TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('module','class','function','method')),
+    name TEXT NOT NULL,
+    qualname TEXT NOT NULL,
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cg_nodes_source ON code_graph_nodes(source_id);
+CREATE INDEX IF NOT EXISTS idx_cg_nodes_file ON code_graph_nodes(file_id);
+CREATE INDEX IF NOT EXISTS idx_cg_nodes_name ON code_graph_nodes(name);
+CREATE INDEX IF NOT EXISTS idx_cg_nodes_qualname ON code_graph_nodes(qualname);
+
+CREATE TABLE IF NOT EXISTS code_graph_edges (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES corpus_sources(id) ON DELETE CASCADE,
+    file_id TEXT NOT NULL REFERENCES corpus_files(id) ON DELETE CASCADE,
+    rel_path TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('contains','imports','calls')),
+    src TEXT NOT NULL,
+    dst_name TEXT NOT NULL,
+    dst_raw TEXT NOT NULL,
+    line INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cg_edges_source ON code_graph_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_cg_edges_file ON code_graph_edges(file_id);
+CREATE INDEX IF NOT EXISTS idx_cg_edges_src ON code_graph_edges(src);
+CREATE INDEX IF NOT EXISTS idx_cg_edges_dst ON code_graph_edges(dst_name);
+CREATE INDEX IF NOT EXISTS idx_cg_edges_kind ON code_graph_edges(kind);
+"""
+
+# Entity graph. Kept separate from the code graph because its provenance is
+# cloud extraction; same fail-closed cascade lifecycle.
+SCHEMA_V6 = """
+CREATE TABLE IF NOT EXISTS entity_nodes (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES corpus_sources(id) ON DELETE CASCADE,
+    file_id TEXT NOT NULL REFERENCES corpus_files(id) ON DELETE CASCADE,
+    rel_path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_entity_nodes_source ON entity_nodes(source_id);
+CREATE INDEX IF NOT EXISTS idx_entity_nodes_file ON entity_nodes(file_id);
+CREATE INDEX IF NOT EXISTS idx_entity_nodes_name ON entity_nodes(name);
+
+CREATE TABLE IF NOT EXISTS entity_edges (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES corpus_sources(id) ON DELETE CASCADE,
+    file_id TEXT NOT NULL REFERENCES corpus_files(id) ON DELETE CASCADE,
+    rel_path TEXT NOT NULL,
+    src_name TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    dst_name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_entity_edges_source ON entity_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_entity_edges_file ON entity_edges(file_id);
+CREATE INDEX IF NOT EXISTS idx_entity_edges_src ON entity_edges(src_name);
+CREATE INDEX IF NOT EXISTS idx_entity_edges_dst ON entity_edges(dst_name);
+"""
+
+SCHEMA_V7 = """
+-- Tool Factory v2: declarative, immutable, content-hashed tool definitions.
+-- The reference-architecture tool is seeded as entry #1 by the registry at
+-- startup (idempotent), so no version-specific JSON is baked into this DDL.
+CREATE TABLE IF NOT EXISTS tool_definitions (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL,
+    version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('draft','proposed','defined','retired')),
+    content_hash TEXT NOT NULL,
+    definition_json TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 0,
+    source_run_id TEXT REFERENCES runs(id),
+    created_at TEXT NOT NULL,
+    UNIQUE(slug, version),
+    UNIQUE(slug, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_tool_definitions_slug
+    ON tool_definitions(slug, created_at);
+-- At most one active definition version per slug.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_definitions_active
+    ON tool_definitions(slug) WHERE active = 1;
+
+-- Gate-1 decisions over definitions (approve / reject-tombstone), mirroring the
+-- Gate-2 tool_proposals table for built versions.
+CREATE TABLE IF NOT EXISTS tool_definition_proposals (
+    id TEXT PRIMARY KEY,
+    definition_id TEXT NOT NULL REFERENCES tool_definitions(id) ON DELETE CASCADE,
+    source_run_id TEXT REFERENCES runs(id),
+    status TEXT NOT NULL,
+    risk_level TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    decision_reason TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tool_definition_proposals_status
+    ON tool_definition_proposals(status, created_at);
+"""
+
+SCHEMA_V8 = """
+-- Gate-2 build records for declarative tool definitions.
+-- Image-based tools keep using tools/tool_versions/tool_proposals; declarative
+-- tools (no runner image — e.g. the README summary card) are built, evaluated,
+-- and activated entirely within the registry. A build is the immutable,
+-- content-hashed, eval-backed candidate that Gate-2 activation pins as the
+-- runnable version of a defined tool.
+CREATE TABLE IF NOT EXISTS tool_definition_builds (
+    id TEXT PRIMARY KEY,
+    definition_id TEXT NOT NULL REFERENCES tool_definitions(id) ON DELETE CASCADE,
+    slug TEXT NOT NULL,
+    version TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('evaluated','active','rejected','superseded')),
+    eval_report_json TEXT NOT NULL,
+    source_run_id TEXT REFERENCES runs(id),
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    UNIQUE(definition_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_tool_definition_builds_slug
+    ON tool_definition_builds(slug, created_at);
+CREATE INDEX IF NOT EXISTS idx_tool_definition_builds_status
+    ON tool_definition_builds(status, created_at);
+-- At most one active build per slug (the runnable declarative version).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_definition_builds_active
+    ON tool_definition_builds(slug) WHERE status = 'active';
+"""
+
+SCHEMA_V9 = """
+-- A build may pin a model-authored, AST-gated
+-- `run(inputs, model)` implementation (empty for declarative tools) plus the
+-- optional OCI Grok review evidence.
+ALTER TABLE tool_definition_builds ADD COLUMN implementation TEXT NOT NULL DEFAULT '';
+ALTER TABLE tool_definition_builds ADD COLUMN code_review_json TEXT;
+"""
+
+SCHEMA_V10 = """
+-- A conversation may pin one explicitly opened project workspace. The project
+-- itself remains identified by the manually refreshed Asset catalog; no host
+-- path is copied into chat state or discovered automatically.
+CREATE TABLE IF NOT EXISTS conversation_projects (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK(mode IN ('grok_bootstrap_local','grok_continuous')),
+    updated_at TEXT NOT NULL
+);
+"""
+
+SCHEMA_V11 = """
+-- External knowledge connectors materialize into the same local corpus, but
+-- retain their provider identity so a chat turn can deliberately restrict
+-- retrieval to one trusted source family (for example, Notion only).
+ALTER TABLE corpus_sources ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'
+    CHECK(provider IN ('local','notion'));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_corpus_sources_single_external_provider
+    ON corpus_sources(provider) WHERE provider != 'local';
+"""
+
+MIGRATIONS: dict[int, str] = {
+    1: SCHEMA_V1,
+    2: SCHEMA_V2,
+    3: SCHEMA_V3,
+    4: SCHEMA_V4,
+    5: SCHEMA_V5,
+    6: SCHEMA_V6,
+    7: SCHEMA_V7,
+    8: SCHEMA_V8,
+    9: SCHEMA_V9,
+    10: SCHEMA_V10,
+    11: SCHEMA_V11,
+}
+SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
+
+
+class Database:
+    """Small async facade over one serialized SQLite connection."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._conn: sqlite3.Connection | None = None
+        self._lock = threading.RLock()
+
+    async def open(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+        def operation() -> None:
+            conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+                )"""
+            )
+            applied = {
+                int(row[0])
+                for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+            }
+            if applied and max(applied) > SUPPORTED_SCHEMA_VERSION:
+                conn.close()
+                raise RuntimeError(
+                    f"database schema {max(applied)} is newer than supported "
+                    f"schema {SUPPORTED_SCHEMA_VERSION}"
+                )
+            for version, migration in sorted(MIGRATIONS.items()):
+                if version in applied:
+                    continue
+                try:
+                    conn.executescript(
+                        "BEGIN IMMEDIATE;\n"
+                        + migration
+                        + "\nINSERT INTO schema_migrations(version, applied_at) "
+                        + f"VALUES ({version}, CURRENT_TIMESTAMP);\nCOMMIT;"
+                    )
+                except BaseException:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    conn.close()
+                    raise
+            self._conn = conn
+
+        await asyncio.to_thread(operation)
+
+    async def close(self) -> None:
+        if self._conn is None:
+            return
+        conn, self._conn = self._conn, None
+        await asyncio.to_thread(conn.close)
+
+    def _connection(self) -> sqlite3.Connection:
+        if self._conn is None:
+            raise RuntimeError("database is not open")
+        return self._conn
+
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        with self._lock:
+            conn = self._connection()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+            except BaseException:
+                conn.rollback()
+                raise
+            else:
+                conn.commit()
+
+    async def _call(self, function: Callable[[], T]) -> T:
+        return await asyncio.to_thread(function)
+
+    async def ping(self) -> bool:
+        def operation() -> bool:
+            with self._lock:
+                return self._connection().execute("SELECT 1").fetchone()[0] == 1
+
+        return await self._call(operation)
+
+    async def create_conversation(self, title: str | None) -> ConversationV1:
+        conversation_id, timestamp = _id("conv"), _now()
+        title = (title or "New conversation").strip() or "New conversation"
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "INSERT INTO conversations VALUES (?, ?, ?, ?)",
+                    (conversation_id, title, timestamp, timestamp),
+                )
+
+        await self._call(operation)
+        return ConversationV1(
+            id=conversation_id, title=title, created_at=timestamp, updated_at=timestamp
+        )
+
+    async def list_conversations(self, limit: int = 100) -> list[ConversationV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?", (limit,)
+                    )
+                    .fetchall()
+                )
+
+        return [ConversationV1.model_validate(dict(row)) for row in await self._call(operation)]
+
+    async def get_conversation(self, conversation_id: str) -> ConversationV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return ConversationV1.model_validate(dict(row)) if row else None
+
+    async def set_conversation_project(
+        self, conversation_id: str, project_id: str, mode: str
+    ) -> ConversationProjectV1:
+        if mode not in {"grok_bootstrap_local", "grok_continuous"}:
+            raise ValueError("unsupported project mode")
+        timestamp = _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO conversation_projects
+                    (conversation_id, project_id, mode, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(conversation_id) DO UPDATE SET
+                        project_id = excluded.project_id,
+                        mode = excluded.mode,
+                        updated_at = excluded.updated_at""",
+                    (conversation_id, project_id, mode, timestamp),
+                )
+
+        await self._call(operation)
+        return ConversationProjectV1(
+            conversation_id=conversation_id,
+            project_id=project_id,
+            mode=mode,
+            updated_at=timestamp,
+        )
+
+    async def get_conversation_project(
+        self, conversation_id: str
+    ) -> ConversationProjectV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM conversation_projects WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        return ConversationProjectV1.model_validate(dict(row)) if row else None
+
+    async def clear_conversation_project(self, conversation_id: str) -> None:
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "DELETE FROM conversation_projects WHERE conversation_id = ?",
+                    (conversation_id,),
+                )
+
+        await self._call(operation)
+
+    async def add_message(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        attachment_ids: list[str] | None = None,
+        run_id: str | None = None,
+    ) -> MessageV1:
+        message_id, timestamp = _id("msg"), _now()
+        attachments = attachment_ids or []
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO messages
+                    (id, conversation_id, role, content, attachments_json, run_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        message_id,
+                        conversation_id,
+                        role,
+                        content,
+                        _json(attachments),
+                        run_id,
+                        timestamp,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                    (timestamp, conversation_id),
+                )
+
+        await self._call(operation)
+        return MessageV1(
+            id=message_id,
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            attachment_ids=attachments,
+            run_id=run_id,
+            created_at=timestamp,
+        )
+
+    async def add_assistant_message_once(
+        self, conversation_id: str, content: str, run_id: str
+    ) -> tuple[MessageV1, bool]:
+        """Publish at most one assistant message for a run across graph replays."""
+
+        message_id, timestamp = _id("msg"), _now()
+
+        def operation() -> tuple[dict[str, Any], bool]:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT * FROM messages WHERE run_id = ? AND role = 'assistant'",
+                    (run_id,),
+                ).fetchone()
+                if existing:
+                    return dict(existing), False
+                conn.execute(
+                    """INSERT INTO messages
+                    (id, conversation_id, role, content, attachments_json, run_id, created_at)
+                    VALUES (?, ?, 'assistant', ?, '[]', ?, ?)""",
+                    (message_id, conversation_id, content, run_id, timestamp),
+                )
+                conn.execute(
+                    "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                    (timestamp, conversation_id),
+                )
+                return {
+                    "id": message_id,
+                    "conversation_id": conversation_id,
+                    "role": "assistant",
+                    "content": content,
+                    "attachments_json": "[]",
+                    "run_id": run_id,
+                    "created_at": timestamp,
+                }, True
+
+        data, created = await self._call(operation)
+        data["attachment_ids"] = _loads(data.pop("attachments_json"), [])
+        return MessageV1.model_validate(data), created
+
+    async def list_messages(self, conversation_id: str) -> list[MessageV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid",
+                        (conversation_id,),
+                    )
+                    .fetchall()
+                )
+
+        result: list[MessageV1] = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data["attachment_ids"] = _loads(data.pop("attachments_json"), [])
+            result.append(MessageV1.model_validate(data))
+        return result
+
+    async def recent_messages(
+        self, conversation_id: str, *, limit: int = 20, max_characters: int = 12_000
+    ) -> list[dict[str, str]]:
+        messages, _ = await self.recent_messages_with_metadata(
+            conversation_id, limit=limit, max_characters=max_characters
+        )
+        return messages
+
+    async def recent_messages_with_metadata(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 20,
+        max_characters: int = 12_000,
+        exclude_message_id: str | None = None,
+    ) -> tuple[list[dict[str, str]], bool]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                if exclude_message_id is not None:
+                    return list(
+                        self._connection().execute(
+                            """SELECT role, content FROM messages
+                            WHERE conversation_id = ? AND id != ?
+                            ORDER BY created_at DESC, rowid DESC LIMIT ?""",
+                            (conversation_id, exclude_message_id, limit + 1),
+                        )
+                    )
+                return list(
+                    self._connection().execute(
+                        """SELECT role, content FROM messages
+                        WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC
+                        LIMIT ?""",
+                        (conversation_id, limit + 1),
+                    )
+                )
+
+        selected = await self._call(operation)
+        result: list[dict[str, str]] = []
+        remaining = max_characters
+        truncated = len(selected) > limit
+        for index, message in enumerate(selected[:limit]):
+            if remaining <= 0:
+                truncated = True
+                break
+            original = str(message["content"])
+            content = original[-remaining:]
+            if len(content) < len(original):
+                truncated = True
+            if not content:
+                continue
+            result.append({"role": str(message["role"]), "content": content})
+            remaining -= len(content)
+            if remaining <= 0:
+                if index + 1 < min(len(selected), limit):
+                    truncated = True
+                break
+        result.reverse()
+        return result, truncated
+
+    async def get_conversation_summary(self, conversation_id: str) -> str:
+        def operation() -> str:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT summary FROM conversation_summaries WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchone()
+                return row["summary"] if row else ""
+
+        return await self._call(operation)
+
+    async def refresh_conversation_summary(
+        self, conversation_id: str, *, max_characters: int = 8_000
+    ) -> str:
+        messages = await self.recent_messages(
+            conversation_id, limit=20, max_characters=max_characters
+        )
+        summary = "\n".join(
+            f"{item['role']}: {item['content']}" for item in messages
+        )[-max_characters:]
+        timestamp = _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO conversation_summaries
+                    (conversation_id, summary, updated_at) VALUES (?, ?, ?)
+                    ON CONFLICT(conversation_id) DO UPDATE SET
+                    summary = excluded.summary, updated_at = excluded.updated_at""",
+                    (conversation_id, summary, timestamp),
+                )
+
+        await self._call(operation)
+        return summary
+
+    async def link_message_run(self, message_id: str, run_id: str) -> None:
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "UPDATE messages SET run_id = ? WHERE id = ?", (run_id, message_id)
+                )
+
+        await self._call(operation)
+
+    async def create_upload(
+        self, sha256: str, filename: str, media_type: str, size: int, blob_path: str
+    ) -> UploadV1:
+        upload_id, timestamp = _id("upl"), _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "INSERT INTO uploads VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (upload_id, sha256, filename, media_type, size, blob_path, timestamp),
+                )
+
+        await self._call(operation)
+        return UploadV1(
+            id=upload_id,
+            filename=filename,
+            media_type=media_type,
+            size=size,
+            sha256=sha256,
+            created_at=timestamp,
+        )
+
+    async def get_upload_record(self, upload_id: str) -> dict[str, Any] | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM uploads WHERE id = ?", (upload_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def validate_upload_ids(self, upload_ids: list[str]) -> bool:
+        if not upload_ids:
+            return True
+        unique = sorted(set(upload_ids))
+        placeholders = ",".join("?" for _ in unique)
+
+        def operation() -> bool:
+            with self._lock:
+                count = self._connection().execute(
+                    f"SELECT COUNT(*) FROM uploads WHERE id IN ({placeholders})", unique
+                ).fetchone()[0]
+                return count == len(unique)
+
+        return await self._call(operation)
+
+    async def create_run(
+        self,
+        conversation_id: str,
+        user_message_id: str,
+        *,
+        graph_schema_version: str,
+        model_aliases: dict[str, str],
+    ) -> RunV1:
+        run_id, timestamp = _id("run"), _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO runs
+                    (id, conversation_id, user_message_id, status, graph_schema_version,
+                     model_aliases_json, prompt_versions_json, tool_versions_json,
+                     cancel_requested, result_json, last_error, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?)""",
+                    (
+                        run_id,
+                        conversation_id,
+                        user_message_id,
+                        RunStatus.QUEUED,
+                        graph_schema_version,
+                        _json(model_aliases),
+                        _json(
+                            {
+                                "planner": "1",
+                                "response": "1",
+                                "architecture": "1",
+                                "diagram_code": "1",
+                                "deep_worker": "1",
+                            }
+                        ),
+                        _json({}),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+
+        await self._call(operation)
+        return RunV1(
+            id=run_id,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+            status=RunStatus.QUEUED,
+            graph_schema_version=graph_schema_version,
+            cancel_requested=False,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+
+    async def get_run(self, run_id: str) -> RunV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM runs WHERE id = ?", (run_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        if not row:
+            return None
+        data = dict(row)
+        data["cancel_requested"] = bool(data["cancel_requested"])
+        data["result"] = _loads(data.pop("result_json"), None)
+        for field in ("model_aliases_json", "prompt_versions_json", "tool_versions_json"):
+            data.pop(field, None)
+        return RunV1.model_validate(data)
+
+    async def get_run_execution_record(self, run_id: str) -> dict[str, Any] | None:
+        """Return persisted inputs and pins needed to recover a durable run."""
+
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    """SELECT r.*, m.content AS prompt, m.attachments_json
+                    FROM runs r JOIN messages m ON m.id = r.user_message_id
+                    WHERE r.id = ?""",
+                    (run_id,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        if not row:
+            return None
+        data = dict(row)
+        data["model_aliases"] = _loads(data.pop("model_aliases_json"), {})
+        data["prompt_versions"] = _loads(data.pop("prompt_versions_json"), {})
+        data["tool_versions"] = _loads(data.pop("tool_versions_json"), {})
+        data["attachment_ids"] = _loads(data.pop("attachments_json"), [])
+        data["cancel_requested"] = bool(data["cancel_requested"])
+        data["result"] = _loads(data.pop("result_json"), None)
+        return data
+
+    async def list_recoverable_execution_records(self) -> list[dict[str, Any]]:
+        runs = await self.list_runs(limit=10_000)
+        records: list[dict[str, Any]] = []
+        for run in runs:
+            if run.status in {
+                RunStatus.QUEUED,
+                RunStatus.RUNNING,
+                RunStatus.AWAITING_APPROVAL,
+            }:
+                record = await self.get_run_execution_record(run.id)
+                if record is not None:
+                    records.append(record)
+        return records
+
+    async def list_runs(
+        self, status: str | None = None, *, limit: int = 100
+    ) -> list[RunV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                if status:
+                    return list(
+                        self._connection().execute(
+                            "SELECT * FROM runs WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
+                            (status, limit),
+                        )
+                    )
+                return list(
+                    self._connection().execute(
+                        "SELECT * FROM runs ORDER BY updated_at DESC LIMIT ?", (limit,)
+                    )
+                )
+
+        result: list[RunV1] = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data["cancel_requested"] = bool(data["cancel_requested"])
+            data["result"] = _loads(data.pop("result_json"), None)
+            for field in (
+                "model_aliases_json",
+                "prompt_versions_json",
+                "tool_versions_json",
+            ):
+                data.pop(field, None)
+            result.append(RunV1.model_validate(data))
+        return result
+
+    async def set_run_status(
+        self,
+        run_id: str,
+        status: RunStatus | str,
+        *,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        timestamp = _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """UPDATE runs SET status = ?, result_json = COALESCE(?, result_json),
+                    last_error = ?, updated_at = ? WHERE id = ?""",
+                    (
+                        str(status),
+                        _json(result) if result is not None else None,
+                        error,
+                        timestamp,
+                        run_id,
+                    ),
+                )
+
+        await self._call(operation)
+
+    async def pin_tool_version(
+        self,
+        run_id: str,
+        *,
+        slug: str,
+        version_id: str,
+        version: str,
+        content_hash: str,
+    ) -> None:
+        timestamp = _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                row = conn.execute(
+                    "SELECT tool_versions_json FROM runs WHERE id = ?", (run_id,)
+                ).fetchone()
+                if not row:
+                    raise KeyError("run not found")
+                pinned = _loads(row["tool_versions_json"], {})
+                pinned[slug] = {
+                    "version_id": version_id,
+                    "version": version,
+                    "content_hash": content_hash,
+                }
+                conn.execute(
+                    "UPDATE runs SET tool_versions_json = ?, updated_at = ? WHERE id = ?",
+                    (_json(pinned), timestamp, run_id),
+                )
+
+        await self._call(operation)
+
+    async def request_cancel(self, run_id: str) -> bool:
+        timestamp = _now()
+
+        def operation() -> bool:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    """UPDATE runs SET cancel_requested = 1, updated_at = ?
+                    WHERE id = ? AND status NOT IN ('completed','failed','cancelled')""",
+                    (timestamp, run_id),
+                )
+                return cursor.rowcount > 0
+
+        return await self._call(operation)
+
+    async def is_cancel_requested(self, run_id: str) -> bool:
+        run = await self.get_run(run_id)
+        return bool(run and run.cancel_requested)
+
+    async def append_event(
+        self,
+        run_id: str,
+        thread_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        checkpoint_id: str | None = None,
+    ) -> RunEventV1:
+        event_id, timestamp = _id("evt"), _now()
+        payload = payload or {}
+
+        def operation() -> int:
+            with self._transaction() as conn:
+                sequence = conn.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()[0]
+                conn.execute(
+                    "INSERT INTO run_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        event_id,
+                        run_id,
+                        sequence,
+                        thread_id,
+                        checkpoint_id,
+                        event_type,
+                        _json(payload),
+                        timestamp,
+                    ),
+                )
+                return int(sequence)
+
+        sequence = await self._call(operation)
+        return RunEventV1(
+            id=event_id,
+            sequence=sequence,
+            run_id=run_id,
+            thread_id=thread_id,
+            checkpoint_id=checkpoint_id,
+            type=event_type,
+            timestamp=timestamp,
+            payload=payload,
+        )
+
+    async def list_events(self, run_id: str, after: int = 0) -> list[RunEventV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute(
+                        """SELECT * FROM run_events WHERE run_id = ? AND sequence > ?
+                        ORDER BY sequence""",
+                        (run_id, after),
+                    )
+                    .fetchall()
+                )
+
+        events: list[RunEventV1] = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data["timestamp"] = data.pop("created_at")
+            data["payload"] = _loads(data.pop("payload_json"), {})
+            events.append(RunEventV1.model_validate(data))
+        return events
+
+    async def create_artifact(
+        self,
+        run_id: str,
+        sha256: str,
+        filename: str,
+        media_type: str,
+        size: int,
+        blob_path: str,
+    ) -> dict[str, Any]:
+        artifact_id, timestamp = _id("art"), _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    """SELECT * FROM artifacts
+                    WHERE run_id = ? AND filename = ? AND sha256 = ?""",
+                    (run_id, filename, sha256),
+                ).fetchone()
+                if existing:
+                    return dict(existing)
+                data = {
+                    "id": artifact_id,
+                    "run_id": run_id,
+                    "sha256": sha256,
+                    "filename": filename,
+                    "media_type": media_type,
+                    "size": size,
+                    "blob_path": blob_path,
+                    "created_at": timestamp,
+                }
+                conn.execute(
+                    "INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    tuple(data.values()),
+                )
+                return data
+
+        return await self._call(operation)
+
+    async def get_idempotency_result(self, action_id: str) -> dict[str, Any] | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
+                    (action_id,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        return _loads(row["result_json"], {}) if row else None
+
+    async def put_idempotency_result(
+        self, action_id: str, result: dict[str, Any]
+    ) -> dict[str, Any]:
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO idempotency_actions VALUES (?, ?, ?)",
+                    (action_id, _json(result), timestamp),
+                )
+                row = conn.execute(
+                    "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
+                    (action_id,),
+                ).fetchone()
+                if not row:
+                    raise RuntimeError("idempotency action was not persisted")
+                return _loads(row["result_json"], {})
+
+        return await self._call(operation)
+
+    async def get_artifact_record(self, artifact_id: str) -> dict[str, Any] | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM artifacts WHERE id = ?", (artifact_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def list_active_tools(self) -> list[dict[str, Any]]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute(
+                        """SELECT t.id, t.slug, t.name, t.description, t.active_version_id,
+                        v.version, v.content_hash, v.manifest_json, v.bundle_path
+                        FROM tools t JOIN tool_versions v ON v.id = t.active_version_id
+                        WHERE v.state = 'active'
+                        ORDER BY t.slug"""
+                    )
+                    .fetchall()
+                )
+
+        result = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data["manifest"] = _loads(data.pop("manifest_json"), {})
+            result.append(data)
+        return result
+
+    async def is_tool_hash_rejected(self, slug: str, content_hash: str) -> bool:
+        def operation() -> bool:
+            with self._lock:
+                row = self._connection().execute(
+                    """SELECT 1 FROM tool_proposals p
+                    JOIN tools t ON t.id = p.tool_id
+                    JOIN tool_versions v ON v.id = p.tool_version_id
+                    WHERE t.slug = ? AND v.content_hash = ? AND p.status = 'rejected'
+                    LIMIT 1""",
+                    (slug, content_hash),
+                ).fetchone()
+                return row is not None
+
+        return await self._call(operation)
+
+    async def list_tools(self) -> list[ToolV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection().execute("SELECT * FROM tools ORDER BY slug").fetchall()
+                )
+
+        return [ToolV1.model_validate(dict(row)) for row in await self._call(operation)]
+
+    async def list_tool_versions(self, tool_id: str) -> list[ToolVersionV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM tool_versions WHERE tool_id = ? ORDER BY created_at DESC",
+                        (tool_id,),
+                    )
+                    .fetchall()
+                )
+
+        result: list[ToolVersionV1] = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data["manifest"] = _loads(data.pop("manifest_json"), {})
+            data["eval_report"] = _loads(data.pop("eval_report_json"), None)
+            data.pop("bundle_path", None)
+            result.append(ToolVersionV1.model_validate(data))
+        return result
+
+    async def get_tool_version_record(
+        self, tool_id: str, version_id: str
+    ) -> dict[str, Any] | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    """SELECT * FROM tool_versions
+                    WHERE id = ? AND tool_id = ?""",
+                    (version_id, tool_id),
+                ).fetchone()
+
+        row = await self._call(operation)
+        if not row:
+            return None
+        data = dict(row)
+        data["manifest"] = _loads(data.pop("manifest_json"), {})
+        data["eval_report"] = _loads(data.pop("eval_report_json"), None)
+        return data
+
+    async def get_active_tool_version_record(
+        self, tool_id: str
+    ) -> dict[str, Any] | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    """SELECT v.* FROM tools t JOIN tool_versions v
+                    ON v.id = t.active_version_id WHERE t.id = ?""",
+                    (tool_id,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        if not row:
+            return None
+        data = dict(row)
+        data["manifest"] = _loads(data.pop("manifest_json"), {})
+        data["eval_report"] = _loads(data.pop("eval_report_json"), None)
+        return data
+
+    async def activate_tool_version(
+        self,
+        tool_id: str,
+        version_id: str,
+        *,
+        action_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
+                    (action_id,),
+                ).fetchone()
+                if existing:
+                    return _loads(existing["result_json"], {})
+                tool = conn.execute(
+                    "SELECT active_version_id FROM tools WHERE id = ?", (tool_id,)
+                ).fetchone()
+                version = conn.execute(
+                    "SELECT state FROM tool_versions WHERE id = ? AND tool_id = ?",
+                    (version_id, tool_id),
+                ).fetchone()
+                if not tool or not version:
+                    raise KeyError("tool or version not found")
+                if version["state"] not in {ToolState.APPROVED, ToolState.ACTIVE}:
+                    raise ValueError("only an approved prior version can be activated")
+                prior = tool["active_version_id"]
+                if prior and prior != version_id:
+                    conn.execute(
+                        "UPDATE tool_versions SET state = ? WHERE id = ?",
+                        (ToolState.APPROVED, prior),
+                    )
+                conn.execute(
+                    "UPDATE tool_versions SET state = ? WHERE id = ?",
+                    (ToolState.ACTIVE, version_id),
+                )
+                conn.execute(
+                    "UPDATE tools SET active_version_id = ?, updated_at = ? WHERE id = ?",
+                    (version_id, timestamp, tool_id),
+                )
+                result = {
+                    "tool_id": tool_id,
+                    "active_version_id": version_id,
+                    "prior_version_id": prior,
+                }
+                conn.execute(
+                    """INSERT INTO tool_version_activation_log
+                    (id, action_id, tool_id, target_version_id, prior_version_id,
+                     reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        _id("tvact"),
+                        action_id,
+                        tool_id,
+                        version_id,
+                        prior,
+                        reason,
+                        timestamp,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO idempotency_actions VALUES (?, ?, ?)",
+                    (action_id, _json(result), timestamp),
+                )
+                return result
+
+        return await self._call(operation)
+
+    async def create_tool_candidate(
+        self,
+        manifest: ToolManifestV1,
+        eval_report: EvalReportV1,
+        source_run_id: str,
+        bundle_path: str,
+    ) -> tuple[ToolV1, ToolVersionV1, ToolProposalV1]:
+        timestamp = _now()
+
+        def operation() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+            with self._transaction() as conn:
+                tool_row = conn.execute(
+                    "SELECT * FROM tools WHERE slug = ?", (manifest.slug,)
+                ).fetchone()
+                if tool_row:
+                    tool = dict(tool_row)
+                    conn.execute(
+                        "UPDATE tools SET name = ?, description = ?, updated_at = ? WHERE id = ?",
+                        (manifest.name, manifest.description, timestamp, tool["id"]),
+                    )
+                    tool.update(
+                        name=manifest.name, description=manifest.description, updated_at=timestamp
+                    )
+                else:
+                    tool = {
+                        "id": _id("tool"),
+                        "slug": manifest.slug,
+                        "name": manifest.name,
+                        "description": manifest.description,
+                        "active_version_id": None,
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                    }
+                    conn.execute(
+                        "INSERT INTO tools VALUES (?, ?, ?, ?, NULL, ?, ?)",
+                        (
+                            tool["id"],
+                            tool["slug"],
+                            tool["name"],
+                            tool["description"],
+                            timestamp,
+                            timestamp,
+                        ),
+                    )
+
+                version_row = conn.execute(
+                    "SELECT * FROM tool_versions WHERE tool_id = ? AND content_hash = ?",
+                    (tool["id"], manifest.content_hash),
+                ).fetchone()
+                if version_row:
+                    version = dict(version_row)
+                else:
+                    version = {
+                        "id": _id("tver"),
+                        "tool_id": tool["id"],
+                        "version": manifest.version,
+                        "state": ToolState.EVALUATED,
+                        "content_hash": manifest.content_hash,
+                        "manifest_json": _json(manifest.model_dump(mode="json")),
+                        "bundle_path": bundle_path,
+                        "eval_report_json": _json(eval_report.model_dump(mode="json")),
+                        "source_run_id": source_run_id,
+                        "created_at": timestamp,
+                    }
+                    conn.execute(
+                        """INSERT INTO tool_versions
+                        (id, tool_id, version, state, content_hash, manifest_json, bundle_path,
+                         eval_report_json, source_run_id, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        tuple(version.values()),
+                    )
+
+                proposal_row = conn.execute(
+                    """SELECT * FROM tool_proposals
+                    WHERE source_run_id = ? AND tool_version_id = ?""",
+                    (source_run_id, version["id"]),
+                ).fetchone()
+                if proposal_row:
+                    proposal = dict(proposal_row)
+                    proposal.pop("decision_reason", None)
+                else:
+                    proposal = {
+                        "id": _id("tprop"),
+                        "tool_id": tool["id"],
+                        "tool_version_id": version["id"],
+                        "source_run_id": source_run_id,
+                        "status": ProposalStatus.PENDING,
+                        "risk_level": manifest.risk_level,
+                        "summary": f"Activate {manifest.name} {manifest.version}",
+                        "created_at": timestamp,
+                        "decided_at": None,
+                    }
+                    conn.execute(
+                        """INSERT INTO tool_proposals
+                        (id, tool_id, tool_version_id, source_run_id, status, risk_level,
+                         summary, decision_reason, created_at, decided_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)""",
+                        (
+                            proposal["id"],
+                            proposal["tool_id"],
+                            proposal["tool_version_id"],
+                            proposal["source_run_id"],
+                            proposal["status"],
+                            proposal["risk_level"],
+                            proposal["summary"],
+                            timestamp,
+                        ),
+                    )
+                return tool, version, proposal
+
+        tool_data, version_data, proposal_data = await self._call(operation)
+        version_data = dict(version_data)
+        version_data["manifest"] = _loads(version_data.pop("manifest_json"), {})
+        version_data["eval_report"] = _loads(version_data.pop("eval_report_json"), None)
+        version_data.pop("bundle_path", None)
+        return (
+            ToolV1.model_validate(tool_data),
+            ToolVersionV1.model_validate(version_data),
+            ToolProposalV1.model_validate(proposal_data),
+        )
+
+    async def get_tool_proposal(self, proposal_id: str) -> ToolProposalV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM tool_proposals WHERE id = ?", (proposal_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        if not row:
+            return None
+        data = dict(row)
+        data.pop("decision_reason", None)
+        return ToolProposalV1.model_validate(data)
+
+    async def list_tool_proposals(
+        self, status: str | None = None
+    ) -> list[ToolProposalV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                if status:
+                    return list(
+                        self._connection()
+                        .execute(
+                            "SELECT * FROM tool_proposals WHERE status = ? ORDER BY created_at DESC",
+                            (status,),
+                        )
+                        .fetchall()
+                    )
+                return list(
+                    self._connection()
+                    .execute("SELECT * FROM tool_proposals ORDER BY created_at DESC")
+                    .fetchall()
+                )
+
+        result = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data.pop("decision_reason", None)
+            result.append(ToolProposalV1.model_validate(data))
+        return result
+
+    async def create_approval(self, request: ApprovalRequestV1) -> ApprovalRequestV1:
+        def operation() -> str:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT OR IGNORE INTO approvals
+                    (id, run_id, proposal_id, action_id, kind, status, request_json,
+                     decision_json, created_at, decided_at)
+                    VALUES (?, ?, ?, ?, ?, 'pending', ?, NULL, ?, NULL)""",
+                    (
+                        request.id,
+                        request.run_id,
+                        request.proposal_id,
+                        request.action_id,
+                        request.kind,
+                        _json(request.model_dump(mode="json")),
+                        request.created_at.isoformat(),
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT request_json FROM approvals WHERE action_id = ?",
+                    (request.action_id,),
+                ).fetchone()
+                if not row:
+                    raise RuntimeError("approval was not persisted")
+                return str(row["request_json"])
+
+        return ApprovalRequestV1.model_validate_json(await self._call(operation))
+
+    async def get_pending_approval(self, run_id: str) -> ApprovalRequestV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    """SELECT request_json FROM approvals
+                    WHERE run_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1""",
+                    (run_id,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        return ApprovalRequestV1.model_validate_json(row["request_json"]) if row else None
+
+    async def get_latest_approval_record(self, run_id: str) -> dict[str, Any] | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    """SELECT status, request_json, decision_json, decided_at
+                    FROM approvals WHERE run_id = ? ORDER BY created_at DESC LIMIT 1""",
+                    (run_id,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        if not row:
+            return None
+        data = dict(row)
+        data["request"] = _loads(data.pop("request_json"), {})
+        data["decision"] = _loads(data.pop("decision_json"), None)
+        return data
+
+    async def list_decided_unfinished_approvals(self) -> list[dict[str, Any]]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection().execute(
+                        """SELECT a.status, a.request_json, a.decision_json,
+                        r.id AS run_id, r.conversation_id
+                        FROM approvals a JOIN runs r ON r.id = a.run_id
+                        WHERE a.status IN ('approve','reject','draft')
+                        AND r.status IN ('queued','running','awaiting_approval')
+                        ORDER BY a.decided_at"""
+                    )
+                )
+
+        result: list[dict[str, Any]] = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data["request"] = _loads(data.pop("request_json"), {})
+            data["decision"] = _loads(data.pop("decision_json"), {})
+            result.append(data)
+        return result
+
+    async def record_approval_decision(
+        self, approval_id: str, decision: str, reason: str | None
+    ) -> bool:
+        timestamp = _now()
+
+        def operation() -> bool:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    """UPDATE approvals SET status = ?, decision_json = ?, decided_at = ?
+                    WHERE id = ? AND status = 'pending'""",
+                    (decision, _json({"decision": decision, "reason": reason}), timestamp, approval_id),
+                )
+                return cursor.rowcount > 0
+
+        return await self._call(operation)
+
+    async def decide_tool_proposal(
+        self,
+        proposal_id: str,
+        decision: str,
+        reason: str | None,
+        action_id: str,
+    ) -> dict[str, Any]:
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
+                    (action_id,),
+                ).fetchone()
+                if existing:
+                    return _loads(existing["result_json"], {})
+                proposal_row = conn.execute(
+                    "SELECT * FROM tool_proposals WHERE id = ?", (proposal_id,)
+                ).fetchone()
+                if not proposal_row:
+                    raise KeyError("tool proposal not found")
+                proposal = dict(proposal_row)
+                if proposal["status"] not in {ProposalStatus.PENDING, decision}:
+                    raise ValueError(f"proposal is already {proposal['status']}")
+                if decision == ProposalStatus.APPROVED:
+                    version = conn.execute(
+                        "SELECT * FROM tool_versions WHERE id = ?",
+                        (proposal["tool_version_id"],),
+                    ).fetchone()
+                    if not version or version["state"] not in {
+                        ToolState.EVALUATED,
+                        ToolState.APPROVED,
+                        ToolState.ACTIVE,
+                    }:
+                        raise ValueError("only evaluated versions can be activated")
+                    old_active = conn.execute(
+                        "SELECT active_version_id FROM tools WHERE id = ?",
+                        (proposal["tool_id"],),
+                    ).fetchone()[0]
+                    if old_active and old_active != proposal["tool_version_id"]:
+                        conn.execute(
+                            "UPDATE tool_versions SET state = ? WHERE id = ?",
+                            (ToolState.APPROVED, old_active),
+                        )
+                    conn.execute(
+                        "UPDATE tool_versions SET state = ? WHERE id = ?",
+                        (ToolState.ACTIVE, proposal["tool_version_id"]),
+                    )
+                    conn.execute(
+                        "UPDATE tools SET active_version_id = ?, updated_at = ? WHERE id = ?",
+                        (proposal["tool_version_id"], timestamp, proposal["tool_id"]),
+                    )
+                conn.execute(
+                    """UPDATE tool_proposals SET status = ?, decision_reason = ?, decided_at = ?
+                    WHERE id = ?""",
+                    (decision, reason, timestamp, proposal_id),
+                )
+                result = {"proposal_id": proposal_id, "status": decision, "applied": True}
+                conn.execute(
+                    "INSERT INTO idempotency_actions VALUES (?, ?, ?)",
+                    (action_id, _json(result), timestamp),
+                )
+                return result
+
+        return await self._call(operation)
+
+    async def search_memories(self, query: str, limit: int = 5) -> list[str]:
+        tokens = [token for token in query.replace('"', " ").split() if len(token) > 2][:12]
+        if not tokens:
+            return []
+        expression = " OR ".join(f'"{token}"' for token in tokens)
+
+        def operation() -> list[str]:
+            with self._lock:
+                rows = self._connection().execute(
+                    """SELECT m.content FROM memory_fts f
+                    JOIN memory_items m ON m.rowid = f.rowid
+                    WHERE memory_fts MATCH ? AND m.active = 1
+                    ORDER BY bm25(memory_fts) LIMIT ?""",
+                    (expression, limit),
+                ).fetchall()
+                return [row["content"] for row in rows]
+
+        try:
+            return await self._call(operation)
+        except sqlite3.OperationalError:
+            return []
+
+    async def create_memory_proposal(
+        self,
+        kind: str,
+        content: str,
+        source_run_id: str | None,
+        confidence: float,
+    ) -> MemoryProposalV1:
+        proposal_id, timestamp = _id("mprop"), _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO memory_proposals
+                    (id, kind, content, source_run_id, confidence, status,
+                     decision_reason, created_at, decided_at)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL)""",
+                    (
+                        proposal_id,
+                        kind,
+                        content,
+                        source_run_id,
+                        confidence,
+                        ProposalStatus.PENDING,
+                        timestamp,
+                    ),
+                )
+
+        await self._call(operation)
+        return MemoryProposalV1(
+            id=proposal_id,
+            kind=kind,
+            content=content,
+            source_run_id=source_run_id,
+            confidence=confidence,
+            status=ProposalStatus.PENDING,
+            created_at=timestamp,
+        )
+
+    async def list_memory_proposals(
+        self, status: str | None = ProposalStatus.PENDING
+    ) -> list[MemoryProposalV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                if status:
+                    return list(
+                        self._connection()
+                        .execute(
+                            "SELECT * FROM memory_proposals WHERE status = ? ORDER BY created_at DESC",
+                            (status,),
+                        )
+                        .fetchall()
+                    )
+                return list(
+                    self._connection()
+                    .execute("SELECT * FROM memory_proposals ORDER BY created_at DESC")
+                    .fetchall()
+                )
+
+        result = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data.pop("decision_reason", None)
+            result.append(MemoryProposalV1.model_validate(data))
+        return result
+
+    async def decide_memory_proposal(
+        self, proposal_id: str, decision: str, reason: str | None
+    ) -> MemoryProposalV1:
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                row = conn.execute(
+                    "SELECT * FROM memory_proposals WHERE id = ?", (proposal_id,)
+                ).fetchone()
+                if not row:
+                    raise KeyError("memory proposal not found")
+                data = dict(row)
+                if data["status"] != ProposalStatus.PENDING:
+                    raise ValueError(f"proposal is already {data['status']}")
+                conn.execute(
+                    """UPDATE memory_proposals SET status = ?, decision_reason = ?, decided_at = ?
+                    WHERE id = ?""",
+                    (decision, reason, timestamp, proposal_id),
+                )
+                if decision == ProposalStatus.APPROVED:
+                    conn.execute(
+                        """INSERT INTO memory_items
+                        (id, kind, content, source_run_id, active, created_at)
+                        VALUES (?, ?, ?, ?, 1, ?)""",
+                        (
+                            _id("mem"),
+                            data["kind"],
+                            data["content"],
+                            data["source_run_id"],
+                            timestamp,
+                        ),
+                    )
+                data.update(status=decision, decided_at=timestamp)
+                data.pop("decision_reason", None)
+                return data
+
+        return MemoryProposalV1.model_validate(await self._call(operation))
+
+    # ── Personal knowledge corpus (Tier-1 RAG) ───────────────────────────────
+
+    async def create_corpus_source(
+        self, root_path: str, label: str, kind: str, provider: str = "local"
+    ) -> CorpusSourceV1:
+        source_id, timestamp = _id("src"), _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM corpus_sources WHERE root_path = ?", (root_path,)
+                ).fetchone()
+                if existing:
+                    raise ValueError("a source with this path is already registered")
+                conn.execute(
+                    """INSERT INTO corpus_sources
+                    (id, root_path, label, kind, consent, consent_reason, status,
+                     file_count, chunk_count, embed_model, last_indexed_at,
+                     last_error, created_at, updated_at, provider)
+                    VALUES (?, ?, ?, ?, 0, NULL, 'pending', 0, 0, NULL, NULL, NULL, ?, ?, ?)""",
+                    (source_id, root_path, label, kind, timestamp, timestamp, provider),
+                )
+
+        await self._call(operation)
+        return CorpusSourceV1(
+            id=source_id, root_path=root_path, label=label, kind=kind,
+            provider=provider,
+            consent=False, status="pending", file_count=0, chunk_count=0,
+            last_indexed_at=None, last_error=None,
+            created_at=timestamp, updated_at=timestamp,
+        )
+
+    async def list_corpus_sources(self) -> list[CorpusSourceV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute("SELECT * FROM corpus_sources ORDER BY created_at DESC")
+                    .fetchall()
+                )
+
+        return [_corpus_source(row) for row in await self._call(operation)]
+
+    async def get_corpus_source(self, source_id: str) -> CorpusSourceV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return (
+                    self._connection()
+                    .execute("SELECT * FROM corpus_sources WHERE id = ?", (source_id,))
+                    .fetchone()
+                )
+
+        row = await self._call(operation)
+        return _corpus_source(row) if row else None
+
+    async def get_corpus_source_by_provider(
+        self, provider: str
+    ) -> CorpusSourceV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM corpus_sources WHERE provider = ? ORDER BY created_at LIMIT 1",
+                    (provider,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        return _corpus_source(row) if row else None
+
+    async def update_corpus_source_label(
+        self, source_id: str, label: str
+    ) -> CorpusSourceV1:
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row:
+            with self._transaction() as conn:
+                conn.execute(
+                    "UPDATE corpus_sources SET label = ?, updated_at = ? WHERE id = ?",
+                    (label, timestamp, source_id),
+                )
+                row = conn.execute(
+                    "SELECT * FROM corpus_sources WHERE id = ?", (source_id,)
+                ).fetchone()
+                if row is None:
+                    raise KeyError("corpus source not found")
+                return row
+
+        return _corpus_source(await self._call(operation))
+
+    async def set_corpus_consent(
+        self, source_id: str, consent: bool, reason: str | None
+    ) -> CorpusSourceV1:
+        """Grant or revoke cloud-embedding consent. Revoking also purges the
+        source's locally-stored embeddings, so nothing cloud-derived remains."""
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row:
+            with self._transaction() as conn:
+                row = conn.execute(
+                    "SELECT id FROM corpus_sources WHERE id = ?", (source_id,)
+                ).fetchone()
+                if not row:
+                    raise KeyError("corpus source not found")
+                if consent:
+                    conn.execute(
+                        """UPDATE corpus_sources SET consent = 1, consent_reason = ?,
+                        status = CASE WHEN status IN ('revoked','error') THEN 'pending'
+                                      ELSE status END,
+                        updated_at = ? WHERE id = ?""",
+                        (reason, timestamp, source_id),
+                    )
+                else:
+                    conn.execute("DELETE FROM corpus_files WHERE source_id = ?", (source_id,))
+                    conn.execute("DELETE FROM corpus_chunks WHERE source_id = ?", (source_id,))
+                    conn.execute(
+                        """UPDATE corpus_sources SET consent = 0, consent_reason = ?,
+                        status = 'revoked', file_count = 0, chunk_count = 0,
+                        last_indexed_at = NULL, updated_at = ? WHERE id = ?""",
+                        (reason, timestamp, source_id),
+                    )
+                return conn.execute(
+                    "SELECT * FROM corpus_sources WHERE id = ?", (source_id,)
+                ).fetchone()
+
+        return _corpus_source(await self._call(operation))
+
+    async def delete_corpus_source(self, source_id: str) -> bool:
+        def operation() -> bool:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM corpus_sources WHERE id = ?", (source_id,)
+                )
+                return cursor.rowcount > 0
+
+        return await self._call(operation)
+
+    async def begin_corpus_indexing(self, source_id: str) -> None:
+        timestamp = _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """UPDATE corpus_sources SET status = 'indexing', last_error = NULL,
+                    updated_at = ? WHERE id = ?""",
+                    (timestamp, source_id),
+                )
+
+        await self._call(operation)
+
+    async def get_corpus_file_index(self, source_id: str) -> dict[str, str]:
+        """Map of rel_path -> content_hash for a source (drives incremental reindex)."""
+
+        def operation() -> dict[str, str]:
+            with self._lock:
+                rows = self._connection().execute(
+                    "SELECT rel_path, content_hash FROM corpus_files WHERE source_id = ?",
+                    (source_id,),
+                ).fetchall()
+            return {row["rel_path"]: row["content_hash"] for row in rows}
+
+        return await self._call(operation)
+
+    async def upsert_corpus_file(
+        self,
+        source_id: str,
+        rel_path: str,
+        content_hash: str,
+        lang: str,
+        chunks: list[dict[str, Any]],
+        graph_nodes: list[dict[str, Any]] | None = None,
+        graph_edges: list[dict[str, Any]] | None = None,
+        entity_nodes: list[dict[str, Any]] | None = None,
+        entity_edges: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Replace one file's chunks (and optional code-graph / entity-graph rows)
+        transactionally.
+
+        Each chunk carries `text`, `embedding` (float32 bytes), `dim`, and optional
+        `symbol`/`start_line`. `graph_*` are the deterministic code graph; `entity_*`
+        are the cloud-extracted entity graph. All are keyed by the new `file_id`, so
+        deleting the old file row cascades away every stale derivative before the new
+        one lands — one file, one atomic write."""
+        file_id, timestamp = _id("cf"), _now()
+        graph_nodes = graph_nodes or []
+        graph_edges = graph_edges or []
+        entity_nodes = entity_nodes or []
+        entity_edges = entity_edges or []
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                old = conn.execute(
+                    "SELECT id FROM corpus_files WHERE source_id = ? AND rel_path = ?",
+                    (source_id, rel_path),
+                ).fetchone()
+                if old:
+                    conn.execute("DELETE FROM corpus_files WHERE id = ?", (old["id"],))
+                conn.execute(
+                    """INSERT INTO corpus_files
+                    (id, source_id, rel_path, content_hash, lang, chunk_count, indexed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (file_id, source_id, rel_path, content_hash, lang, len(chunks), timestamp),
+                )
+                for chunk in chunks:
+                    conn.execute(
+                        """INSERT INTO corpus_chunks
+                        (id, source_id, file_id, rel_path, symbol, start_line, text,
+                         embedding, dim, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            _id("ck"), source_id, file_id, rel_path,
+                            chunk.get("symbol"), chunk.get("start_line"),
+                            chunk["text"], chunk["embedding"], chunk["dim"], timestamp,
+                        ),
+                    )
+                for node in graph_nodes:
+                    conn.execute(
+                        """INSERT INTO code_graph_nodes
+                        (id, source_id, file_id, rel_path, kind, name, qualname,
+                         start_line, end_line, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            _id("cgn"), source_id, file_id, rel_path,
+                            node["kind"], node["name"], node["qualname"],
+                            node["start_line"], node["end_line"], timestamp,
+                        ),
+                    )
+                for edge in graph_edges:
+                    conn.execute(
+                        """INSERT INTO code_graph_edges
+                        (id, source_id, file_id, rel_path, kind, src, dst_name,
+                         dst_raw, line, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            _id("cge"), source_id, file_id, rel_path,
+                            edge["kind"], edge["src"], edge["dst_name"],
+                            edge["dst_raw"], edge["line"], timestamp,
+                        ),
+                    )
+                for node in entity_nodes:
+                    conn.execute(
+                        """INSERT INTO entity_nodes
+                        (id, source_id, file_id, rel_path, name, kind, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            _id("en"), source_id, file_id, rel_path,
+                            node["name"], node["kind"], timestamp,
+                        ),
+                    )
+                for edge in entity_edges:
+                    conn.execute(
+                        """INSERT INTO entity_edges
+                        (id, source_id, file_id, rel_path, src_name, relation,
+                         dst_name, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            _id("ee"), source_id, file_id, rel_path,
+                            edge["src_name"], edge["relation"], edge["dst_name"],
+                            timestamp,
+                        ),
+                    )
+
+        await self._call(operation)
+
+    async def remove_corpus_files(self, source_id: str, rel_paths: list[str]) -> int:
+        if not rel_paths:
+            return 0
+
+        def operation() -> int:
+            removed = 0
+            with self._transaction() as conn:
+                for rel_path in rel_paths:
+                    cursor = conn.execute(
+                        "DELETE FROM corpus_files WHERE source_id = ? AND rel_path = ?",
+                        (source_id, rel_path),
+                    )
+                    removed += cursor.rowcount
+            return removed
+
+        return await self._call(operation)
+
+    async def finish_corpus_indexing(
+        self,
+        source_id: str,
+        status: str,
+        embed_model: str | None = None,
+        last_error: str | None = None,
+    ) -> CorpusSourceV1:
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row:
+            with self._transaction() as conn:
+                counts = conn.execute(
+                    """SELECT COUNT(*) AS files, COALESCE(SUM(chunk_count), 0) AS chunks
+                    FROM corpus_files WHERE source_id = ?""",
+                    (source_id,),
+                ).fetchone()
+                indexed_at = timestamp if status == "indexed" else None
+                conn.execute(
+                    """UPDATE corpus_sources SET status = ?, file_count = ?, chunk_count = ?,
+                    embed_model = ?, last_error = ?,
+                    last_indexed_at = COALESCE(?, last_indexed_at), updated_at = ?
+                    WHERE id = ?""",
+                    (
+                        status, counts["files"], counts["chunks"], embed_model,
+                        last_error, indexed_at, timestamp, source_id,
+                    ),
+                )
+                return conn.execute(
+                    "SELECT * FROM corpus_sources WHERE id = ?", (source_id,)
+                ).fetchone()
+
+        return _corpus_source(await self._call(operation))
+
+    async def corpus_search_vectors(
+        self, provider: str | None = None
+    ) -> list[sqlite3.Row]:
+        """(id, embedding, dim) rows for every consented, indexed chunk."""
+
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                provider_clause = " AND s.provider = ?" if provider else ""
+                parameters = (provider,) if provider else ()
+                return list(
+                    self._connection()
+                    .execute(
+                        """SELECT c.id, c.embedding, c.dim FROM corpus_chunks c
+                        JOIN corpus_sources s ON s.id = c.source_id
+                        WHERE s.consent = 1 AND s.status = 'indexed'"""
+                        + provider_clause,
+                        parameters,
+                    )
+                    .fetchall()
+                )
+
+        return await self._call(operation)
+
+    async def corpus_chunks_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                rows = self._connection().execute(
+                    f"""SELECT c.id, c.rel_path, c.symbol, c.start_line, c.text,
+                    s.label AS source_label, s.provider AS source_provider
+                    FROM corpus_chunks c
+                    JOIN corpus_sources s ON s.id = c.source_id
+                    WHERE c.id IN ({placeholders})""",
+                    tuple(ids),
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        return await self._call(operation)
+
+    # ── Code graph (Graph-RAG Stage 1) ───────────────────────────────────────
+
+    async def code_graph_stats(self) -> dict[str, Any]:
+        """Node/edge counts (overall and by kind) over consented, indexed sources."""
+
+        def operation() -> dict[str, Any]:
+            with self._lock:
+                conn = self._connection()
+                nodes = conn.execute(
+                    """SELECT n.kind AS kind, COUNT(*) AS count
+                    FROM code_graph_nodes n JOIN corpus_sources s ON s.id = n.source_id
+                    WHERE s.consent = 1 GROUP BY n.kind"""
+                ).fetchall()
+                edges = conn.execute(
+                    """SELECT e.kind AS kind, COUNT(*) AS count
+                    FROM code_graph_edges e JOIN corpus_sources s ON s.id = e.source_id
+                    WHERE s.consent = 1 GROUP BY e.kind"""
+                ).fetchall()
+            node_counts = {row["kind"]: int(row["count"]) for row in nodes}
+            edge_counts = {row["kind"]: int(row["count"]) for row in edges}
+            return {
+                "node_count": sum(node_counts.values()),
+                "edge_count": sum(edge_counts.values()),
+                "nodes_by_kind": node_counts,
+                "edges_by_kind": edge_counts,
+            }
+
+        return await self._call(operation)
+
+    async def code_graph_lookup(self, name: str, limit: int = 50) -> dict[str, Any]:
+        """Resolve one symbol name to its definitions, callers, and callees.
+
+        Matching is by simple name (the lightweight-graph trade-off): callers are
+        `calls` edges whose target name is `name`; callees are the `calls` edges
+        made *by* any definition named `name`. Restricted to consented sources."""
+        name = (name or "").strip()
+        if not name:
+            return {"name": name, "definitions": [], "callers": [], "callees": [], "imports": []}
+
+        def operation() -> dict[str, Any]:
+            with self._lock:
+                conn = self._connection()
+                definitions = [
+                    dict(row)
+                    for row in conn.execute(
+                        """SELECT n.kind, n.name, n.qualname, n.rel_path,
+                        n.start_line, n.end_line, s.label AS source_label
+                        FROM code_graph_nodes n JOIN corpus_sources s ON s.id = n.source_id
+                        WHERE n.name = ? AND n.kind != 'module' AND s.consent = 1
+                        ORDER BY n.rel_path, n.start_line LIMIT ?""",
+                        (name, limit),
+                    ).fetchall()
+                ]
+                callers = [
+                    dict(row)
+                    for row in conn.execute(
+                        """SELECT DISTINCT e.src AS caller, e.rel_path, e.line,
+                        e.dst_raw, s.label AS source_label
+                        FROM code_graph_edges e JOIN corpus_sources s ON s.id = e.source_id
+                        WHERE e.kind = 'calls' AND e.dst_name = ? AND s.consent = 1
+                        ORDER BY e.rel_path, e.line LIMIT ?""",
+                        (name, limit),
+                    ).fetchall()
+                ]
+                callees = [
+                    dict(row)
+                    for row in conn.execute(
+                        """SELECT DISTINCT e.dst_name, e.dst_raw, e.rel_path, e.line,
+                        s.label AS source_label
+                        FROM code_graph_edges e JOIN corpus_sources s ON s.id = e.source_id
+                        WHERE e.kind = 'calls' AND s.consent = 1 AND e.src IN (
+                            SELECT qualname FROM code_graph_nodes WHERE name = ?
+                        )
+                        ORDER BY e.rel_path, e.line LIMIT ?""",
+                        (name, limit),
+                    ).fetchall()
+                ]
+                imports = [
+                    dict(row)
+                    for row in conn.execute(
+                        """SELECT DISTINCT e.rel_path, e.dst_raw, e.line,
+                        s.label AS source_label
+                        FROM code_graph_edges e JOIN corpus_sources s ON s.id = e.source_id
+                        WHERE e.kind = 'imports' AND s.consent = 1
+                        AND (e.dst_name = ? OR e.dst_raw = ?)
+                        ORDER BY e.rel_path, e.line LIMIT ?""",
+                        (name, name, limit),
+                    ).fetchall()
+                ]
+            return {
+                "name": name,
+                "definitions": definitions,
+                "callers": callers,
+                "callees": callees,
+                "imports": imports,
+            }
+
+        return await self._call(operation)
+
+    async def code_graph_neighbor_names(self, symbols: list[str]) -> set[str]:
+        """Names one hop away from `symbols` in the call graph (callers + callees).
+
+        Used by hybrid retrieval to expand vector hits with structurally related
+        code before reranking."""
+        symbols = [s for s in {s.strip() for s in symbols} if s]
+        if not symbols:
+            return set()
+        placeholders = ",".join("?" for _ in symbols)
+
+        def operation() -> set[str]:
+            with self._lock:
+                conn = self._connection()
+                callees = conn.execute(
+                    f"""SELECT DISTINCT e.dst_name AS name FROM code_graph_edges e
+                    JOIN corpus_sources s ON s.id = e.source_id
+                    WHERE e.kind = 'calls' AND s.consent = 1 AND e.src IN (
+                        SELECT qualname FROM code_graph_nodes WHERE name IN ({placeholders})
+                    )""",
+                    tuple(symbols),
+                ).fetchall()
+                callers = conn.execute(
+                    f"""SELECT DISTINCT n.name AS name
+                    FROM code_graph_edges e
+                    JOIN code_graph_nodes n ON n.qualname = e.src
+                    JOIN corpus_sources s ON s.id = e.source_id
+                    WHERE e.kind = 'calls' AND s.consent = 1
+                    AND e.dst_name IN ({placeholders})""",
+                    tuple(symbols),
+                ).fetchall()
+            return {row["name"] for row in callees} | {row["name"] for row in callers}
+
+        return await self._call(operation)
+
+    async def corpus_chunks_by_symbols(
+        self, symbols: list[str], exclude_ids: list[str], limit: int
+    ) -> list[dict[str, Any]]:
+        """Consented, indexed chunks whose `symbol` is one of `symbols`, excluding
+        `exclude_ids`. Feeds graph-expanded candidates into rerank."""
+        symbols = [s for s in {s.strip() for s in symbols} if s]
+        if not symbols or limit <= 0:
+            return []
+        symbol_ph = ",".join("?" for _ in symbols)
+        exclude_ph = ",".join("?" for _ in exclude_ids) if exclude_ids else ""
+        clause = f"AND c.id NOT IN ({exclude_ph})" if exclude_ids else ""
+
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                rows = self._connection().execute(
+                    f"""SELECT c.id, c.rel_path, c.symbol, c.start_line, c.text,
+                    s.label AS source_label FROM corpus_chunks c
+                    JOIN corpus_sources s ON s.id = c.source_id
+                    WHERE s.consent = 1 AND s.status = 'indexed'
+                    AND c.symbol IN ({symbol_ph}) {clause}
+                    LIMIT ?""",
+                    (*symbols, *exclude_ids, limit),
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        return await self._call(operation)
+
+    # ── Entity graph (Graph-RAG Stage 2) ─────────────────────────────────────
+
+    async def entity_graph_stats(self) -> dict[str, Any]:
+        """Entity node/edge counts (overall and by kind) over consented sources."""
+
+        def operation() -> dict[str, Any]:
+            with self._lock:
+                conn = self._connection()
+                nodes = conn.execute(
+                    """SELECT n.kind AS kind, COUNT(*) AS count
+                    FROM entity_nodes n JOIN corpus_sources s ON s.id = n.source_id
+                    WHERE s.consent = 1 GROUP BY n.kind"""
+                ).fetchall()
+                edges = conn.execute(
+                    """SELECT COUNT(*) AS count FROM entity_edges e
+                    JOIN corpus_sources s ON s.id = e.source_id WHERE s.consent = 1"""
+                ).fetchone()
+            kinds = {row["kind"]: int(row["count"]) for row in nodes}
+            return {
+                "node_count": sum(kinds.values()),
+                "edge_count": int(edges["count"]) if edges else 0,
+                "nodes_by_kind": kinds,
+            }
+
+        return await self._call(operation)
+
+    async def entity_graph_lookup(self, name: str, limit: int = 50) -> dict[str, Any]:
+        """Resolve an entity name to its kinds and its relationships (both
+        directions). Matching is case-insensitive on the entity name."""
+        name = (name or "").strip()
+        if not name:
+            return {"name": name, "kinds": [], "relations_out": [], "relations_in": []}
+
+        def operation() -> dict[str, Any]:
+            with self._lock:
+                conn = self._connection()
+                kinds = [
+                    row["kind"]
+                    for row in conn.execute(
+                        """SELECT DISTINCT n.kind FROM entity_nodes n
+                        JOIN corpus_sources s ON s.id = n.source_id
+                        WHERE s.consent = 1 AND LOWER(n.name) = LOWER(?)""",
+                        (name,),
+                    ).fetchall()
+                ]
+                relations_out = [
+                    dict(row)
+                    for row in conn.execute(
+                        """SELECT DISTINCT e.relation, e.dst_name, e.rel_path,
+                        s.label AS source_label FROM entity_edges e
+                        JOIN corpus_sources s ON s.id = e.source_id
+                        WHERE s.consent = 1 AND LOWER(e.src_name) = LOWER(?)
+                        ORDER BY e.relation LIMIT ?""",
+                        (name, limit),
+                    ).fetchall()
+                ]
+                relations_in = [
+                    dict(row)
+                    for row in conn.execute(
+                        """SELECT DISTINCT e.relation, e.src_name, e.rel_path,
+                        s.label AS source_label FROM entity_edges e
+                        JOIN corpus_sources s ON s.id = e.source_id
+                        WHERE s.consent = 1 AND LOWER(e.dst_name) = LOWER(?)
+                        ORDER BY e.relation LIMIT ?""",
+                        (name, limit),
+                    ).fetchall()
+                ]
+            return {
+                "name": name,
+                "kinds": kinds,
+                "relations_out": relations_out,
+                "relations_in": relations_in,
+            }
+
+        return await self._call(operation)
+
+    async def add_feedback(
+        self, run_id: str, rating: str, correction: str | None
+    ) -> str:
+        feedback_id, timestamp = _id("feed"), _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "INSERT INTO feedback VALUES (?, ?, ?, ?, ?)",
+                    (feedback_id, run_id, rating, correction, timestamp),
+                )
+
+        await self._call(operation)
+        return feedback_id
+
+    async def create_tool_improvements_for_run(
+        self, run_id: str, correction: str
+    ) -> list[ToolImprovementProposalV1]:
+        timestamp = _now()
+
+        def operation() -> list[dict[str, Any]]:
+            with self._transaction() as conn:
+                run = conn.execute(
+                    """SELECT r.tool_versions_json, m.content AS prompt
+                    FROM runs r JOIN messages m ON m.id = r.user_message_id
+                    WHERE r.id = ?""",
+                    (run_id,),
+                ).fetchone()
+                if not run:
+                    raise KeyError("run not found")
+                pinned = _loads(run["tool_versions_json"], {})
+                created: list[dict[str, Any]] = []
+                for slug, version_pin in pinned.items():
+                    version = conn.execute(
+                        "SELECT tool_id FROM tool_versions WHERE id = ?",
+                        (version_pin["version_id"],),
+                    ).fetchone()
+                    if not version:
+                        continue
+                    proposal_id = _id("timpr")
+                    eval_case = {
+                        "id": f"regression-{proposal_id}",
+                        "name": f"Correction regression for {slug}",
+                        "input": {
+                            "source_run_id": run_id,
+                            "original_request": run["prompt"],
+                        },
+                        "expected_properties": [correction],
+                    }
+                    data = {
+                        "id": proposal_id,
+                        "source_run_id": run_id,
+                        "tool_id": version["tool_id"],
+                        "tool_version_id": version_pin["version_id"],
+                        "content_hash": version_pin["content_hash"],
+                        "correction": correction,
+                        "regression_eval_json": _json(eval_case),
+                        "status": ProposalStatus.PENDING,
+                        "created_at": timestamp,
+                    }
+                    conn.execute(
+                        """INSERT INTO tool_improvement_proposals
+                        (id, source_run_id, tool_id, tool_version_id, content_hash,
+                         correction, regression_eval_json, status, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        tuple(data.values()),
+                    )
+                    created.append(data)
+                return created
+
+        result = []
+        for data in await self._call(operation):
+            data["regression_eval"] = _loads(data.pop("regression_eval_json"), {})
+            result.append(ToolImprovementProposalV1.model_validate(data))
+        return result
+
+    async def list_tool_improvements(
+        self, status: str | None = ProposalStatus.PENDING
+    ) -> list[ToolImprovementProposalV1]:
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                if status:
+                    return list(
+                        self._connection().execute(
+                            """SELECT * FROM tool_improvement_proposals
+                            WHERE status = ? ORDER BY created_at DESC""",
+                            (status,),
+                        )
+                    )
+                return list(
+                    self._connection().execute(
+                        "SELECT * FROM tool_improvement_proposals ORDER BY created_at DESC"
+                    )
+                )
+
+        result = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data["regression_eval"] = _loads(data.pop("regression_eval_json"), {})
+            result.append(ToolImprovementProposalV1.model_validate(data))
+        return result
+
+    async def get_tool_improvement(
+        self, proposal_id: str
+    ) -> ToolImprovementProposalV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM tool_improvement_proposals WHERE id = ?",
+                    (proposal_id,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        if not row:
+            return None
+        data = dict(row)
+        data["regression_eval"] = _loads(data.pop("regression_eval_json"), {})
+        return ToolImprovementProposalV1.model_validate(data)
+
+    async def list_eligible_tool_revision_records(
+        self, proposal_id: str
+    ) -> list[dict[str, Any]]:
+        """Return immutable, evaluated versions created after the correction proposal.
+
+        This query deliberately does not infer that an arbitrary version is a
+        correction. The caller must still name the exact target version in its
+        approval decision.
+        """
+
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection().execute(
+                        """SELECT v.* FROM tool_versions v
+                        JOIN tool_improvement_proposals p ON p.tool_id = v.tool_id
+                        WHERE p.id = ? AND v.id != p.tool_version_id
+                        AND v.created_at >= p.created_at
+                        AND v.state IN ('evaluated','approved','active')
+                        ORDER BY v.created_at DESC""",
+                        (proposal_id,),
+                    )
+                )
+
+        result: list[dict[str, Any]] = []
+        for row in await self._call(operation):
+            data = dict(row)
+            data["manifest"] = _loads(data.pop("manifest_json"), {})
+            data["eval_report"] = _loads(data.pop("eval_report_json"), None)
+            if data["eval_report"] and data["eval_report"].get("passed") is True:
+                result.append(data)
+        return result
+
+    async def get_tool_revision_request(
+        self, request_id: str
+    ) -> ToolRevisionRequestV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM tool_revision_requests WHERE id = ?", (request_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        if not row:
+            return None
+        data = dict(row)
+        data["regression_eval"] = _loads(data.pop("regression_eval_json"), {})
+        return ToolRevisionRequestV1.model_validate(data)
+
+    async def decide_tool_improvement(
+        self,
+        proposal_id: str,
+        decision: str,
+        reason: str,
+        action_id: str,
+        *,
+        target_version_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist one immutable improvement decision and its exact outcome.
+
+        Approval without an evaluated target queues a governed revision request;
+        it never changes the registry's active pointer. Supplying a target opts
+        into one exact, evaluated, immutable bundle and activates it atomically.
+        """
+
+        if decision not in {"approve", "reject"}:
+            raise ValueError("decision must be approve or reject")
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
+                    (action_id,),
+                ).fetchone()
+                if existing:
+                    return _loads(existing["result_json"], {})
+
+                row = conn.execute(
+                    "SELECT * FROM tool_improvement_proposals WHERE id = ?",
+                    (proposal_id,),
+                ).fetchone()
+                if not row:
+                    raise KeyError("tool improvement proposal not found")
+                proposal = dict(row)
+                if proposal["status"] != ProposalStatus.PENDING:
+                    raise ValueError(f"proposal is already {proposal['status']}")
+                if decision == "reject" and target_version_id is not None:
+                    raise ValueError("a rejected proposal cannot name a target version")
+
+                outcome = "rejected"
+                status = ProposalStatus.REJECTED
+                revision_request_id: str | None = None
+                activated_version_id: str | None = None
+                prior_version_id: str | None = None
+
+                if decision == "approve" and target_version_id is None:
+                    outcome = "revision_queued"
+                    status = ProposalStatus.APPROVED
+                    revision_request_id = _id("treq")
+                    conn.execute(
+                        """INSERT INTO tool_revision_requests
+                        (id, proposal_id, tool_id, base_version_id, base_content_hash,
+                         correction, regression_eval_json, status, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)""",
+                        (
+                            revision_request_id,
+                            proposal_id,
+                            proposal["tool_id"],
+                            proposal["tool_version_id"],
+                            proposal["content_hash"],
+                            proposal["correction"],
+                            proposal["regression_eval_json"],
+                            timestamp,
+                        ),
+                    )
+                elif decision == "approve":
+                    target = conn.execute(
+                        """SELECT * FROM tool_versions
+                        WHERE id = ? AND tool_id = ? AND id != ?
+                        AND created_at >= ?
+                        AND state IN ('evaluated','approved','active')""",
+                        (
+                            target_version_id,
+                            proposal["tool_id"],
+                            proposal["tool_version_id"],
+                            proposal["created_at"],
+                        ),
+                    ).fetchone()
+                    if not target:
+                        raise ValueError(
+                            "target must be an immutable evaluated revision created after the proposal"
+                        )
+                    report = _loads(target["eval_report_json"], None)
+                    if not report or report.get("passed") is not True:
+                        raise ValueError("target revision must have a passing evaluation report")
+                    if target["content_hash"] == proposal["content_hash"]:
+                        raise ValueError("target revision must differ from the pinned base version")
+
+                    tool = conn.execute(
+                        "SELECT active_version_id FROM tools WHERE id = ?",
+                        (proposal["tool_id"],),
+                    ).fetchone()
+                    if not tool:
+                        raise KeyError("tool not found")
+                    prior_version_id = tool["active_version_id"]
+                    if prior_version_id and prior_version_id != target_version_id:
+                        conn.execute(
+                            "UPDATE tool_versions SET state = ? WHERE id = ?",
+                            (ToolState.APPROVED, prior_version_id),
+                        )
+                    conn.execute(
+                        "UPDATE tool_versions SET state = ? WHERE id = ?",
+                        (ToolState.ACTIVE, target_version_id),
+                    )
+                    conn.execute(
+                        "UPDATE tools SET active_version_id = ?, updated_at = ? WHERE id = ?",
+                        (target_version_id, timestamp, proposal["tool_id"]),
+                    )
+                    conn.execute(
+                        """INSERT INTO tool_version_activation_log
+                        (id, action_id, tool_id, target_version_id, prior_version_id,
+                         reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            _id("tvact"),
+                            f"improvement-activation:{action_id}",
+                            proposal["tool_id"],
+                            target_version_id,
+                            prior_version_id,
+                            reason,
+                            timestamp,
+                        ),
+                    )
+                    outcome = "revision_activated"
+                    status = ProposalStatus.APPROVED
+                    activated_version_id = target_version_id
+
+                conn.execute(
+                    """UPDATE tool_improvement_proposals
+                    SET status = ?, decision_reason = ?, decided_at = ?, outcome = ?,
+                        revision_request_id = ?, target_version_id = ?
+                    WHERE id = ?""",
+                    (
+                        status,
+                        reason,
+                        timestamp,
+                        outcome,
+                        revision_request_id,
+                        target_version_id,
+                        proposal_id,
+                    ),
+                )
+                conn.execute(
+                    """INSERT INTO tool_improvement_decisions
+                    (id, proposal_id, action_id, decision, reason, outcome,
+                     target_version_id, revision_request_id, prior_version_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        _id("tidec"),
+                        proposal_id,
+                        action_id,
+                        decision,
+                        reason,
+                        outcome,
+                        target_version_id,
+                        revision_request_id,
+                        prior_version_id,
+                        timestamp,
+                    ),
+                )
+                result = {
+                    "proposal_id": proposal_id,
+                    "outcome": outcome,
+                    "revision_request_id": revision_request_id,
+                    "activated_version_id": activated_version_id,
+                    "prior_version_id": prior_version_id,
+                }
+                conn.execute(
+                    "INSERT INTO idempotency_actions VALUES (?, ?, ?)",
+                    (action_id, _json(result), timestamp),
+                )
+                return result
+
+        return await self._call(operation)
+
+    # ── Tool Factory v2: tool definitions ────────────────────────────────────
+
+    @staticmethod
+    def _tool_definition_from_storage(
+        payload: str, status: str
+    ) -> ToolDefinitionV1:
+        """Read immutable definition content with its current lifecycle status.
+
+        The content-addressed JSON intentionally stays byte-stable after review;
+        lifecycle promotion lives in the indexed ``status`` column. Returning
+        that column here prevents an approved definition from continuing to look
+        ``proposed`` to the registry and Tool Workshop.
+        """
+        definition = ToolDefinitionV1.model_validate_json(payload)
+        return definition.model_copy(update={"status": status})
+
+    async def list_tool_definitions(self) -> list[ToolDefinitionV1]:
+        def operation() -> list[ToolDefinitionV1]:
+            with self._lock:
+                rows = self._connection().execute(
+                    "SELECT definition_json, status FROM tool_definitions "
+                    "ORDER BY slug, created_at"
+                ).fetchall()
+            return [
+                self._tool_definition_from_storage(row["definition_json"], row["status"])
+                for row in rows
+            ]
+
+        return await self._call(operation)
+
+    async def get_active_tool_definition(
+        self, slug: str
+    ) -> ToolDefinitionV1 | None:
+        def operation() -> ToolDefinitionV1 | None:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT definition_json, status FROM tool_definitions "
+                    "WHERE slug = ? AND active = 1",
+                    (slug,),
+                ).fetchone()
+            return (
+                self._tool_definition_from_storage(
+                    row["definition_json"], row["status"]
+                )
+                if row
+                else None
+            )
+
+        return await self._call(operation)
+
+    async def list_active_tool_definitions(self) -> list[ToolDefinitionV1]:
+        def operation() -> list[ToolDefinitionV1]:
+            with self._lock:
+                rows = self._connection().execute(
+                    "SELECT definition_json, status FROM tool_definitions "
+                    "WHERE active = 1 ORDER BY slug"
+                ).fetchall()
+            return [
+                self._tool_definition_from_storage(row["definition_json"], row["status"])
+                for row in rows
+            ]
+
+        return await self._call(operation)
+
+    async def upsert_tool_definition(
+        self, definition: ToolDefinitionV1, *, activate: bool, source_run_id: str | None = None
+    ) -> ToolDefinitionV1:
+        """Insert a definition version (idempotent by slug+content_hash). When
+        ``activate`` is set it becomes the sole active version for its slug."""
+        payload = definition.model_dump_json()
+        timestamp = _now()
+
+        def operation() -> ToolDefinitionV1:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM tool_definitions WHERE slug = ? AND content_hash = ?",
+                    (definition.slug, definition.content_hash),
+                ).fetchone()
+                if existing is None:
+                    # A builtin whose content changed without a version bump would collide on
+                    # UNIQUE(slug, version), so upgrade that row in place.
+                    same_version = conn.execute(
+                        "SELECT id FROM tool_definitions WHERE slug = ? AND version = ?",
+                        (definition.slug, definition.version),
+                    ).fetchone()
+                    if same_version is not None:
+                        conn.execute(
+                            "UPDATE tool_definitions SET status = ?, content_hash = ?, "
+                            "definition_json = ?, source_run_id = ?, created_at = ? "
+                            "WHERE id = ?",
+                            (
+                                definition.status,
+                                definition.content_hash,
+                                payload,
+                                source_run_id,
+                                timestamp,
+                                same_version["id"],
+                            ),
+                        )
+                    else:
+                        conn.execute(
+                            "INSERT INTO tool_definitions "
+                            "(id, slug, version, status, content_hash, definition_json, "
+                            "active, source_run_id, created_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
+                            (
+                                _id("tooldef"),
+                                definition.slug,
+                                definition.version,
+                                definition.status,
+                                definition.content_hash,
+                                payload,
+                                source_run_id,
+                                timestamp,
+                            ),
+                        )
+                if activate:
+                    conn.execute(
+                        "UPDATE tool_definitions SET active = 0 WHERE slug = ?",
+                        (definition.slug,),
+                    )
+                    conn.execute(
+                        "UPDATE tool_definitions SET active = 1 "
+                        "WHERE slug = ? AND content_hash = ?",
+                        (definition.slug, definition.content_hash),
+                    )
+            return definition
+
+        return await self._call(operation)
+
+    # Gate-1 definition proposals.
+
+    def _definition_proposal_from_row(self, row: dict[str, Any]) -> ToolDefinitionProposalV1:
+        return ToolDefinitionProposalV1(
+            id=row["id"],
+            definition_id=row["definition_id"],
+            slug=row["slug"],
+            version=row["version"],
+            status=row["status"],
+            risk_level=row["risk_level"],
+            summary=row["summary"],
+            source_run_id=row.get("source_run_id"),
+            decision_reason=row.get("decision_reason"),
+            created_at=row["created_at"],
+            decided_at=row.get("decided_at"),
+        )
+
+    async def create_tool_definition_proposal(
+        self,
+        definition: ToolDefinitionV1,
+        *,
+        source_run_id: str,
+        summary: str,
+    ) -> tuple[ToolDefinitionV1, ToolDefinitionProposalV1]:
+        """Gate-1: store a drafted definition (status 'proposed', not yet live) and
+        a pending proposal over its capabilities. Idempotent by slug+content_hash so
+        re-running the same toolify request reuses the same pending proposal."""
+        payload = definition.model_dump_json()
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM tool_definitions WHERE slug = ? AND content_hash = ?",
+                    (definition.slug, definition.content_hash),
+                ).fetchone()
+                if existing is None:
+                    definition_id = _id("tooldef")
+                    conn.execute(
+                        "INSERT INTO tool_definitions "
+                        "(id, slug, version, status, content_hash, definition_json, "
+                        "active, source_run_id, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
+                        (
+                            definition_id,
+                            definition.slug,
+                            definition.version,
+                            definition.status,
+                            definition.content_hash,
+                            payload,
+                            source_run_id,
+                            timestamp,
+                        ),
+                    )
+                else:
+                    definition_id = existing["id"]
+                proposal_row = conn.execute(
+                    "SELECT * FROM tool_definition_proposals "
+                    "WHERE definition_id = ? AND status = ? ORDER BY created_at LIMIT 1",
+                    (definition_id, ProposalStatus.PENDING.value),
+                ).fetchone()
+                if proposal_row:
+                    proposal = dict(proposal_row)
+                else:
+                    proposal = {
+                        "id": _id("tdprop"),
+                        "definition_id": definition_id,
+                        "source_run_id": source_run_id,
+                        "status": ProposalStatus.PENDING.value,
+                        "risk_level": RiskLevel.R3.value,
+                        "summary": summary,
+                        "decision_reason": None,
+                        "created_at": timestamp,
+                        "decided_at": None,
+                    }
+                    conn.execute(
+                        "INSERT INTO tool_definition_proposals "
+                        "(id, definition_id, source_run_id, status, risk_level, summary, "
+                        "decision_reason, created_at, decided_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL)",
+                        (
+                            proposal["id"],
+                            definition_id,
+                            source_run_id,
+                            proposal["status"],
+                            proposal["risk_level"],
+                            summary,
+                            timestamp,
+                        ),
+                    )
+                proposal["slug"] = definition.slug
+                proposal["version"] = definition.version
+                return proposal
+
+        proposal_data = await self._call(operation)
+        return definition, self._definition_proposal_from_row(proposal_data)
+
+    async def list_tool_definition_proposals(
+        self, status: str | None = None
+    ) -> list[ToolDefinitionProposalV1]:
+        def operation() -> list[dict[str, Any]]:
+            query = (
+                "SELECT p.*, d.slug AS slug, d.version AS version "
+                "FROM tool_definition_proposals p "
+                "JOIN tool_definitions d ON d.id = p.definition_id "
+            )
+            params: tuple[Any, ...] = ()
+            if status:
+                query += "WHERE p.status = ? "
+                params = (status,)
+            query += "ORDER BY p.created_at DESC"
+            with self._lock:
+                return [dict(row) for row in self._connection().execute(query, params).fetchall()]
+
+        rows = await self._call(operation)
+        return [self._definition_proposal_from_row(row) for row in rows]
+
+    async def get_tool_definition_proposal(
+        self, proposal_id: str
+    ) -> ToolDefinitionProposalV1 | None:
+        def operation() -> dict[str, Any] | None:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT p.*, d.slug AS slug, d.version AS version "
+                    "FROM tool_definition_proposals p "
+                    "JOIN tool_definitions d ON d.id = p.definition_id "
+                    "WHERE p.id = ?",
+                    (proposal_id,),
+                ).fetchone()
+            return dict(row) if row else None
+
+        row = await self._call(operation)
+        return self._definition_proposal_from_row(row) if row else None
+
+    async def get_tool_definition_by_id(self, definition_id: str) -> ToolDefinitionV1 | None:
+        def operation() -> dict[str, str] | None:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT definition_json, status FROM tool_definitions WHERE id = ?",
+                    (definition_id,),
+                ).fetchone()
+            return dict(row) if row else None
+
+        row = await self._call(operation)
+        return (
+            self._tool_definition_from_storage(row["definition_json"], row["status"])
+            if row
+            else None
+        )
+
+    async def decide_tool_definition_proposal(
+        self, proposal_id: str, decision: str, reason: str | None, action_id: str
+    ) -> dict[str, Any]:
+        """Gate-1 apply: approve promotes the definition to the live 'defined'
+        version of its slug (buildable, catalog-visible) unless a runnable version
+        already exists (a pending upgrade stays inactive); reject tombstones it as
+        'retired'. Idempotent via idempotency_actions."""
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
+                    (action_id,),
+                ).fetchone()
+                if existing:
+                    return _loads(existing["result_json"], {})
+                prop = conn.execute(
+                    "SELECT * FROM tool_definition_proposals WHERE id = ?", (proposal_id,)
+                ).fetchone()
+                if not prop:
+                    raise KeyError("tool definition proposal not found")
+                prop = dict(prop)
+                if prop["status"] not in {ProposalStatus.PENDING.value, decision}:
+                    raise ValueError(f"proposal is already {prop['status']}")
+                definition_id = prop["definition_id"]
+                defn = conn.execute(
+                    "SELECT slug FROM tool_definitions WHERE id = ?", (definition_id,)
+                ).fetchone()
+                slug = defn["slug"] if defn else ""
+                if decision == ProposalStatus.APPROVED.value:
+                    has_runnable = conn.execute(
+                        "SELECT 1 FROM tool_definition_builds "
+                        "WHERE slug = ? AND status = 'active' LIMIT 1",
+                        (slug,),
+                    ).fetchone()
+                    if has_runnable:
+                        conn.execute(
+                            "UPDATE tool_definitions SET status = 'defined' WHERE id = ?",
+                            (definition_id,),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE tool_definitions SET active = 0 WHERE slug = ?", (slug,)
+                        )
+                        conn.execute(
+                            "UPDATE tool_definitions SET status = 'defined', active = 1 "
+                            "WHERE id = ?",
+                            (definition_id,),
+                        )
+                elif decision == ProposalStatus.REJECTED.value:
+                    conn.execute(
+                        "UPDATE tool_definitions SET status = 'retired', active = 0 WHERE id = ?",
+                        (definition_id,),
+                    )
+                conn.execute(
+                    "UPDATE tool_definition_proposals SET status = ?, decision_reason = ?, "
+                    "decided_at = ? WHERE id = ?",
+                    (decision, reason, timestamp, proposal_id),
+                )
+                result = {
+                    "proposal_id": proposal_id,
+                    "definition_id": definition_id,
+                    "slug": slug,
+                    "status": decision,
+                    "applied": True,
+                }
+                conn.execute(
+                    "INSERT INTO idempotency_actions VALUES (?, ?, ?)",
+                    (action_id, _json(result), timestamp),
+                )
+                return result
+
+        return await self._call(operation)
+
+    # Declarative Gate-2 builds.
+
+    def _definition_build_from_row(self, row: dict[str, Any]) -> ToolDefinitionBuildV1:
+        return ToolDefinitionBuildV1(
+            id=row["id"],
+            definition_id=row["definition_id"],
+            slug=row["slug"],
+            version=row["version"],
+            content_hash=row["content_hash"],
+            status=row["status"],
+            eval_report=_loads(row.get("eval_report_json"), None),
+            implementation=row.get("implementation") or "",
+            code_review=_loads(row.get("code_review_json"), None),
+            source_run_id=row.get("source_run_id"),
+            created_at=row["created_at"],
+            decided_at=row.get("decided_at"),
+        )
+
+    async def get_buildable_definition(self, slug: str) -> ToolDefinitionV1 | None:
+        """The newest 'defined' definition for a slug that still needs building
+        (no active/evaluated build for its content hash). Serves `tool_factory`."""
+        def operation() -> dict[str, str] | None:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT d.definition_json, d.status FROM tool_definitions d "
+                    "WHERE d.slug = ? AND d.status = 'defined' AND NOT EXISTS ("
+                    "  SELECT 1 FROM tool_definition_builds b "
+                    "  WHERE b.definition_id = d.id "
+                    "  AND b.status IN ('active','evaluated','superseded')"
+                    ") ORDER BY d.created_at DESC LIMIT 1",
+                    (slug,),
+                ).fetchone()
+            return dict(row) if row else None
+
+        row = await self._call(operation)
+        return (
+            self._tool_definition_from_storage(row["definition_json"], row["status"])
+            if row
+            else None
+        )
+
+    async def get_runnable_definition(self, slug: str) -> ToolDefinitionV1 | None:
+        """The definition tied to the slug's active build (runnable)."""
+        def operation() -> dict[str, str] | None:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT d.definition_json, d.status FROM tool_definitions d "
+                    "JOIN tool_definition_builds b ON b.definition_id = d.id "
+                    "WHERE d.slug = ? AND b.status = 'active' LIMIT 1",
+                    (slug,),
+                ).fetchone()
+            return dict(row) if row else None
+
+        row = await self._call(operation)
+        return (
+            self._tool_definition_from_storage(row["definition_json"], row["status"])
+            if row
+            else None
+        )
+
+    async def get_runnable_build(self, slug: str) -> ToolDefinitionBuildV1 | None:
+        """The slug's active build — carries the pinned authored implementation for
+        code-authoring tools (empty for declarative)."""
+        def operation() -> dict[str, Any] | None:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT * FROM tool_definition_builds WHERE slug = ? AND status = 'active' LIMIT 1",
+                    (slug,),
+                ).fetchone()
+            return dict(row) if row else None
+
+        row = await self._call(operation)
+        return self._definition_build_from_row(row) if row else None
+
+    async def declarative_build_index(self) -> dict[str, dict[str, bool]]:
+        """Per-slug build presence: {slug: {"active": bool, "evaluated": bool}}.
+        Drives declarative routing (runnable/buildable) and the browser."""
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute(
+                        "SELECT slug, status, COUNT(*) AS n FROM tool_definition_builds "
+                        "GROUP BY slug, status"
+                    )
+                    .fetchall()
+                )
+
+        index: dict[str, dict[str, bool]] = {}
+        for row in await self._call(operation):
+            entry = index.setdefault(row["slug"], {"active": False, "evaluated": False})
+            if row["status"] in entry and row["n"]:
+                entry[row["status"]] = True
+        return index
+
+    async def is_definition_hash_rejected(self, slug: str, content_hash: str) -> bool:
+        def operation() -> bool:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT 1 FROM tool_definition_builds "
+                    "WHERE slug = ? AND content_hash = ? AND status = 'rejected' "
+                    "UNION SELECT 1 FROM tool_definitions "
+                    "WHERE slug = ? AND content_hash = ? AND status = 'retired' LIMIT 1",
+                    (slug, content_hash, slug, content_hash),
+                ).fetchone()
+                return row is not None
+
+        return await self._call(operation)
+
+    async def create_tool_definition_build(
+        self,
+        definition: ToolDefinitionV1,
+        *,
+        eval_report: EvalReportV1,
+        source_run_id: str,
+        implementation: str = "",
+        code_review: dict[str, Any] | None = None,
+    ) -> ToolDefinitionBuildV1:
+        """Record an evaluated build (Gate-2 candidate) for a stored definition.
+        Declarative tools carry no implementation (their behavior is a fixed host
+        interpreter); code-authoring tools pin their AST-gated `run()` source here,
+        and the build's content_hash folds that source in so different authored
+        code is a distinct immutable build. Idempotent by (definition, code).
+        Raises KeyError if the definition is not stored."""
+        timestamp = _now()
+        slug = definition.slug
+        version = definition.version
+        # The build's identity: the definition hash, plus the authored code when
+        # present (declarative builds keep the bare definition hash — unchanged).
+        build_hash = definition.content_hash
+        if implementation:
+            build_hash = hashlib.sha256(
+                (definition.content_hash + "\x00" + implementation).encode("utf-8")
+            ).hexdigest()
+        review_json = _json(code_review) if code_review is not None else None
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                def_row = conn.execute(
+                    "SELECT id FROM tool_definitions WHERE slug = ? AND content_hash = ?",
+                    (slug, definition.content_hash),
+                ).fetchone()
+                if def_row is None:
+                    raise KeyError("definition not found for build")
+                definition_id = def_row["id"]
+                row = conn.execute(
+                    "SELECT * FROM tool_definition_builds "
+                    "WHERE definition_id = ? AND content_hash = ?",
+                    (definition_id, build_hash),
+                ).fetchone()
+                if row:
+                    return dict(row)
+                build = {
+                    "id": _id("tdbuild"),
+                    "definition_id": definition_id,
+                    "slug": slug,
+                    "version": version,
+                    "content_hash": build_hash,
+                    "status": "evaluated",
+                    "eval_report_json": _json(eval_report.model_dump(mode="json")),
+                    "source_run_id": source_run_id,
+                    "created_at": timestamp,
+                    "decided_at": None,
+                    "implementation": implementation,
+                    "code_review_json": review_json,
+                }
+                conn.execute(
+                    "INSERT INTO tool_definition_builds "
+                    "(id, definition_id, slug, version, content_hash, status, "
+                    "eval_report_json, source_run_id, created_at, decided_at, "
+                    "implementation, code_review_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                    (
+                        build["id"],
+                        definition_id,
+                        slug,
+                        version,
+                        build_hash,
+                        build["status"],
+                        build["eval_report_json"],
+                        source_run_id,
+                        timestamp,
+                        implementation,
+                        review_json,
+                    ),
+                )
+                return build
+
+        row = await self._call(operation)
+        return self._definition_build_from_row(row)
+
+    async def get_tool_definition_build(self, build_id: str) -> ToolDefinitionBuildV1 | None:
+        def operation() -> dict[str, Any] | None:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT * FROM tool_definition_builds WHERE id = ?", (build_id,)
+                ).fetchone()
+            return dict(row) if row else None
+
+        row = await self._call(operation)
+        return self._definition_build_from_row(row) if row else None
+
+    async def list_tool_definition_builds(
+        self, status: str | None = None
+    ) -> list[ToolDefinitionBuildV1]:
+        def operation() -> list[dict[str, Any]]:
+            query = "SELECT * FROM tool_definition_builds "
+            params: tuple[Any, ...] = ()
+            if status:
+                query += "WHERE status = ? "
+                params = (status,)
+            query += "ORDER BY created_at DESC"
+            with self._lock:
+                return [dict(r) for r in self._connection().execute(query, params).fetchall()]
+
+        rows = await self._call(operation)
+        return [self._definition_build_from_row(row) for row in rows]
+
+    async def decide_tool_definition_build(
+        self, build_id: str, decision: str, reason: str | None, action_id: str
+    ) -> dict[str, Any]:
+        """Gate-2 apply for a declarative tool: approve pins this build as the sole
+        active (runnable) version — its definition becomes the live one, any prior
+        active build is superseded; reject leaves the definition 'defined' (it can
+        be rebuilt). Idempotent via idempotency_actions."""
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
+                    (action_id,),
+                ).fetchone()
+                if existing:
+                    return _loads(existing["result_json"], {})
+                build = conn.execute(
+                    "SELECT * FROM tool_definition_builds WHERE id = ?", (build_id,)
+                ).fetchone()
+                if not build:
+                    raise KeyError("tool definition build not found")
+                build = dict(build)
+                if build["status"] not in {"evaluated", decision}:
+                    raise ValueError(f"build is already {build['status']}")
+                slug = build["slug"]
+                if decision == "active":
+                    conn.execute(
+                        "UPDATE tool_definition_builds SET status = 'superseded', "
+                        "decided_at = ? WHERE slug = ? AND status = 'active'",
+                        (timestamp, slug),
+                    )
+                    conn.execute(
+                        "UPDATE tool_definition_builds SET status = 'active', decided_at = ? "
+                        "WHERE id = ?",
+                        (timestamp, build_id),
+                    )
+                    conn.execute(
+                        "UPDATE tool_definitions SET active = 0 WHERE slug = ?", (slug,)
+                    )
+                    conn.execute(
+                        "UPDATE tool_definitions SET active = 1 WHERE id = ?",
+                        (build["definition_id"],),
+                    )
+                elif decision == "rejected":
+                    conn.execute(
+                        "UPDATE tool_definition_builds SET status = 'rejected', decided_at = ? "
+                        "WHERE id = ?",
+                        (timestamp, build_id),
+                    )
+                result = {
+                    "build_id": build_id,
+                    "definition_id": build["definition_id"],
+                    "slug": slug,
+                    "status": decision,
+                    "applied": True,
+                }
+                conn.execute(
+                    "INSERT INTO idempotency_actions VALUES (?, ?, ?)",
+                    (action_id, _json(result), timestamp),
+                )
+                return result
+
+        return await self._call(operation)

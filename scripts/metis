@@ -1,0 +1,86 @@
+#!/bin/zsh
+# Start Metis the way a desktop app would: free the ports a previous run left
+# behind, rebuild the web app only when its sources changed, bring up the API
+# and the UI together, then open the browser once the UI answers.
+#
+# Run it from a terminal, or double-click Metis.app (which just calls this).
+set -uo pipefail
+
+ROOT="${0:A:h:h}"
+WEB_PORT=3000
+API_PORT=8000
+WEB_URL="http://127.0.0.1:$WEB_PORT"
+LOG_DIR="$ROOT/.data"
+LOG="$LOG_DIR/metis-launch.log"
+
+# Finder-launched apps inherit a bare PATH; put node/pnpm back on it.
+export PATH="/opt/homebrew/bin:$HOME/Library/pnpm:$PATH"
+
+mkdir -p "$LOG_DIR"
+
+notify() {
+	osascript -e "display notification \"$1\" with title \"Metis\"" >/dev/null 2>&1
+}
+
+say() {
+	print -r -- "[metis] $1"
+}
+
+free_port() {
+	local port=$1 pids
+	pids=$(lsof -ti "tcp:$port" 2>/dev/null)
+	[[ -z $pids ]] && return 0
+	say "freeing port $port (pids: ${pids//$'\n'/ })"
+	kill $=pids 2>/dev/null
+	for _ in {1..10}; do
+		sleep 0.3
+		pids=$(lsof -ti "tcp:$port" 2>/dev/null)
+		[[ -z $pids ]] && return 0
+	done
+	kill -9 $=pids 2>/dev/null
+	return 0
+}
+
+# True when any web source is newer than the last production build.
+needs_build() {
+	local web="$ROOT/apps/web" stamp="$ROOT/apps/web/.next/BUILD_ID"
+	[[ -f $stamp ]] || return 0
+	local path changed
+	for path in app components lib hooks public \
+		package.json next.config.mjs tsconfig.json; do
+		[[ -e "$web/$path" ]] || continue
+		changed=$(find "$web/$path" -newer "$stamp" -print -quit 2>/dev/null)
+		[[ -n $changed ]] && return 0
+	done
+	return 1
+}
+
+free_port "$WEB_PORT"
+free_port "$API_PORT"
+
+if needs_build; then
+	say "changes detected, building the web app..."
+	notify "Building the latest changes…"
+	if ! pnpm --dir "$ROOT/apps/web" build; then
+		say "build failed, not starting."
+		notify "Build failed. See $LOG"
+		exit 1
+	fi
+else
+	say "web build is up to date, skipping rebuild."
+fi
+
+# Open the browser as soon as the UI is actually serving.
+{
+	for _ in {1..180}; do
+		if curl -sf -o /dev/null --max-time 2 "$WEB_URL"; then
+			open "$WEB_URL"
+			exit 0
+		fi
+		sleep 1
+	done
+	notify "Metis did not come up in time. See $LOG"
+} &
+
+say "starting API + web..."
+exec "$ROOT/.venv/bin/python" "$ROOT/scripts/run_local.py"

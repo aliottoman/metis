@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reference Architecture Generator"
+  short_description: "Create validated architecture diagrams"
+  default_prompt: "Use $reference-architecture-generator to turn this README into a validated reference architecture diagram."
