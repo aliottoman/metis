@@ -19,6 +19,10 @@ uploads/
 # Editor and local workspace state
 .vscode/
 .idea/
+.claude/
+
+# Personal QA harnesses that drive a running instance and the live database
+qa/
 
 # Python
 .venv/
