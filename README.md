@@ -129,6 +129,49 @@ Open <http://127.0.0.1:3000>. API documentation is at <http://127.0.0.1:8000/doc
 
 Configuration keys use the `WAQIL_` prefix, retained from the project's earlier name so existing environments keep working. See `.env.example` for the annotated set.
 
+## Local model sessions
+
+Metis never starts or switches an Ollama model just because the app opened or a
+request arrived. Use the model control at the top of the app to choose one
+installed model, its context window, and how long it should remain warm after
+the last call. The laptop-safe defaults are 32K context and a five-minute idle
+window. Calls are serialized and every local role stays pinned to that one model
+for the session.
+
+If an approved run is paused and its pinned model has unloaded, the approval
+action explicitly says it will relaunch that exact model before resuming.
+Metis never substitutes another model. A model already running outside Metis is
+treated as externally owned and is not stopped automatically.
+
+## Customer intelligence
+
+The **Customers** workbench keeps accounts, original notes, interactions, facts,
+people, actions, evidence, and generated outputs in local SQLite. Capture always
+saves the raw note first. Analysis is a separate explicit action, and if the
+model is off the note remains **Waiting for analysis** without launching
+anything.
+
+Extracted material appears in one review surface and becomes account knowledge
+only after **Save update**. Customer facts are never written into global
+personal memory. Selecting a customer in Chat creates a hard context boundary:
+only that account's reviewed record is injected, preventing another customer's
+facts or general personal memory from entering the turn.
+
+The first output is an activity-tracker Markdown update. Configure the company's
+online tracker URL in the account's **Outputs** tab, then use **Copy Markdown &
+open tracker**; Metis stores no tracker credentials and does not submit on your
+behalf.
+
+Accounts can also record **wins** — explicit, user-entered outcomes such as a
+signed contract or a deployed Dedicated AI Cluster. A win carries a title, a
+brief, the services involved, an optional DAC shape, an optional yearly ARR
+figure, and a win date. The customers page shows a win tracker with total wins,
+DAC wins, total yearly ARR, a by-service breakdown, and the most recent wins,
+all updated the moment a win is recorded. Wins live in the same account-scoped
+SQLite store (`customer_wins`, cascade-deleted with the account) and are managed
+through `POST /api/v1/customers/{id}/wins`, `PUT /api/v1/customers/wins/{id}`,
+and `DELETE /api/v1/customers/wins/{id}`.
+
 ## Chat and attachments
 
 Chat accepts UTF-8 text and source files; PDF, DOCX, PPTX, and XLSX documents; and PNG, JPEG, WebP, and GIF images. Raw uploads are limited to 10 MB by default, and extracted text is limited to 64 KB per message context. Raster images are signature-checked, stored locally, and described to the current text-only model by filename, media type, and dimensions; the model does not yet inspect their pixels. Archives, SVG, HEIC, TIFF, environment files, corrupt packages, and documents without extractable text all fail closed. Successful files from a multi-file selection stay attached even when another file in the same selection is rejected.
@@ -172,7 +215,27 @@ The chat header can open any project already present in the manually refreshed A
 - `.metis/project-context.json`, a deterministic bounded file and language map plus an initial architectural summary.
 - `.metis/METIS.md`, durable project conventions, important paths, verification guidance, risks, learnings, and a work log that evolves as Metis completes work.
 
-Two run-pinned modes are available. **Grok to Local** spends the cloud call on the initial map and then uses the configured local model for the bounded project loop. **Keep Grok** continues using Grok and OCI Responses function calling. Both modes expose the same host-owned tools: bounded file listing, exact-text search, ranged reads, exact-block replacement, and new-file creation. Reads run immediately. Every write appears in the normal approval timeline and applies only after approval, and stale or ambiguous patches fail closed. Secret files, `.git`, `.metis`, symlinks, paths outside the selected project, arbitrary shell commands, and host networking are never exposed.
+Two run-pinned modes are available. **Grok to Local** spends the cloud call on the initial map and then uses the configured local model for the bounded project loop. **Keep Grok** continues using Grok and OCI Responses function calling. Both modes expose the same host-owned tools: bounded file listing, exact-text search, ranged reads, exact-block replacement, new-file creation, and reviewed verification checks. Reads run immediately. Every write appears in the normal approval timeline and applies only after approval, and stale or ambiguous patches fail closed. Secret files, `.git`, `.metis`, symlinks, paths outside the selected project, arbitrary shell commands, and host networking are never exposed.
+
+### Verification checks
+
+An agent that can edit but cannot run anything can only ever hand you a patch to check yourself. A project closes that loop by declaring its own checks in `.metis/verify.json`:
+
+```json
+{
+  "schema_version": "1",
+  "checks": [
+    { "name": "test", "command": ["make", "test"], "description": "Full suite." },
+    { "name": "types", "command": ["npx", "tsc", "--noEmit"], "timeout_seconds": 120 }
+  ]
+}
+```
+
+The agent may only **name** a declared check. It cannot compose, extend, or suggest a command, and `command` is an argv array rather than a shell string, so there is no shell to inject into. `{python}` and `{uv}` resolve to the interpreter Metis is running under.
+
+You approve the recipe once, by fingerprint, exactly as you approve an asset launch manifest. The approval card carries a plain-English explanation derived from the argv — "Runs the `test` target from the project's Makefile", "Type-checks the sources with TypeScript, without writing any output files" — so the decision never depends on reading argv you did not write. Editing `.metis/verify.json` changes the fingerprint and cancels the approval.
+
+After that, checks run without further clicks so the agent can iterate to green, and each run posts its name, exit code, and duration to the timeline. Output is captured head-and-tail within `WAQIL_PROJECT_VERIFY_OUTPUT_CHARS`, a hung check is killed at its timeout, and `WAQIL_PROJECT_VERIFY_MAX_RUNS` bounds how many checks one turn may run so a check that never passes cannot consume the whole step budget. Verification is trusted host execution, not the generated-code sandbox: the child runs as your own account with your filesystem and network access. Set `WAQIL_PROJECT_VERIFY_ENABLED=false` to remove the capability entirely.
 
 Project selection never discovers folders. Use **Assets, Scan for updates** when you want new projects to appear, then explicitly open one in chat.
 
@@ -196,6 +259,18 @@ Dynamic dependency downloads and self-modification of the Metis core are not sup
 
 Conversation summaries are automatic. Long-term memories and reusable skills are proposals: Metis records their provenance, evaluates them, and waits for approval before making them active. To save durable context, open **Memory**, write the stable fact or preference, and create a proposal. Pending proposals are never retrieved. Approving **Remember this** activates the memory for relevant future prompts, and rejecting it leaves no active item. Corrective chat feedback follows the same proposal path.
 
+Metis also proposes durable facts on its own. When a run finishes, it reads what was asked and what was concluded and suggests anything that looks like a stable preference, convention, or decision. These arrive as ordinary pending proposals, deduplicated against what is already active or already waiting, so nothing enters long-term memory without your approval however confident the suggestion was. Set `WAQIL_MEMORY_HARVEST_ENABLED=false` to turn the suggestions off.
+
+### Memory retrieval
+
+Approved memories are found by keyword by default, which means a memory written one way can be missed by a question phrased another way. Opting memory into cloud embedding through `POST /api/v1/memory/index/consent` puts it on the same pipeline the corpus uses — embed, cosine recall, rerank — so paraphrases match. Consent for memory is deliberately separate from corpus consent: opting a code directory into cloud embedding must never silently opt in your own notes about yourself. Withdrawing consent purges every stored memory vector, and every failure along the cloud path degrades to keyword search rather than failing the turn. `GET /api/v1/memory/index` reports whether retrieval is actually semantic, which stays false when consent is granted but the cloud path is unreachable or nothing has been embedded yet.
+
+### Run history
+
+Each completed run is written to `.data/corpus/runs` as a Markdown document holding the request, the outcome, the files that were changed, and any artifacts, and registers itself in Knowledge as an ordinary corpus source named **Run history**. It arrives with consent off, so indexing your own past work is a visible choice; grant it and questions like "how did we fix this before" retrieve prior runs with the same chunking, reranking, and citations as any other source.
+
+Documents record which files changed, never the contents of a diff — consent to index your notes should not become consent to index whatever a patched file happened to contain. Declined and failed edits are excluded, because a record of work that never happened is worse than no record. Set `WAQIL_RUN_HISTORY_ENABLED=false` to stop writing them.
+
 The Settings page routes new runs either to local Ollama or to Grok 4.3 through OCI Responses. OCI mode is an explicit opt-in requiring an Enterprise AI project OCID, and X Search and OCI Code Interpreter may be enabled independently. Metis keeps its own tools, policy, conversations, and memory authoritative, and service-side OCI memory stays disabled. Grok can draft and author candidate tools, but every model call made while an approved tool executes is pinned to the local Ollama provider.
 
 Each conversation has a stable `thread_id`, and each user message creates a distinct `run_id`. Events are committed to an outbox before they are offered over SSE, so clients resume with `after=<sequence>` and deduplicate by `(run_id, sequence)`. Approval creation, graph interruption, and the approved side effect are separate operations, and side effects use stable action IDs and persist their result so a process restart cannot repeat them.
@@ -210,7 +285,7 @@ make test
 make build
 ```
 
-That covers 294 backend and skill-bundle tests plus 25 web tests. The backend suite uses a deterministic model provider, so it needs neither Ollama nor Podman.
+That covers 416 backend and skill-bundle tests plus 52 web tests. The backend suite uses a deterministic model provider, so it needs neither Ollama nor Podman.
 
 Optional live checks require local model and container runtimes:
 

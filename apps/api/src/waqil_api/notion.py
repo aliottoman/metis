@@ -39,6 +39,11 @@ _PAGE_ID = re.compile(
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?![0-9a-fA-F])"
 )
 _SLUG = re.compile(r"[^a-z0-9]+")
+# Notion's Markdown export annotates blocks with `{toggle="true"}`-style
+# attributes. They mean nothing to a reader, and they ride along into both the
+# embedded text and the heading we cite, so they are stripped at the line end.
+_EXPORT_ATTRIBUTES = re.compile(r'\s*\{(?:[A-Za-z_][\w-]*="[^"]*"\s*)+\}\s*$')
+_FENCE = re.compile(r"^\s*(?:```|~~~)")
 _REQUEST_INTERVAL_SECONDS = 0.42
 _MAX_REQUEST_ATTEMPTS = 8
 _MAX_RATE_LIMIT_WAIT_SECONDS = 120.0
@@ -91,6 +96,22 @@ def _plain_text(items: Any) -> str:
         for item in items
         if isinstance(item, dict)
     ).strip()
+
+
+def _strip_export_attributes(markdown: str) -> str:
+    """Drop Notion's block-attribute annotations from the end of each line.
+
+    Fenced code is left byte-exact: an attribute-shaped line inside a fence is
+    somebody's actual code, not export metadata."""
+    lines: list[str] = []
+    in_fence = False
+    for line in markdown.splitlines():
+        if _FENCE.match(line):
+            in_fence = not in_fence
+            lines.append(line)
+            continue
+        lines.append(line if in_fence else _EXPORT_ATTRIBUTES.sub("", line))
+    return "\n".join(lines)
 
 
 def _page_title(page: dict[str, Any]) -> str:
@@ -534,7 +555,7 @@ class NotionService:
                 f"Notion page ID: `{document.page_id}`  \n"
                 f"Notion URL: {document.url or 'Unavailable'}  \n"
                 f"Last edited: {document.last_edited_time or 'Unknown'}\n\n"
-                f"{document.markdown}\n"
+                f"{_strip_export_attributes(document.markdown)}\n"
             )
             path = root / filename
             try:

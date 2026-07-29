@@ -56,6 +56,12 @@ class Archetype:
 
     name: str
     keywords: tuple[str, ...]
+    # Words that mean "this is not really my task even though a keyword matched".
+    # A specific archetype is a *template*, not a topic: a request that computes,
+    # parses, or tallies is a code-authoring task even when it also says
+    # "summary". Without this, one incidental keyword silently downgrades a
+    # computation into a project-summary card.
+    disqualifiers: tuple[str, ...]
     default_name: str
     default_description: str
     default_intent_examples: tuple[str, ...]
@@ -71,6 +77,8 @@ class Archetype:
     author_system_prompt: str = ""
 
     def matches(self, haystack: str) -> bool:
+        if any(word in haystack for word in self.disqualifiers):
+            return False
         return any(keyword in haystack for keyword in self.keywords)
 
 
@@ -120,6 +128,11 @@ _TEXT_SUMMARY = Archetype(
         "tldr",
         "project card",
         "summary card",
+    ),
+    disqualifiers=(
+        "calculat", "comput", "parse", "parsing", "total", "subtotal", "sum of",
+        "vat", "tax", "count", "tally", "invoice", "amount", "price", "cost",
+        "percent", "rate", "score", "estimate", "convert", "formula",
     ),
     default_name="Project Summary Card",
     default_description=(
@@ -200,6 +213,19 @@ _AUTHOR_SYSTEM_PROMPT = (
     "JSON-serializable dict.\n"
     "Hard rules — code that breaks them is rejected and discarded:\n"
     "- Read input ONLY from the `inputs` dict; do all work in pure Python.\n"
+    "- At runtime `inputs` has exactly two keys: `inputs['prompt']` is the "
+    "user's request text and `inputs['text']` is attachment text (often empty). "
+    "Parse parameters from `(inputs.get('text') or '') or (inputs.get('prompt') "
+    "or '')` — never assume one key alone is populated, and return a clear "
+    "{'error': ...} dict when required values are absent.\n"
+    "- Parse numbers defensively: strip commas and currency symbols, wrap every "
+    "float()/int() conversion in try/except, and treat any malformed value as "
+    "missing (return the {'error': ...} dict, never raise).\n"
+    "- Regex capture groups are nullable. Before calling `.strip()`, `.replace()`, "
+    "or another string method on `match.group(n)`, verify the captured value is "
+    "not None. When a keyword pattern contains alternatives, wrap it in a "
+    "non-capturing group such as `(?:employee|staff|worker)` so every matching "
+    "branch reaches the intended numeric capture.\n"
     "- You may `import` only from this stdlib allowlist: json, re, math, "
     "statistics, decimal, fractions, random, collections, itertools, functools, "
     "operator, datetime, string, textwrap, unicodedata, html, difflib, bisect, "
@@ -225,6 +251,7 @@ _ASSIST_TEMPLATE = (
 _CODE_AUTHORING = Archetype(
     name="code-authoring",
     keywords=(),  # the fallback — selected when no specific archetype matches
+    disqualifiers=(),
     default_name="Custom Tool",
     default_description="A custom tool that processes the provided input for a specific task.",
     default_intent_examples=(
@@ -273,7 +300,19 @@ _CODE_AUTHORING = Archetype(
             name="handles-empty-input",
             tool_input={"text": "", "prompt": ""},
             broker_reply="ok",
-            expected_properties=["output_matches_contract"],
+            expected_properties=["output_matches_contract", "no_runtime_exception"],
+        ),
+        EvalFixture(
+            name="handles-parameter-words-without-values",
+            tool_input={
+                "text": "",
+                "prompt": (
+                    "Calculate this from the number of employees, average salary, "
+                    "and total hours."
+                ),
+            },
+            broker_reply="ok",
+            expected_properties=["output_matches_contract", "no_runtime_exception"],
         ),
     ),
 )

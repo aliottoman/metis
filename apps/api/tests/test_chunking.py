@@ -55,6 +55,38 @@ def test_markdown_splits_by_heading() -> None:
     assert "Stripe handles invoices" in billing.text
 
 
+def test_markdown_chunks_carry_the_page_title_and_heading_path() -> None:
+    # The customer-page case: a passage under a sub-heading must still be
+    # findable by the page's name, which appears only in the H1.
+    markdown = (
+        "# Acme Corp\n"
+        "account overview\n\n"
+        "## Interactions\n\n"
+        "### Meeting, 3 June\n"
+        "they asked about pricing\n"
+    )
+    chunks = chunk_text(markdown, "markdown", max_chars=1000, overlap=50)
+    meeting = next(chunk for chunk in chunks if "pricing" in chunk.text)
+    assert meeting.text.startswith("Acme Corp > Interactions > Meeting, 3 June")
+    assert meeting.symbol == "Meeting, 3 June"
+    # A sibling heading pops the deeper trail rather than nesting under it.
+    overview = next(chunk for chunk in chunks if "account overview" in chunk.text)
+    assert overview.text.startswith("Acme Corp\n")
+
+
+def test_every_window_of_a_long_section_repeats_the_heading_path() -> None:
+    body = "\n".join(f"interaction number {i}" for i in range(200))
+    markdown = f"# Acme Corp\n\n## Interactions\n{body}\n"
+    chunks = chunk_text(markdown, "markdown", max_chars=600, overlap=50)
+    windows = [chunk for chunk in chunks if chunk.symbol == "Interactions"]
+    assert len(windows) > 1, "expected the long section to split"
+    assert all(
+        chunk.text.startswith("Acme Corp > Interactions") for chunk in windows
+    )
+    # The heading path never eats more than half the window budget.
+    assert all(len(chunk.text) <= 600 for chunk in chunks)
+
+
 def test_char_window_overlaps_and_tracks_lines() -> None:
     text = "\n".join(f"line{i}" for i in range(100))
     chunks = chunk_text(text, "text", max_chars=120, overlap=20)

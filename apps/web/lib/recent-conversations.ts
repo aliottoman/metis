@@ -21,3 +21,10 @@ export function rememberConversation(conversation: ConversationSummary): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify([conversation, ...current].slice(0, 40)));
   window.dispatchEvent(new Event(CONVERSATIONS_CHANGED_EVENT));
 }
+
+export function forgetConversation(id: string): void {
+  if (typeof window === "undefined") return;
+  const current = readRecentConversations().filter((item) => item.id !== id);
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+  window.dispatchEvent(new Event(CONVERSATIONS_CHANGED_EVENT));
+}

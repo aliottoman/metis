@@ -10,10 +10,33 @@ import pytest
 from waqil_api.config import Settings
 from waqil_api.contracts import NotionConnectionUpdateV1
 from waqil_api.database import Database
-from waqil_api.notion import NotionApiClient, NotionService
+from waqil_api.notion import (
+    NotionApiClient,
+    NotionService,
+    _strip_export_attributes,
+)
 
 
 PAGE_ID = "11111111-2222-3333-4444-555555555555"
+
+
+def test_export_attributes_are_stripped_outside_code_fences() -> None:
+    markdown = (
+        '### Customer Meeting (3 Nov) {toggle="true"}\n'
+        'they asked about pricing {color="blue" bold="true"}\n'
+        "\n"
+        "```python\n"
+        'config = {mode="fast"}\n'
+        "```\n"
+        "trailing {not an attribute} stays\n"
+    )
+    cleaned = _strip_export_attributes(markdown)
+    assert "### Customer Meeting (3 Nov)" in cleaned
+    assert "toggle=" not in cleaned
+    assert "color=" not in cleaned
+    # Fenced code is untouched, and brace text that is not an attribute stays.
+    assert 'config = {mode="fast"}' in cleaned
+    assert "trailing {not an attribute} stays" in cleaned
 
 
 class _CorpusStub:

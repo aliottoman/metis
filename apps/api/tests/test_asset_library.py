@@ -23,6 +23,11 @@ def _write_manifest(project: Path, body: dict) -> None:
     (manifest_dir / "asset.json").write_text(json.dumps(body), encoding="utf-8")
 
 
+def _catalog_text(client: TestClient) -> str:
+    """The whole serialized catalog, for asserting a value never appears in it."""
+    return client.get("/api/v1/assets").text
+
+
 def test_asset_scan_is_dynamic_bounded_and_metadata_only(
     settings: Settings, tmp_path: Path
 ) -> None:
@@ -243,6 +248,169 @@ def test_manifest_launch_is_loopback_redacts_secrets_and_stops_on_shutdown(
 
     assert process is not None
     assert process.returncode is not None
+
+
+def test_env_file_is_reported_by_presence_and_never_by_value(
+    settings: Settings, tmp_path: Path
+) -> None:
+    root = tmp_path / "projects"
+    root.mkdir()
+    project = root / "configured"
+    project.mkdir()
+    (project / "README.md").write_text(
+        "# Configured\n\nReads `INFERRED_ONLY` from somewhere.\n", encoding="utf-8"
+    )
+    (project / ".env.example").write_text("ALSO_INFERRED=\n", encoding="utf-8")
+    (project / ".env").write_text(
+        "# Local settings\n"
+        "OMNI_MODEL=qwen3-omni\n"
+        "OMNI_API_KEY=super-secret-token-value\n"
+        "EMPTY_SETTING=\n"
+        "PATH=/attacker/bin\n"
+        "LD_PRELOAD=/attacker/evil.so\n"
+        "lowercase_key=ignored\n",
+        encoding="utf-8",
+    )
+
+    with _client(settings, root) as client:
+        asset = client.post("/api/v1/assets/scan").json()[0]
+        assert asset["env_file_present"] is True
+        assert asset["env_file"] == [
+            {"key": "OMNI_MODEL", "is_set": True, "sensitive": False},
+            {"key": "OMNI_API_KEY", "is_set": True, "sensitive": True},
+            {"key": "EMPTY_SETTING", "is_set": False, "sensitive": False},
+        ]
+        # Reserved and non-conforming keys never surface, and no value is serialized.
+        assert "super-secret-token-value" not in _catalog_text(client)
+        assert "/attacker" not in _catalog_text(client)
+
+        # The inferred key list is untouched, so launch fingerprints keep their meaning.
+        assert "ALSO_INFERRED" in asset["env_keys"]
+        assert "OMNI_API_KEY" not in asset["env_keys"]
+
+
+def test_env_write_edits_the_project_file_in_place_and_refuses_reserved_keys(
+    settings: Settings, tmp_path: Path
+) -> None:
+    root = tmp_path / "projects"
+    root.mkdir()
+    project = root / "editable"
+    project.mkdir()
+    env_path = project / ".env"
+    env_path.write_text(
+        "# Keep this comment\n"
+        "OMNI_MODEL=old-model   # trailing note\n"
+        "\n"
+        "export OMNI_BASE_URL=https://old.invalid/v1\n"
+        "UNTOUCHED=leave-me\n",
+        encoding="utf-8",
+    )
+    env_path.chmod(0o600)
+
+    with _client(settings, root) as client:
+        asset_id = client.post("/api/v1/assets/scan").json()[0]["id"]
+        saved = client.put(
+            f"/api/v1/assets/{asset_id}/env",
+            json={
+                "values": {
+                    "OMNI_MODEL": "qwen3-omni-flash",
+                    "OMNI_BASE_URL": "https://new.invalid/v1",
+                    "ADDED_SETTING": "has spaces and #hash",
+                }
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        assert "qwen3-omni-flash" not in saved.text
+        assert {item["key"] for item in saved.json()["env_file"]} == {
+            "OMNI_MODEL",
+            "OMNI_BASE_URL",
+            "UNTOUCHED",
+            "ADDED_SETTING",
+        }
+
+        written = env_path.read_text(encoding="utf-8")
+        assert "# Keep this comment" in written
+        # A replaced value keeps the note its author left beside it.
+        assert "OMNI_MODEL=qwen3-omni-flash   # trailing note" in written
+        assert "export OMNI_BASE_URL=https://new.invalid/v1" in written
+        assert "UNTOUCHED=leave-me" in written
+        assert 'ADDED_SETTING="has spaces and #hash"' in written
+        assert "old-model" not in written
+        assert env_path.stat().st_mode & 0o777 == 0o600
+
+        # Rewriting is stable: a value carrying a # survives a second pass intact.
+        reread = client.get("/api/v1/assets").json()[0]
+        assert [item["key"] for item in reread["env_file"]] == [
+            "OMNI_MODEL",
+            "OMNI_BASE_URL",
+            "UNTOUCHED",
+            "ADDED_SETTING",
+        ]
+        assert all(item["is_set"] for item in reread["env_file"])
+
+        for rejected in ({"PATH": "/tmp/bin"}, {"METIS_PORT": "1"}, {"lower": "x"}):
+            refused = client.put(
+                f"/api/v1/assets/{asset_id}/env", json={"values": rejected}
+            )
+            assert refused.status_code in (409, 422), rejected
+        # A value that spans lines could smuggle a second assignment into the file.
+        assert (
+            client.put(
+                f"/api/v1/assets/{asset_id}/env",
+                json={"values": {"ADDED_SETTING": "one\nPATH=/tmp/bin"}},
+            ).status_code
+            == 422
+        )
+        assert "/tmp/bin" not in env_path.read_text(encoding="utf-8")
+
+
+def test_env_file_values_reach_the_child_process_without_a_start_payload(
+    settings: Settings, tmp_path: Path
+) -> None:
+    root = tmp_path / "projects"
+    root.mkdir()
+    project = root / "env-consumer"
+    project.mkdir()
+    (project / ".env").write_text(
+        "DEMO_SETTING=from-dotenv\nDEMO_API_KEY=dotenv-secret-value\nPATH=/attacker/bin\n",
+        encoding="utf-8",
+    )
+    server_code = (
+        "import http.server,os,sys;"
+        "print(os.environ['DEMO_SETTING'],os.environ['DEMO_API_KEY'],flush=True);"
+        "print('PATHOK' if '/attacker/bin' not in os.environ['PATH'] else 'PATHBAD',flush=True);"
+        "http.server.ThreadingHTTPServer((sys.argv[2],int(sys.argv[1])),"
+        "http.server.SimpleHTTPRequestHandler).serve_forever()"
+    )
+    _write_manifest(
+        project,
+        {
+            "name": "Env Consumer",
+            "launch": {
+                "command": ["{python}", "-u", "-c", server_code, "{port}", "{host}"]
+            },
+        },
+    )
+
+    with _client(settings, root) as client:
+        asset_id = client.post("/api/v1/assets/scan").json()[0]["id"]
+        assert client.post(f"/api/v1/assets/{asset_id}/approval").status_code == 200
+        # No env payload at all: the project's own .env is the source of truth.
+        started = client.post(f"/api/v1/assets/{asset_id}/start", json={})
+        assert started.status_code == 200, started.text
+
+        deadline = time.monotonic() + 5
+        logs = client.get(f"/api/v1/assets/{asset_id}/logs").json()["logs"]
+        while "PATHOK" not in logs and "PATHBAD" not in logs and time.monotonic() < deadline:
+            time.sleep(0.02)
+            logs = client.get(f"/api/v1/assets/{asset_id}/logs").json()["logs"]
+        assert "from-dotenv" in logs
+        assert "PATHOK" in logs, logs
+        # A secret-looking .env value is redacted; an ordinary one stays readable.
+        assert "dotenv-secret-value" not in logs
+        assert "[REDACTED]" in logs
+
+        assert client.post(f"/api/v1/assets/{asset_id}/stop").status_code == 200
 
 
 def test_launch_rejects_unknown_malformed_traversal_and_environment_keys(

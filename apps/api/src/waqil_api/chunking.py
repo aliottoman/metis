@@ -29,6 +29,10 @@ TEXT_EXTENSIONS: dict[str, str] = {
 }
 
 
+# Upper bound on the heading path prepended to a Markdown chunk.
+_MAX_CONTEXT_CHARS = 200
+
+
 @dataclass(frozen=True)
 class Chunk:
     text: str
@@ -42,22 +46,36 @@ def lang_for(suffix: str) -> str | None:
 
 
 def _window(
-    text: str, start_line: int, symbol: str | None, max_chars: int, overlap: int
+    text: str,
+    start_line: int,
+    symbol: str | None,
+    max_chars: int,
+    overlap: int,
+    *,
+    context: str = "",
 ) -> list[Chunk]:
-    """Split `text` into overlapping character windows, tracking line numbers."""
+    """Split `text` into overlapping character windows, tracking line numbers.
+
+    `context` is prepended to every window. A passage halfway down a page has no
+    idea which page it is on, so a query naming the document ("interactions with
+    Acme") cannot match it; carrying the heading path into each window makes the
+    whole document findable by name, not just its opening section."""
     text = text.strip("\n")
     if not text.strip():
         return []
-    if len(text) <= max_chars:
-        return [Chunk(text, symbol, start_line)]
-    step = max(1, max_chars - overlap)
+    prefix = f"{context}\n\n" if context else ""
+    # Never let a long heading path starve the passage it is supposed to label.
+    budget = max(max_chars // 2, max_chars - len(prefix))
+    if len(text) <= budget:
+        return [Chunk(prefix + text, symbol, start_line)]
+    step = max(1, budget - overlap)
     chunks: list[Chunk] = []
     index = 0
     while index < len(text):
-        piece = text[index : index + max_chars]
+        piece = text[index : index + budget]
         line = start_line + text.count("\n", 0, index)
         if piece.strip():
-            chunks.append(Chunk(piece, symbol, line))
+            chunks.append(Chunk(prefix + piece, symbol, line))
         index += step
     return chunks
 
@@ -97,22 +115,56 @@ def _chunk_python(text: str, max_chars: int, overlap: int) -> list[Chunk]:
     return chunks or _window(text, 1, None, max_chars, overlap)
 
 
+def _heading_level(line: str) -> int:
+    """ATX heading depth (1-6), or 0 when the line is not a heading."""
+    stripped = line.lstrip()
+    if not stripped.startswith("#"):
+        return 0
+    level = len(stripped) - len(stripped.lstrip("#"))
+    return level if level <= 6 else 0
+
+
+def _breadcrumb(trail: list[tuple[int, str]]) -> str:
+    """`Page title > Section > Subsection`, shortened from the middle when long
+    so the document title — the part a query is most likely to name — survives."""
+    names = [name for _, name in trail]
+    if not names:
+        return ""
+    path = " > ".join(names)
+    if len(path) > _MAX_CONTEXT_CHARS and len(names) > 2:
+        path = f"{names[0]} > … > {names[-1]}"
+    return path[:_MAX_CONTEXT_CHARS]
+
+
 def _chunk_markdown(text: str, max_chars: int, overlap: int) -> list[Chunk]:
     lines = text.splitlines()
     chunks: list[Chunk] = []
+    trail: list[tuple[int, str]] = []
     heading: str | None = None
+    context = ""
     section_start = 1
     section: list[str] = []
 
     def flush() -> None:
         block = "\n".join(section)
         if block.strip():
-            chunks.extend(_window(block, section_start, heading, max_chars, overlap))
+            chunks.extend(
+                _window(
+                    block, section_start, heading, max_chars, overlap, context=context
+                )
+            )
 
     for number, line in enumerate(lines, start=1):
-        if line.lstrip().startswith("#"):
+        level = _heading_level(line)
+        if level:
             flush()
             heading = line.strip("# ").strip()[:120] or None
+            # Pop siblings and deeper headings so the trail holds only ancestors.
+            while trail and trail[-1][0] >= level:
+                trail.pop()
+            if heading:
+                trail.append((level, heading))
+            context = _breadcrumb(trail)
             section_start = number
             section = [line]
         else:

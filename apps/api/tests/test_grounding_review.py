@@ -209,6 +209,108 @@ def test_notion_only_scope_refuses_without_support_and_skips_generation(settings
     assert "couldn't find relevant support" in content
 
 
+def _run_attachment_turn(
+    client: TestClient, model, corpus, *, knowledge_scope: str = "auto"
+) -> tuple[dict, str, str]:
+    """Ask about an attached document while retrieval also returns a strong hit —
+    the shape that used to get the document answer rewritten around Notion."""
+    runtime = client.app.state.runtime
+    runtime.control_plane.model = model
+    runtime.control_plane.corpus = corpus
+    uploaded = client.post(
+        "/api/v1/uploads",
+        files={
+            "file": (
+                "launch-brief.md",
+                b"The launch code is ORCHID-73.",
+                "text/markdown",
+            )
+        },
+    ).json()
+    conversation = client.post("/api/v1/conversations", json={}).json()
+    accepted = client.post(
+        f"/api/v1/conversations/{conversation['id']}/messages",
+        json={
+            "content": "What is the launch code in the attached brief?",
+            "attachment_ids": [uploaded["id"]],
+            "knowledge_scope": knowledge_scope,
+        },
+    ).json()
+    completed = _wait(client, accepted["run_id"], {"completed", "failed"})
+    events = client.get(f"/api/v1/runs/{accepted['run_id']}/events?after=0").text
+    messages = client.get(
+        f"/api/v1/conversations/{conversation['id']}/messages"
+    ).json()
+    assistant = [m for m in messages if m["role"] == "assistant"][-1]
+    return completed, events, assistant["content"]
+
+
+def test_attached_document_is_citable_alongside_strong_retrieval(settings) -> None:
+    # The stub corpus contributes one passage as [1], so the attached document is
+    # offered as [2]. Citing it counts as grounding: no revision, and the Sources
+    # list names the file rather than only the retrieved passage.
+    model = _ScriptedModel(["The launch code is ORCHID-73 [2]."])
+    with TestClient(create_app(settings)) as client:
+        completed, events, content = _run_attachment_turn(
+            client, model, _StubCorpus(score=0.95)
+        )
+    assert completed["status"] == "completed", completed
+    assert model.generate_calls == 1  # the document answer survives as written
+    prompt = model.last_request.user_prompt
+    assert "[2] Attached document — launch-brief.md" in prompt
+    # The number must sit on the file's own header, next to the text it labels —
+    # a lone index line is easy for a smaller model to lose track of.
+    assert "--- [2] launch-brief.md (untrusted attachment) ---" in prompt
+    assert "**Sources**" in content
+    assert "[2] Attached document — launch-brief.md" in content
+    verdict = _event_payload(events, "answer.grounding_reviewed")
+    assert verdict["has_attachments"] is True
+    assert verdict["cited"] is True
+    assert verdict["revision"] is False
+
+
+def test_uncited_document_answer_is_published_without_a_revision(settings) -> None:
+    # The regression that produced a Notion-only reply: an answer drawn from the
+    # attachment carries no [n] marker, so the gate read it as ungrounded and sent
+    # a revision that rewrote it around the retrieved passages. An attachment must
+    # now opt the turn out — the document answer is published exactly as written.
+    model = _ScriptedModel(
+        ["The launch code is ORCHID-73.", "Per my notes [1], there is no code."]
+    )
+    with TestClient(create_app(settings)) as client:
+        completed, events, content = _run_attachment_turn(
+            client, model, _StubCorpus(score=0.95)
+        )
+    assert completed["status"] == "completed", completed
+    assert model.generate_calls == 1  # the second, corpus-shaped answer never runs
+    assert content == "The launch code is ORCHID-73."
+    verdict = _event_payload(events, "answer.grounding_reviewed")
+    assert verdict["has_attachments"] is True
+    assert verdict["strong_retrieval"] is True  # retrieval was strong, and ignored
+    assert verdict["cited"] is False
+    assert verdict["revision"] is False
+
+
+def test_notion_only_scope_never_asks_the_model_to_cite_a_withheld_attachment(
+    settings,
+) -> None:
+    # Notion-only mode deliberately withholds attachments from the prompt, so the
+    # attachment opt-out must not apply there: the gate still grounds the answer
+    # against the Notion passages that were the only evidence the model saw.
+    model = _ScriptedModel(["An answer with no citations.", "Per Notion [1]."])
+    with TestClient(create_app(settings)) as client:
+        completed, events, _ = _run_attachment_turn(
+            client, model, _StubCorpus(score=0.95), knowledge_scope="notion"
+        )
+    assert completed["status"] == "completed", completed
+    assert model.generate_calls == 2
+    verdict = _event_payload(events, "answer.grounding_reviewed")
+    assert verdict["has_attachments"] is False
+    critique = model.last_request.user_prompt
+    assert "highly relevant material from the user's own knowledge" in critique
+    assert "attached document is the primary factual source" not in critique
+
+
 def test_attachment_is_primary_evidence_when_cloud_knowledge_lookup_fails(settings) -> None:
     model = _ScriptedModel(["The attached launch code is ORCHID-73."])
     with TestClient(create_app(settings)) as client:

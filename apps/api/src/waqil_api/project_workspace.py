@@ -19,7 +19,19 @@ from typing import Any
 
 from .asset_library import AssetLibraryError, AssetManager
 from .config import Settings
-from .contracts import ProjectBootstrapV1, ProjectToolCallV1, ProjectWorkspaceV1
+from .contracts import (
+    ProjectBootstrapV1,
+    ProjectCheckV1,
+    ProjectToolCallV1,
+    ProjectVerificationV1,
+    ProjectWorkspaceV1,
+)
+from .project_verification import (
+    BOUNDARY_NOTICE,
+    ProjectVerificationService,
+    explain_command,
+    explain_recipe,
+)
 
 
 _IGNORE_DIRS = frozenset(
@@ -119,6 +131,14 @@ class ProjectWorkspaceError(RuntimeError):
     pass
 
 
+class VerificationNotApprovedError(ProjectWorkspaceError):
+    """The project declares checks the user has not reviewed yet.
+
+    Distinct from a plain tool error so the control plane can raise a one-time
+    approval instead of handing the agent a dead end it cannot act on.
+    """
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -137,10 +157,12 @@ class ProjectWorkspaceService:
         settings: Settings,
         assets: AssetManager,
         bootstrap_model: Any,
+        verification: ProjectVerificationService | None = None,
     ) -> None:
         self.settings = settings
         self.assets = assets
         self.bootstrap_model = bootstrap_model
+        self.verification = verification
         self._lock = asyncio.Lock()
 
     async def list(self) -> list[ProjectWorkspaceV1]:
@@ -261,6 +283,35 @@ class ProjectWorkspaceService:
             "project_name": manifest.get("project_name", root.name),
             "manifest": manifest,
             "metis_md": notes,
+            "verification": await self._verification_context(asset_id, root),
+        }
+
+    async def _verification_context(self, asset_id: str, root: Path) -> dict[str, Any]:
+        """What the agent is allowed to know about `run_check`.
+
+        Only names and descriptions cross this boundary. The agent never sees
+        the argv, because it can never supply one — telling it the command would
+        only invite it to propose variations the host would refuse.
+        """
+        if self.verification is None or not self.settings.project_verify_enabled:
+            return {"available": False, "reason": "verification checks are disabled"}
+        recipe = await asyncio.to_thread(self.verification.recipe, root)
+        if not recipe.present:
+            return {"available": False, "reason": "this project declares no checks"}
+        if recipe.error:
+            return {"available": False, "reason": recipe.error}
+        if not self.verification.is_approved(asset_id, recipe):
+            return {
+                "available": False,
+                "reason": "the user has not approved this project's checks yet",
+                "checks": [check.name for check in recipe.checks],
+            }
+        return {
+            "available": True,
+            "checks": [
+                {"name": check.name, "description": check.description}
+                for check in recipe.checks
+            ],
         }
 
     async def preview(self, asset_id: str, call: ProjectToolCallV1) -> dict[str, str]:
@@ -302,7 +353,90 @@ class ProjectWorkspaceService:
                 result = await asyncio.to_thread(self._create_file, root, call.arguments)
                 await asyncio.to_thread(self._record_mutation, root, call, result)
                 return result
+        if call.name == "run_check":
+            return await self._run_check(asset_id, root, call.arguments)
         raise ProjectWorkspaceError(f"unsupported project tool: {call.name}")
+
+    async def _run_check(
+        self, asset_id: str, root: Path, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Run one check the project declared and the user approved."""
+        if self.verification is None or not self.settings.project_verify_enabled:
+            raise ProjectWorkspaceError("verification checks are disabled")
+        recipe = await asyncio.to_thread(self.verification.recipe, root)
+        if not recipe.present:
+            raise ProjectWorkspaceError(
+                "this project declares no checks; add .metis/verify.json with a "
+                'checks array of {"name", "command"} entries to enable verification'
+            )
+        if recipe.error:
+            raise ProjectWorkspaceError(
+                f"this project's .metis/verify.json cannot be used: {recipe.error}"
+            )
+        if not self.verification.is_approved(asset_id, recipe):
+            raise VerificationNotApprovedError(
+                "the verification recipe for this project has not been approved yet"
+            )
+        name = _bounded_line(arguments.get("name"), 32).casefold()
+        check = recipe.get(name)
+        if check is None:
+            available = ", ".join(recipe.names) or "none"
+            raise ProjectWorkspaceError(
+                f"unknown check {name or '(missing)'!r}; this project declares: {available}"
+            )
+        run = await self.verification.run(root, check)
+        return {
+            "name": run.name,
+            "command": run.command,
+            "ok": run.ok,
+            "exit_code": run.exit_code,
+            "timed_out": run.timed_out,
+            "duration_seconds": run.duration_seconds,
+            "output": run.output,
+            "truncated": run.truncated,
+        }
+
+    async def verification_view(self, asset_id: str) -> ProjectVerificationV1:
+        """Everything the approval card needs, including the plain-English text."""
+        root = await self.assets.project_path(asset_id)
+        if self.verification is None:
+            return ProjectVerificationV1(
+                project_id=asset_id, error="verification checks are disabled"
+            )
+        recipe = await asyncio.to_thread(self.verification.recipe, root)
+        return ProjectVerificationV1(
+            project_id=asset_id,
+            configured=recipe.present and not recipe.error,
+            approved=self.verification.is_approved(asset_id, recipe),
+            fingerprint=recipe.fingerprint or None,
+            checks=[
+                ProjectCheckV1(
+                    name=check.name,
+                    command=list(check.command),
+                    description=check.description,
+                    explanation=explain_command(check.command),
+                    timeout_seconds=check.timeout_seconds,
+                )
+                for check in recipe.checks
+            ],
+            explanation=explain_recipe(recipe),
+            boundary=BOUNDARY_NOTICE,
+            error=recipe.error or None,
+        )
+
+    async def approve_verification(self, asset_id: str) -> ProjectVerificationV1:
+        root = await self.assets.project_path(asset_id)
+        if self.verification is None:
+            raise ProjectWorkspaceError("verification checks are disabled")
+        recipe = await asyncio.to_thread(self.verification.recipe, root)
+        await self.verification.approve(asset_id, recipe)
+        return await self.verification_view(asset_id)
+
+    async def revoke_verification(self, asset_id: str) -> ProjectVerificationV1:
+        if self.verification is None:
+            raise ProjectWorkspaceError("verification checks are disabled")
+        await self.verification.revoke(asset_id)
+        return await self.verification_view(asset_id)
 
     async def record_learnings(
         self, asset_id: str, run_id: str, learnings: list[str]

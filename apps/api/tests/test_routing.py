@@ -188,3 +188,91 @@ def test_validate_tool_definition_requires_r3_and_no_slug() -> None:
             _request("q"),
             catalog,
         )
+
+
+def _runnable(slug: str) -> ToolRoute:
+    """A runnable authored calculator: declares the attachment_text pipeline for
+    its optional `text` input, but is driven by the user's message."""
+    return ToolRoute(
+        slug=slug,
+        existing_risk=RiskLevel.R2,
+        factory_risk=RiskLevel.R3,
+        input_pipeline="attachment_text",
+        runnable=True,
+        authored=True,
+    )
+
+
+def test_named_runnable_tool_is_rescued_when_planner_says_direct() -> None:
+    """Measured live: with an active break-even-calculator, the planner routed
+    `direct` and hand-computed the answer. Naming the tool outright must run it."""
+    catalog = _catalog(_runnable("break-even-calculator"))
+    plan = normalize_plan_semantics(
+        _proposed("direct", None),
+        _request("Use the break even calculator tool: fixed cost 50000, unit price 40, unit cost 25"),
+        catalog,
+    )
+    assert plan.route == "existing_tool"
+    assert plan.tool_slug == "break-even-calculator"
+    assert plan.risk_level == RiskLevel.R2
+    validate_plan_semantics(plan, _request("use the break even calculator"), catalog)
+
+
+def test_rescue_requires_every_meaningful_slug_token() -> None:
+    catalog = _catalog(_runnable("break-even-calculator"))
+    # "calculator" alone is not enough to run a specific tool.
+    for prompt in (
+        "what does a calculator do?",
+        "is the price even worth it?",
+        "break down the numbers for me",
+    ):
+        plan = normalize_plan_semantics(_proposed("direct", None), _request(prompt), catalog)
+        assert plan.route == "direct", prompt
+
+
+def test_rescue_skips_disabled_unrunnable_and_ambiguous_tools() -> None:
+    prompt = "use the break even calculator tool"
+    disabled = _catalog(
+        ToolRoute(
+            slug="break-even-calculator", existing_risk=RiskLevel.R2,
+            factory_risk=RiskLevel.R3, input_pipeline="message_text",
+            runnable=True, disabled=True,
+        )
+    )
+    assert normalize_plan_semantics(_proposed("direct", None), _request(prompt), disabled).route == "direct"
+
+    # A declarative attachment-pipeline tool with no attachment stays direct.
+    attachment_only = _catalog(_declarative("break-even-calculator", runnable=True))
+    assert normalize_plan_semantics(
+        _proposed("direct", None), _request(prompt, attach=False), attachment_only
+    ).route == "direct"
+
+    # Two equally-named runnable tools are ambiguous — the host refuses to guess.
+    ambiguous = _catalog(_runnable("break-even-calculator"), _runnable("break-even"))
+    assert normalize_plan_semantics(
+        _proposed("direct", None), _request(prompt), ambiguous
+    ).route == "direct"
+
+
+def test_rescue_never_overrides_an_explicit_build_request() -> None:
+    catalog = _catalog(_runnable("break-even-calculator"))
+    plan = normalize_plan_semantics(
+        _proposed("direct", None),
+        _request("build me a new break even calculator tool"),
+        catalog,
+    )
+    assert plan.route != "existing_tool"
+
+
+def test_authored_tool_runs_without_an_attachment() -> None:
+    """Measured live: every authored calculator declares the `attachment_text`
+    pipeline, so `_input_ready` refused to route to it from a plain sentence and
+    the planner hand-computed the answer instead of running the built tool."""
+    catalog = _catalog(_runnable("break-even-calculator"))
+    plan = normalize_plan_semantics(
+        _proposed("existing_tool", "break-even-calculator"),
+        _request("fixed cost 50000, unit price 40, unit cost 25", attach=False),
+        catalog,
+    )
+    assert plan.route == "existing_tool"
+    assert plan.tool_slug == "break-even-calculator"

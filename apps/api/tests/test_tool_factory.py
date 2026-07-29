@@ -134,6 +134,8 @@ def test_extract_python_source_strips_fences() -> None:
     fenced = "```python\nfrom pathlib import Path\nx = 1\n```"
     assert _extract_python_source(fenced) == "from pathlib import Path\nx = 1\n"
     assert _extract_python_source("raw = 1") == "raw = 1\n"
+    prose_led = "Here is the function:\n```python\ndef run(inputs, model):\n    return {}\n```\nUsage notes follow."
+    assert _extract_python_source(prose_led) == "def run(inputs, model):\n    return {}\n"
 
 
 @pytest.mark.asyncio

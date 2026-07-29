@@ -7,12 +7,13 @@ import os
 import re
 import signal
 import socket
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .contracts import AssetLogsV1, AssetStatus, AssetV1
+from .contracts import AssetEnvVarV1, AssetLogsV1, AssetStatus, AssetV1
 
 
 _README_LIMIT = 64 * 1024
@@ -43,6 +44,10 @@ _RESERVED_ENV_EXACT = {
     "TMPDIR",
 }
 _RESERVED_ENV_PREFIXES = ("DYLD_", "LD_", "METIS_")
+_ENV_FILE_LIMIT = 256 * 1024
+_ENV_ASSIGNMENT = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
+_ENV_BARE_VALUE = re.compile(r"[A-Za-z0-9_@%+=:,./-]+")
+_SENSITIVE_ENV = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL")
 
 
 class AssetLibraryError(ValueError):
@@ -389,6 +394,137 @@ def _infer_env_keys(project: Path, readme: str) -> list[str]:
                 if not _is_reserved_env(key):
                     keys.add(key)
     return sorted(keys)[:64]
+
+
+def _is_sensitive_env(key: str) -> bool:
+    return _SENSITIVE_ENV.search(key.upper()) is not None
+
+
+def _env_file_path(project: Path) -> Path:
+    return project / ".env"
+
+
+def _split_env_value(raw: str) -> tuple[str, str]:
+    """Split an assignment's right-hand side into its value and trailing note.
+
+    Scanning from the left is what lets `KEY="a b"  # note` read correctly: the
+    quote closes the value, so the note is never folded into it.
+    """
+    text = raw.strip()
+    if text[:1] in ("'", '"'):
+        quote = text[0]
+        buffer: list[str] = []
+        index = 1
+        while index < len(text):
+            character = text[index]
+            if character == "\\" and quote == '"' and index + 1 < len(text):
+                following = text[index + 1]
+                buffer.append({"n": "\n", "t": "\t"}.get(following, following))
+                index += 2
+                continue
+            if character == quote:
+                return "".join(buffer), text[index + 1 :].strip()
+            buffer.append(character)
+            index += 1
+        # An unterminated quote is not a value Metis can reason about; keep it whole.
+        return text, ""
+    # An unquoted value ends at an inline comment, matching dotenv readers.
+    match = re.search(r"\s+#", text)
+    if match is None:
+        return text, ""
+    return text[: match.start()].strip(), text[match.start() :].strip()
+
+
+def _parse_env_file(text: str) -> dict[str, str]:
+    """Parse KEY=value pairs, keeping file order and dotenv's last-wins rule.
+
+    Only keys Metis is willing to hand to a child process survive, so a project
+    cannot smuggle PATH or DYLD_* through its own .env.
+    """
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = _ENV_ASSIGNMENT.match(line)
+        if match is None:
+            continue
+        key = match.group(1)
+        if not _ENV_KEY.fullmatch(key) or _is_reserved_env(key):
+            continue
+        values[key] = _split_env_value(match.group(2))[0]
+    return values
+
+
+def _read_env_file(project: Path) -> dict[str, str] | None:
+    """Return the project's own .env values, or None when there is no file.
+
+    Values stay server-side: only `_env_presence` is ever serialized to a client.
+    """
+    path = _env_file_path(project)
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+    except OSError:
+        return None
+    text = _read_text(path, _ENV_FILE_LIMIT)
+    if text is None:
+        return None
+    return _parse_env_file(text)
+
+
+def _env_presence(project: Path) -> list[tuple[str, bool]]:
+    values = _read_env_file(project)
+    if values is None:
+        return []
+    return [(key, bool(value)) for key, value in values.items()][:64]
+
+
+def _quote_env_value(value: str) -> str:
+    if value and _ENV_BARE_VALUE.fullmatch(value):
+        return value
+    return '"{}"'.format(value.replace("\\", "\\\\").replace('"', '\\"'))
+
+
+def _render_env_file(original: str, updates: dict[str, str]) -> str:
+    """Rewrite assignments in place so comments, order, and spacing survive."""
+    applied: set[str] = set()
+    lines: list[str] = []
+    for line in original.splitlines():
+        match = _ENV_ASSIGNMENT.match(line)
+        key = match.group(1) if match is not None else None
+        if key is None or key not in updates or line.lstrip().startswith("#"):
+            lines.append(line)
+            continue
+        # A duplicated key is rewritten at every position: dotenv takes the last
+        # one, so leaving a stale earlier line would silently win on some readers.
+        prefix = "export " if line.lstrip().startswith("export ") else ""
+        note = _split_env_value(match.group(2))[1]
+        suffix = f"   {note}" if note else ""
+        lines.append(f"{prefix}{key}={_quote_env_value(updates[key])}{suffix}")
+        applied.add(key)
+    lines.extend(
+        f"{key}={_quote_env_value(updates[key])}"
+        for key in sorted(updates)
+        if key not in applied
+    )
+    body = "\n".join(lines).strip("\n")
+    return f"{body}\n" if body else ""
+
+
+def _write_env_file(path: Path, text: str) -> None:
+    """Replace the file atomically, keeping its mode and never following a link."""
+    mode = 0o600
+    try:
+        mode = stat.S_IMODE(path.lstat().st_mode)
+    except OSError:
+        pass
+    temp = path.with_name(f".env.metis-{os.getpid()}.tmp")
+    try:
+        temp.write_text(text, encoding="utf-8")
+        os.chmod(temp, mode)
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _framework_and_entrypoint(project: Path) -> tuple[str | None, str | None, set[str]]:
@@ -806,7 +942,13 @@ class AssetManager:
                 .replace("{uv}", runtime_uv)
                 for item in record.command
             )
+            # The project's own .env is the source of truth for runtime settings.
+            # It sits under the request overrides and under the Metis pins, and
+            # `_parse_env_file` has already dropped every reserved key, so a .env
+            # can configure the app but never redirect PATH or preload a library.
+            project_env = _read_env_file(record.path) or {}
             child_env = self._base_environment()
+            child_env.update(project_env)
             child_env.update(environment)
             child_env.update(
                 {
@@ -835,9 +977,16 @@ class AssetManager:
                 process=process,
                 port=port,
                 url=url,
+                # Only secret-looking .env values join the redaction set. Redacting
+                # every value would rewrite ordinary words out of the log stream.
                 secrets=tuple(
                     sorted(
-                        (value for value in provided_env.values() if value),
+                        {value for value in provided_env.values() if value}
+                        | {
+                            value
+                            for key, value in project_env.items()
+                            if len(value) >= 8 and _is_sensitive_env(key)
+                        },
                         key=len,
                         reverse=True,
                     )
@@ -898,6 +1047,56 @@ class AssetManager:
             except TimeoutError:
                 run.reader_task.cancel()
         async with self._lock:
+            return self._view(record)
+
+    async def write_env(self, asset_id: str, values: dict[str, str]) -> AssetV1:
+        """Persist runtime settings into the project's own .env file.
+
+        This is the only path that writes inside a project folder. It rewrites
+        assignments in place, so comments and unrelated keys survive, and it
+        refuses reserved keys so a saved value can never alter how Metis launches
+        the process. A launch recipe is unaffected, so approval is not disturbed.
+        """
+        await self._refresh_known_record(asset_id)
+        async with self._lock:
+            record = self._lookup(asset_id)
+            for key, value in values.items():
+                if not _ENV_KEY.fullmatch(key) or _is_reserved_env(key):
+                    raise AssetEnvironmentError(
+                        f"environment key {key!r} is reserved or invalid"
+                    )
+                if (
+                    not isinstance(value, str)
+                    or len(value) > 16_384
+                    or any(character in value for character in ("\x00", "\r", "\n"))
+                ):
+                    raise AssetEnvironmentError(
+                        f"environment value for {key!r} is invalid"
+                    )
+            if not values:
+                return self._view(record)
+
+            path = _env_file_path(record.path)
+            try:
+                if path.is_symlink():
+                    raise AssetEnvironmentError(
+                        "the project .env is a symbolic link; Metis will not write through it"
+                    )
+                exists = path.is_file()
+                # Refuse rather than truncate: a partial read would silently drop
+                # whatever sat past the limit when the file is written back.
+                if exists and path.stat().st_size > _ENV_FILE_LIMIT:
+                    raise AssetEnvironmentError(
+                        "the project .env file is too large for Metis to edit safely"
+                    )
+                original = _read_text(path, _ENV_FILE_LIMIT) if exists else ""
+                if original is None:
+                    raise AssetEnvironmentError("the project .env file could not be read")
+                _write_env_file(path, _render_env_file(original, values))
+            except OSError as exc:
+                raise AssetEnvironmentError(
+                    "the project .env file could not be written"
+                ) from exc
             return self._view(record)
 
     async def logs(self, asset_id: str) -> AssetLogsV1:
@@ -1207,6 +1406,9 @@ class AssetManager:
         run = self._runs.get(record.id)
         active = run is not None and run.process.returncode is None
         launch_approved = self._is_approved(record)
+        # Read live rather than from the catalog: the project's .env is edited
+        # outside Metis too, and a stale "not set" badge would be misleading.
+        env_file = _read_env_file(record.path)
         return AssetV1(
             id=record.id,
             name=record.name,
@@ -1216,6 +1418,11 @@ class AssetManager:
             framework=record.framework,
             entrypoint=record.entrypoint,
             env_keys=list(record.env_keys),
+            env_file=[
+                AssetEnvVarV1(key=key, is_set=bool(value), sensitive=_is_sensitive_env(key))
+                for key, value in list((env_file or {}).items())[:64]
+            ],
+            env_file_present=env_file is not None,
             launch_configured=record.command is not None,
             launch_approved=launch_approved,
             launch_command=list(record.command or ()),

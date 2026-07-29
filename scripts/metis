@@ -4,7 +4,13 @@
 # and the UI together, then open the browser once the UI answers.
 #
 # Run it from a terminal, or double-click Metis.app (which just calls this).
+#
+# With --serve it stays headless: no browser is opened. That is the mode the
+# LaunchAgent uses, since the UI window is launched by you, not by the service.
 set -uo pipefail
+
+OPEN_UI=1
+[[ ${1:-} == "--serve" ]] && OPEN_UI=0
 
 ROOT="${0:A:h:h}"
 WEB_PORT=3000
@@ -45,15 +51,38 @@ free_port() {
 needs_build() {
 	local web="$ROOT/apps/web" stamp="$ROOT/apps/web/.next/BUILD_ID"
 	[[ -f $stamp ]] || return 0
-	local path changed
-	for path in app components lib hooks public \
+	# NB: the loop variable must not be named `path` — in zsh that is the
+	# special array tied to $PATH, and assigning it breaks command lookup
+	# (find silently vanishes and every launch skips the rebuild).
+	local entry changed
+	for entry in app components lib hooks public \
 		package.json next.config.mjs tsconfig.json; do
-		[[ -e "$web/$path" ]] || continue
-		changed=$(find "$web/$path" -newer "$stamp" -print -quit 2>/dev/null)
+		[[ -e "$web/$entry" ]] || continue
+		changed=$(find "$web/$entry" -newer "$stamp" -print -quit 2>/dev/null)
 		[[ -n $changed ]] && return 0
 	done
 	return 1
 }
+
+# Only one launch may hold the "kill the ports, then rebuild" section at a time.
+# Two overlapping launches let `next build` rewrite .next underneath a server
+# that is already serving it, and the running server then 500s on chunk names
+# only the older build had — the UI hangs on the loading fallback forever.
+LOCK="$LOG_DIR/metis-launch.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+	owner=$(cat "$LOCK/pid" 2>/dev/null)
+	if [[ -n $owner ]] && kill -0 "$owner" 2>/dev/null; then
+		say "another launch (pid $owner) is already starting Metis — leaving it alone."
+		notify "Metis is already starting up."
+		exit 0
+	fi
+	say "clearing a stale lock from pid ${owner:-unknown}"
+	rm -rf "$LOCK"
+	mkdir "$LOCK" 2>/dev/null || { say "could not take the launch lock."; exit 1; }
+fi
+print -r -- "$$" >"$LOCK/pid"
+# The lock is released before exec, so relaunching to pick up changes still works.
+trap 'rm -rf "$LOCK"' EXIT INT TERM
 
 free_port "$WEB_PORT"
 free_port "$API_PORT"
@@ -70,17 +99,35 @@ else
 	say "web build is up to date, skipping rebuild."
 fi
 
-# Open the browser as soon as the UI is actually serving.
-{
-	for _ in {1..180}; do
-		if curl -sf -o /dev/null --max-time 2 "$WEB_URL"; then
-			open "$WEB_URL"
-			exit 0
-		fi
-		sleep 1
-	done
-	notify "Metis did not come up in time. See $LOG"
-} &
+# Critical section is over: the build is settled and nothing else may rewrite
+# .next before we serve it. Drop the lock (and the trap, so the background
+# opener below can never delete a later launch's lock) and hand off.
+trap - EXIT INT TERM
+rm -rf "$LOCK"
+
+# Open the UI as soon as it is actually serving — the standalone Safari dock
+# app if one is installed, so you get the chrome-free window rather than a tab.
+if (( OPEN_UI )); then
+	{
+		for _ in {1..180}; do
+			if curl -sf -o /dev/null --max-time 2 "$WEB_URL"; then
+				local_app=""
+				for candidate in "$HOME/Applications/Metis.app" \
+					"$HOME/Applications/Waqil.app" "$HOME/Applications/Wakīl.app"; do
+					[[ -d $candidate && ! -e "$candidate/Contents/MacOS/Metis" ]] && { local_app=$candidate; break; }
+				done
+				if [[ -n $local_app ]]; then
+					open -a "$local_app"
+				else
+					open "$WEB_URL"
+				fi
+				exit 0
+			fi
+			sleep 1
+		done
+		notify "Metis did not come up in time. See $LOG"
+	} &
+fi
 
 say "starting API + web..."
 exec "$ROOT/.venv/bin/python" "$ROOT/scripts/run_local.py"

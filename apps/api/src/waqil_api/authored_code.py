@@ -304,6 +304,8 @@ async def execute_authored(
     timeout_seconds: int = 10,
     memory_mb: int = 512,
     max_frame_bytes: int = 1_000_000,
+    model_call_timeout_seconds: int = 0,
+    model_call_budget: int = 0,
 ) -> dict[str, Any]:
     """Run AST-gated ``run(inputs, model)`` in a restricted host subprocess.
 
@@ -335,19 +337,26 @@ async def execute_authored(
         encoding="utf-8",
     )
 
+    # Time spent blocked on the host's own model call is not untrusted compute, so
+    # it gets its own allowance instead of eating the code budget. RLIMIT_CPU still
+    # pins actual CPU burn to `timeout_seconds`, which is the runaway-code guard;
+    # a tool that legitimately calls a model just needs wall-clock to wait.
+    model_wait = max(0, int(model_call_timeout_seconds)) * max(0, int(model_call_budget))
+    wall_clock_budget = timeout_seconds + model_wait
+
     def bridge(params: dict[str, Any]) -> str:
         # Runs on the driver thread; hop to the loop for the async broker call.
         if on_model_request is None:
             raise RuntimeError("this tool has no model access")
         future = asyncio.run_coroutine_threadsafe(on_model_request(params), loop)
-        return future.result(timeout=timeout_seconds)
+        return future.result(timeout=model_call_timeout_seconds or timeout_seconds)
 
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(
-                _drive_sync, bootstrap, workdir, bridge, timeout_seconds, max_frame_bytes
+                _drive_sync, bootstrap, workdir, bridge, wall_clock_budget, max_frame_bytes
             ),
-            timeout=timeout_seconds + 12,
+            timeout=wall_clock_budget + 12,
         )
     except asyncio.TimeoutError as exc:
         raise AuthoredExecutionError("authored tool exceeded its time budget") from exc
@@ -411,9 +420,18 @@ def _drive_sync(
             if kind == "model_request":
                 response: dict[str, Any] = {"frame": "model_response"}
                 try:
-                    response["content"] = bridge(frame.get("params", {}))
+                    content = bridge(frame.get("params", {}))
+                    # A bridge that answers with anything but text is a host bug,
+                    # not tool output — never hand it to the tool as a reply.
+                    if not isinstance(content, str):
+                        raise TypeError("model bridge returned a non-text reply")
+                    response["content"] = content
                 except Exception as error:  # noqa: BLE001 — broker/budget → typed error frame
-                    response["error"] = str(error)[:200]
+                    # `str(TimeoutError())` is empty, and an empty message reads
+                    # as "no error" on the far side, so a timed-out model call
+                    # silently became an empty successful reply. Always send a
+                    # non-empty reason: an error must never look like success.
+                    response["error"] = str(error)[:200] or type(error).__name__
                 try:
                     proc.stdin.write((json.dumps(response) + "\n").encode("utf-8"))
                     proc.stdin.flush()

@@ -4,21 +4,29 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ArtifactViewer } from "@/components/artifact-viewer";
+import { CustomerDashboardSnippet } from "@/components/customer-dashboard-snippet";
 import { MarkdownContent } from "@/components/markdown-content";
 import { RunTimeline } from "@/components/run-timeline";
-import { MetisCompanion, MetisMark } from "@/components/metis-mark";
+import { MetisCompanion, MetisMark, MetisWordmark } from "@/components/metis-mark";
 import {
   ApiError,
   cancelRun,
   createConversation,
+  createCorpusSource,
   decideRun,
   getConversation,
   getConversationProject,
   getModelPreference,
+  getLocalModelSession,
+  listCustomers,
+  listCorpusSources,
   listProjectWorkspaces,
   listRecoverableRuns,
   openProjectWorkspace,
+  reindexCorpusSource,
+  scanAssets,
   sendMessage,
+  setCorpusConsent,
   setModelPreference,
   submitFeedback,
   uploadFile,
@@ -26,14 +34,32 @@ import {
 import { rememberConversation } from "@/lib/recent-conversations";
 import { mergeAssistantRunEvent, messageBelongsToRun } from "@/lib/run-history";
 import { attachmentBadge, CHAT_ATTACHMENT_ACCEPT } from "@/lib/attachments";
-import type { ArtifactRef, AttachmentRef, ChatMessage, KnowledgeScope, ModelPreference, ProjectMode, ProjectWorkspace, RecoverableRun, RunEventV1 } from "@/lib/types";
+import {
+  ATTACHMENT_TEXT_BUDGET_BYTES,
+  attachableFiles,
+  droppedDirectories,
+  findProjectForFolder,
+  findSourceForFolder,
+  formatByteSize,
+  guessRootPath,
+  looseFiles,
+  MAX_ATTACHABLE_FILES,
+  scanFolderEntry,
+  suggestCorpusKind,
+  totalBytes,
+  type FolderScan,
+} from "@/lib/folder-drop";
+import type { ArtifactRef, AttachmentRef, ChatMessage, CorpusSource, CustomerAccount, KnowledgeScope, LocalModelSession, ModelPreference, ProjectMode, ProjectWorkspace, RecoverableRun, RunEventV1 } from "@/lib/types";
 import { useRunEvents } from "@/hooks/use-run-events";
 
-const suggestions = [
-  { label: "Map a codebase", prompt: "Review the attached README and create a reference architecture with Python diagrams." },
-  { label: "Build a reusable tool", prompt: "Turn this repeatable workflow into a tested local tool and show me the proposal before activation." },
-  { label: "Explain a repository", prompt: "Read the attached project files and explain the architecture, risks, and a sensible next step." },
-];
+function UserAvatar() {
+  return (
+    <span className="userAvatarGlyph" aria-hidden="true">
+      <i className="userAvatarHead" />
+      <i className="userAvatarBody" />
+    </span>
+  );
+}
 
 // Sent verbatim through the composer's send path when the user asks Metis to
 // distill a finished answer into a governed, reusable tool definition.
@@ -112,6 +138,7 @@ export function ChatWorkspace() {
   const [correction, setCorrection] = useState("");
   const [stageLabel, setStageLabel] = useState<string | null>(null);
   const [modelPreference, setModelPreferenceState] = useState<ModelPreference | null>(null);
+  const [localModelSession, setLocalModelSession] = useState<LocalModelSession | null>(null);
   const [providerSaving, setProviderSaving] = useState(false);
   const [projects, setProjects] = useState<ProjectWorkspace[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -119,6 +146,18 @@ export function ChatWorkspace() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [projectOpening, setProjectOpening] = useState(false);
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>("auto");
+  const [customers, setCustomers] = useState<CustomerAccount[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  // A dropped folder is routed, never uploaded: the scan below is local, and
+  // only the option the user picks does anything.
+  const [folderDrop, setFolderDrop] = useState<{ scan: FolderScan; ignored: string[] } | null>(null);
+  const [folderScanning, setFolderScanning] = useState(false);
+  const [folderBusy, setFolderBusy] = useState<"project" | "knowledge" | "attach" | "rescan" | null>(null);
+  const [folderPath, setFolderPath] = useState("");
+  const [folderKind, setFolderKind] = useState<CorpusSource["kind"]>("code");
+  const [folderConsent, setFolderConsent] = useState(false);
+  const [folderNotice, setFolderNotice] = useState<string | null>(null);
+  const [corpusSources, setCorpusSources] = useState<CorpusSource[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -155,8 +194,13 @@ export function ChatWorkspace() {
     setSending(false);
     setUploading(false);
     setDragActive(false);
+    setFolderDrop(null);
+    setFolderScanning(false);
+    setFolderBusy(null);
+    setFolderNotice(null);
     setProjectPickerOpen(false);
     setProjectOpening(false);
+    setSelectedCustomerId(null);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (textareaRef.current) textareaRef.current.style.height = "";
@@ -165,6 +209,30 @@ export function ChatWorkspace() {
   useEffect(() => {
     const stored = window.localStorage.getItem("metis.knowledgeScope");
     if (stored === "auto" || stored === "notion") setKnowledgeScope(stored);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void getLocalModelSession()
+      .then((value) => mounted && setLocalModelSession(value))
+      .catch(() => undefined);
+    const listener = (event: Event) => {
+      const value = (event as CustomEvent<LocalModelSession>).detail;
+      if (value) setLocalModelSession(value);
+    };
+    window.addEventListener("metis:model-session", listener);
+    return () => {
+      mounted = false;
+      window.removeEventListener("metis:model-session", listener);
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void listCustomers()
+      .then((items) => mounted && setCustomers(items))
+      .catch(() => undefined);
+    return () => { mounted = false; };
   }, []);
 
   function chooseKnowledgeScope(scope: KnowledgeScope) {
@@ -202,17 +270,19 @@ export function ChatWorkspace() {
     };
   }, []);
 
-  async function chooseProject(projectId: string | null) {
-    if (projectOpening || runActive) return;
+  /** Resolves true only when a project actually opened, so callers that own
+   *  surrounding UI (the folder-drop sheet) know whether to close it. */
+  async function chooseProject(projectId: string | null): Promise<boolean> {
+    if (projectOpening || runActive) return false;
     if (!projectId) {
       setSelectedProjectId(null);
       setProjectPickerOpen(false);
-      return;
+      return false;
     }
     const target = projects.find((project) => project.id === projectId);
     if (!modelPreference?.oci_available && (!target?.initialized || projectMode === "grok_continuous")) {
       setError("Project mode needs Grok through OCI for the initial repository map. Configure OCI in Settings first.");
-      return;
+      return false;
     }
     setProjectOpening(true);
     setError(null);
@@ -221,8 +291,10 @@ export function ChatWorkspace() {
       setProjects((current) => current.map((item) => item.id === opened.id ? opened : item));
       setSelectedProjectId(opened.id);
       setProjectPickerOpen(false);
+      return true;
     } catch (openError) {
       setError(openError instanceof Error ? openError.message : "Metis could not open that project.");
+      return false;
     } finally {
       setProjectOpening(false);
     }
@@ -415,6 +487,41 @@ export function ChatWorkspace() {
   const hasMessages = messages.length > 0 || loadingConversation;
   const runActive = Boolean(activeRunId) && !["closed", "error"].includes(connection);
 
+  const droppedName = folderDrop?.scan.name ?? "";
+  const droppedFiles = folderDrop?.scan.files;
+  const matchedProject = useMemo(
+    () => droppedName ? findProjectForFolder(droppedName, projects) : undefined,
+    [droppedName, projects],
+  );
+  const matchedSource = useMemo(
+    () => droppedName ? findSourceForFolder(droppedName, corpusSources) : undefined,
+    [corpusSources, droppedName],
+  );
+  const droppedAttachable = useMemo(
+    () => droppedFiles ? attachableFiles(droppedFiles, CHAT_ATTACHMENT_ACCEPT) : [],
+    [droppedFiles],
+  );
+  const droppedAttachableBytes = totalBytes(droppedAttachable);
+  // The composer uploads one request per file and the host caps the aggregate
+  // text, so a folder past either bound is pointed at indexing instead.
+  const attachBlockedReason = !droppedAttachable.length
+    ? "Nothing in this folder is a format the composer can attach."
+    : droppedAttachable.length > MAX_ATTACHABLE_FILES
+      ? `${droppedAttachable.length} attachable files is past the ${MAX_ATTACHABLE_FILES} this composer uploads at once — index it instead.`
+      : droppedAttachableBytes > ATTACHMENT_TEXT_BUDGET_BYTES
+        ? `${formatByteSize(droppedAttachableBytes)} is past the ${formatByteSize(ATTACHMENT_TEXT_BUDGET_BYTES)} context budget — index it instead.`
+        : null;
+  // Indexing sends the folder's text to the cloud embedder, so an unconsented
+  // source has no runnable action until the box is ticked.
+  const knowledgeLabel = folderBusy === "knowledge"
+    ? "Working…"
+    : matchedSource
+      ? matchedSource.consent ? "Reindex source" : folderConsent ? "Grant consent & index" : "Consent required"
+      : folderConsent ? "Add & index" : "Add source";
+  const knowledgeDisabled = Boolean(folderBusy)
+    || (!matchedSource && !folderPath.trim())
+    || (Boolean(matchedSource) && !matchedSource?.consent && !folderConsent);
+
   async function addFiles(files: FileList | File[]) {
     const items = Array.from(files);
     if (!items.length) return;
@@ -440,6 +547,113 @@ export function ChatWorkspace() {
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     }
+  }
+
+  function closeFolderDrop() {
+    setFolderDrop(null);
+    setFolderNotice(null);
+    setFolderBusy(null);
+  }
+
+  /**
+   * A drop tells us a folder's name and contents but never its absolute path,
+   * so the sheet resolves what it can against the catalogs already loaded and
+   * asks only for what is genuinely unknowable in a browser.
+   */
+  async function routeFolderDrop(directories: FileSystemDirectoryEntry[]) {
+    const [dropped, ...ignored] = directories;
+    if (!dropped) return;
+    const generation = workspaceGenerationRef.current;
+    setFolderScanning(true);
+    setFolderNotice(null);
+    setError(null);
+    setProjectPickerOpen(false);
+    try {
+      const [scan, sources] = await Promise.all([
+        scanFolderEntry(dropped),
+        // A missing corpus only costs the path guess; it must not block routing.
+        listCorpusSources().catch(() => [] as CorpusSource[]),
+      ]);
+      if (generation !== workspaceGenerationRef.current) return;
+      const existing = findSourceForFolder(scan.name, sources);
+      setCorpusSources(sources);
+      setFolderPath(
+        existing?.root_path
+        ?? guessRootPath(scan.name, sources.map((item) => item.root_path))
+        ?? "",
+      );
+      setFolderKind(existing?.kind ?? suggestCorpusKind(scan.files));
+      setFolderConsent(false);
+      setFolderDrop({ scan, ignored: ignored.map((entry) => entry.name) });
+    } catch (scanError) {
+      if (generation !== workspaceGenerationRef.current) return;
+      setError(scanError instanceof Error ? scanError.message : "That folder could not be read.");
+    } finally {
+      if (generation === workspaceGenerationRef.current) setFolderScanning(false);
+    }
+  }
+
+  async function openDroppedProject() {
+    if (!matchedProject) return;
+    setFolderBusy("project");
+    const opened = await chooseProject(matchedProject.id);
+    setFolderBusy(null);
+    if (opened) closeFolderDrop();
+  }
+
+  async function rescanForDroppedProject() {
+    setFolderBusy("rescan");
+    setFolderNotice(null);
+    try {
+      await scanAssets();
+      const found = await listProjectWorkspaces();
+      setProjects(found);
+      if (!findProjectForFolder(droppedName, found)) {
+        setFolderNotice(`Still no project named “${droppedName}”. Projects are only discovered under the folders configured in Settings.`);
+      }
+    } catch (rescanError) {
+      setFolderNotice(rescanError instanceof Error ? rescanError.message : "The project catalog could not be refreshed.");
+    } finally {
+      setFolderBusy(null);
+    }
+  }
+
+  async function indexDroppedFolder() {
+    if (!folderDrop) return;
+    const path = folderPath.trim();
+    if (!matchedSource && !path) {
+      setFolderNotice("Metis needs the folder's full path on disk before it can index it.");
+      return;
+    }
+    setFolderBusy("knowledge");
+    setFolderNotice(null);
+    try {
+      const source = matchedSource ?? await createCorpusSource(path, folderDrop.scan.name, folderKind);
+      const decided = source.consent || !folderConsent
+        ? source
+        : await setCorpusConsent(source.id, true, "granted from a composer folder drop");
+      setCorpusSources((current) => current.some((item) => item.id === decided.id)
+        ? current.map((item) => item.id === decided.id ? decided : item)
+        : [...current, decided]);
+      if (!decided.consent) {
+        setFolderNotice("Added as a source. It stays unindexed until you allow cloud embedding for it.");
+        return;
+      }
+      const result = await reindexCorpusSource(decided.id);
+      setFolderNotice(`Indexed ${result.files_indexed} file(s) into ${result.chunks} chunk(s). Future answers can cite this folder.`);
+    } catch (indexError) {
+      setFolderNotice(indexError instanceof Error ? indexError.message : "That folder could not be indexed.");
+    } finally {
+      setFolderBusy(null);
+    }
+  }
+
+  async function attachDroppedFiles() {
+    if (!droppedAttachable.length || attachBlockedReason) return;
+    setFolderBusy("attach");
+    await addFiles(droppedAttachable.map((item) => item.file));
+    setFolderBusy(null);
+    closeFolderDrop();
   }
 
   async function submit(event?: FormEvent, overrideContent?: string) {
@@ -489,6 +703,7 @@ export function ChatWorkspace() {
         userMessage.attachments ?? [],
         selectedProjectId ? { id: selectedProjectId, mode: projectMode } : null,
         knowledgeScope,
+        selectedCustomerId,
       );
       if (generation !== workspaceGenerationRef.current) return;
       if (!run.run_id) throw new Error("The API did not return a run ID.");
@@ -627,6 +842,41 @@ export function ChatWorkspace() {
   }
 
   const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === "assistant"), [messages]);
+  const latestUser = useMemo(() => [...messages].reverse().find((message) => message.role === "user"), [messages]);
+  const latestRunEvent = useMemo(
+    () => events.reduce<RunEventV1 | null>(
+      (latest, event) => !latest || event.sequence > latest.sequence ? event : latest,
+      null,
+    ),
+    [events],
+  );
+  const compactActivity = useMemo(() => {
+    const type = latestRunEvent?.type ?? "";
+    const countLabel = `${events.length} ${events.length === 1 ? "step" : "steps"}`;
+    if (type.includes("approval") || type.includes("interrupt")) {
+      return { label: "Needs approval", detail: countLabel, tone: "attention", live: false };
+    }
+    if (type.includes("fail") || type.includes("error")) {
+      return { label: "Run interrupted", detail: countLabel, tone: "danger", live: false };
+    }
+    if (type.includes("cancel")) {
+      return { label: "Run stopped", detail: countLabel, tone: "neutral", live: false };
+    }
+    if (runActive) {
+      return {
+        label: stageLabel ?? "Working on your request",
+        detail: events.length ? `${countLabel} · live` : "Starting securely",
+        tone: "live",
+        live: true,
+      };
+    }
+    return {
+      label: type.includes("complete") ? "Completed" : "Activity",
+      detail: countLabel,
+      tone: "success",
+      live: false,
+    };
+  }, [events.length, latestRunEvent, runActive, stageLabel]);
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
@@ -634,7 +884,7 @@ export function ChatWorkspace() {
 
   return (
     <div
-      className={`chatWorkspace ${timelineOpen ? "timelineVisible" : ""} ${timelineResizing ? "timelineResizing" : ""}`}
+      className={`chatWorkspace ${!hasMessages ? "isEmpty" : ""} ${timelineOpen ? "timelineVisible" : ""} ${timelineResizing ? "timelineResizing" : ""}`}
       style={{ "--activity-width": `${timelineWidth}px` } as CSSProperties}
     >
       <section className="conversationPane">
@@ -644,6 +894,21 @@ export function ChatWorkspace() {
             <strong title={conversationTitle}>{conversationTitle}</strong>
           </div>
           <div className="chatHeaderActions">
+            <label className={`customerScopeSelect ${selectedCustomerId ? "selected" : ""}`}>
+              <span aria-hidden="true">◎</span>
+              <select
+                value={selectedCustomerId ?? ""}
+                onChange={(event) => setSelectedCustomerId(event.target.value || null)}
+                disabled={runActive || Boolean(selectedProject)}
+                aria-label="Customer account scope"
+                title="Keep this conversation strictly scoped to one customer account"
+              >
+                <option value="">No customer</option>
+                {customers.filter((item) => item.status === "active").map((customer) => (
+                  <option key={customer.id} value={customer.id}>{customer.name}</option>
+                ))}
+              </select>
+            </label>
             <button
               className={`projectQuickSwitch ${selectedProject ? "selected" : ""}`}
               type="button"
@@ -679,9 +944,9 @@ export function ChatWorkspace() {
             <button className="headerNewChat" type="button" onClick={startFreshConversation} disabled={runActive} title={runActive ? "Stop the active run first" : "Start a new conversation"}>
               <span aria-hidden="true">＋</span><span>New chat</span>
             </button>
-            <button className={`timelineToggle ${timelineOpen ? "active" : ""}`} type="button" onClick={() => setTimelineOpen((value) => !value)} aria-pressed={timelineOpen}>
+            <button className={`timelineToggle ${runActive ? "isLive" : ""} ${timelineOpen ? "active" : ""}`} type="button" onClick={() => setTimelineOpen((value) => !value)} aria-pressed={timelineOpen}>
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 11.8 6.2 8.6l2.2 2.1L13 5.8M9.7 5.8H13v3.3" /></svg>
-              Activity {events.length ? <b>{events.length}</b> : null}
+              <span>{runActive ? "Live activity" : "Activity"}</span>{events.length ? <b>{events.length}</b> : null}
             </button>
           </div>
         </header>
@@ -733,6 +998,15 @@ export function ChatWorkspace() {
           </div>
         ) : null}
 
+        {selectedCustomerId && !selectedProject ? (
+          <div className="customerContextStrip">
+            <span><i />Customer scope</span>
+            <strong>{customers.find((item) => item.id === selectedCustomerId)?.name}</strong>
+            <small>Only this account&apos;s reviewed facts are added to the model context.</small>
+            <button type="button" onClick={() => setSelectedCustomerId(null)}>Clear</button>
+          </div>
+        ) : null}
+
         {recoverableRuns.length ? (
           <section className="recoveryBanner" aria-label="Runs awaiting approval">
             <div className="recoverySummary">
@@ -763,27 +1037,138 @@ export function ChatWorkspace() {
           </section>
         ) : null}
 
+        {folderScanning || folderDrop ? (
+          <section className="folderRoutePopover" aria-label="Route this folder">
+            <div className="projectWorkspaceIntro">
+              <span className="eyebrow">Folder dropped</span>
+              <strong>{folderScanning ? "Reading the folder…" : folderDrop?.scan.name}</strong>
+              {folderScanning ? (
+                <p>Counting locally what Metis could index or attach. Build and vendor directories are passed over.</p>
+              ) : folderDrop ? (
+                <p>
+                  {`${folderDrop.scan.files.length}${folderDrop.scan.truncated ? "+" : ""} file${folderDrop.scan.files.length === 1 ? "" : "s"}`}
+                  {` · ${formatByteSize(totalBytes(folderDrop.scan.files))}`}
+                  {folderDrop.scan.skippedDirectories ? ` · ${folderDrop.scan.skippedDirectories} build folder${folderDrop.scan.skippedDirectories === 1 ? "" : "s"} passed over` : ""}
+                  {folderDrop.ignored.length ? ` · one folder at a time, so ${folderDrop.ignored.join(", ")} was ignored` : ""}
+                </p>
+              ) : null}
+            </div>
+
+            {folderDrop ? (
+              <div className="folderRouteList">
+                <article className="folderRoute">
+                  <header>
+                    <i aria-hidden="true">◇</i>
+                    <div><strong>Open as project</strong><small>Metis reads, searches, and proposes exact edits under approval. Nothing leaves this machine.</small></div>
+                  </header>
+                  {matchedProject ? (
+                    <button type="button" className="primaryButton" disabled={Boolean(folderBusy) || projectOpening || runActive} onClick={() => void openDroppedProject()}>
+                      {folderBusy === "project" ? "Opening…" : `Open ${matchedProject.name}`}
+                    </button>
+                  ) : (
+                    <div className="folderRouteAside">
+                      <p>Not in the projects catalog. Projects are discovered by scanning the folders configured in Settings.</p>
+                      <button type="button" className="secondaryButton" disabled={Boolean(folderBusy)} onClick={() => void rescanForDroppedProject()}>
+                        {folderBusy === "rescan" ? "Rescanning…" : "Rescan projects"}
+                      </button>
+                    </div>
+                  )}
+                </article>
+
+                <article className="folderRoute">
+                  <header>
+                    <i aria-hidden="true">⌗</i>
+                    <div><strong>Index as knowledge</strong><small>Chunked and embedded once, then cited in this conversation and every one after it.</small></div>
+                  </header>
+                  <div className="folderRouteForm">
+                    {matchedSource ? (
+                      <p className="folderRoutePath mono">{matchedSource.root_path}</p>
+                    ) : (
+                      <>
+                        {/* A browser never reveals a dropped folder's real path; the
+                            guess comes from where existing sources already live. */}
+                        <input
+                          className="knowledgeInput"
+                          value={folderPath}
+                          onChange={(event) => setFolderPath(event.target.value)}
+                          placeholder="/absolute/path/to/the/folder"
+                          aria-label="Folder path on disk"
+                          spellCheck={false}
+                          disabled={Boolean(folderBusy)}
+                        />
+                        <select
+                          className="knowledgeInput"
+                          value={folderKind}
+                          onChange={(event) => setFolderKind(event.target.value as CorpusSource["kind"])}
+                          aria-label="Source kind"
+                          disabled={Boolean(folderBusy)}
+                        >
+                          {["code", "docs", "notes", "mixed"].map((item) => <option key={item} value={item}>{item}</option>)}
+                        </select>
+                      </>
+                    )}
+                    {matchedSource?.consent ? null : (
+                      <label className="folderRouteConsent">
+                        <input type="checkbox" checked={folderConsent} onChange={(event) => setFolderConsent(event.target.checked)} disabled={Boolean(folderBusy)} />
+                        <span>Allow cloud embedding for this folder. Its text is sent to Cohere to build the index; the vectors stay in local SQLite.</span>
+                      </label>
+                    )}
+                    <button type="button" className="primaryButton" disabled={knowledgeDisabled} onClick={() => void indexDroppedFolder()}>
+                      {knowledgeLabel}
+                    </button>
+                    {matchedSource ? <small className="folderRouteHint">Already a source · {matchedSource.file_count} file(s) · {matchedSource.chunk_count} chunk(s)</small> : null}
+                  </div>
+                </article>
+
+                <article className="folderRoute">
+                  <header>
+                    <i aria-hidden="true">＋</i>
+                    <div><strong>Attach the files</strong><small>Text goes into this one message and counts against the {formatByteSize(ATTACHMENT_TEXT_BUDGET_BYTES)} context budget.</small></div>
+                  </header>
+                  {attachBlockedReason ? (
+                    <div className="folderRouteAside"><p>{attachBlockedReason}</p></div>
+                  ) : (
+                    <button type="button" className="secondaryButton" disabled={Boolean(folderBusy) || uploading || runActive} onClick={() => void attachDroppedFiles()}>
+                      {folderBusy === "attach" ? "Uploading…" : `Attach ${droppedAttachable.length} file${droppedAttachable.length === 1 ? "" : "s"} · ${formatByteSize(droppedAttachableBytes)}`}
+                    </button>
+                  )}
+                </article>
+              </div>
+            ) : null}
+
+            <footer className="folderRouteFooter">
+              {folderNotice
+                ? <p role="status">{folderNotice}</p>
+                : <span>Reading a folder is local. Only the route you choose acts on it.</span>}
+              <button type="button" className="textButton" onClick={closeFolderDrop} disabled={Boolean(folderBusy)}>Dismiss</button>
+            </footer>
+          </section>
+        ) : null}
+
         <div
           className={`messageViewport ${dragActive ? "dragActive" : ""}`}
           onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
           onDragOver={(event) => event.preventDefault()}
           onDragLeave={(event) => { if (event.currentTarget === event.target) setDragActive(false); }}
-          onDrop={(event) => { event.preventDefault(); setDragActive(false); void addFiles(event.dataTransfer.files); }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragActive(false);
+            // DataTransfer entries are neutered once this handler returns, so
+            // the directories have to be claimed before anything awaits.
+            const directories = droppedDirectories(event.dataTransfer.items);
+            const files = looseFiles(event.dataTransfer.files, directories);
+            if (files.length) void addFiles(files);
+            if (directories.length) void routeFolderDrop(directories);
+          }}
         >
-          {dragActive ? <div className="dropOverlay"><span>＋</span><strong>Drop files to add context</strong><small>Images, documents, and source files · no archives</small></div> : null}
+          {dragActive ? <div className="dropOverlay"><span>＋</span><strong>Drop files or a folder</strong><small>Files become context · a folder can be indexed, opened as a project, or attached</small></div> : null}
           {!hasMessages ? (
             <div className="welcomeState">
               <MetisCompanion />
               <span className="eyebrow">Your private thinking partner</span>
-              <h1>What are we building?</h1>
+              <h1><MetisWordmark className="heroWordmark" /></h1>
               <p>Ask Metis to understand a project, create an artifact, or turn a workflow into a tested local capability.</p>
-              <div className="suggestionGrid">
-                {suggestions.map((suggestion, index) => (
-                  <button key={suggestion.label} type="button" onClick={() => { setDraft(suggestion.prompt); textareaRef.current?.focus(); }}>
-                    <span>0{index + 1}</span><strong>{suggestion.label}</strong><small>{suggestion.prompt}</small><i>↗</i>
-                  </button>
-                ))}
-              </div>
+              <CustomerDashboardSnippet />
               <div className="trustLine"><span><i />On-device models</span><span><i />Sandboxed tools</span><span><i />Approved memory</span></div>
             </div>
           ) : (
@@ -791,8 +1176,8 @@ export function ChatWorkspace() {
               {loadingConversation ? <div className="messageLoading"><span /><span /><span /></div> : null}
               {messages.map((message, messageIndex) => (
                 <article className={`chatMessage message-${message.role} ${message.failed ? "message-failed" : ""}`} key={message.id}>
-                  <div className={`messageAvatar ${message.role === "assistant" ? "metisAvatar" : ""}`}>
-                    {message.role === "user" ? "You" : <MetisMark animated={message.streaming} />}
+                  <div className={`messageAvatar ${message.role === "assistant" ? "metisAvatar" : "userAvatar"}`}>
+                    {message.role === "user" ? <UserAvatar /> : <MetisMark animated={message.streaming} />}
                   </div>
                   <div className="messageBody">
                     <div className="messageAuthor"><strong>{message.role === "user" ? "You" : "Metis"}</strong>{message.streaming ? <span className="thinkingPulse"><i /><i /><i /></span> : null}</div>
@@ -838,6 +1223,19 @@ export function ChatWorkspace() {
                       </section>
                     ) : null}
                   </div>
+                  {message.role === "user" && message.id === latestUser?.id && activeRunId ? (
+                    <button
+                      className={`compactRunActivity tone-${compactActivity.tone} ${compactActivity.live ? "isLive" : ""}`}
+                      type="button"
+                      onClick={() => setTimelineOpen((value) => !value)}
+                      aria-expanded={timelineOpen}
+                      aria-label={`${compactActivity.label}. ${compactActivity.detail}. ${timelineOpen ? "Close" : "Open"} full activity.`}
+                    >
+                      <span className="compactActivityCore" aria-hidden="true"><i /><i /><i /><i /></span>
+                      <span className="compactActivityCopy"><strong key={compactActivity.label}>{compactActivity.label}</strong><small>{compactActivity.detail}</small></span>
+                      <span className="compactActivityChevron" aria-hidden="true">⌄</span>
+                    </button>
+                  ) : null}
                 </article>
               ))}
               <div ref={messageEndRef} />
@@ -921,7 +1319,22 @@ export function ChatWorkspace() {
           title="Drag to resize · Double-click to reset"
         ><span /></div>
         <button className="runDrawerClose" type="button" aria-label="Close activity" onClick={() => setTimelineOpen(false)}>×</button>
-        <RunTimeline events={events} connection={connection} streamError={streamError} onDecision={handleDecision} decidedApprovals={decidedApprovals} decisionBusy={decisionBusy} />
+        <RunTimeline
+          events={events}
+          connection={connection}
+          streamError={streamError}
+          onDecision={handleDecision}
+          decidedApprovals={decidedApprovals}
+          decisionBusy={decisionBusy}
+          approveLabel={
+            modelPreference?.provider !== "oci"
+            && localModelSession
+            && localModelSession.state === "off"
+            && localModelSession.selected_model
+              ? `Approve & relaunch ${localModelSession.selected_model}`
+              : "Approve once"
+          }
+        />
       </aside>
     </div>
   );

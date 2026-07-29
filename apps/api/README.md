@@ -17,6 +17,8 @@ Useful environment variables:
 - `WAQIL_REPO_ROOT`: repository root used to find `skills/`
 - `WAQIL_MODEL_BACKEND`: `ollama`, `deterministic`, or `auto`
 - `WAQIL_OLLAMA_BASE_URL`: loopback Ollama URL
+- `WAQIL_LOCAL_MODEL_IDLE_SECONDS`: default explicit session idle timeout
+  (default: 300 seconds; the UI may override it per launch)
 - `WAQIL_ALLOW_OCI_RESPONSES`: explicitly enables the optional Grok Responses provider
 - `WAQIL_OCI_RESPONSES_PROJECT_ID`: OCI Enterprise AI project OCID used by Responses
 - `WAQIL_OCI_RESPONSES_BASE_URL`: regional OpenAI-compatible `/openai/v1` base URL

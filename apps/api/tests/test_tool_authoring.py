@@ -12,6 +12,7 @@ import pytest
 
 from waqil_api import capability_profiles, tool_authoring
 from waqil_api.contracts import ToolDefinitionDraftV1
+from waqil_api.control_plane import ControlPlane
 from waqil_api.tool_authoring import ToolAuthoringError
 from waqil_api.tool_registry import REFERENCE_ARCHITECTURE_SLUG, definition_hash
 
@@ -76,6 +77,50 @@ def test_unmatched_request_falls_back_to_code_authoring() -> None:
     assert definition.capability_profile.network == "none"
     assert definition.author_system_prompt  # the pinned authoring prompt is carried
     assert definition.capability_profile.model_access.enabled is True
+
+
+def test_code_authoring_guards_nullable_regex_captures() -> None:
+    draft = ToolDefinitionDraftV1(
+        name="Opportunity Cost Calculator",
+        description="multiply employees, salary, and hours",
+    )
+    definition = tool_authoring.harden_draft(
+        draft, slug="opportunity-cost-calculator", max_broker_calls=4
+    )
+    assert "Regex capture groups are nullable" in definition.author_system_prompt
+    assert "(?:employee|staff|worker)" in definition.author_system_prompt
+    fixture = next(
+        item
+        for item in tool_authoring.get_archetype("code-authoring").eval_fixtures
+        if item.name == "handles-parameter-words-without-values"
+    )
+    assert fixture.expected_properties == [
+        "output_matches_contract",
+        "no_runtime_exception",
+    ]
+
+
+def test_runtime_exception_output_fails_authored_tool_evaluation() -> None:
+    draft = ToolDefinitionDraftV1(
+        name="Opportunity Cost Calculator",
+        description="multiply employees, salary, and hours",
+    )
+    definition = tool_authoring.harden_draft(
+        draft, slug="opportunity-cost-calculator", max_broker_calls=4
+    )
+    plane = object.__new__(ControlPlane)
+    crashed = plane._check_properties(
+        definition,
+        {"error": "'NoneType' object has no attribute 'replace'"},
+        ["no_runtime_exception"],
+    )
+    missing_input = plane._check_properties(
+        definition,
+        {"error": "Provide the number of employees, average salary, and total hours."},
+        ["no_runtime_exception"],
+    )
+    assert crashed["no_runtime_exception"] is False
+    assert missing_input["no_runtime_exception"] is True
 
 
 def test_reserved_builtin_slug_is_refused() -> None:
@@ -150,3 +195,58 @@ def test_archetype_menu_is_registered_and_named() -> None:
     assert capability_profiles.exists(archetype.capability_profile.code_allowlist)
     # It ships hermetic eval fixtures (host-owned scripted broker replies).
     assert archetype.eval_fixtures
+
+
+def test_computation_draft_mentioning_summary_stays_code_authoring() -> None:
+    """A computation is a code-authoring task even when it also says "summary".
+
+    Measured live: "parses invoice line items ... computes the subtotal, VAT and
+    grand total" and "summarize the notes AND count the action items" were both
+    claimed by the text-summary archetype on the bare "summar" substring, so the
+    factory built a project-summary card and answered "Untitled Project".
+    """
+    invoice = ToolDefinitionDraftV1(
+        name="Invoice Line Parser",
+        description=(
+            "Parses invoice line items and computes the subtotal, 5 percent VAT, "
+            "grand total, and a summary of the most expensive line."
+        ),
+        intent="Parse invoice lines and total them",
+    )
+    definition = tool_authoring.harden_draft(
+        invoice, slug="invoice-line-parser", max_broker_calls=4
+    )
+    assert definition.archetype == "code-authoring"
+    assert definition.capability_profile.code_allowlist == "pure-python-authored-v1"
+
+    notes = ToolDefinitionDraftV1(
+        name="Meeting Notes Analyzer",
+        description=(
+            "Writes a two-sentence executive summary using the model and counts "
+            "the words and action items deterministically."
+        ),
+        intent="Summarize meeting notes and count the action items",
+    )
+    assert (
+        tool_authoring.harden_draft(
+            notes, slug="meeting-notes-analyzer", max_broker_calls=4
+        ).archetype
+        == "code-authoring"
+    )
+
+
+def test_genuine_readme_summary_still_selects_text_summary() -> None:
+    """The disqualifiers must not swallow the archetype's own purpose."""
+    definition = tool_authoring.harden_draft(_draft(), slug="readme-summary", max_broker_calls=4)
+    assert definition.archetype == "text-summary"
+    overview = ToolDefinitionDraftV1(
+        name="Project Overview Card",
+        description="Summarize a project README into a project card with its stack.",
+        intent="Give me a summary card for the attached repo",
+    )
+    assert (
+        tool_authoring.harden_draft(
+            overview, slug="project-overview-card", max_broker_calls=4
+        ).archetype
+        == "text-summary"
+    )

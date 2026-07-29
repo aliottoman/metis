@@ -5,22 +5,34 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { MetisMark } from "@/components/metis-mark";
-import { listConversations } from "@/lib/api";
+import { MetisMark, MetisWordmark } from "@/components/metis-mark";
+import { ModelSessionControl } from "@/components/model-session-control";
+import { deleteConversation, listConversations } from "@/lib/api";
 import {
   CONVERSATIONS_CHANGED_EVENT,
+  forgetConversation,
   readRecentConversations,
 } from "@/lib/recent-conversations";
 import type { ConversationSummary } from "@/lib/types";
 
-type NavIconName = "chat" | "assets" | "tools" | "knowledge" | "memory" | "settings";
+type NavIconName =
+  | "chat"
+  | "customers"
+  | "assets"
+  | "tools"
+  | "knowledge"
+  | "memory"
+  | "sizing"
+  | "settings";
 
 const navigation: Array<{ href: string; label: string; icon: NavIconName }> = [
   { href: "/", label: "Chat", icon: "chat" },
+  { href: "/customers", label: "Customers", icon: "customers" },
   { href: "/assets", label: "Assets", icon: "assets" },
   { href: "/tools", label: "Tool Workshop", icon: "tools" },
   { href: "/knowledge", label: "Knowledge", icon: "knowledge" },
   { href: "/memory", label: "Memory", icon: "memory" },
+  { href: "/sizing", label: "Sizing", icon: "sizing" },
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
@@ -43,6 +55,9 @@ function NavIcon({ name }: { name: NavIconName }) {
   if (name === "chat") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4 4.7h12v8.1H9l-3.7 2.8v-2.8H4z" /></svg>;
   }
+  if (name === "customers") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M6.6 9.4a2.7 2.7 0 1 0 0-5.4 2.7 2.7 0 0 0 0 5.4ZM2.8 16c.2-3 1.4-4.5 3.8-4.5s3.6 1.5 3.8 4.5M13 9a2.2 2.2 0 1 0 0-4.4M11.8 11.7c3.1-.5 4.8.9 5 4.3" /></svg>;
+  }
   if (name === "assets") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M3.7 5.3 10 2.8l6.3 2.5L10 7.8zM3.7 9.1 10 11.6l6.3-2.5M3.7 12.9 10 15.4l6.3-2.5" /></svg>;
   }
@@ -54,6 +69,9 @@ function NavIcon({ name }: { name: NavIconName }) {
   }
   if (name === "memory") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M10 3.4a6.6 6.6 0 1 1-4.7 2M3.4 3.8v3h3M10 6.6v3.7l2.6 1.5" /></svg>;
+  }
+  if (name === "sizing") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M3.4 16.2V9.7h3.4v6.5zm5.1 0V4.5h3v11.7zm4.7 0v-8.4h3.4v8.4z" /></svg>;
   }
   return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4 5.2h12M4 10h12M4 14.8h12M7 3.6v3.2M13 8.4v3.2M8.5 13.2v3.2" /></svg>;
 }
@@ -81,6 +99,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [resizing, setResizing] = useState(false);
   const [animate, setAnimate] = useState(false);
   const [apiConnected, setApiConnected] = useState(true);
+  const [deletingConversation, setDeletingConversation] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const resizingRef = useRef(false);
   const resizeOriginRef = useRef({ pointerX: 0, width: DEFAULT_SIDEBAR_WIDTH });
@@ -216,6 +235,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }, {});
   }, [filtered]);
 
+  const removeConversation = async (conversation: ConversationSummary) => {
+    if (deletingConversation || !window.confirm(`Delete “${conversation.title}”? This permanently removes this chat and its messages.`)) return;
+    setDeletingConversation(conversation.id);
+    try {
+      await deleteConversation(conversation.id);
+      forgetConversation(conversation.id);
+      setConversations((current) => current.filter((item) => item.id !== conversation.id));
+      if (activeConversation === conversation.id) router.push("/");
+    } catch {
+      window.alert("This conversation could not be deleted. Please try again.");
+    } finally {
+      setDeletingConversation(null);
+    }
+  };
+
   return (
     <div className={`appShell ${collapsed ? "isCollapsed" : ""} ${animate ? "animate" : ""} ${resizing ? "isResizing" : ""}`}>
       <div className="ambient" aria-hidden="true">
@@ -251,7 +285,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <MetisMark />
             </span>
             <span>
-              <strong>Metis</strong>
+              <strong><MetisWordmark /></strong>
               <small>Private intelligence</small>
             </span>
           </Link>
@@ -313,14 +347,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <section key={label}>
               <h2>{label}</h2>
               {items.map((conversation) => (
-                <Link
-                  key={conversation.id}
-                  href={`/?conversation=${encodeURIComponent(conversation.id)}`}
-                  className={pathname === "/" && activeConversation === conversation.id ? "active" : ""}
-                  title={conversation.title}
-                >
-                  <span>{conversation.title}</span>
-                </Link>
+                <div key={conversation.id} className="conversationHistoryItem">
+                  <Link href={`/?conversation=${encodeURIComponent(conversation.id)}`} className={pathname === "/" && activeConversation === conversation.id ? "active" : ""} title={conversation.title}>
+                    <span>{conversation.title}</span>
+                  </Link>
+                  <button type="button" className="conversationDeleteButton" aria-label={`Delete ${conversation.title}`} title="Delete conversation" disabled={deletingConversation === conversation.id} onClick={() => void removeConversation(conversation)}>×</button>
+                </div>
               ))}
             </section>
           ))}
@@ -357,7 +389,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ><span /></div>
       </aside>
 
-      <main className="appMain">{children}</main>
+      <main className="appMain">
+        <ModelSessionControl />
+        {children}
+      </main>
     </div>
   );
 }

@@ -16,6 +16,7 @@ import {
   getAssetLogs,
   listAssets,
   revokeAssetApproval,
+  saveAssetEnv,
   scanAssets,
   startAsset,
   stopAsset,
@@ -27,7 +28,6 @@ const LOG_POLL_MS = 3_000;
 const DEFAULT_ASSET_DRAWER_WIDTH = 640;
 const MIN_ASSET_DRAWER_WIDTH = 480;
 const MAX_ASSET_DRAWER_WIDTH = 880;
-const SENSITIVE_ENV_KEY = /(key|token|secret|password)/i;
 const TAG_TONES = ["mint", "coral", "violet", "blue", "gold"] as const;
 
 type LifecycleFilter = "all" | "running" | "ready" | "review" | "setup";
@@ -126,6 +126,9 @@ export function AssetLibrary() {
   const [envByAsset, setEnvByAsset] = useState<Record<string, Record<string, string>>>({});
   const [revealedEnv, setRevealedEnv] = useState<Record<string, boolean>>({});
   const [disclosureOpen, setDisclosureOpen] = useState<Record<string, boolean>>({});
+  const [envSaving, setEnvSaving] = useState(false);
+  const [envError, setEnvError] = useState<string | null>(null);
+  const [envSaved, setEnvSaved] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<PendingAssetAction>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string | null>(null);
@@ -217,6 +220,8 @@ export function AssetLibrary() {
       setSelectedId(null);
       setActionError(null);
       setLogsError(null);
+      setEnvError(null);
+      setEnvSaved(null);
       returnFocusRef.current?.focus();
       closeTimerRef.current = null;
     }, 300);
@@ -342,6 +347,8 @@ export function AssetLibrary() {
     setActionError(null);
     setLogs(null);
     setLogsError(null);
+    setEnvError(null);
+    setEnvSaved(null);
   }
 
   function openAsset(asset: AssetV1) {
@@ -353,10 +360,43 @@ export function AssetLibrary() {
   }
 
   function updateEnv(assetId: string, key: string, value: string) {
+    setEnvSaved(null);
+    setEnvError(null);
     setEnvByAsset((current) => ({
       ...current,
       [assetId]: { ...current[assetId], [key]: value },
     }));
+  }
+
+  /** Only non-empty edits are sent: a blank field means "keep what is on disk". */
+  function pendingEnv(asset: AssetV1): Record<string, string> {
+    const edits = envByAsset[asset.id] ?? {};
+    return Object.fromEntries(
+      asset.envFile
+        .map((variable) => [variable.key, edits[variable.key] ?? ""] as const)
+        .filter(([, value]) => value.length > 0),
+    );
+  }
+
+  async function saveEnv(asset: AssetV1) {
+    const values = pendingEnv(asset);
+    if (!Object.keys(values).length || envSaving) return;
+    setEnvSaving(true);
+    setEnvError(null);
+    setEnvSaved(null);
+    try {
+      const updated = await saveAssetEnv(asset.id, values);
+      setAssets((current) => mergeAsset(current, updated));
+      // Clear the typed values once they live in .env, so nothing lingers in the page.
+      setEnvByAsset((current) => ({ ...current, [asset.id]: {} }));
+      setRevealedEnv({});
+      const count = Object.keys(values).length;
+      setEnvSaved(`Saved ${count} ${count === 1 ? "variable" : "variables"} to .env.`);
+    } catch (saveError) {
+      setEnvError(messageOf(saveError, "The project .env file could not be updated."));
+    } finally {
+      setEnvSaving(false);
+    }
   }
 
   async function runAction(asset: AssetV1, action: AssetAction) {
@@ -364,15 +404,10 @@ export function AssetLibrary() {
     setBusyAction({ assetId: asset.id, action });
     setActionError(null);
     try {
+      // Runtime values now live in the project's .env, which the API loads into
+      // the child process, so a launch carries no environment of its own.
       const updated = action === "start"
-        ? await startAsset(
-          asset.id,
-          Object.fromEntries(
-            asset.envKeys
-              .map((key) => [key, envByAsset[asset.id]?.[key] ?? ""] as const)
-              .filter(([, value]) => value.length > 0),
-          ),
-        )
+        ? await startAsset(asset.id, {})
         : action === "stop"
           ? await stopAsset(asset.id)
           : action === "approve"
@@ -791,77 +826,110 @@ export function AssetLibrary() {
                   </section>
                 ) : null}
 
-                {selected.envKeys.length ? (
-                  <details
-                    className="assetDisclosure assetEnvSection"
-                    open={disclosureOpen[`${selected.id}:environment`] ?? !selectedActive}
-                    key={`environment-${selected.id}`}
-                    onToggle={(event) => {
-                      const open = event.currentTarget.open;
-                      setDisclosureOpen((current) => ({
-                        ...current,
-                        [`${selected.id}:environment`]: open,
-                      }));
-                    }}
-                  >
-                    <summary className="assetDisclosureSummary">
-                      <span>
-                        <span className="assetSectionLabel">Runtime configuration</span>
-                        <strong id="asset-env-title">Environment</strong>
-                      </span>
-                      <span>{selected.envKeys.length} {selected.envKeys.length === 1 ? "variable" : "variables"}</span>
-                    </summary>
-                    <div className="assetDisclosureBody">
+                <details
+                  className="assetDisclosure assetEnvSection"
+                  open={disclosureOpen[`${selected.id}:environment`] ?? !selectedActive}
+                  key={`environment-${selected.id}`}
+                  onToggle={(event) => {
+                    const open = event.currentTarget.open;
+                    setDisclosureOpen((current) => ({
+                      ...current,
+                      [`${selected.id}:environment`]: open,
+                    }));
+                  }}
+                >
+                  <summary className="assetDisclosureSummary">
+                    <span>
+                      <span className="assetSectionLabel">Runtime configuration</span>
+                      <strong id="asset-env-title">.env</strong>
+                    </span>
+                    <span>
+                      {selected.envFilePresent
+                        ? `${selected.envFile.length} ${selected.envFile.length === 1 ? "variable" : "variables"}`
+                        : "No file"}
+                    </span>
+                  </summary>
+                  <div className="assetDisclosureBody">
+                    {selected.envFilePresent ? (
+                      <>
+                        <p>
+                          These are the variables in this project&apos;s own <code>.env</code>.
+                          Metis reports only whether a value is set — it never reads one back
+                          into this page. Typing a value replaces it in the file.
+                        </p>
+                        <div className="assetEnvList">
+                          {selected.envFile.map(({ key, isSet, sensitive }) => {
+                            const fieldId = `asset-env-${selected.id}-${key}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+                            const revealId = `${selected.id}:${key}`;
+                            const revealed = revealedEnv[revealId] === true;
+                            const draft = envByAsset[selected.id]?.[key] ?? "";
+                            return (
+                              <label
+                                className={`assetEnvField ${draft ? "isEdited" : ""}`}
+                                htmlFor={fieldId}
+                                key={key}
+                              >
+                                <span>
+                                  <code>{key}</code>
+                                  <small className={isSet ? "isSetBadge" : "isUnsetBadge"}>
+                                    {isSet ? "Set" : "Empty"}
+                                  </small>
+                                  {sensitive ? <small>Sensitive</small> : null}
+                                </span>
+                                <span className="assetEnvControl">
+                                  <input
+                                    id={fieldId}
+                                    type={sensitive && !revealed ? "password" : "text"}
+                                    value={draft}
+                                    onChange={(event) => updateEnv(selected.id, key, event.target.value)}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    placeholder={isSet ? "Value set — type to replace" : `Enter ${key}`}
+                                  />
+                                  {sensitive ? (
+                                    <button
+                                      type="button"
+                                      aria-label={`${revealed ? "Hide" : "Show"} ${key}`}
+                                      aria-pressed={revealed}
+                                      onClick={() => setRevealedEnv((current) => ({
+                                        ...current,
+                                        [revealId]: !revealed,
+                                      }))}
+                                    >
+                                      {revealed ? "Hide" : "Show"}
+                                    </button>
+                                  ) : null}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {envError ? <p className="assetLogsError" role="alert">{envError}</p> : null}
+                        {envSaved ? <p className="assetEnvSaved" role="status">{envSaved}</p> : null}
+                        <div className="assetEnvActions">
+                          <button
+                            className="primaryButton"
+                            type="button"
+                            disabled={envSaving || !Object.keys(pendingEnv(selected)).length}
+                            onClick={() => void saveEnv(selected)}
+                          >
+                            {envSaving ? "Saving…" : "Save to .env"}
+                          </button>
+                          {selectedActive ? (
+                            <span className="assetEnvHint">
+                              Saved values take effect the next time this asset starts.
+                            </span>
+                          ) : null}
+                        </div>
+                      </>
+                    ) : (
                       <p>
-                        Values stay in this page session and are sent only when you start the asset.
-                        They are never written into the catalog.
+                        This project has no <code>.env</code> file, so there is nothing to
+                        configure. Add one in the project folder and it will appear here.
                       </p>
-                      <div className="assetEnvList">
-                        {selected.envKeys.map((key) => {
-                          const fieldId = `asset-env-${selected.id}-${key}`.replace(/[^a-zA-Z0-9_-]/g, "-");
-                          const sensitive = SENSITIVE_ENV_KEY.test(key);
-                          const revealId = `${selected.id}:${key}`;
-                          const revealed = revealedEnv[revealId] === true;
-                          return (
-                            <label className="assetEnvField" htmlFor={fieldId} key={key}>
-                              <span>
-                                <code>{key}</code>
-                                {sensitive ? <small>Sensitive</small> : null}
-                              </span>
-                              <span className="assetEnvControl">
-                                <input
-                                  id={fieldId}
-                                  type={sensitive && !revealed ? "password" : "text"}
-                                  value={envByAsset[selected.id]?.[key] ?? ""}
-                                  onChange={(event) => updateEnv(selected.id, key, event.target.value)}
-                                  autoComplete="off"
-                                  spellCheck={false}
-                                  placeholder={`Enter ${key}`}
-                                />
-                                {sensitive ? (
-                                  <button
-                                    type="button"
-                                    aria-label={`${revealed ? "Hide" : "Show"} ${key}`}
-                                    aria-pressed={revealed}
-                                    onClick={() => setRevealedEnv((current) => ({
-                                      ...current,
-                                      [revealId]: !revealed,
-                                    }))}
-                                  >
-                                    {revealed ? "Hide" : "Show"}
-                                  </button>
-                                ) : null}
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                      {selectedActive ? (
-                        <p className="assetEnvHint">Changes take effect the next time this asset starts.</p>
-                      ) : null}
-                    </div>
-                  </details>
-                ) : null}
+                    )}
+                  </div>
+                </details>
 
                 {actionError ? <div className="assetActionError" role="alert">{actionError}</div> : null}
 

@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 
 // The Metis brand cluster — a cobalt rounded square, a lavender circle, a coral
-// rounded square, and a small ink dot on paper. Shared by the generated favicon
+// rounded square, and a small green dot on paper. Shared by the generated favicon
 // and apple-touch icon. Explicit pixel geometry keeps it Satori-compatible.
 export function brandCluster(px: number): ReactElement {
   const pad = Math.round(px * 0.16);
@@ -30,9 +30,9 @@ export function brandCluster(px: number): ReactElement {
           gap,
         }}
       >
-        <div style={{ width: cell, height: cell, background: "#5669df", borderRadius: round }} />
-        <div style={{ width: cell, height: cell, background: "#b894d8", borderRadius: cell }} />
-        <div style={{ width: cell, height: cell, background: "#ff735c", borderRadius: round }} />
+        <div style={{ width: cell, height: cell, background: "#6175e8", borderRadius: round }} />
+        <div style={{ width: cell, height: cell, background: "#c28fe0", borderRadius: cell }} />
+        <div style={{ width: cell, height: cell, background: "#ff7b61", borderRadius: round }} />
         <div
           style={{
             width: cell,
@@ -42,7 +42,7 @@ export function brandCluster(px: number): ReactElement {
             justifyContent: "center",
           }}
         >
-          <div style={{ width: dot, height: dot, background: "#1b1c22", borderRadius: dot }} />
+          <div style={{ width: dot, height: dot, background: "#4b9b72", borderRadius: dot }} />
         </div>
       </div>
     </div>

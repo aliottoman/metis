@@ -204,6 +204,113 @@ async def test_retrieve_degrades_to_cosine_when_rerank_is_unavailable(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_junk_dirs_are_skipped_inside_the_source_but_not_above_it(tmp_path) -> None:
+    # Reproduces the Notion mirror case: the source itself lives under a
+    # directory named in _SKIP_DIRS (.data/corpus/notion). Its files must still
+    # index — only junk directories *inside* the source are skipped.
+    database, corpus = await _corpus(tmp_path)
+    root = tmp_path / ".data" / "corpus" / "notion"
+    root.mkdir(parents=True)
+    (root / "acme.md").write_text("# Acme\nCall notes for the Acme account.\n")
+    (root / "node_modules").mkdir()
+    (root / "node_modules" / "vendor.md").write_text("# Vendor\nnoise\n")
+    source = await corpus.register_source(str(root), "Notion", "notes", provider="notion")
+    await corpus.set_consent(source.id, True, "ok")
+    result = await corpus.index_source(source.id)
+    assert result.files_indexed == 1
+    assert result.chunks >= 1
+
+    snippets = await corpus.retrieve("acme account call notes", provider="notion")
+    assert [snippet.rel_path for snippet in snippets] == ["acme.md"]
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_source_full_of_unindexable_files_fails_loudly(tmp_path) -> None:
+    # The silent-failure mode that made Notion look synced while retrieval had
+    # nothing: a scan that matches no file must not report a clean 'indexed'.
+    database, corpus = await _corpus(tmp_path)
+    root = tmp_path / "shots"
+    root.mkdir()
+    (root / "a.png").write_bytes(b"\x89PNG")
+    (root / "b.png").write_bytes(b"\x89PNG")
+    source = await corpus.register_source(str(root), "shots", "notes")
+    await corpus.set_consent(source.id, True, "ok")
+    with pytest.raises(ValueError, match="none.*were indexable"):
+        await corpus.index_source(source.id)
+    source = await corpus.get_source(source.id)
+    assert source.status == "error"
+    assert "2 file(s)" in source.last_error
+    assert "unsupported file types" in source.last_error
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_empty_source_is_not_an_error(tmp_path) -> None:
+    database, corpus = await _corpus(tmp_path)
+    root = tmp_path / "empty"
+    root.mkdir()
+    source = await corpus.register_source(str(root), "empty", "notes")
+    await corpus.set_consent(source.id, True, "ok")
+    result = await corpus.index_source(source.id)
+    assert result.status == "indexed"
+    assert result.files_indexed == 0
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_page_expansion_completes_the_winning_document(tmp_path) -> None:
+    # "Summarize the interactions with Acme": only one section matches the query
+    # by tokens, but the whole page should reach the answer — and the unrelated
+    # page must not ride along.
+    database, corpus = await _corpus(tmp_path, corpus_top_k=1)
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "acme.md").write_text(
+        "# Acme Corp\n\n"
+        "## Renewal call\n"
+        "discussed the renewal pricing terms\n\n"
+        "## Onboarding\n"
+        "zzz shipped the first workspace zzz\n\n"
+        "## Support escalation\n"
+        "qqq raised a latency complaint qqq\n"
+    )
+    (root / "other.md").write_text("# Globex\n\nunrelated renewal pricing terms\n")
+    source = await corpus.register_source(str(root), "notes", "notes")
+    await corpus.set_consent(source.id, True, "ok")
+    await corpus.index_source(source.id)
+
+    snippets = await corpus.retrieve("acme renewal pricing terms")
+    assert {snippet.rel_path for snippet in snippets} == {"acme.md"}
+    text = "\n".join(snippet.text for snippet in snippets)
+    assert "shipped the first workspace" in text
+    assert "raised a latency complaint" in text
+    # Neighbours inherit the anchor's score, so the relevance floor keeps them.
+    assert all(snippet.score > 0 for snippet in snippets)
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_page_expansion_can_be_disabled(tmp_path) -> None:
+    database, corpus = await _corpus(
+        tmp_path, corpus_top_k=1, corpus_page_expand=False
+    )
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "acme.md").write_text(
+        "# Acme Corp\n\n## Renewal call\ndiscussed the renewal pricing terms\n\n"
+        "## Onboarding\nzzz shipped the first workspace zzz\n"
+    )
+    source = await corpus.register_source(str(root), "notes", "notes")
+    await corpus.set_consent(source.id, True, "ok")
+    await corpus.index_source(source.id)
+
+    snippets = await corpus.retrieve("acme renewal pricing terms")
+    assert len(snippets) == 1
+    await database.close()
+
+
+@pytest.mark.asyncio
 async def test_incremental_reindex_only_touches_changed_files(tmp_path) -> None:
     database, corpus = await _corpus(tmp_path)
     root = tmp_path / "proj"

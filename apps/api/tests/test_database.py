@@ -141,7 +141,7 @@ async def test_migrations_upgrade_real_v1_are_idempotent_and_reject_future(tmp_p
         )
     }
     connection.close()
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     assert {
         "conversation_summaries",
         "tool_improvement_proposals",
@@ -164,6 +164,11 @@ async def test_migrations_upgrade_real_v1_are_idempotent_and_reject_future(tmp_p
         "tool_definition_builds",
         "conversation_projects",
         "idx_tool_definition_builds_active",
+        "memory_vectors",
+        "memory_settings",
+        "customer_accounts",
+        "customer_wins",
+        "idx_customer_wins_account",
     } <= objects
 
     future_path = tmp_path / "future.db"

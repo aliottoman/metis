@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Coroutine
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
@@ -10,15 +12,22 @@ from .blob_store import BlobStore
 from .config import Settings
 from .control_plane import ControlPlane
 from .corpus import CorpusService
+from .customer_intelligence import CustomerIntelligenceService
+from .dac_catalog import DacCatalog
+from .dac_service import DacService
 from .database import Database
 from .deep_worker import build_deep_worker_factory
 from .embeddings import CohereRetrieval
 from .events import EventBus
+from .memory_index import MemoryIndex
+from .local_model_session import LocalModelSessionManager
 from .model_preference import ModelPreferenceStore
 from .model_provider import RoutedModelProvider, build_model_provider
 from .notion import NotionService
 from .profile import ProfileStore
+from .project_verification import ProjectVerificationService
 from .project_workspace import ProjectWorkspaceService
+from .run_history import RunHistoryService
 from .tool_registry import ToolRegistry
 from .reference_architecture import ReferenceArchitectureRunner
 
@@ -37,17 +46,52 @@ class AppRuntime:
         self.retrieval = CohereRetrieval(settings)
         self.corpus = CorpusService(settings, self.database, self.retrieval)
         self.notion = NotionService(settings, self.database, self.corpus)
+        self.memory_index = MemoryIndex(settings, self.database, self.retrieval)
+        self.run_history = RunHistoryService(settings, self.database, self.corpus)
         self.profile = ProfileStore(settings)
         self.model_preference = ModelPreferenceStore(settings)
+        self.model_session = LocalModelSessionManager(
+            settings, self.model_preference
+        )
+        # Sizing reads a vendored catalog and needs no I/O, so it is built here
+        # rather than in start(); the model provider is attached later so the
+        # recommender can use whichever model the user has selected.
+        self.dac_catalog = DacCatalog()
+        self.dac = DacService(self.dac_catalog, preference=self.model_preference)
+        self.verification = ProjectVerificationService(
+            settings, approval_path=settings.project_verify_approval_path
+        )
         self.projects: ProjectWorkspaceService | None = None
         self.registry = ToolRegistry(self.database, settings)
         self.model = None
         self.local_model = None
+        self.customers: CustomerIntelligenceService | None = None
         self.reference_runner = ReferenceArchitectureRunner(settings)
         self.checkpointer: Any = None
         self.control_plane: ControlPlane | None = None
         self.deep_worker_factory: Any = None
         self._checkpointer_context: AbstractAsyncContextManager[Any] | None = None
+        self._background: set[asyncio.Task[None]] = set()
+
+    def spawn(self, work: Coroutine[Any, Any, Any], *, name: str) -> None:
+        """Run best-effort maintenance without blocking or breaking the caller.
+
+        These tasks only ever affect retrieval quality, so a failure is
+        swallowed. They are tracked so shutdown can cancel them rather than
+        leaving a half-finished write behind a closed database.
+        """
+
+        async def guarded() -> None:
+            try:
+                await work
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - maintenance is never load-bearing
+                pass
+
+        task = asyncio.create_task(guarded(), name=name)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     async def start(self) -> None:
         self.settings.prepare_directories()
@@ -55,12 +99,22 @@ class AppRuntime:
         await self.registry.seed_builtins()
         await self.registry.reconcile_trusted_definition_proposals()
         await self.registry.reconcile_trusted_evaluated_builds()
-        self.model = build_model_provider(self.settings)
+        self.model = build_model_provider(
+            self.settings, model_session=self.model_session
+        )
         self.local_model = (
             self.model.local if isinstance(self.model, RoutedModelProvider) else self.model
         )
+        self.customers = CustomerIntelligenceService(
+            self.database, self.local_model, self.model_session
+        )
         self.deep_worker_factory = build_deep_worker_factory(self.local_model)
-        self.projects = ProjectWorkspaceService(self.settings, self.assets, self.model)
+        self.dac = DacService(
+            self.dac_catalog, model=self.model, preference=self.model_preference
+        )
+        self.projects = ProjectWorkspaceService(
+            self.settings, self.assets, self.model, verification=self.verification
+        )
         self._checkpointer_context = AsyncSqliteSaver.from_conn_string(
             str(self.settings.checkpoint_path)
         )
@@ -80,14 +134,22 @@ class AppRuntime:
             self.deep_worker_factory,
             corpus=self.corpus,
             profile=self.profile,
+            memory_index=self.memory_index,
+            run_history=self.run_history,
             registry=self.registry,
             reviewer=self.retrieval,
             tool_model=self.local_model,
             projects=self.projects,
+            customers=self.customers,
+            model_session=self.model_session,
         )
         await self.control_plane.reconcile_startup()
 
     async def close(self) -> None:
+        for task in list(self._background):
+            task.cancel()
+        if self._background:
+            await asyncio.gather(*self._background, return_exceptions=True)
         await self.assets.shutdown()
         if self.control_plane is not None:
             await self.control_plane.shutdown()

@@ -480,6 +480,191 @@ export interface ModelPreference {
   oci_available: boolean;
 }
 
+export interface LocalModelOption {
+  id: string;
+  name: string;
+  size_bytes: number;
+  parameter_size: string;
+  quantization: string;
+  context_length: number | null;
+  loaded: boolean;
+  expires_at: string | null;
+  owned_by_metis: boolean;
+}
+
+export interface LocalModelSession {
+  state: "off" | "loading" | "ready" | "busy" | "error";
+  selected_model: string | null;
+  idle_timeout_seconds: 60 | 300 | 900 | 1800 | 86400;
+  context_window: 32768 | 65536 | 131072;
+  expires_at: string | null;
+  owned_by_metis: boolean;
+  busy_count: number;
+  error: string | null;
+  models: LocalModelOption[];
+}
+
+export interface CustomerAccount {
+  id: string;
+  name: string;
+  aliases: string[];
+  industry: string;
+  region: string;
+  status: "active" | "paused" | "archived";
+  open_actions: number;
+  pending_notes: number;
+  wins: number;
+  last_interaction_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerWin {
+  id: string;
+  account_id: string;
+  account_name: string;
+  title: string;
+  brief: string;
+  services: string[];
+  dac_shape: string;
+  yearly_arr: number | null;
+  won_at: string | null;
+  source_ref: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerEvidence {
+  quote: string;
+  source_id: string | null;
+  line_start: number | null;
+  line_end: number | null;
+}
+
+export interface CustomerPerson {
+  name: string;
+  role: string;
+  organization: string;
+  evidence: CustomerEvidence;
+}
+
+export interface CustomerFact {
+  id: string;
+  account_id: string;
+  interaction_id: string | null;
+  kind: string;
+  content: string;
+  status: "active" | "superseded" | "disputed";
+  confidence: number;
+  evidence: CustomerEvidence;
+  created_at: string;
+}
+
+export interface CustomerAction {
+  id: string;
+  account_id: string;
+  interaction_id: string | null;
+  description: string;
+  owner: string;
+  due_at: string | null;
+  status: "open" | "done" | "cancelled";
+  evidence: CustomerEvidence;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerInteraction {
+  id: string;
+  account_id: string;
+  source_id: string;
+  title: string;
+  occurred_at: string;
+  summary: string;
+  created_at: string;
+}
+
+export interface CustomerSource {
+  id: string;
+  account_id: string;
+  source_kind: string;
+  title: string;
+  content: string;
+  source_ref: string;
+  occurred_at: string | null;
+  status: "waiting" | "review" | "saved" | "duplicate";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerExtraction {
+  summary: string;
+  occurred_at: string | null;
+  people: CustomerPerson[];
+  facts: Array<{
+    kind: string;
+    content: string;
+    confidence: number;
+    evidence: CustomerEvidence;
+  }>;
+  actions: Array<{
+    description: string;
+    owner: string;
+    due_at: string | null;
+    evidence: CustomerEvidence;
+  }>;
+}
+
+export interface CustomerProposal {
+  id: string;
+  source_id: string;
+  account_id: string;
+  status: "review" | "approved" | "rejected";
+  extraction: CustomerExtraction;
+  model: string;
+  prompt_version: string;
+  created_at: string;
+  decided_at: string | null;
+}
+
+export interface CustomerAccountDetail {
+  account: CustomerAccount;
+  interactions: CustomerInteraction[];
+  facts: CustomerFact[];
+  actions: CustomerAction[];
+  people: CustomerPerson[];
+  sources: CustomerSource[];
+  wins: CustomerWin[];
+}
+
+export interface CustomerDashboard {
+  active_accounts: number;
+  open_actions: number;
+  overdue_actions: number;
+  waiting_notes: number;
+  total_wins: number;
+  dac_wins: number;
+  total_yearly_arr: number;
+  wins_by_service: Record<string, number>;
+  recent_accounts: CustomerAccount[];
+  priority_actions: CustomerAction[];
+  recent_wins: CustomerWin[];
+}
+
+export interface CustomerOutput {
+  id: string;
+  account_id: string;
+  kind: string;
+  content: string;
+  tracker_url: string;
+  created_at: string;
+}
+
+export interface CustomerSettings {
+  tracker_url: string;
+  activity_template: string;
+  updated_at: string | null;
+}
+
 export type ProjectMode = "grok_bootstrap_local" | "grok_continuous";
 
 export interface ProjectWorkspace {
@@ -494,11 +679,51 @@ export interface ProjectWorkspace {
   updatedAt: string | null;
 }
 
+export interface MemoryIndexStatus {
+  consent: boolean;
+  consentReason: string | null;
+  cloudAvailable: boolean;
+  /** True only when consent, the cloud path, and embedded vectors all line up. */
+  semantic: boolean;
+  active: number;
+  embedded: number;
+}
+
+export interface ProjectCheck {
+  name: string;
+  command: string[];
+  description: string;
+  /** Plain-English account of what this command does, derived from its argv. */
+  explanation: string;
+  timeoutSeconds: number;
+}
+
+export interface ProjectVerification {
+  projectId: string;
+  configured: boolean;
+  approved: boolean;
+  fingerprint: string | null;
+  checks: ProjectCheck[];
+  explanation: string;
+  boundary: string;
+  error: string | null;
+}
+
 export interface ConversationProject {
   conversationId: string;
   projectId: string;
   mode: ProjectMode;
   updatedAt?: string;
+}
+
+/**
+ * One variable from the project's own .env file. `isSet` reports that a value
+ * exists on disk — the value itself never leaves the API.
+ */
+export interface AssetEnvVar {
+  key: string;
+  isSet: boolean;
+  sensitive: boolean;
 }
 
 /** A project discovered by Metis and exposed through the local asset runner. */
@@ -515,10 +740,202 @@ export interface AssetV1 {
   launchApproved: boolean;
   launchCommand: string[];
   envKeys: string[];
+  envFile: AssetEnvVar[];
+  envFilePresent: boolean;
   url: string | null;
 }
 
 export interface AssetLogsV1 {
   assetId: string;
   logs: string;
+}
+
+/* ── Dedicated AI Cluster sizing ────────────────────────────────────────────
+ *
+ * These mirror the API's Dac*V1 contracts field-for-field, in snake_case. The
+ * rest of this file uses camelCase because those payloads are normalized on the
+ * way in; sizing responses are deeply nested computed numbers with no identity
+ * or lifecycle, so they are passed through as the API returns them rather than
+ * maintaining a rename map that could silently drop a field.
+ */
+
+export type DacConfidenceTier = "measured" | "interpolated" | "modeled";
+
+export interface DacGpu {
+  key: string;
+  label: string;
+  memory_gb: number;
+  memory_bandwidth_gb_s: number;
+  dense_bf16_tflops: number;
+  dense_fp8_tflops: number | null;
+  supports_fp8: boolean;
+}
+
+export interface DacShape {
+  key: string;
+  gpu: string;
+  gpu_count: number;
+  ai_units: number;
+  total_memory_gb: number;
+  importable: boolean;
+}
+
+export interface DacModel {
+  id: string;
+  family: string;
+  capability: string;
+  validated_shapes: string[];
+  benchmarked_shapes: string[];
+  supported: boolean;
+  unsupported_reason: string | null;
+  config_source: string | null;
+  architecture: Record<string, unknown> | null;
+}
+
+export interface DacCatalog {
+  models: DacModel[];
+  shapes: DacShape[];
+  gpus: DacGpu[];
+  quantizations: string[];
+  pricing: Record<string, unknown>;
+  provenance: Record<string, unknown>;
+}
+
+export interface DacVramBreakdown {
+  weights_gb: number;
+  kv_cache_gb: number;
+  activations_gb: number;
+  overhead_gb: number;
+  total_gb: number;
+  capacity_gb: number;
+  usable_gb: number;
+  utilization: number;
+  status: "okay" | "moderate" | "high" | "very_high" | "insufficient";
+  fits: boolean;
+  max_concurrency: number;
+}
+
+export interface DacPerformance {
+  ttft_s: number;
+  inference_speed_tps: number;
+  token_throughput_tps: number;
+  request_latency_s: number;
+  request_throughput_rps: number;
+  request_throughput_rpm: number;
+  total_throughput_tps: number;
+  concurrency: number;
+  prompt_tokens: number;
+  response_tokens: number;
+}
+
+export interface DacConfidence {
+  tier: DacConfidenceTier;
+  error_margin: number | null;
+  reason: string;
+}
+
+export interface DacCost {
+  ai_units_per_unit: number;
+  units: number;
+  hours: number;
+  unit_hours: number;
+  billed_unit_hours: number;
+  minimum_unit_hours: number;
+  cost: number;
+}
+
+export interface DacEstimateRequest {
+  model_id: string;
+  shape: string;
+  units?: number;
+  prompt_tokens?: number;
+  response_tokens?: number;
+  concurrency?: number;
+  quantization?: string | null;
+  kv_quantization?: string | null;
+  hours?: number;
+  price_per_ai_unit_hour?: number | null;
+}
+
+export interface DacEstimate {
+  model_id: string;
+  shape: string;
+  units: number;
+  oracle_validated: boolean;
+  minimum_shape: string | null;
+  vram: DacVramBreakdown;
+  performance: DacPerformance;
+  cost: DacCost;
+  confidence: DacConfidence;
+  published: Record<string, unknown> | null;
+  notes: string[];
+}
+
+export interface DacOptimizeRequest {
+  model_id: string;
+  prompt_tokens?: number;
+  response_tokens?: number;
+  concurrency?: number;
+  max_ttft_s?: number | null;
+  max_request_latency_s?: number | null;
+  min_inference_speed_tps?: number | null;
+  min_request_throughput_rps?: number | null;
+  quantization?: string | null;
+  hours?: number;
+  price_per_ai_unit_hour?: number | null;
+  validated_only?: boolean;
+  max_units?: number;
+}
+
+export interface DacOption {
+  shape: string;
+  gpu: string;
+  gpu_count: number;
+  units: number;
+  oracle_validated: boolean;
+  vram: DacVramBreakdown;
+  performance: DacPerformance;
+  cost: DacCost;
+  meets_sla: boolean;
+  unmet: string[];
+}
+
+export interface DacOptimizeResult {
+  model_id: string;
+  options: DacOption[];
+  confidence: DacConfidence;
+  considered: number;
+  notes: string[];
+}
+
+export interface DacRecommendRequest {
+  use_case: string;
+  concurrency?: number;
+  prompt_tokens?: number;
+  response_tokens?: number;
+  max_request_latency_s?: number | null;
+  capability?: string | null;
+  limit?: number;
+}
+
+export interface DacCandidate {
+  model_id: string;
+  family: string;
+  capability: string;
+  score: number;
+  shape: string | null;
+  units: number;
+  performance: DacPerformance | null;
+  cost: DacCost | null;
+  meets_sla: boolean;
+  rationale: string | null;
+}
+
+export interface DacRecommendation {
+  use_case: string;
+  candidates: DacCandidate[];
+  summary: string | null;
+  model_used: string | null;
+  model_backed: boolean;
+  notes: string[];
 }

@@ -2,8 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { createMemoryProposal, decideMemoryProposal, listMemoryProposals } from "@/lib/api";
-import type { MemoryProposal } from "@/lib/types";
+import {
+  createMemoryProposal,
+  decideMemoryProposal,
+  getMemoryIndexStatus,
+  listMemoryProposals,
+  setMemoryIndexConsent,
+} from "@/lib/api";
+import type { MemoryIndexStatus, MemoryProposal } from "@/lib/types";
 
 type MemoryFilter = "pending" | "approved" | "rejected" | "all";
 
@@ -16,12 +22,19 @@ export function MemoryCenter() {
   const [draft, setDraft] = useState("");
   const [draftKind, setDraftKind] = useState<"user" | "project" | "skill">("project");
   const [savingDraft, setSavingDraft] = useState(false);
+  const [index, setIndex] = useState<MemoryIndexStatus | null>(null);
+  const [indexBusy, setIndexBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setProposals(await listMemoryProposals());
+      const [items, status] = await Promise.all([
+        listMemoryProposals(),
+        getMemoryIndexStatus().catch(() => null),
+      ]);
+      setProposals(items);
+      setIndex(status);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load memory proposals.");
     } finally {
@@ -66,6 +79,28 @@ export function MemoryCenter() {
     }
   }
 
+  async function toggleSemantic(consent: boolean) {
+    setIndexBusy(true);
+    setError(null);
+    try {
+      setIndex(await setMemoryIndexConsent(consent));
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : "Could not change memory search.");
+    } finally {
+      setIndexBusy(false);
+    }
+  }
+
+  // Consent alone does not mean semantic search is running: the cloud path may
+  // be unconfigured or nothing embedded yet. Say which of those it is.
+  const indexDetail = !index?.consent
+    ? "Memories are matched by keyword, so a question phrased differently than the memory can miss it. Turning this on embeds your approved memories with Cohere so paraphrases match."
+    : index.semantic
+      ? `Searching ${index.embedded.toLocaleString()} of ${index.active.toLocaleString()} approved memories by meaning.`
+      : index.cloudAvailable
+        ? "Consent granted. Nothing is embedded yet — approve a memory, or refresh in a moment."
+        : "Consent granted, but cloud retrieval is unavailable, so search has fallen back to keywords.";
+
   return (
     <div className="workspacePage memoryPage">
       <header className="pageHeader">
@@ -95,6 +130,34 @@ export function MemoryCenter() {
         <span className="principleMark">◎</span>
         <div><strong>Proposal-first learning</strong><p>Metis can notice patterns and suggest useful context, but only approved memories are retrieved in future conversations.</p></div>
       </div>
+
+      {index ? (
+        <section className="memoryPrinciple" aria-labelledby="memory-search-title">
+          <span className="principleMark">{index.semantic ? "◈" : "◇"}</span>
+          <div>
+            <strong id="memory-search-title">
+              {index.semantic ? "Searching memory by meaning" : "Searching memory by keyword"}
+            </strong>
+            <p>{indexDetail}</p>
+            <p className="memoryRationale">
+              Separate from corpus consent, and revocable: withdrawing deletes every stored
+              memory vector. Only the memory text being embedded leaves this machine.
+            </p>
+            <button
+              className={index.consent ? "dangerButton" : "primaryButton"}
+              type="button"
+              disabled={indexBusy}
+              onClick={() => void toggleSemantic(!index.consent)}
+            >
+              {indexBusy
+                ? "Working…"
+                : index.consent
+                  ? "Withdraw consent and purge vectors"
+                  : "Embed my memories for semantic search"}
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <div className="filterTabs" role="tablist" aria-label="Memory status filter">
         {(["pending", "approved", "rejected", "all"] as MemoryFilter[]).map((item) => (

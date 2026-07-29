@@ -1,10 +1,10 @@
 SHELL := /bin/zsh
 
-.PHONY: setup dev api web start run stop test verify-lock build sandbox-image acceptance \
+.PHONY: setup dev api web start run stop refresh install-agent uninstall-agent test verify-lock build sandbox-image acceptance \
 	verify-ollama verify-podman verify-live offline-bundle \
 	verify-restart \
 	offline-bundle-prerequisites offline-verify offline-verify-release \
-	offline-smoke-install offline-extract export-data verify-export clean-data
+	offline-smoke-install offline-extract export-data verify-export clean-data dac-catalog
 
 EXPORT ?= metis-export.zip
 ACCEPTANCE_URL ?= http://127.0.0.1:8000
@@ -40,6 +40,18 @@ run:
 stop:
 	@lsof -ti -i tcp:3000 -i tcp:8000 2>/dev/null | xargs -r kill || true
 
+# Rebuild and restart the background service after code changes.
+refresh:
+	@launchctl kickstart -k gui/$$UID/com.metis.local 2>/dev/null \
+		&& echo "Metis restarting with your latest changes." \
+		|| $(MAKE) run
+
+install-agent:
+	./scripts/install-agent
+
+uninstall-agent:
+	./scripts/install-agent --remove
+
 test:
 	$(MAKE) verify-lock
 	.venv/bin/pytest apps/api/tests tests
@@ -54,6 +66,12 @@ build:
 
 sandbox-image:
 	./infra/sandbox/build_reference_architecture_image.sh
+
+# Refreshes the vendored OCI sizing catalog from Oracle's docs and Hugging Face.
+# The only networked step in the project; the app itself never calls out. Run it
+# when Oracle publishes newly validated models, then commit the JSON it writes.
+dac-catalog:
+	.venv/bin/python scripts/build_dac_catalog.py
 
 acceptance:
 	.venv/bin/python scripts/acceptance_smoke.py --base-url "$(ACCEPTANCE_URL)" --readme README.md

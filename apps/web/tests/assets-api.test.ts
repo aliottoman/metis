@@ -5,6 +5,7 @@ import {
   approveAsset,
   getAssetLogs,
   listAssets,
+  saveAssetEnv,
   scanAssets,
   startAsset,
   stopAsset,
@@ -34,6 +35,11 @@ test("normalizes the asset catalog contract and legacy field casing", async () =
       launch_approved: true,
       launch_command: ["pnpm", "dev"],
       env_keys: ["DAC_OCID"],
+      env_file: [
+        { key: "DAC_OCID", is_set: true, sensitive: false },
+        { key: "DAC_API_KEY", is_set: false, sensitive: true },
+      ],
+      env_file_present: true,
       launch_url: null,
     }],
   });
@@ -53,8 +59,53 @@ test("normalizes the asset catalog contract and legacy field casing", async () =
       launchApproved: true,
       launchCommand: ["pnpm", "dev"],
       envKeys: ["DAC_OCID"],
+      envFile: [
+        { key: "DAC_OCID", isSet: true, sensitive: false },
+        { key: "DAC_API_KEY", isSet: false, sensitive: true },
+      ],
+      envFilePresent: true,
       url: null,
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("writes runtime values to the project .env through the v1 route", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? "GET",
+      body: init?.body ? JSON.parse(String(init.body)) as unknown : undefined,
+    });
+    return jsonResponse({
+      id: "demo/one",
+      name: "Demo One",
+      summary: "A demo.",
+      category: "Demos",
+      tags: [],
+      framework: "Vite",
+      entrypoint: "npm run dev",
+      status: "ready",
+      launchConfigured: true,
+      launchApproved: true,
+      launchCommand: ["npm", "run", "dev"],
+      envKeys: [],
+      env_file: [{ key: "API_TOKEN", is_set: true, sensitive: true }],
+      env_file_present: true,
+      url: null,
+    });
+  };
+
+  try {
+    const saved = await saveAssetEnv("demo/one", { API_TOKEN: "written-to-disk" });
+    assert.match(calls[0]!.url, /\/assets\/demo%2Fone\/env$/);
+    assert.equal(calls[0]!.method, "PUT");
+    assert.deepEqual(calls[0]!.body, { values: { API_TOKEN: "written-to-disk" } });
+    // The response carries presence only — never the value that was just sent.
+    assert.deepEqual(saved.envFile, [{ key: "API_TOKEN", isSet: true, sensitive: true }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

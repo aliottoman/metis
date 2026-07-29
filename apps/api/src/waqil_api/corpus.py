@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import code_graph
@@ -47,6 +48,28 @@ _SKIP_DIRS = {
     ".idea", ".vscode", "dist", "build", ".next", ".mypy_cache", ".pytest_cache",
     ".uv-cache", ".pnpm-store", ".ruff_cache", ".turbo", "target", ".gradle",
 }
+
+# Folded into every file's content hash. Bump it whenever chunking changes, so
+# an incremental reindex re-embeds files whose bytes are identical but whose
+# chunks would now be built differently — otherwise a chunker improvement never
+# reaches an already-indexed corpus.
+_INDEX_VERSION = "2"
+
+
+@dataclass(frozen=True)
+class _ScanReport:
+    """Why the files under a source root were or were not indexed. Turns a scan
+    that quietly matched nothing into a diagnosable failure."""
+
+    total_files: int = 0
+    skipped_dir: int = 0
+    skipped_extension: int = 0
+    skipped_size: int = 0
+
+
+def max_bytes_mb(value: int) -> str:
+    """Render a byte cap for a user-facing message."""
+    return f"{value / 1_048_576:.1f} MB"
 
 
 def _clean_path_input(raw: str) -> str:
@@ -136,7 +159,19 @@ class CorpusService:
         try:
             existing = await self._db.get_corpus_file_index(source_id)
             root = Path(source.root_path)
-            scanned = await asyncio.to_thread(self._scan, root)
+            scanned, report = await asyncio.to_thread(self._scan, root)
+            # A source full of files that matched nothing is a misconfiguration,
+            # not a successful empty index. Reporting it as 'indexed' is how a
+            # silently-skipped corpus reaches retrieval as "no results found".
+            if not scanned and report.total_files:
+                raise ValueError(
+                    f"found {report.total_files} file(s) under {root} but none "
+                    f"were indexable: {report.skipped_dir} inside skipped "
+                    f"directories, {report.skipped_extension} of unsupported "
+                    f"file types, {report.skipped_size} over the "
+                    f"{max_bytes_mb(self._settings.corpus_max_file_bytes)} size "
+                    "cap. Nothing was embedded."
+                )
             seen: set[str] = set()
             indexed = skipped = 0
             for rel_path, content_hash, lang, path in scanned:
@@ -257,21 +292,60 @@ class CorpusService:
                 key=lambda pair: pair[1],
                 reverse=True,
             )[:top_k]
-        snippets: list[KnowledgeSnippetV1] = []
-        for index, score in ranked:
-            item = candidates[index]
-            snippets.append(
-                KnowledgeSnippetV1(
-                    source_label=item["source_label"],
-                    provider=item.get("source_provider", "local"),
-                    rel_path=item["rel_path"],
-                    symbol=item.get("symbol"),
-                    start_line=item.get("start_line"),
-                    text=item["text"],
-                    score=score,
-                )
-            )
-        return snippets
+        ranked_items = [(candidates[index], score) for index, score in ranked]
+        snippets = [self._snippet(item, score) for item, score in ranked_items]
+        return snippets + await self._page_neighbours(ranked_items)
+
+    async def _page_neighbours(
+        self, ranked_items: list[tuple[dict, float]]
+    ) -> list[KnowledgeSnippetV1]:
+        """Complete the top-ranked documents with their remaining passages.
+
+        Vector search returns the passages most similar to the question, which is
+        the wrong shape for "summarize everything about X": when one document is
+        about X end to end, its later sections lose top-k slots to unrelated
+        documents that merely mention X. Once a document has clearly won, pull
+        the rest of it in document order so an answer can cover the whole page
+        rather than the fragments that happened to match.
+
+        Neighbours inherit their anchor's score — they are context for an
+        already-relevant document, so inheriting keeps them above the caller's
+        relevance floor without raising the top score the grounding review
+        reads."""
+        settings = self._settings
+        pages = settings.corpus_page_expand_pages
+        per_query = settings.corpus_page_expand_k
+        if not (settings.corpus_page_expand and ranked_items) or not (pages and per_query):
+            return []
+        anchors: dict[tuple[str, str], float] = {}
+        for item, score in ranked_items:
+            key = (str(item.get("source_id", "")), str(item.get("rel_path", "")))
+            if not all(key) or key in anchors:
+                continue
+            anchors[key] = float(score)
+            if len(anchors) >= pages:
+                break
+        if not anchors:
+            return []
+        rows = await self._db.corpus_chunks_by_paths(
+            list(anchors), [item["id"] for item, _ in ranked_items], per_query
+        )
+        return [
+            self._snippet(row, anchors.get((row["source_id"], row["rel_path"]), 0.0))
+            for row in rows
+        ]
+
+    @staticmethod
+    def _snippet(item: dict, score: float) -> KnowledgeSnippetV1:
+        return KnowledgeSnippetV1(
+            source_label=item["source_label"],
+            provider=item.get("source_provider", "local"),
+            rel_path=item["rel_path"],
+            symbol=item.get("symbol"),
+            start_line=item.get("start_line"),
+            text=item["text"],
+            score=score,
+        )
 
     # ── Code graph (Graph-RAG Stage 1) ───────────────────────────────────────
 
@@ -393,26 +467,53 @@ class CorpusService:
         ]
         return entity_nodes, entity_edges
 
-    def _scan(self, root: Path) -> list[tuple[str, str, str, Path]]:
+    def _scan(
+        self, root: Path
+    ) -> tuple[list[tuple[str, str, str, Path]], _ScanReport]:
         """Walk `root`, returning (rel_path, content_hash, lang, path) for each
-        indexable text file under the size cap, skipping junk directories."""
+        indexable text file under the size cap, plus a report of what was
+        rejected and why.
+
+        The junk-directory test runs against the path *relative to the source
+        root*: a directory named in `_SKIP_DIRS` only counts when it sits inside
+        the source. Testing the absolute path would let an ancestor the user
+        never chose (the Notion mirror lives under `.data/`) disqualify every
+        file in the source."""
         results: list[tuple[str, str, str, Path]] = []
         max_bytes = self._settings.corpus_max_file_bytes
+        total = skipped_dir = skipped_extension = skipped_size = 0
         for path in root.rglob("*"):
-            if path.is_dir() or any(part in _SKIP_DIRS for part in path.parts):
+            if path.is_dir():
+                continue
+            try:
+                relative = path.relative_to(root)
+            except ValueError:  # a symlink escaping the root
+                continue
+            total += 1
+            if any(part in _SKIP_DIRS for part in relative.parts):
+                skipped_dir += 1
                 continue
             lang = lang_for(path.suffix)
             if lang is None:
+                skipped_extension += 1
                 continue
             try:
                 if path.stat().st_size > max_bytes:
+                    skipped_size += 1
                     continue
                 data = path.read_bytes()
             except OSError:
                 continue
-            content_hash = hashlib.sha256(data).hexdigest()
-            results.append((str(path.relative_to(root)), content_hash, lang, path))
-        return results
+            content_hash = hashlib.sha256(
+                f"{_INDEX_VERSION}:".encode() + data
+            ).hexdigest()
+            results.append((str(relative), content_hash, lang, path))
+        return results, _ScanReport(
+            total_files=total,
+            skipped_dir=skipped_dir,
+            skipped_extension=skipped_extension,
+            skipped_size=skipped_size,
+        )
 
     @staticmethod
     def _read_text(path: Path) -> str | None:

@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, AsyncIterator, Literal
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from .asset_library import AssetLibraryError
 from .attachment_text import (
@@ -20,11 +21,19 @@ from .attachment_text import (
 from .blob_store import BlobTooLargeError
 from .contracts import (
     ApprovalDecisionV1,
+    AssetEnvUpdateV1,
     AssetLogsV1,
     AssetStartV1,
     AssetV1,
     CodeGraphLookupV1,
     CodeGraphStatsV1,
+    DacCatalogV1,
+    DacEstimateRequestV1,
+    DacEstimateV1,
+    DacOptimizeRequestV1,
+    DacOptimizeResultV1,
+    DacRecommendationV1,
+    DacRecommendRequestV1,
     EntityGraphLookupV1,
     EntityGraphStatsV1,
     ConversationCreateV1,
@@ -35,11 +44,34 @@ from .contracts import (
     CorpusSearchV1,
     CorpusSourceCreateV1,
     CorpusSourceV1,
+    CustomerAccountCreateV1,
+    CustomerAccountDetailV1,
+    CustomerAccountUpdateV1,
+    CustomerAccountV1,
+    CustomerActionStatusV1,
+    CustomerActionV1,
+    CustomerCaptureV1,
+    CustomerDashboardV1,
+    CustomerOutputRequestV1,
+    CustomerOutputV1,
+    CustomerProposalSaveV1,
+    CustomerSettingsUpdateV1,
+    CustomerSettingsV1,
+    CustomerSourceV1,
+    CustomerUpdateProposalV1,
+    CustomerWinCreateV1,
+    CustomerWinUpdateV1,
+    CustomerWinV1,
     Decision,
     FeedbackV1,
     HealthV1,
     KnowledgeSnippetV1,
+    LocalModelSessionLaunchV1,
+    LocalModelSessionStopV1,
+    LocalModelSessionV1,
+    MemoryConsentV1,
     MemoryDecisionV1,
+    MemoryIndexStatusV1,
     MemoryProposalCreateV1,
     MemoryProposalV1,
     NotionConnectionUpdateV1,
@@ -50,6 +82,7 @@ from .contracts import (
     PersonalProfileV1,
     PersonalProfileUpdateV1,
     ProjectOpenV1,
+    ProjectVerificationV1,
     ProjectWorkspaceV1,
     MessageAcceptedV1,
     MessageCreateV1,
@@ -74,9 +107,12 @@ from .contracts import (
     UploadV1,
 )
 from .control_plane import GRAPH_SCHEMA_VERSION, initial_state
+from .dac_sizing import SizingError
 from .embeddings import CohereUnavailable
+from .local_model_session import LocalModelSessionError
 from .notion import NotionError
 from .reference_architecture import ReferenceRunnerError
+from .project_verification import ProjectVerificationError
 from .project_workspace import ProjectWorkspaceError
 from .runtime import AppRuntime
 from .tool_evidence import build_tool_version_evidence
@@ -152,6 +188,276 @@ async def put_model_preference(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+@router.get("/model-session", response_model=LocalModelSessionV1)
+async def get_model_session(request: Request) -> LocalModelSessionV1:
+    return await runtime(request).model_session.status()
+
+
+@router.post("/model-session/launch", response_model=LocalModelSessionV1)
+async def launch_model_session(
+    body: LocalModelSessionLaunchV1, request: Request
+) -> LocalModelSessionV1:
+    try:
+        app = runtime(request)
+        result = await app.model_session.launch(
+            body.model, body.idle_timeout_seconds, body.context_window
+        )
+        if app.control_plane is not None:
+            await app.control_plane.reconcile_startup()
+        return result
+    except LocalModelSessionError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/model-session/stop", response_model=LocalModelSessionV1)
+async def stop_model_session(
+    body: LocalModelSessionStopV1, request: Request
+) -> LocalModelSessionV1:
+    try:
+        return await runtime(request).model_session.stop(force=body.force)
+    except LocalModelSessionError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+# ── Customer intelligence workbench ─────────────────────────────────────────
+
+
+def _utc_isoformat(value: datetime | None) -> str | None:
+    """Store one instant in one representation.
+
+    Win rows are ordered by comparing these strings, so a value that kept its
+    original offset (``…T00:00:00+04:00``) would sort against a UTC one
+    (``…T22:00:00+00:00``) lexicographically rather than chronologically. A naive
+    value is read as UTC, matching how the rest of the store writes timestamps."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC).isoformat()
+    return value.astimezone(UTC).isoformat()
+
+
+@router.get("/customers/dashboard", response_model=CustomerDashboardV1)
+async def customer_dashboard(request: Request) -> CustomerDashboardV1:
+    service = runtime(request).customers
+    assert service is not None
+    return await service.dashboard()
+
+
+@router.get("/customers", response_model=list[CustomerAccountV1])
+async def list_customer_accounts(request: Request) -> list[CustomerAccountV1]:
+    service = runtime(request).customers
+    assert service is not None
+    return await service.accounts()
+
+
+@router.post(
+    "/customers", response_model=CustomerAccountV1,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_customer_account(
+    body: CustomerAccountCreateV1, request: Request
+) -> CustomerAccountV1:
+    row = await runtime(request).database.create_customer_account(
+        body.name, body.aliases, body.industry, body.region
+    )
+    return CustomerAccountV1.model_validate(row)
+
+
+@router.get("/customers/{account_id}", response_model=CustomerAccountDetailV1)
+async def get_customer_account(
+    account_id: str, request: Request
+) -> CustomerAccountDetailV1:
+    service = runtime(request).customers
+    assert service is not None
+    value = await service.account(account_id)
+    if value is None:
+        raise not_found("customer account")
+    return value
+
+
+@router.put("/customers/{account_id}", response_model=CustomerAccountV1)
+async def update_customer_account(
+    account_id: str, body: CustomerAccountUpdateV1, request: Request
+) -> CustomerAccountV1:
+    value = await runtime(request).database.update_customer_account(
+        account_id,
+        name=body.name,
+        aliases=body.aliases,
+        industry=body.industry,
+        region=body.region,
+        status=body.status,
+    )
+    if value is None:
+        raise not_found("customer account")
+    return CustomerAccountV1.model_validate(value)
+
+
+@router.delete("/customers/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer_account(account_id: str, request: Request) -> Response:
+    if not await runtime(request).database.delete_customer_account(account_id):
+        raise not_found("customer account")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/customers/sources", response_model=CustomerSourceV1,
+    status_code=status.HTTP_201_CREATED,
+)
+async def capture_customer_source(
+    body: CustomerCaptureV1, request: Request
+) -> CustomerSourceV1:
+    app = runtime(request)
+    if await app.database.get_customer_account(body.account_id) is None:
+        raise not_found("customer account")
+    row, duplicate = await app.database.capture_customer_source(
+        account_id=body.account_id,
+        source_kind=body.source_kind,
+        title=body.title,
+        content=body.content,
+        source_ref=body.source_ref,
+        occurred_at=body.occurred_at.isoformat() if body.occurred_at else None,
+    )
+    value = {key: item for key, item in row.items() if key != "content_hash"}
+    if duplicate and value["status"] == "waiting":
+        value["status"] = "duplicate"
+    return CustomerSourceV1.model_validate(value)
+
+
+@router.post(
+    "/customers/sources/{source_id}/analyze",
+    response_model=CustomerUpdateProposalV1,
+)
+async def analyze_customer_source(
+    source_id: str, request: Request
+) -> CustomerUpdateProposalV1:
+    service = runtime(request).customers
+    assert service is not None
+    try:
+        return await service.analyze(source_id)
+    except KeyError as error:
+        raise not_found("customer source") from error
+    except LocalModelSessionError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.put(
+    "/customers/proposals/{proposal_id}/save",
+    response_model=CustomerUpdateProposalV1,
+)
+async def save_customer_update(
+    proposal_id: str, body: CustomerProposalSaveV1, request: Request
+) -> CustomerUpdateProposalV1:
+    service = runtime(request).customers
+    assert service is not None
+    value = await service.save_proposal(proposal_id, body.extraction)
+    if value is None:
+        raise HTTPException(
+            status_code=409, detail="customer update is missing or already reviewed"
+        )
+    return value
+
+
+@router.patch(
+    "/customers/actions/{action_id}", response_model=CustomerActionV1
+)
+async def update_customer_action(
+    action_id: str, body: CustomerActionStatusV1, request: Request
+) -> CustomerActionV1:
+    value = await runtime(request).database.update_customer_action(
+        action_id, body.status
+    )
+    if value is None:
+        raise not_found("customer action")
+    value["evidence"] = json.loads(value.pop("evidence_json") or "{}")
+    return CustomerActionV1.model_validate(value)
+
+
+@router.post(
+    "/customers/{account_id}/wins", response_model=CustomerWinV1,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_customer_win(
+    account_id: str, body: CustomerWinCreateV1, request: Request
+) -> CustomerWinV1:
+    app = runtime(request)
+    if await app.database.get_customer_account(account_id) is None:
+        raise not_found("customer account")
+    row = await app.database.create_customer_win(
+        account_id,
+        title=body.title,
+        brief=body.brief,
+        services=body.services,
+        dac_shape=body.dac_shape,
+        yearly_arr=body.yearly_arr,
+        won_at=_utc_isoformat(body.won_at),
+        source_ref=body.source_ref,
+    )
+    return CustomerWinV1.model_validate(row)
+
+
+@router.put("/customers/wins/{win_id}", response_model=CustomerWinV1)
+async def update_customer_win(
+    win_id: str, body: CustomerWinUpdateV1, request: Request
+) -> CustomerWinV1:
+    row = await runtime(request).database.update_customer_win(
+        win_id,
+        title=body.title,
+        brief=body.brief,
+        services=body.services,
+        dac_shape=body.dac_shape,
+        yearly_arr=body.yearly_arr,
+        won_at=_utc_isoformat(body.won_at),
+        source_ref=body.source_ref,
+    )
+    if row is None:
+        raise not_found("customer win")
+    return CustomerWinV1.model_validate(row)
+
+
+@router.delete("/customers/wins/{win_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer_win(win_id: str, request: Request) -> Response:
+    if not await runtime(request).database.delete_customer_win(win_id):
+        raise not_found("customer win")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/customer-settings", response_model=CustomerSettingsV1)
+async def get_customer_settings(request: Request) -> CustomerSettingsV1:
+    return CustomerSettingsV1.model_validate(
+        await runtime(request).database.customer_settings()
+    )
+
+
+@router.put("/customer-settings", response_model=CustomerSettingsV1)
+async def put_customer_settings(
+    body: CustomerSettingsUpdateV1, request: Request
+) -> CustomerSettingsV1:
+    if body.tracker_url and not body.tracker_url.startswith(("https://", "http://")):
+        raise HTTPException(status_code=422, detail="tracker URL must be an HTTP(S) URL")
+    return CustomerSettingsV1.model_validate(
+        await runtime(request).database.save_customer_settings(
+            body.tracker_url, body.activity_template
+        )
+    )
+
+
+@router.post(
+    "/customers/{account_id}/outputs", response_model=CustomerOutputV1,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_customer_output(
+    account_id: str, body: CustomerOutputRequestV1, request: Request
+) -> CustomerOutputV1:
+    service = runtime(request).customers
+    assert service is not None
+    try:
+        return await service.output(account_id, body.kind, body.interaction_id)
+    except KeyError as error:
+        raise not_found("customer account") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 # ── Metis local asset library ────────────────────────────────────────────────
 
 
@@ -204,6 +510,17 @@ async def stop_asset(asset_id: str, request: Request) -> AssetV1:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
+@router.put("/assets/{asset_id}/env", response_model=AssetV1)
+async def write_asset_env(
+    asset_id: str, request: Request, body: AssetEnvUpdateV1
+) -> AssetV1:
+    # Values only ever travel inward: the response reports presence, never content.
+    try:
+        return await runtime(request).assets.write_env(asset_id, body.values)
+    except AssetLibraryError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
 @router.get("/assets/{asset_id}/logs", response_model=AssetLogsV1)
 async def asset_logs(asset_id: str, request: Request) -> AssetLogsV1:
     try:
@@ -236,6 +553,60 @@ async def open_project(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get(
+    "/projects/{project_id}/verification", response_model=ProjectVerificationV1
+)
+async def get_project_verification(
+    project_id: str, request: Request
+) -> ProjectVerificationV1:
+    """The declared checks, their plain-English explanation, and approval state."""
+    app = runtime(request)
+    if app.projects is None:
+        raise HTTPException(status_code=503, detail="project workspaces are unavailable")
+    try:
+        return await app.projects.verification_view(project_id)
+    except (AssetLibraryError, ProjectWorkspaceError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/projects/{project_id}/verification/approve", response_model=ProjectVerificationV1
+)
+async def approve_project_verification(
+    project_id: str, request: Request
+) -> ProjectVerificationV1:
+    app = runtime(request)
+    if app.projects is None:
+        raise HTTPException(status_code=503, detail="project workspaces are unavailable")
+    try:
+        return await app.projects.approve_verification(project_id)
+    except (
+        AssetLibraryError,
+        ProjectVerificationError,
+        ProjectWorkspaceError,
+    ) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/projects/{project_id}/verification/revoke", response_model=ProjectVerificationV1
+)
+async def revoke_project_verification(
+    project_id: str, request: Request
+) -> ProjectVerificationV1:
+    app = runtime(request)
+    if app.projects is None:
+        raise HTTPException(status_code=503, detail="project workspaces are unavailable")
+    try:
+        return await app.projects.revoke_verification(project_id)
+    except (
+        AssetLibraryError,
+        ProjectVerificationError,
+        ProjectWorkspaceError,
+    ) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post(
     "/conversations", response_model=ConversationV1, status_code=status.HTTP_201_CREATED
 )
@@ -258,6 +629,13 @@ async def get_conversation(conversation_id: str, request: Request) -> Conversati
     if value is None:
         raise not_found("conversation")
     return value
+
+
+@router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_conversation(conversation_id: str, request: Request) -> Response:
+    if not await runtime(request).database.delete_conversation(conversation_id):
+        raise not_found("conversation")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -322,6 +700,11 @@ async def create_message(
         )
     model_aliases = app.model_preference.resolve_aliases()
     model_aliases["_knowledge_scope"] = body.knowledge_scope
+    if body.customer_id is not None:
+        customer = await app.database.get_customer_account(body.customer_id)
+        if customer is None:
+            raise not_found("customer account")
+        model_aliases["_customer_id"] = body.customer_id
     project_fields_supplied = bool(
         {"project_id", "project_mode"} & body.model_fields_set
     )
@@ -367,6 +750,14 @@ async def create_message(
                 else "local",
             }
         )
+    if (
+        model_aliases.get("_provider") != "oci"
+        and app.settings.model_backend != "deterministic"
+    ):
+        try:
+            await app.model_session.require_ready(model_aliases.get("planner"))
+        except LocalModelSessionError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
     user_message = await app.database.add_message(
         conversation_id, "user", body.content, body.attachment_ids
     )
@@ -479,6 +870,21 @@ async def decide_run(
         raise HTTPException(status_code=409, detail="run has no pending approval")
     if body.approval_id is not None and body.approval_id != approval.id:
         raise HTTPException(status_code=409, detail="approval ID does not match pending action")
+    if body.decision == Decision.APPROVE:
+        record = await app.database.get_run_execution_record(run_id)
+        aliases = record.get("model_aliases", {}) if record else {}
+        if (
+            aliases.get("_provider") != "oci"
+            and app.settings.model_backend != "deterministic"
+        ):
+            pinned_model = str(aliases.get("planner") or "")
+            try:
+                await app.model_session.require_ready(pinned_model)
+            except LocalModelSessionError:
+                try:
+                    await app.model_session.relaunch_pinned(pinned_model)
+                except LocalModelSessionError as error:
+                    raise HTTPException(status_code=409, detail=str(error)) from error
     changed = await app.database.record_approval_decision(
         approval.id, body.decision, body.reason
     )
@@ -977,13 +1383,40 @@ async def decide_memory_proposal(
             Decision.REJECT: ProposalStatus.REJECTED,
             Decision.DRAFT: ProposalStatus.DRAFT,
         }[body.decision]
-        return await runtime(request).database.decide_memory_proposal(
+        app = runtime(request)
+        decided = await app.database.decide_memory_proposal(
             proposal_id, mapped, body.reason
         )
+        if mapped == ProposalStatus.APPROVED and app.memory_index is not None:
+            # A newly active memory is unreachable by meaning until it has a
+            # vector. Embedding is best-effort and must not fail the decision.
+            app.spawn(app.memory_index.sync(), name="metis-memory-sync")
+        return decided
     except KeyError as exc:
         raise not_found("memory proposal") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/memory/index", response_model=MemoryIndexStatusV1)
+async def get_memory_index_status(request: Request) -> MemoryIndexStatusV1:
+    """Whether memory is searched by meaning or by keyword, and why."""
+    app = runtime(request)
+    if app.memory_index is None:
+        return MemoryIndexStatusV1()
+    return MemoryIndexStatusV1.model_validate(await app.memory_index.stats())
+
+
+@router.post("/memory/index/consent", response_model=MemoryIndexStatusV1)
+async def set_memory_index_consent(
+    body: MemoryConsentV1, request: Request
+) -> MemoryIndexStatusV1:
+    """Opt long-term memory into cloud embedding, or withdraw and purge it."""
+    app = runtime(request)
+    if app.memory_index is None:
+        raise HTTPException(status_code=503, detail="memory indexing is unavailable")
+    await app.memory_index.set_consent(body.consent, body.reason)
+    return MemoryIndexStatusV1.model_validate(await app.memory_index.stats())
 
 
 # ── Personal knowledge: Tier-1 corpus (RAG) + Tier-0 profile ─────────────────
@@ -1146,3 +1579,48 @@ async def put_profile(
     body: PersonalProfileUpdateV1, request: Request
 ) -> PersonalProfileV1:
     return runtime(request).profile.save(body.content)
+
+
+# ── Dedicated AI Cluster sizing ──────────────────────────────────────────────
+#
+# These endpoints are pure computation over a vendored catalog: no database, no
+# network, no run lifecycle. That is why they take request bodies and return
+# results directly instead of going through the approval and event machinery the
+# rest of the API uses — there is nothing here to approve and nothing to persist.
+
+
+def _sizing_error(error: SizingError) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error))
+
+
+@router.get("/dac/catalog", response_model=DacCatalogV1)
+async def dac_catalog(request: Request) -> DacCatalogV1:
+    return runtime(request).dac.catalog()
+
+
+@router.post("/dac/estimate", response_model=DacEstimateV1)
+async def dac_estimate(body: DacEstimateRequestV1, request: Request) -> DacEstimateV1:
+    try:
+        return runtime(request).dac.estimate(body)
+    except SizingError as error:
+        raise _sizing_error(error) from error
+
+
+@router.post("/dac/optimize", response_model=DacOptimizeResultV1)
+async def dac_optimize(
+    body: DacOptimizeRequestV1, request: Request
+) -> DacOptimizeResultV1:
+    try:
+        return runtime(request).dac.optimize(body)
+    except SizingError as error:
+        raise _sizing_error(error) from error
+
+
+@router.post("/dac/recommend", response_model=DacRecommendationV1)
+async def dac_recommend(
+    body: DacRecommendRequestV1, request: Request
+) -> DacRecommendationV1:
+    try:
+        return await runtime(request).dac.recommend(body)
+    except SizingError as error:
+        raise _sizing_error(error) from error

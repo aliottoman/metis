@@ -11,6 +11,7 @@ interface RunTimelineProps {
   onDecision: (approvalId: string, decision: "approve" | "reject") => Promise<void>;
   decidedApprovals: ReadonlySet<string>;
   decisionBusy?: string | null;
+  approveLabel?: string;
 }
 
 function getText(payload: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -61,6 +62,8 @@ function titleFor(type: string): string {
     "tool.code_review_skipped": "Code review skipped",
     "tool.output": "Tool output",
     "evaluation.completed": "Evaluation complete",
+    "project.check_result": "Verification check",
+    "project.verification_decided": "Verification decision",
     "approval.required": "Approval needed",
     "approval.applied": "Approval recorded",
     "run.awaiting_approval": "Waiting for approval",
@@ -79,6 +82,8 @@ function eventTone(event: RunEventV1): string {
   if (type === "context.knowledge_error") return "attention";
   // Payload-dependent tones for the Tool Factory events.
   if (type === "tool.evaluated") return payload.passed ? "success" : "attention";
+  if (type === "project.check_result") return payload.ok ? "success" : "danger";
+  if (type === "project.verification_decided") return payload.approved ? "success" : "attention";
   if (type === "tool.output") return payload.contract_ok ? "success" : "attention";
   if (type === "tool.code_reviewed") return payload.safe === false ? "danger" : "success";
   const exact: Record<string, string> = {
@@ -103,6 +108,7 @@ function eventSummary(event: RunEventV1): string {
   }
   if (event.type === "answer.grounding_reviewed") {
     if (payload.revision) return "Retrieved sources went uncited — sending one revision to ground the answer.";
+    if (payload.has_attachments) return "Answered from the attached document — kept as written.";
     if (payload.strong_retrieval) return "Answer is grounded in the retrieved sources.";
     return "No strongly-relevant sources to ground against.";
   }
@@ -144,6 +150,19 @@ function eventSummary(event: RunEventV1): string {
   if (event.type === "tool.code_review_skipped") {
     return getText(payload, "reason") ?? "code review unavailable — AST gate still applied";
   }
+  if (event.type === "project.check_result") {
+    const name = getText(payload, "name") ?? "check";
+    const failure = getText(payload, "error");
+    if (failure) return `${name} · ${failure}`;
+    if (payload.timed_out) return `${name} · timed out`;
+    const verdict = payload.ok ? "passed" : `failed (exit ${numText(payload.exit_code, "?")})`;
+    return `${name} · ${verdict} · ${numText(payload.duration_seconds, "?")}s`;
+  }
+  if (event.type === "project.verification_decided") {
+    return payload.approved
+      ? "Verification checks approved for this project."
+      : "Verification checks were declined.";
+  }
   return getText(payload, "summary", "message", "status", "tool_name", "tool", "node", "error") ??
     (event.type.includes("delta") ? "Streaming response" : "Recorded by the control plane");
 }
@@ -168,7 +187,7 @@ function approvalFrom(event: RunEventV1): ApprovalRequest | null {
   };
 }
 
-export function RunTimeline({ events, connection, streamError, onDecision, decidedApprovals, decisionBusy }: RunTimelineProps) {
+export function RunTimeline({ events, connection, streamError, onDecision, decidedApprovals, decisionBusy, approveLabel = "Approve once" }: RunTimelineProps) {
   const ordered = useMemo(() => [...events].sort((a, b) => a.sequence - b.sequence), [events]);
 
   return (
@@ -205,7 +224,7 @@ export function RunTimeline({ events, connection, streamError, onDecision, decid
                     ) : (
                       <div className="approvalActions">
                         <button type="button" className="dangerButton" disabled={decisionBusy === approval.id} onClick={() => void onDecision(approval.id, "reject")}>Reject</button>
-                        <button type="button" className="primaryButton" disabled={decisionBusy === approval.id} onClick={() => void onDecision(approval.id, "approve")}>Approve once</button>
+                        <button type="button" className="primaryButton" disabled={decisionBusy === approval.id} onClick={() => void onDecision(approval.id, "approve")}>{approveLabel}</button>
                       </div>
                     )}
                   </section>

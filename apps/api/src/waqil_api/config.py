@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     deep_worker_timeout_seconds: int = Field(default=120, ge=15, le=300)
     # Unload after each call so two models never share unified memory.
     ollama_keep_alive: str = "0"
+    # A manually launched model stays warm briefly after its last completed use.
+    # The session control may override this per launch, but never starts a model.
+    local_model_idle_seconds: int = Field(default=300, ge=60, le=86_400)
     max_upload_bytes: int = Field(
         default=10 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024
     )
@@ -87,6 +90,10 @@ class Settings(BaseSettings):
     # Bounds each model-authored tool run in the restricted executor.
     tool_authored_timeout_seconds: int = Field(default=10, ge=1, le=120)
     tool_authored_memory_mb: int = Field(default=512, ge=64, le=4096)
+    # Wall-clock allowance for ONE brokered model call made from inside a tool.
+    # Separate from the code budget above: a local 35B reply takes far longer than
+    # the few seconds of CPU an authored tool should ever need.
+    tool_authored_model_call_timeout_seconds: int = Field(default=300, ge=5, le=900)
     # Optional Grok review of authored code; sends that code to the cloud.
     allow_tool_code_review: bool = False
     oci_grok_model: str = "xai.grok-4.3"
@@ -108,6 +115,14 @@ class Settings(BaseSettings):
     project_tool_result_chars: int = Field(default=48_000, ge=4_000, le=200_000)
     project_max_write_bytes: int = Field(default=1_000_000, ge=1_024, le=8_000_000)
 
+    # Reviewed verification checks. The agent may only name a check declared in
+    # the project's own .metis/verify.json, and the recipe is approved once by
+    # fingerprint; runs per turn are bounded so a failing check cannot loop.
+    project_verify_enabled: bool = True
+    project_verify_timeout_seconds: int = Field(default=300, ge=5, le=1_800)
+    project_verify_output_chars: int = Field(default=12_000, ge=500, le=120_000)
+    project_verify_max_runs: int = Field(default=6, ge=0, le=30)
+
     # Containers whose child directories become Assets on an explicit scan.
     # NoDecode accepts a single path, a separated list, or a JSON array.
     asset_roots: Annotated[list[Path], NoDecode] = Field(default_factory=list)
@@ -128,6 +143,20 @@ class Settings(BaseSettings):
     corpus_graph_expand: bool = True
     corpus_graph_expand_seeds: int = Field(default=6, ge=0, le=50)
     corpus_graph_expand_k: int = Field(default=12, ge=0, le=100)
+
+    # Same-document expansion: after rerank picks winners, pull the rest of the
+    # top documents so "summarize this page" sees the page, not just its hits.
+    corpus_page_expand: bool = True
+    corpus_page_expand_pages: int = Field(default=2, ge=0, le=10)
+    corpus_page_expand_k: int = Field(default=12, ge=0, le=100)
+
+    # Completed runs become corpus documents so past work is retrievable. The
+    # documents are always local; indexing them still needs source consent.
+    run_history_enabled: bool = True
+    run_history_max_chars: int = Field(default=12_000, ge=500, le=80_000)
+    # Durable facts are proposed from a finished run, never activated by it.
+    memory_harvest_enabled: bool = True
+    memory_harvest_max_candidates: int = Field(default=3, ge=0, le=10)
 
     # Entity graph over prose. Off by default: it costs a cloud call per file.
     corpus_entity_graph: bool = False
@@ -239,6 +268,10 @@ class Settings(BaseSettings):
         return self.data_dir / "asset-catalog.json"
 
     @property
+    def project_verify_approval_path(self) -> Path:
+        return self.data_dir / "project-verify-approvals.json"
+
+    @property
     def tool_bundle_dir(self) -> Path:
         return self.data_dir / "tool-bundles"
 
@@ -272,6 +305,11 @@ class Settings(BaseSettings):
     def model_preference_path(self) -> Path:
         """Which model(s) to route requests to (local, user-owned JSON)."""
         return self.data_dir / "model_preference.json"
+
+    @property
+    def model_session_path(self) -> Path:
+        """Last explicit local-model session choices (never credentials)."""
+        return self.data_dir / "model_session.json"
 
     def prepare_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

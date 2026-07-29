@@ -1,0 +1,79 @@
+#!/bin/zsh
+# Install (or reinstall) the LaunchAgent that keeps Metis serving in the
+# background: started at login, restarted if it ever dies, rebuilt whenever the
+# web sources changed since the last build.
+#
+# Paths are derived from wherever this repo currently lives, so moving the repo
+# and re-running this is all that a relocation takes.
+#
+#   ./scripts/install-agent            install and start
+#   ./scripts/install-agent --remove   stop and uninstall
+set -uo pipefail
+
+ROOT="${0:A:h:h}"
+LABEL="com.metis.local"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG_DIR="$ROOT/.data"
+
+if [[ ${1:-} == "--remove" ]]; then
+	launchctl bootout "gui/$UID/$LABEL" 2>/dev/null
+	rm -f "$PLIST"
+	print -r -- "Removed $LABEL."
+	exit 0
+fi
+
+case "$ROOT" in
+	"$HOME"/Desktop/*|"$HOME"/Documents/*|"$HOME"/Downloads/*)
+		print -r -- "Refusing to install: $ROOT sits in a macOS privacy-protected folder."
+		print -r -- "launchd cannot read it, so the agent would fail on every start."
+		print -r -- "Move the repo somewhere like ~/Developer and re-run this."
+		exit 1
+		;;
+esac
+
+mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
+
+cat > "$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>$LABEL</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$ROOT/scripts/metis</string>
+		<string>--serve</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>$ROOT</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>StandardOutPath</key>
+	<string>$LOG_DIR/metis-agent.log</string>
+	<key>StandardErrorPath</key>
+	<string>$LOG_DIR/metis-agent.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:$HOME/Library/pnpm:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+</dict>
+</plist>
+PLIST_EOF
+
+launchctl bootout "gui/$UID/$LABEL" 2>/dev/null
+if ! launchctl bootstrap "gui/$UID" "$PLIST"; then
+	print -r -- "Failed to load $LABEL. Plist written to $PLIST."
+	exit 1
+fi
+
+print -r -- "Installed $LABEL — Metis now starts at login and stays up."
+print -r -- "Logs: $LOG_DIR/metis-agent.log"

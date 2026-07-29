@@ -35,9 +35,15 @@ def _model(params):
     if not line:
         raise RuntimeError("model channel closed by host")
     message = json.loads(line)
-    if message.get("error"):
-        raise RuntimeError(f"model call rejected: {message['error']}")
-    return message.get("content", "")
+    # Key presence, not truthiness: an error frame carrying an empty reason is
+    # still a failed call, and treating it as an empty answer hides the failure
+    # inside the tool's own output.
+    if "error" in message:
+        raise RuntimeError(f"model call rejected: {message['error'] or 'unknown error'}")
+    content = message.get("content")
+    if not isinstance(content, str):
+        raise RuntimeError("model channel returned no text")
+    return content
 
 
 def _make_safe_import(allowed: set) -> callable:

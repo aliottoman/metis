@@ -106,3 +106,57 @@ async def test_allowed_import_works_through_the_safe_importer() -> None:
     )
     output = await execute_authored(source, {})
     assert output == {"f": 24, "m": 4}
+
+
+@pytest.mark.asyncio
+async def test_timed_out_model_call_is_an_error_not_an_empty_answer() -> None:
+    """Measured live: a tool's model() call hit the 10s budget, and
+    `str(TimeoutError())` is empty — so the error frame carried a falsy reason,
+    the harness read it as "no error", and the tool received "" as a successful
+    reply. The tool then reported an empty summary and the failure was invisible.
+    An error must never be indistinguishable from success."""
+    import asyncio
+
+    async def slow_model(params):
+        await asyncio.sleep(5)
+        return "too late"
+
+    source = _run(
+        "try:\n"
+        "    reply = model({'prompt': 'summarize'})\n"
+        "except Exception as exc:\n"
+        "    return {'failed': True, 'reason': str(exc)[:60]}\n"
+        "return {'failed': False, 'reply': reply}"
+    )
+    output = await execute_authored(
+        source,
+        {"text": "x"},
+        on_model_request=slow_model,
+        timeout_seconds=10,
+        model_call_timeout_seconds=1,
+        model_call_budget=1,
+    )
+    assert output["failed"] is True
+    assert output["reason"], "the rejection reason must never be empty"
+
+
+@pytest.mark.asyncio
+async def test_model_latency_does_not_consume_the_code_budget() -> None:
+    """A brokered model call is host latency, not untrusted compute, so a tool
+    that waits on one must not be killed by the code timeout."""
+    import asyncio
+
+    async def slow_model(params):
+        await asyncio.sleep(3)
+        return "done waiting"
+
+    source = _run("return {'reply': model({'prompt': 'x'})}")
+    output = await execute_authored(
+        source,
+        {"text": "x"},
+        on_model_request=slow_model,
+        timeout_seconds=2,
+        model_call_timeout_seconds=30,
+        model_call_budget=1,
+    )
+    assert output == {"reply": "done waiting"}

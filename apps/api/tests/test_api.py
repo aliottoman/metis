@@ -47,6 +47,21 @@ def new_conversation(client: TestClient) -> str:
     return response.json()["id"]
 
 
+def test_delete_conversation_removes_messages_and_is_not_found_afterward(client: TestClient) -> None:
+    conversation_id = new_conversation(client)
+    accepted = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={"content": "Remove this chat", "attachment_ids": []},
+    )
+    assert accepted.status_code == 202
+
+    deleted = client.delete(f"/api/v1/conversations/{conversation_id}")
+    assert deleted.status_code == 204
+    assert client.get(f"/api/v1/conversations/{conversation_id}").status_code == 404
+    assert client.get(f"/api/v1/conversations/{conversation_id}/messages").status_code == 404
+    assert conversation_id not in {item["id"] for item in client.get("/api/v1/conversations").json()}
+
+
 def test_direct_run_and_replayable_events(client: TestClient) -> None:
     health = client.get("/api/v1/health")
     assert health.status_code == 200

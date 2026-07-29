@@ -1,28 +1,49 @@
 import type {
+  AssetEnvVar,
   AssetLogsV1,
   AssetV1,
   AttachmentRef,
   ChatMessage,
   CodeGraphLookup,
+  DacCatalog,
+  DacEstimate,
+  DacEstimateRequest,
+  DacOptimizeRequest,
+  DacOptimizeResult,
+  DacRecommendRequest,
+  DacRecommendation,
   CodeGraphStats,
   EntityGraphLookup,
   EntityGraphStats,
   ConversationDetail,
   ConversationSummary,
+  CustomerAccount,
+  CustomerAccountDetail,
+  CustomerAction,
+  CustomerDashboard,
+  CustomerExtraction,
+  CustomerOutput,
+  CustomerProposal,
+  CustomerSettings,
+  CustomerSource,
+  CustomerWin,
   CorpusHealth,
   CorpusReindexResult,
   CorpusSource,
   HealthSnapshot,
   KnowledgeSnippet,
   KnowledgeScope,
+  MemoryIndexStatus,
   MemoryProposal,
   ModelHealth,
   ModelPreference,
+  LocalModelSession,
   NotionConnection,
   NotionSyncResult,
   ConversationProject,
   PersonalProfile,
   ProjectMode,
+  ProjectVerification,
   ProjectWorkspace,
   RecoverableRun,
   RiskLevel,
@@ -102,6 +123,30 @@ async function readError(response: Response): Promise<unknown> {
   }
 }
 
+/**
+ * A readable sentence out of FastAPI's 422 body.
+ *
+ * FastAPI reports validation failures as an array of objects, which the generic
+ * string coercion renders as "[object Object]" — the user sees that a request
+ * failed but not which field or why. Returns undefined for every other error
+ * shape so the existing handling stays in charge.
+ */
+function validationMessage(detail: unknown): string | undefined {
+  if (!Array.isArray(detail) || !detail.length) return undefined;
+  const parts = detail
+    .map((entry) => {
+      const item = asRecord(entry);
+      const message = typeof item.msg === "string" ? item.msg : undefined;
+      if (!message) return undefined;
+      const location = Array.isArray(item.loc)
+        ? item.loc.filter((part) => part !== "body").join(".")
+        : "";
+      return location ? `${location}: ${message}` : message;
+    })
+    .filter((part): part is string => Boolean(part));
+  return parts.length ? parts.join("; ") : undefined;
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !(init.body instanceof FormData) && !headers.has("content-type")) {
@@ -117,7 +162,12 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const detail = await readError(response);
     const record = asRecord(detail);
-    throw new ApiError(stringValue(record.detail ?? record.message, `Request failed (${response.status})`), response.status, detail);
+    throw new ApiError(
+      validationMessage(record.detail) ??
+        stringValue(record.detail ?? record.message, `Request failed (${response.status})`),
+      response.status,
+      detail,
+    );
   }
   if (response.status === 204) return undefined as T;
   const text = await response.text();
@@ -171,6 +221,12 @@ export async function createConversation(title?: string): Promise<ConversationSu
   return normalizeConversation(unwrap(response));
 }
 
+export async function deleteConversation(id: string): Promise<void> {
+  await request<void>(`${API_PREFIX}/conversations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getConversation(id: string): Promise<ConversationDetail> {
   const [conversationResponse, messagesResponse] = await Promise.all([
     request<unknown>(`${API_PREFIX}/conversations/${encodeURIComponent(id)}`),
@@ -199,6 +255,7 @@ export async function sendMessage(
   attachments: AttachmentRef[],
   project?: { id: string; mode: ProjectMode } | null,
   knowledgeScope: KnowledgeScope = "auto",
+  customerId?: string | null,
 ): Promise<RunHandle> {
   const response = await request<unknown>(
     `${API_PREFIX}/conversations/${encodeURIComponent(conversationId)}/messages`,
@@ -208,6 +265,7 @@ export async function sendMessage(
         content,
         attachment_ids: attachments.map((item) => item.id),
         knowledge_scope: knowledgeScope,
+        ...(customerId ? { customer_id: customerId } : {}),
         ...(project === undefined
           ? {}
           : project
@@ -254,6 +312,81 @@ export async function openProjectWorkspace(
       method: "POST",
       body: JSON.stringify({ mode }),
     })),
+  );
+}
+
+function normalizeMemoryIndexStatus(value: unknown): MemoryIndexStatus {
+  const item = asRecord(unwrap(value));
+  return {
+    consent: item.consent === true,
+    consentReason: item.consentReason || item.consent_reason
+      ? stringValue(item.consentReason ?? item.consent_reason)
+      : null,
+    cloudAvailable: (item.cloudAvailable ?? item.cloud_available) === true,
+    semantic: item.semantic === true,
+    active: numberValue(item.active) ?? 0,
+    embedded: numberValue(item.embedded) ?? 0,
+  };
+}
+
+export async function getMemoryIndexStatus(): Promise<MemoryIndexStatus> {
+  return normalizeMemoryIndexStatus(await request<unknown>(`${API_PREFIX}/memory/index`));
+}
+
+export async function setMemoryIndexConsent(consent: boolean): Promise<MemoryIndexStatus> {
+  return normalizeMemoryIndexStatus(
+    await request<unknown>(`${API_PREFIX}/memory/index/consent`, {
+      method: "POST",
+      body: JSON.stringify({ consent }),
+    }),
+  );
+}
+
+function normalizeProjectVerification(
+  value: unknown,
+  projectId: string,
+): ProjectVerification {
+  const item = asRecord(unwrap(value));
+  return {
+    projectId: stringValue(item.projectId ?? item.project_id, projectId),
+    configured: item.configured === true,
+    approved: item.approved === true,
+    fingerprint: item.fingerprint == null ? null : stringValue(item.fingerprint),
+    checks: listFrom(item.checks, "checks").map((raw) => {
+      const check = asRecord(raw);
+      return {
+        name: stringValue(check.name),
+        command: Array.isArray(check.command) ? check.command.map((part) => stringValue(part)) : [],
+        description: stringValue(check.description, ""),
+        explanation: stringValue(check.explanation, ""),
+        timeoutSeconds: numberValue(check.timeoutSeconds ?? check.timeout_seconds) ?? 300,
+      };
+    }),
+    explanation: stringValue(item.explanation, ""),
+    boundary: stringValue(item.boundary, ""),
+    error: item.error == null ? null : stringValue(item.error),
+  };
+}
+
+export async function getProjectVerification(projectId: string): Promise<ProjectVerification> {
+  return normalizeProjectVerification(
+    await request<unknown>(
+      `${API_PREFIX}/projects/${encodeURIComponent(projectId)}/verification`,
+    ),
+    projectId,
+  );
+}
+
+export async function decideProjectVerification(
+  projectId: string,
+  decision: "approve" | "revoke",
+): Promise<ProjectVerification> {
+  return normalizeProjectVerification(
+    await request<unknown>(
+      `${API_PREFIX}/projects/${encodeURIComponent(projectId)}/verification/${decision}`,
+      { method: "POST" },
+    ),
+    projectId,
   );
 }
 
@@ -999,6 +1132,173 @@ export async function setModelPreference(
   );
 }
 
+export async function getLocalModelSession(): Promise<LocalModelSession> {
+  return request<LocalModelSession>(`${API_PREFIX}/model-session`);
+}
+
+export async function launchLocalModel(
+  model: string,
+  idleTimeoutSeconds: LocalModelSession["idle_timeout_seconds"] = 300,
+  contextWindow: LocalModelSession["context_window"] = 32768,
+): Promise<LocalModelSession> {
+  return request<LocalModelSession>(`${API_PREFIX}/model-session/launch`, {
+    method: "POST",
+    body: JSON.stringify({
+      model,
+      idle_timeout_seconds: idleTimeoutSeconds,
+      context_window: contextWindow,
+    }),
+  });
+}
+
+export async function stopLocalModel(force = true): Promise<LocalModelSession> {
+  return request<LocalModelSession>(`${API_PREFIX}/model-session/stop`, {
+    method: "POST",
+    body: JSON.stringify({ force }),
+  });
+}
+
+export async function listCustomers(): Promise<CustomerAccount[]> {
+  return request<CustomerAccount[]>(`${API_PREFIX}/customers`);
+}
+
+export async function createCustomer(input: {
+  name: string;
+  aliases?: string[];
+  industry?: string;
+  region?: string;
+}): Promise<CustomerAccount> {
+  return request<CustomerAccount>(`${API_PREFIX}/customers`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteCustomer(id: string): Promise<void> {
+  await request<void>(`${API_PREFIX}/customers/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getCustomer(id: string): Promise<CustomerAccountDetail> {
+  return request<CustomerAccountDetail>(
+    `${API_PREFIX}/customers/${encodeURIComponent(id)}`,
+  );
+}
+
+export async function getCustomerDashboard(): Promise<CustomerDashboard> {
+  return request<CustomerDashboard>(`${API_PREFIX}/customers/dashboard`);
+}
+
+export async function captureCustomerSource(input: {
+  account_id: string;
+  title: string;
+  content: string;
+  source_kind?: "note" | "meeting" | "chat" | "notion" | "attachment";
+  source_ref?: string;
+  occurred_at?: string | null;
+}): Promise<CustomerSource> {
+  return request<CustomerSource>(`${API_PREFIX}/customers/sources`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function analyzeCustomerSource(sourceId: string): Promise<CustomerProposal> {
+  return request<CustomerProposal>(
+    `${API_PREFIX}/customers/sources/${encodeURIComponent(sourceId)}/analyze`,
+    { method: "POST" },
+  );
+}
+
+export async function saveCustomerProposal(
+  proposalId: string,
+  extraction: CustomerExtraction,
+): Promise<CustomerProposal> {
+  return request<CustomerProposal>(
+    `${API_PREFIX}/customers/proposals/${encodeURIComponent(proposalId)}/save`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ extraction }),
+    },
+  );
+}
+
+export interface CustomerWinInput {
+  title: string;
+  brief?: string;
+  services?: string[];
+  dac_shape?: string;
+  yearly_arr?: number | null;
+  won_at?: string | null;
+  source_ref?: string;
+}
+
+export async function createCustomerWin(
+  accountId: string,
+  input: CustomerWinInput,
+): Promise<CustomerWin> {
+  return request<CustomerWin>(
+    `${API_PREFIX}/customers/${encodeURIComponent(accountId)}/wins`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export async function updateCustomerWin(
+  winId: string,
+  input: CustomerWinInput,
+): Promise<CustomerWin> {
+  return request<CustomerWin>(
+    `${API_PREFIX}/customers/wins/${encodeURIComponent(winId)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+}
+
+export async function deleteCustomerWin(winId: string): Promise<void> {
+  await request<void>(`${API_PREFIX}/customers/wins/${encodeURIComponent(winId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function updateCustomerAction(
+  actionId: string,
+  status: CustomerAction["status"],
+): Promise<CustomerAction> {
+  return request<CustomerAction>(
+    `${API_PREFIX}/customers/actions/${encodeURIComponent(actionId)}`,
+    { method: "PATCH", body: JSON.stringify({ status }) },
+  );
+}
+
+export async function getCustomerSettings(): Promise<CustomerSettings> {
+  return request<CustomerSettings>(`${API_PREFIX}/customer-settings`);
+}
+
+export async function saveCustomerSettings(
+  settings: Pick<CustomerSettings, "tracker_url" | "activity_template">,
+): Promise<CustomerSettings> {
+  return request<CustomerSettings>(`${API_PREFIX}/customer-settings`, {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+}
+
+export async function createCustomerOutput(
+  accountId: string,
+  interactionId?: string | null,
+): Promise<CustomerOutput> {
+  return request<CustomerOutput>(
+    `${API_PREFIX}/customers/${encodeURIComponent(accountId)}/outputs`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        kind: "activity_tracker",
+        interaction_id: interactionId || null,
+      }),
+    },
+  );
+}
+
 function numberRecord(value: unknown): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [key, entry] of Object.entries(asRecord(value))) {
@@ -1124,7 +1424,20 @@ export function normalizeAsset(value: unknown): AssetV1 {
     launchApproved: item.launchApproved === true || item.launch_approved === true,
     launchCommand: listFrom(item.launchCommand ?? item.launch_command).map((part) => stringValue(part)),
     envKeys: listFrom(item.envKeys ?? item.env_keys).map((key) => stringValue(key)).filter(Boolean),
+    envFile: listFrom(item.envFile ?? item.env_file)
+      .map(normalizeAssetEnvVar)
+      .filter((variable) => variable.key),
+    envFilePresent: item.envFilePresent === true || item.env_file_present === true,
     url: rawUrl == null || rawUrl === "" ? null : stringValue(rawUrl),
+  };
+}
+
+function normalizeAssetEnvVar(value: unknown): AssetEnvVar {
+  const item = asRecord(value);
+  return {
+    key: stringValue(item.key),
+    isSet: item.isSet === true || item.is_set === true,
+    sensitive: item.sensitive === true,
   };
 }
 
@@ -1149,6 +1462,19 @@ export async function startAsset(
   const response = await request<unknown>(
     `${API_PREFIX}/assets/${encodeURIComponent(assetId)}/start`,
     { method: "POST", body: JSON.stringify({ env }) },
+  );
+  return normalizeAsset(unwrap(response));
+}
+
+/** Persist runtime values into the project's own .env file. Values only ever
+ *  travel outbound: the response reports presence, never content. */
+export async function saveAssetEnv(
+  assetId: string,
+  values: Record<string, string>,
+): Promise<AssetV1> {
+  const response = await request<unknown>(
+    `${API_PREFIX}/assets/${encodeURIComponent(assetId)}/env`,
+    { method: "PUT", body: JSON.stringify({ values }) },
   );
   return normalizeAsset(unwrap(response));
 }
@@ -1188,4 +1514,31 @@ export async function getAssetLogs(assetId: string): Promise<AssetLogsV1> {
       ? rawLogs.map((line) => stringValue(line)).join("\n")
       : stringValue(rawLogs),
   };
+}
+
+/* ── Dedicated AI Cluster sizing ──────────────────────────────────────────── */
+
+export async function getDacCatalog(): Promise<DacCatalog> {
+  return request<DacCatalog>(`${API_PREFIX}/dac/catalog`);
+}
+
+export async function estimateDac(body: DacEstimateRequest): Promise<DacEstimate> {
+  return request<DacEstimate>(`${API_PREFIX}/dac/estimate`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function optimizeDac(body: DacOptimizeRequest): Promise<DacOptimizeResult> {
+  return request<DacOptimizeResult>(`${API_PREFIX}/dac/optimize`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function recommendDac(body: DacRecommendRequest): Promise<DacRecommendation> {
+  return request<DacRecommendation>(`${API_PREFIX}/dac/recommend`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
