@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
@@ -31,6 +32,7 @@ from .contracts import (
     RunStatus,
     ToolDefinitionV1,
     ToolManifestV1,
+    project_tool_catalog,
 )
 from . import (
     authored_code,
@@ -53,15 +55,20 @@ from .tool_authoring import ToolAuthoringError
 from .tool_registry import REFERENCE_ARCHITECTURE_SLUG
 from .model_provider import (
     ModelProvider,
+    ModelProviderError,
+    PermanentModelError,
     PLANNING_ATTACHMENT_EXCERPT_CHARACTERS,
     RoutingCatalog,
     ToolRoute,
     build_planning_attachment_evidence,
     default_routing_catalog,
     is_explicit_toolify_request,
+    is_new_application_request,
+    is_project_build_instruction,
     normalize_plan_semantics,
     validate_plan_semantics,
 )
+from .project_scaffold import SCAFFOLD_VERSION, build_capabilities, scaffold_prompt
 from .project_workspace import ProjectWorkspaceError, VerificationNotApprovedError
 from .run_history import changes_from_trace
 from .policy import (
@@ -97,6 +104,54 @@ def _bounded_check_name(call: ProjectToolCallV1) -> str:
     return re.sub(r"[^a-z0-9_-]", "", raw.casefold())[:32] or "unnamed"
 
 
+# Read-only tools only: a repeated write is refused on its own merits, and a
+# repeated check may legitimately re-run after a change.
+_REPEATABLE_PROJECT_READS = frozenset({"list_files", "search_code", "read_file"})
+
+
+def _repeated_project_call(
+    state: AgentState, call: ProjectToolCallV1
+) -> dict[str, Any] | None:
+    """A tool error when this read was already answered, unchanged, in this turn.
+
+    Nothing in the loop otherwise notices that the same listing has been fetched
+    ten times, and each repeat pushes the useful evidence further out of the
+    trace window while spending a step.
+    """
+    if call.name not in _REPEATABLE_PROJECT_READS:
+        return None
+    signature = json.dumps(
+        {"tool": call.name, "arguments": call.arguments}, sort_keys=True, default=str
+    )
+    for index, entry in enumerate(state.get("project_trace", []), start=1):
+        previous = json.dumps(
+            {"tool": entry.get("tool"), "arguments": entry.get("arguments") or {}},
+            sort_keys=True,
+            default=str,
+        )
+        if previous == signature and (entry.get("result") or {}).get("ok"):
+            # The answer travels with the refusal. "Its result is still above"
+            # was true when this was written and false in the case that matters:
+            # each refusal is itself a trace entry, so a run of them pushes the
+            # successful read out of the bounded window. The model was then
+            # being sent to look at something it could no longer see — it
+            # re-reads, is refused again, and the refusal makes the situation
+            # worse. One real build spent 44 of its 48 steps in that loop and
+            # staged nothing. Handing the bytes back costs nothing and ends it.
+            return {
+                "ok": False,
+                "error": (
+                    f"This is the same {call.name} call as trace entry {index}, and "
+                    "nothing has changed since. Its result is repeated below — use "
+                    "it and move on. If it is empty, the project has no files "
+                    "matching that path: call list_files with no path to see the "
+                    "whole project, then create the files this task needs."
+                ),
+                "output": (entry.get("result") or {}).get("output"),
+            }
+    return None
+
+
 # Graph topology version. Runs checkpointed under an older topology cannot
 # resume safely, so reconcile_startup fails them instead.
 GRAPH_SCHEMA_VERSION = "5"
@@ -122,18 +177,175 @@ def _extract_python_source(raw: str) -> str:
     return text.strip() + "\n"
 
 
-def _source_location(source: dict[str, Any]) -> str:
+# `notion.py` names every mirrored page `<title-slug>--<32 hex page id>.md`, so a
+# citation can recover the page id without a lookup.
+_NOTION_MIRROR_FILE = re.compile(r"--([0-9a-f]{32})\.md$")
+# The same transform `notion.py` applies to a page title to build that slug.
+_NOTION_SLUG = re.compile(r"[^a-z0-9]+")
+_MARKDOWN_LINK_TEXT = re.compile(r"[\[\]]")
+# Two kinds of noise ride along inside a mirrored heading, and both are cleaned
+# at render time rather than at sync time so the fix applies to pages already
+# indexed. A `#` survives when the heading was indented, because the chunker
+# detects the heading on the lstripped line but slices `#` off the raw one.
+_HEADING_PREFIX = re.compile(r"^(?:\s*#{1,6}\s+)+")
+# Notion's Markdown export annotates blocks with `{toggle="true"}`-style
+# attributes, which mean nothing to a reader.
+_HEADING_ATTRIBUTES = re.compile(r'\s*\{(?:[A-Za-z_][\w-]*="[^"]*"\s*)+\}\s*$')
+
+
+def _notion_heading(heading: str) -> str:
+    """A mirrored Notion heading with export noise removed."""
+    return _HEADING_ATTRIBUTES.sub("", _HEADING_PREFIX.sub("", heading)).strip()
+
+
+def _notion_page_url(rel_path: str) -> str | None:
+    """The permalink for a mirrored Notion page, or None when the path is not one.
+
+    Built from the id in the filename rather than read back out of the mirror, so
+    rendering a citation never touches the disk and never fails for a page that
+    has since been unshared or deleted. Notion resolves a bare page id to the
+    canonical URL."""
+    match = _NOTION_MIRROR_FILE.search(rel_path.rsplit("/", 1)[-1])
+    return f"https://www.notion.so/{match.group(1)}" if match else None
+
+
+def _notion_page_title(source: dict[str, Any]) -> str:
+    """The page's real title, recovered from the heading breadcrumb that
+    `chunking._window` prepends to every Markdown passage.
+
+    The candidate is accepted only when it re-slugs to the filename the mirror
+    wrote, so a passage carrying no breadcrumb can never promote a stray line of
+    body text into a page title. The de-slugged filename is the fallback; it is
+    lossy on capitalisation, which is why it is not the first choice."""
+    filename = source.get("rel_path", "").rsplit("/", 1)[-1]
+    slug = _NOTION_MIRROR_FILE.sub("", filename)
+    breadcrumb = str(source.get("text", "")).split("\n", 1)[0]
+    candidate = _notion_heading(breadcrumb.split(" > ", 1)[0])
+    if candidate and _NOTION_SLUG.sub("-", candidate.lower()).strip("-")[:70] == slug:
+        return candidate
+    return " ".join(word.capitalize() for word in slug.split("-")) or filename
+
+
+def _source_display(source: dict[str, Any]) -> str:
+    """The human-readable location of one cited passage.
+
+    A Notion page is named by its title and section: the mirror filename is a
+    slug plus 32 hex characters, which tells the reader nothing about which page
+    they are being pointed at. Anything without a recoverable page id keeps the
+    `path::symbol` form, so a local file is unaffected."""
     rel_path = source.get("rel_path", "")
     symbol = source.get("symbol")
+    if source.get("provider") == "notion" and _notion_page_url(rel_path):
+        title = _notion_page_title(source)
+        section = _notion_heading(symbol) if symbol else ""
+        return f"{title} › {section}" if section and section != title else title
     return f"{rel_path}::{symbol}" if symbol else rel_path
 
 
+@lru_cache(maxsize=8)
+def _read_reference_files(directory: str, stamp: float) -> tuple[tuple[str, str], ...]:
+    """Every reference document under `directory`, as (name, text).
+
+    ``stamp`` is the directory's mtime and exists only to key the cache, so an
+    edited reference is picked up without a restart and an unchanged one is not
+    re-read on every step of every build.
+    """
+    root = Path(directory)
+    files: list[tuple[str, str]] = []
+    try:
+        candidates = sorted(root.glob("*.md"))
+    except OSError:
+        return ()
+    for path in candidates:
+        # The index explains the library to a human; the model wants the facts.
+        if path.name.casefold() == "readme.md":
+            continue
+        try:
+            files.append((path.name, path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeError):
+            continue
+    return tuple(files)
+
+
+def _reference_notes(
+    prompt: str, directory: Path, *, max_characters: int
+) -> list[dict[str, str]]:
+    """The verified API facts a build turn is given, read from disk every turn.
+
+    Deterministic on purpose. The same material was indexed as a corpus source
+    and never once surfaced: a build prompt retrieves previous build prompts,
+    so the reference lost to run history every time and both a frontier model
+    and a local one invented the same three API details it documents.
+
+    Documents are ranked by how often the request uses their title words —
+    *occurrences*, not presence. Presence alone scored every document equally
+    on the first real build: "api" and "app" appear in both titles and in every
+    prompt, so the tie broke alphabetically and the OCI reference lost to the
+    FastAPI one on a build whose whole subject was OCI.
+
+    Nothing is ever dropped in silence. The top-ranked document is always sent —
+    truncated at a section boundary if the budget is tight, never omitted — and
+    a truncated document says so in its own text. Silently sending nothing is
+    what the first version did to every local build, and an absent reference is
+    indistinguishable from a reference the model ignored.
+    """
+    if max_characters <= 0:
+        return []
+    try:
+        stamp = directory.stat().st_mtime
+    except OSError:
+        return []
+    documents = _read_reference_files(str(directory), stamp)
+    if not documents:
+        return []
+
+    lowered = prompt.casefold()
+
+    def affinity(item: tuple[str, str]) -> tuple[int, str]:
+        words = [w for w in re.split(r"[^a-z0-9]+", item[0].casefold()) if len(w) > 2]
+        return (-sum(lowered.count(word) for word in words), item[0])
+
+    notes: list[dict[str, str]] = []
+    spent = 0
+    for name, text in sorted(documents, key=affinity):
+        remaining = max_characters - spent
+        if len(text) > remaining:
+            # Only the highest-ranked document is worth truncating; anything
+            # after it can wait for a turn with room.
+            if notes or remaining < _REFERENCE_MIN_CHARS:
+                break
+            text = _truncate_at_section(text, remaining)
+        spent += len(text)
+        notes.append({"source": f"reference/{name}", "text": text})
+    return notes
+
+
+# Below this a reference is more misleading than useful: enough for the opening
+# sections, which is where the client construction and the API choice live.
+_REFERENCE_MIN_CHARS = 2_000
+
+
+def _truncate_at_section(text: str, budget: int) -> str:
+    """Cut at the last markdown heading that fits, and say that it was cut."""
+    notice = "\n\n[This reference was truncated to fit. Sections below are missing.]"
+    room = max(0, budget - len(notice))
+    clipped = text[:room]
+    boundary = clipped.rfind("\n## ")
+    if boundary > room // 3:
+        clipped = clipped[:boundary]
+    return clipped + notice
+
+
 def _format_knowledge(snippets: list[dict[str, Any]]) -> str:
-    """Render retrieved personal-knowledge passages as a numbered, citable block."""
+    """Render retrieved personal-knowledge passages as a numbered, citable block.
+
+    The URL is deliberately withheld here and added only when the answer is
+    published: a link in the prompt is a link the model can copy into prose,
+    where nothing checks that it points at the passage being described."""
     lines: list[str] = []
     for index, snippet in enumerate(snippets, start=1):
         lines.append(
-            f"[{index}] {snippet.get('source_label', '')} — {_source_location(snippet)}\n"
+            f"[{index}] {snippet.get('source_label', '')} — {_source_display(snippet)}\n"
             f"{snippet.get('text', '')}"
         )
     return "\n\n".join(lines)
@@ -186,24 +398,83 @@ def _format_document_index(filenames: list[str], *, offset: int) -> str:
     )
 
 
-def _append_cited_sources(answer: str, sources: list[dict[str, Any]]) -> str:
+# `[n]` not followed by `(`: a `[1](https://…)` is a Markdown link the model
+# wrote, not a citation, and rewriting it would leave a bare URL behind.
+_CITATION_MARKER = re.compile(r"\[(\d+)\](?!\()")
+_INLINE_CODE = re.compile(r"(`+[^`]*`+)")
+_CODE_FENCE = re.compile(r"^\s*(?:```|~~~)")
+
+
+def _strip_dangling_markers(answer: str, source_count: int) -> tuple[str, list[int]]:
+    """Remove `[n]` markers pointing at no source, and report which they were.
+
+    A fabricated marker is worse than a missing one. It is already filtered out
+    of the Sources list, so it reads to the user as a reference while pointing at
+    nothing, and `_ground_review` counts any `[n]` as proof the answer used the
+    evidence — so an invented marker suppressed the very revision that would have
+    grounded the answer. Code is left byte-exact: `[0]` inside a snippet is an
+    index, not a citation."""
+    dropped: list[int] = []
+
+    def replace(match: re.Match[str]) -> str:
+        number = int(match.group(1))
+        if 1 <= number <= source_count:
+            return match.group(0)
+        dropped.append(number)
+        return ""
+
+    lines: list[str] = []
+    in_fence = False
+    for line in answer.split("\n"):
+        if _CODE_FENCE.match(line):
+            in_fence = not in_fence
+            lines.append(line)
+            continue
+        if in_fence:
+            lines.append(line)
+            continue
+        parts = _INLINE_CODE.split(line)
+        for index, part in enumerate(parts):
+            if index % 2:  # an inline code span, kept verbatim
+                continue
+            rewritten = _CITATION_MARKER.sub(replace, part)
+            if rewritten != part:
+                # Removing a marker leaves the space that preceded it stranded.
+                rewritten = re.sub(r"[ \t]{2,}", " ", rewritten)
+                rewritten = re.sub(r"[ \t]+([.,;:!?)])", r"\1", rewritten)
+            parts[index] = rewritten
+        lines.append("".join(parts))
+    return "\n".join(lines), dropped
+
+
+def _append_cited_sources(
+    answer: str, sources: list[dict[str, Any]]
+) -> tuple[str, list[int]]:
     """Append a Sources list for exactly the [n] markers the model actually used,
-    so provenance is honest — unused evidence is not advertised."""
-    if not sources:
-        return answer
+    so provenance is honest — unused evidence is not advertised.
+
+    A Notion source is rendered as a link to the page itself, so the citation is
+    something the reader can open rather than a mirror filename they cannot."""
+    answer, dropped = _strip_dangling_markers(answer, len(sources))
     cited = sorted(
         number
-        for raw in set(re.findall(r"\[(\d+)\]", answer))
+        for raw in set(_CITATION_MARKER.findall(answer))
         if 1 <= (number := int(raw)) <= len(sources)
     )
     if not cited:
-        return answer
-    lines = [
-        f"[{number}] {sources[number - 1].get('source_label', '')} — "
-        f"{_source_location(sources[number - 1])}"
-        for number in cited
-    ]
-    return f"{answer}\n\n**Sources**\n" + "\n".join(lines)
+        return answer, dropped
+    lines: list[str] = []
+    for number in cited:
+        source = sources[number - 1]
+        display = _source_display(source)
+        url = _notion_page_url(source.get("rel_path", ""))
+        location = (
+            f"[{_MARKDOWN_LINK_TEXT.sub('', display)}]({url})"
+            if url and source.get("provider") == "notion"
+            else display
+        )
+        lines.append(f"[{number}] {source.get('source_label', '')} — {location}")
+    return f"{answer}\n\n**Sources**\n" + "\n".join(lines), dropped
 
 
 def _safe_knowledge_error(error: Exception, *, has_attachments: bool) -> dict[str, str]:
@@ -236,6 +507,28 @@ def _safe_knowledge_error(error: Exception, *, has_attachments: bool) -> dict[st
         "summary": reason + continuation,
         "error_type": type(error).__name__,
     }
+
+
+# What each permanent backend failure means for the person reading it, and what
+# they can actually do about it. None of these is the model's fault, so none of
+# them says the model did anything. Module level, like the other loop constants:
+# it is a data table, and the project-step helpers are called unbound in tests.
+_BLOCKED_STEP_GUIDANCE: dict[str, str] = {
+    "grammar_compile": (
+        "the backend could not turn my reply schema into a decoding grammar, so it "
+        "rejected the request before the model ran. This is a defect in Metis or in "
+        "this backend version — not a limit of the model, and not something retrying "
+        "fixes. `make verify-schemas` reports exactly which schemas it refuses."
+    ),
+    "model_unavailable": (
+        "the selected model is not loaded. Launch it from the model menu and send "
+        "this message again."
+    ),
+    "backend_unreachable": (
+        "the local model server did not answer. Check that Ollama is running, then "
+        "send this message again."
+    ),
+}
 
 
 def _bounded_project_trace(
@@ -290,10 +583,59 @@ class AgentState(TypedDict):
     project_trace: list[dict[str, Any]]
     project_pending_call: dict[str, Any]
     project_iterations: int
+    # The turn's staged changeset: path → {content, origin, base_sha256, bytes}.
+    # Writes land here as the loop runs; disk changes only in the one
+    # project_apply_build approval. Checkpointed with the rest of the state, so
+    # a pending build survives a restart alongside its approval.
+    project_staged: dict[str, Any]
     # Set when the agent asked for a check the user has not reviewed yet, so the
     # turn raises the one-time recipe approval instead of failing the tool.
     project_verify_pending: dict[str, Any]
     project_checks_run: int
+    # Consecutive steps the model returned in a shape the host could not read.
+    # Recoverable in ones and twos; a run of them means this model cannot hold
+    # the contract today, and the turn ends with whatever it staged.
+    project_malformed_streak: int
+    # Times a build-instruction turn "finished" with nothing staged. A model
+    # that describes files it never wrote is declined and re-prompted a bounded
+    # number of times before the empty completion is finally allowed to stand.
+    project_empty_finish_streak: int
+    # Times a completion was sent back because a staged file would not parse. The
+    # build loop otherwise never checks that what it wrote is even valid before
+    # the user approves it; this bounds the fix-and-recheck cycle.
+    project_syntax_retries: int
+    # The tool whose arguments were just refused for their shape, if any. The
+    # next step's grammar is narrowed to exactly that tool's required keys, so
+    # the omission cannot be repeated. Written on every step-producing path so a
+    # stale value can never outlive the refusal that set it.
+    project_retry_tool: str
+    # The files a build still owes, set only when a write was just refused for
+    # aiming at a path that already exists. The next step's grammar restricts the
+    # write target to this list, which is the one thing that stops a model
+    # re-creating work it has already staged. Cleared the same way as above.
+    project_write_pin: list[str]
+    # Consecutive refusals per "tool:path" target. A model that keeps rewriting
+    # the same file it cannot rewrite will otherwise spend the entire step budget
+    # on it; past the limit the target is closed for the turn.
+    project_blocked_targets: dict[str, int]
+    # The files this build turn committed to writing, named on its first step.
+    # Completion is held against it: while a planned file is unstaged the build
+    # is demonstrably unfinished, whatever the model's summary says. Empty means
+    # no manifest was taken, and the older "did you stage anything" rule applies.
+    project_planned_files: list[str]
+    # Steps since the staged overlay last changed. The manifest gate takes
+    # `complete` out of the grammar, which is right while the model is making
+    # progress and a trap when it cannot: an edit turn whose planned file exists
+    # on disk is only satisfiable by a patch, and a model that cannot produce
+    # one has no legal move left — not writing, not finishing. Past the limit
+    # the gate releases so the turn can end honestly instead of at the budget.
+    project_stall_steps: int
+    # Consecutive tool calls the host refused. Distinct from the stall counter,
+    # which successful-but-unproductive reads also advance: a refusal streak is
+    # a model issuing calls the workspace cannot honour — empty paths, invented
+    # targets — and five in a row is a loop that will not recover. The turn
+    # ends honestly instead of grinding to the step budget.
+    project_refused_streak: int
     # The bounded synthesize <-> ground_review loop.
     answer_revisions: int
     answer_critique: str
@@ -382,6 +724,9 @@ class ControlPlane:
         graph.add_node("project_step", self._project_step)
         graph.add_node("project_execute", self._project_execute)
         graph.add_node("project_prepare_approval", self._project_prepare_approval)
+        graph.add_node(
+            "project_prepare_build_approval", self._project_prepare_build_approval
+        )
         graph.add_node("plan", self._plan)
         # The answer path is a specialized generate -> verify sub-graph.
         graph.add_node("synthesize", self._synthesize)
@@ -412,11 +757,14 @@ class ControlPlane:
             {
                 "execute": "project_execute",
                 "approval": "project_prepare_approval",
+                "build_approval": "project_prepare_build_approval",
+                "retry": "project_step",
                 "publish": "publish",
             },
         )
         graph.add_edge("project_execute", "project_step")
         graph.add_edge("project_prepare_approval", "approval_interrupt")
+        graph.add_edge("project_prepare_build_approval", "approval_interrupt")
         graph.add_conditional_edges(
             "plan",
             self._route_plan,
@@ -427,6 +775,8 @@ class ControlPlane:
                 "declarative_existing": "declarative_execute",
                 "declarative_factory": "declarative_build",
                 "tool_definition": "draft_definition",
+                # A host-written answer that needs no generation.
+                "guidance": "publish",
             },
         )
         # Generate then verify. The revision count lives in state, so the loop terminates.
@@ -480,10 +830,14 @@ class ControlPlane:
                 "checkpoint_ns": "",
             },
             "metadata": {"thread_id": conversation_id, "run_id": run_id},
-            "recursion_limit": 50,
+            # The project loop visits two nodes per iteration, plus the fixed
+            # pipeline and approval overhead — the limit must scale with the
+            # step budget or the graph dies before the budget does.
+            "recursion_limit": max(50, 20 + 3 * self.settings.project_agent_max_steps),
         }
 
     async def submit(self, state: AgentState) -> None:
+        state = await self._carry_pending_overlay(state)
         await self._spawn(
             state["run_id"],
             self._drive(
@@ -492,6 +846,72 @@ class ControlPlane:
                 state,
             ),
         )
+
+    async def _carry_pending_overlay(self, state: AgentState) -> AgentState:
+        """Resume an undecided build changeset in a follow-up project run.
+
+        A build turn that ends at the approval card keeps its overlay in that
+        run's checkpoint. Before this, a follow-up message started from disk:
+        the model was asked to repair files it could not see, and the staged
+        state — the exact bytes verification inspected and the card's findings
+        describe — was unreachable until the user approved or rejected the
+        whole changeset. Now the newest undecided project changeset rides into
+        the follow-up run's overlay, so a repair continues from what was
+        verified. The old card stays decidable: approving it applies its own
+        bytes (per-file drift against newer work is caught at materialize),
+        and rejecting it discards only that card's copy.
+        """
+        if not state.get("model_aliases", {}).get("_project_id"):
+            return state
+        try:
+            prior = await self.database.latest_awaiting_project_approval(
+                state["conversation_id"]
+            )
+            if prior is None:
+                return state
+            prior_run, prior_project = prior
+            if (
+                prior_run == state["run_id"]
+                or prior_project != state["model_aliases"].get("_project_id")
+            ):
+                return state
+            approval = await self.database.get_pending_approval(prior_run)
+            if approval is None or approval.kind != "project_apply_build":
+                return state
+            checkpoint = await self.checkpointer.aget_tuple(
+                self._config(state["conversation_id"], prior_run)
+            )
+            values = (
+                checkpoint.checkpoint.get("channel_values", {}) if checkpoint else {}
+            )
+            staged = dict(values.get("project_staged") or {})
+        except Exception:  # noqa: BLE001 - carrying forward only sharpens repair
+            return state
+        if not staged:
+            return state
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.staged_resumed",
+            {"files": sorted(staged), "from_run": prior_run},
+        )
+        # The carried work arrives as trace evidence, not prose: the model's
+        # first step already sees which files exist only in the overlay and
+        # why the previous card did not clear.
+        note = {
+            "tool": "resume_staged",
+            "arguments": {},
+            "result": {
+                "ok": True,
+                "carried_files": sorted(staged),
+                "blocked_reason": str(getattr(approval, "blocked_reason", "") or ""),
+                "note": (
+                    "staged changes from the previous turn, carried into this one "
+                    "exactly as verification inspected them; read_file sees them"
+                ),
+            },
+        }
+        return {**state, "project_staged": staged, "project_trace": [note]}
 
     async def resume(
         self,
@@ -940,13 +1360,52 @@ class ControlPlane:
         if not project_id or self.projects is None:
             raise ValueError("project workspace is unavailable")
         iterations = int(state.get("project_iterations", 0))
+        staged = state.get("project_staged") or {}
         if iterations >= self.settings.project_agent_max_steps:
+            # Out of steps, but not out of work: whatever was staged is still a
+            # coherent offer, so it goes to the batch approval instead of being
+            # silently dropped with the loop.
+            if staged:
+                return {
+                    "response_text": (
+                        f"I reached the step limit with {len(staged)} staged file "
+                        "change(s) ready. Review them below — approving applies "
+                        "everything staged so far; a follow-up message continues the work."
+                    ),
+                    "project_pending_call": {},
+                }
             return {
                 "response_text": (
                     "I reached the bounded project-tool limit before finishing. "
                     "No unapproved change was applied; send a narrower follow-up to continue."
                 ),
                 "project_pending_call": {},
+            }
+        refused = int(state.get("project_refused_streak", 0))
+        if refused >= _MAX_REFUSED_STEPS:
+            # A streak this long is a loop, not a rough patch: every further
+            # step would be another refusal pushing useful evidence out of the
+            # trace window. End the turn while it can still end honestly.
+            if staged:
+                return {
+                    "response_text": (
+                        f"I stopped after {refused} consecutive refused tool calls — "
+                        f"the loop was no longer making progress. {len(staged)} staged "
+                        "file change(s) are still ready to review below; a follow-up "
+                        "message continues the work."
+                    ),
+                    "project_pending_call": {},
+                    "project_refused_streak": 0,
+                }
+            return {
+                "response_text": (
+                    f"I stopped after {refused} consecutive refused tool calls with "
+                    "nothing staged — the model kept issuing calls the workspace "
+                    "had to refuse. No change was applied; send a narrower "
+                    "follow-up, or switch to the cloud builder."
+                ),
+                "project_pending_call": {},
+                "project_refused_streak": 0,
             }
         await self._stage(
             state,
@@ -970,20 +1429,583 @@ class ControlPlane:
             list(state.get("project_trace", [])),
             max_characters=180_000 if using_oci else 36_000,
         )
-        step = await self.model.project_step(
-            {
-                "user_request": state["prompt"],
-                "project_context": prompt_context,
-                "approved_memory": state.get("memories", []),
-                "conversation_summary": state.get("conversation_summary", ""),
-                "recent_messages": state.get("recent_messages", []),
-                "untrusted_attachments": state.get("attachment_text", ""),
-                "tool_trace": trace,
-                "step": iterations + 1,
-                "max_steps": self.settings.project_agent_max_steps,
-            },
-            model_aliases=state.get("model_aliases", {}),
+        planned = await self._project_manifest(state, prompt_context, iterations, staged)
+        if planned == [] and is_new_application_request(state["prompt"]):
+            # Asked twice, named nothing — a plan failure, distinct from a
+            # manifest that merely could not be requested (None). Scoped to
+            # whole-application requests: a path-level build ("create app/x.py")
+            # can proceed gateless as it always has, but an application asked
+            # for by shape with no plan behind it is the measured 30-minute
+            # drift. Ending here costs nothing: no step was spent, nothing was
+            # staged.
+            await self.events.emit(
+                state["run_id"], state["conversation_id"], "project.plan_failed", {}
+            )
+            return {
+                "response_text": (
+                    "The model could not produce a build plan for this request — "
+                    "asked twice, it named no files — so the build was not started "
+                    "and nothing was written. Rephrase or narrow the request, or "
+                    "switch to the cloud builder for a request of this size."
+                ),
+                "project_pending_call": {},
+            }
+        # Carried on EVERY outcome, not just a clean step. The manifest is only
+        # taken on step one, so losing it to a single unreadable reply would
+        # silently drop the gate for the whole turn — the next step, no longer
+        # step one, would never ask for it again.
+        carry: dict[str, Any] = (
+            {"project_planned_files": planned}
+            if planned and not state.get("project_planned_files")
+            else {}
         )
+        # A whole-application build starts from verified infrastructure, not a
+        # blank tree: the host stages appkit (and .env.example) before the
+        # model's first step. Seeded entries ride the same overlay as model
+        # writes — visible on the approval card, applied only through the same
+        # single approval. Narrow on purpose: a request to add one file gets
+        # no scaffold, and like the manifest, a scaffold that cannot be staged
+        # degrades to the old behaviour rather than failing the turn.
+        if not iterations and not staged and is_new_application_request(state["prompt"]):
+            try:
+                staged, seeded = await self.projects.stage_scaffold(
+                    project_id, staged, build_capabilities(state["prompt"])
+                )
+            except Exception:  # noqa: BLE001 - scaffolding only sharpens a build
+                seeded = []
+            if seeded:
+                carry["project_staged"] = staged
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "project.scaffold_staged",
+                    {"files": seeded, "version": SCAFFOLD_VERSION},
+                )
+        try:
+            step = await self.model.project_step(
+                self._project_step_request(
+                    state, prompt_context, trace, staged, iterations, planned
+                ),
+                model_aliases=state.get("model_aliases", {}),
+            )
+        except PermanentModelError as exc:
+            # The backend refused the request before the model ran. There is no
+            # reply to correct, so treating this as the model's mistake spends
+            # the whole retry budget on identical failures and then blames the
+            # model for a host-side defect — which is exactly how a schema that
+            # could not compile went days being read as "the model is
+            # unintelligible". End the turn and name the real cause.
+            return {**carry, **await self._blocked_project_step(state, exc, iterations, staged)}
+        except ModelProviderError as exc:
+            # A step the host could not read is the model's own tool error: it
+            # becomes evidence and the model gets the next step to correct
+            # itself. Failing the turn here would discard every staged file
+            # over one malformed JSON object, which for a long build is the
+            # most expensive possible response to a recoverable mistake.
+            return {**carry, **self._malformed_project_step(state, exc, iterations, staged)}
+        except ValueError as exc:
+            # A wire reply that validated but will not convert — a completion
+            # with a blank response, a tool step naming no tool. to_step raises
+            # outside the provider's own error handling, so without this the
+            # run fails outright and the staged changeset goes with it. It is a
+            # badly shaped reply like any other, so it becomes evidence.
+            return {**carry, **self._malformed_project_step(state, exc, iterations, staged)}
+        step_result = await self._project_step_result(
+            state, step, iterations, project_context, planned
+        )
+        return {**carry, **step_result}
+
+    async def _project_manifest(
+        self,
+        state: AgentState,
+        prompt_context: dict[str, Any],
+        iterations: int,
+        staged: dict[str, Any],
+    ) -> list[str] | None:
+        """The file list this build turn is accountable to, taken once.
+
+        Asked on the first step of a build turn only, and inside this node
+        rather than as a graph node of its own — a new node would change the
+        graph topology (and so the checkpoint schema every in-flight run is
+        pinned to) and spend supersteps out of the recursion budget, for a call
+        that happens at most once per turn. It deliberately does not advance
+        project_iterations: the manifest is not one of the model's steps, and
+        charging a step for it would push real work past tight budgets.
+
+        Returns None when a manifest was not applicable or could not be
+        requested — the loop then behaves exactly as it did before the gate
+        existed, the right fallback for a gate that only sharpens an existing
+        guard. Returns [] only when the model was asked twice and named
+        nothing: the caller treats that as a plan failure and ends the turn,
+        because a planless build drifting through its step budget is how a
+        configured model once spent thirty minutes producing a 35-byte
+        __init__.py.
+        """
+        existing = list(state.get("project_planned_files") or [])
+        if existing:
+            return existing
+        if iterations or staged or not is_project_build_instruction(state["prompt"]):
+            return None
+        request = {
+            "user_request": state["prompt"],
+            "project_context": prompt_context,
+            "conversation_summary": state.get("conversation_summary", ""),
+        }
+        for _ in range(2):
+            try:
+                planned = await self.model.project_plan_files(
+                    request, model_aliases=state.get("model_aliases", {})
+                )
+            except Exception:  # noqa: BLE001 - a missing manifest only loses the gate
+                return None
+            # Bounded by the contract as well; this keeps the manifest inside
+            # the same changeset budget the overlay itself enforces.
+            files = [str(path) for path in planned][: self.settings.project_staged_max_files]
+            if files:
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "project.build_planned",
+                    {"files": files},
+                )
+                return files
+        return []
+
+    def _project_step_request(
+        self,
+        state: AgentState,
+        prompt_context: dict[str, Any],
+        trace: list[dict[str, Any]],
+        staged: dict[str, Any],
+        iterations: int,
+        planned: list[str] | None = None,
+    ) -> dict[str, Any]:
+        remaining = [path for path in (planned or []) if path not in staged]
+        # A gate the model cannot pass is worse than no gate. Once the overlay
+        # has not changed for this many steps the manifest stops withholding
+        # `complete`, so a stuck turn ends with an honest account of what it
+        # could not do rather than grinding to the step budget with nothing.
+        stalled = int(state.get("project_stall_steps", 0)) >= _MAX_STALL_STEPS
+        using_oci = state.get("model_aliases", {}).get("_provider") == "oci"
+        return {
+            "user_request": state["prompt"],
+            "project_context": prompt_context,
+            # Verified API facts, read from reference/ and always sent — not
+            # retrieved. Retrieval was tried and measured: the reference never
+            # surfaced once, and both Grok and the local model independently
+            # invented the same three details it documents.
+            "reference_notes": _reference_notes(
+                state["prompt"],
+                self.settings.project_reference_dir,
+                max_characters=(
+                    self.settings.project_reference_max_chars
+                    if using_oci
+                    else self.settings.project_reference_max_chars_local
+                )
+                if self.settings.project_reference_enabled
+                else 0,
+            ),
+            "approved_memory": state.get("memories", []),
+            "conversation_summary": state.get("conversation_summary", ""),
+            "recent_messages": state.get("recent_messages", []),
+            "untrusted_attachments": state.get("attachment_text", ""),
+            "tool_trace": trace,
+            # What this turn has already written, so progress is visible
+            # without re-reading every staged file: contents stay reachable
+            # through read_file, which consults the overlay first.
+            "staged_changes": [
+                {
+                    "path": path,
+                    "origin": str(entry.get("origin", "")),
+                    "bytes": int(entry.get("bytes", 0)),
+                }
+                for path, entry in sorted(staged.items())
+            ],
+            # The local model is given no function schemas — the system prompt
+            # names the tools and never their arguments, which is why it kept
+            # sending apply_patch a "patch" key the host does not accept. Grok
+            # has had this all along through real function definitions.
+            "available_tools": project_tool_catalog(),
+            # Metis-owned scaffold in this project, when present: what appkit
+            # provides and the environment contract, so the model composes the
+            # verified adapter instead of reinventing the infrastructure.
+            "scaffold": scaffold_prompt(staged, prompt_context),
+            # The files this turn committed to, and the ones still missing from
+            # the overlay. Naming what is left is most of the work: a model told
+            # only "you have staged 5 files" has no way to know it owes 13 more.
+            "planned_files": list(planned or []),
+            "files_still_to_write": [] if stalled else remaining,
+            "step": iterations + 1,
+            "max_steps": self.settings.project_agent_max_steps,
+            # When a build request is demonstrably unfinished, "finished" is
+            # almost always a fabricated summary. The flag lets the local
+            # provider narrow its grammar so a completion is not expressible; it
+            # is inert for the OCI path. Deliberately ONE flag rather than two
+            # controlling the same grammar branch — nothing staged, or a planned
+            # file still unwritten, are the same fact about the same turn. Same
+            # predicate the premature-finish guard uses, so detection lives in
+            # one place.
+            "build_turn": is_project_build_instruction(state["prompt"])
+            and (not staged or bool(remaining))
+            and not stalled,
+            # Set only when the previous step was refused for the *shape* of its
+            # arguments, which is the one failure resending the same tool can
+            # fix. A semantic refusal must never land here: narrowing the
+            # grammar to a tool whose target is simply unavailable pins the
+            # model to a call that cannot succeed, and it re-sends it until the
+            # budget runs out.
+            "retry_tool": str(state.get("project_retry_tool", "") or ""),
+            # The write target the last refusal narrowed to. Outranked by
+            # retry_tool, which knows the exact tool; released the moment the
+            # manifest is satisfied or the turn stalls, both of which empty it.
+            "write_pin": [] if stalled else list(state.get("project_write_pin") or []),
+        }
+
+    async def _blocked_project_step(
+        self,
+        state: AgentState,
+        error: PermanentModelError,
+        iterations: int,
+        staged: dict[str, Any],
+    ) -> dict[str, Any]:
+        """End the turn on a backend refusal, and put the true cause on the record.
+
+        The cause used to survive only inside the LangGraph checkpoint, because
+        the loop turned it into trace evidence and reported a summary. Emitting
+        it means the next diagnosis reads one run event instead of decoding
+        msgpack blobs out of checkpoints.db.
+        """
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.step_blocked",
+            {
+                "step": iterations + 1,
+                "reason": error.reason,
+                # str(), not the exception: the payload is json.dumps'd inside a
+                # transaction, where a non-JSON value would fail the write.
+                "detail": str(error)[:1000],
+                "staged_files": len(staged),
+            },
+        )
+        guidance = _BLOCKED_STEP_GUIDANCE.get(
+            error.reason, "the local model backend refused the request."
+        )
+        return {
+            "project_iterations": iterations + 1,
+            "project_pending_call": {},
+            "response_text": (
+                f"I stopped this turn: {guidance}"
+                + (
+                    f"\n\nThe {len(staged)} file change(s) staged before that are below "
+                    "for you to accept or discard."
+                    if staged
+                    else " Nothing was staged, and nothing was written."
+                )
+            ),
+        }
+
+    def _malformed_project_step(
+        self,
+        state: AgentState,
+        error: Exception,
+        iterations: int,
+        staged: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Record an unreadable step as evidence and let the model try again."""
+        streak = int(state.get("project_malformed_streak", 0)) + 1
+        trace = list(state.get("project_trace", []))
+        trace.append(
+            {
+                "tool": "project_step",
+                "arguments": {},
+                "result": {
+                    "ok": False,
+                    "error": (
+                        "Your previous reply was not a readable step. Return one JSON "
+                        'object with a top-level "status": either '
+                        '{"status":"tool","tool_call":{"name":...,"arguments":{...}}} '
+                        'or {"status":"complete","response":"..."}. '
+                        f"Details: {str(error)[:400]}"
+                    ),
+                },
+            }
+        )
+        if streak >= _MAX_MALFORMED_PROJECT_STEPS:
+            return {
+                "project_trace": trace[-24:],
+                "project_iterations": iterations + 1,
+                "project_malformed_streak": streak,
+                "project_pending_call": {},
+                "response_text": (
+                    f"I could not read {streak} replies from the model in a row, so I "
+                    "stopped this turn."
+                    + (
+                        f" The {len(staged)} file change(s) staged before that are below "
+                        "for you to accept or discard."
+                        if staged
+                        else " Nothing was staged, and nothing was written."
+                    )
+                ),
+            }
+        return {
+            "project_trace": trace[-24:],
+            "project_iterations": iterations + 1,
+            "project_malformed_streak": streak,
+            "project_pending_call": {},
+            # An unreadable reply is not a tool-argument correction, so any
+            # narrowing from the previous step has served its purpose.
+            "project_retry_tool": "",
+            "project_write_pin": [],
+        }
+
+    def _premature_finish(
+        self,
+        state: AgentState,
+        iterations: int,
+        empty_finishes: int,
+        missing: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Decline a build turn that finished with work outstanding, and re-prompt.
+
+        Returning no response and no pending call routes the step straight back
+        to the model with the record of what it skipped; the next step is meant
+        to be the create_file call the summary only claimed to have made.
+
+        With a manifest this stops being "did you write anything" and becomes
+        "did you write what you said you would" — which is the version that
+        catches the far more common failure, where a build stages a handful of
+        files and reports the whole thing done.
+        """
+        trace = list(state.get("project_trace", []))
+        if missing:
+            listed = ", ".join(missing[:12])
+            detail = (
+                f"You planned {len(missing)} file(s) that are still not staged: "
+                f"{listed}. Your summary describes work that does not exist yet. "
+                "Do not finish. Create the next one now with create_file, and "
+                "only finish once every planned file is staged — or say plainly "
+                "which ones you are not going to write, and why."
+            )
+        else:
+            detail = (
+                "You finished with zero files staged, so any files your "
+                "summary named do not exist yet — nothing has been "
+                "written. Do not finish. Write each file now with "
+                "create_file, one per step, e.g. "
+                '{"status":"tool","tool":"create_file","arguments":'
+                '{"path":"app/main.py","content":"..."}}. Only finish '
+                "after every file is staged."
+            )
+        trace.append(
+            {
+                "tool": "finish_project_task",
+                "arguments": {},
+                "result": {"ok": False, "error": detail},
+            }
+        )
+        return {
+            "project_trace": trace[-24:],
+            "project_iterations": iterations + 1,
+            "project_empty_finish_streak": empty_finishes + 1,
+            "project_pending_call": {},
+            "project_retry_tool": "",
+            "project_write_pin": [],
+        }
+
+    def _staged_verify_retry(
+        self,
+        state: AgentState,
+        iterations: int,
+        retries: int,
+        errors: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        """Send a completed-but-broken changeset back to the model to fix.
+
+        The host checked the overlay the approval would apply — it parsed every
+        file, resolved the references between them, and where it could, ran the
+        project in the sandbox. Rather than offer work that does not hold up, it
+        records the exact errors as evidence and loops back, so the next steps
+        repair the files with apply_patch before the turn can finish.
+        """
+        detail = "; ".join(f"{item['path']}: {item['error']}" for item in errors[:8])
+        trace = list(state.get("project_trace", []))
+        trace.append(
+            {
+                "tool": "verify_staged",
+                "arguments": {},
+                "result": {
+                    "ok": False,
+                    "error": (
+                        f"{len(errors)} problem(s) in the staged changeset would stop "
+                        f"this project working: {detail}. Fix each with apply_patch — "
+                        "read_file shows the current staged text — then finish. Do not "
+                        "finish while a staged file is broken."
+                    ),
+                },
+            }
+        )
+        return {
+            "project_trace": trace[-24:],
+            "project_iterations": iterations + 1,
+            "project_syntax_retries": retries + 1,
+            "project_pending_call": {},
+            "project_retry_tool": "",
+            "project_write_pin": [],
+        }
+
+    async def _emit_staged_verification(
+        self, state: AgentState, verification: dict[str, Any]
+    ) -> None:
+        """Put the gate's verdict in the run timeline, pass or fail.
+
+        A check that only shows up when it fails leaves the user unable to tell
+        "verified and clean" from "never ran", which is the difference the whole
+        gate exists to make visible.
+        """
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.staged_verified",
+            {
+                "errors": len(verification["errors"]),
+                "warnings": len(verification["warnings"]),
+                "ran": len(verification["checks"]),
+                "notes": verification["notes"],
+            },
+        )
+
+    async def _verify_staged_changeset(
+        self,
+        project_id: str,
+        staged: dict[str, Any],
+        *,
+        full: bool = False,
+        planned: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Verify a staged changeset and report each distinct defect once.
+
+        The rungs themselves are in ``_verify_staged_rungs``; deduplication
+        happens here so it cannot be missed by one of that method's several
+        early returns.
+        """
+        result = await self._verify_staged_rungs(
+            project_id, staged, full=full, planned=planned
+        )
+        result["errors"] = _distinct_findings(result["errors"])
+        result["warnings"] = _distinct_findings(result["warnings"])
+        return result
+
+    async def _verify_staged_rungs(
+        self,
+        project_id: str,
+        staged: dict[str, Any],
+        *,
+        full: bool = False,
+        planned: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Check a staged changeset: every file parses, the files fit together,
+        the project actually runs.
+
+        Two audiences want different things from the same three rungs. Mid-loop
+        (``full=False``) it stops at the first failure, which keeps the model
+        working on the most basic thing that is wrong and never spends two
+        seconds on a container to rediscover an unresolved import the parser
+        could see.
+
+        The approval card wants the opposite. Stopping early there meant a
+        changeset with one syntax error reported one problem and hid eight —
+        the user approved it, and the other eight were found on disk. With
+        ``full=True`` every rung that can still say something useful runs, so
+        the card reports the union.
+
+        Union, not concatenation: two rungs legitimately catch the same defect
+        (an undeclared import is visible to the parser-level check and again to
+        the container that fails to import it), and a live build turned one
+        genuine problem into "3 problem(s)" on the card. The count is what the
+        user reads first, so it has to mean distinct defects.
+        """
+        result: dict[str, Any] = {"errors": [], "warnings": [], "notes": [], "checks": []}
+        if not staged:
+            return result
+        syntax = _from_rung(await self.projects.verify_staged_syntax(staged), "syntax")
+        if syntax:
+            result["errors"] = syntax
+            if not full:
+                return result
+        # Between parsing and wiring: it needs every file to parse, and it knows
+        # things the project cannot say about itself, so it runs before the
+        # cross-file checks rather than after them.
+        types = _from_rung(await self.projects.verify_staged_types(staged), "typecheck")
+        result["errors"].extend(
+            item for item in types if item.get("severity") != "warning"
+        )
+        result["warnings"].extend(
+            item for item in types if item.get("severity") == "warning"
+        )
+        if result["errors"] and not full:
+            return result
+        wiring = _from_rung(
+            await self.projects.verify_staged_wiring(project_id, staged), "wiring"
+        )
+        result["errors"].extend(
+            item for item in wiring if item.get("severity") != "warning"
+        )
+        result["warnings"].extend(
+            item for item in wiring if item.get("severity") == "warning"
+        )
+        if result["errors"] and not full:
+            return result
+        # Conformance sits above wiring and below the container: it needs every
+        # file parsed, and it answers a question no amount of running the code
+        # can — whether this is the changeset the turn committed to.
+        conformance = _from_rung(
+            await self.projects.verify_staged_conformance(project_id, staged, planned),
+            "conformance",
+        )
+        result["errors"].extend(
+            item for item in conformance if item.get("severity") != "warning"
+        )
+        result["warnings"].extend(
+            item for item in conformance if item.get("severity") == "warning"
+        )
+        if result["errors"] and not full:
+            return result
+        if syntax:
+            # The container imports the project. A module that will not parse
+            # cannot import, so the sandbox can only re-report the parse error
+            # the first rung already has — and it would charge a container start
+            # to do it. Everything above this line still ran.
+            result["notes"].append(
+                "the project was not run: it has files that do not parse"
+            )
+            return result
+        outcome = await self.projects.verify_staged_runtime(project_id, staged)
+        if not outcome.available:
+            if outcome.reason:
+                result["notes"].append(f"the project was not run: {outcome.reason}")
+            return result
+        result["checks"] = outcome.checks
+        runtime = _from_rung(outcome.findings, "runtime")
+        # extend, not assign: in full mode the rungs below this one may already
+        # have put findings here, and the card reports the union of all of them.
+        result["errors"].extend(
+            item for item in runtime if item.get("severity") != "warning"
+        )
+        result["warnings"].extend(
+            item for item in runtime if item.get("severity") == "warning"
+        )
+        return result
+
+    async def _project_step_result(
+        self,
+        state: AgentState,
+        step: ProjectAgentStepV1,
+        iterations: int,
+        project_context: dict[str, Any],
+        planned: list[str] | None = None,
+    ) -> dict[str, Any]:
+        project_id = state.get("model_aliases", {}).get("_project_id", "")
         await self.events.emit(
             state["run_id"],
             state["conversation_id"],
@@ -996,12 +2018,95 @@ class ControlPlane:
             },
         )
         if step.status == "complete":
+            empty_finishes = int(state.get("project_empty_finish_streak", 0))
+            staged_paths = state.get("project_staged") or {}
+            missing = [
+                path
+                for path in (planned or state.get("project_planned_files") or [])
+                if path not in staged_paths
+            ]
+            if (
+                missing
+                and staged_paths
+                and int(state.get("project_stall_steps", 0)) < _MAX_STALL_STEPS
+                and empty_finishes < _MAX_EMPTY_PROJECT_FINISHES
+                and is_project_build_instruction(state["prompt"])
+            ):
+                # The turn staged something, but not what it said it would. This
+                # is the ordinary shape of the failure — a build asked for
+                # eighteen files stages five and reports success — and the
+                # empty-staged guard below never saw it, because *something* was
+                # written. Bounded by the same budget: a model that will not
+                # write the rest ends up at the honest completion, where the
+                # approval card shows the true list.
+                return self._premature_finish(
+                    state, iterations, empty_finishes, missing
+                )
+            if (
+                not staged_paths
+                and empty_finishes < _MAX_EMPTY_PROJECT_FINISHES
+                and is_project_build_instruction(state["prompt"])
+            ):
+                # The turn asked for files to be written, and the model finished
+                # with nothing staged: it is describing files it never wrote. A
+                # run once "completed" a 15-file build this way, and the
+                # fabricated summary read exactly like a real one. Rather than let
+                # it stand behind a disclaimer, the host declines the finish and
+                # hands the model that fact as evidence, so the next step calls
+                # create_file. Bounded — a model that still will not write falls
+                # through to the honest completion below.
+                #
+                # This is now the *backstop*, not the primary defense: the local
+                # provider's build-turn grammar (build_turn in
+                # _project_step_request) makes an empty completion unexpressible
+                # in the first place. This still covers what the grammar cannot —
+                # a build the detector misses, or a provider (e.g. OCI) that does
+                # not narrow its schema.
+                return self._premature_finish(state, iterations, empty_finishes)
+            staged_now = state.get("project_staged") or {}
+            verification = await self._verify_staged_changeset(
+                project_id,
+                staged_now,
+                planned=planned or state.get("project_planned_files") or [],
+            )
+            if staged_now:
+                await self._emit_staged_verification(state, verification)
+            verify_retries = int(state.get("project_syntax_retries", 0))
+            if verification["errors"] and verify_retries < _MAX_STAGED_VERIFY_RETRIES:
+                # A completion is only the model's claim that the work is done. The
+                # loop used to take that claim on trust, so a build that would not
+                # parse, would not import, or would not run could reach the approval
+                # card and the user's disk. Hand the exact errors back and let the
+                # model fix them with apply_patch before finishing. Bounded, so it
+                # terminates.
+                return self._staged_verify_retry(
+                    state, iterations, verify_retries, verification["errors"]
+                )
             await self.projects.record_learnings(project_id, state["run_id"], step.learnings)
+            response = step.response
+            if not staged_now:
+                # The host states what the turn actually did, because the model's
+                # own summary is only a claim: a run once "completed" a 15-file
+                # build without a single write, and the fabricated summary read
+                # exactly like a real one. Staged work shows its file list on
+                # the approval card; the empty case needs the same visibility.
+                response = (
+                    f"{response}\n\n---\n"
+                    "*No file changes were staged in this turn — the project is "
+                    "unchanged. If files were expected, the summary above does "
+                    "not reflect work that actually happened.*"
+                )
+            # When the fix budget is spent and files still do not parse, the
+            # changeset is still offered rather than trapping the turn — but the
+            # approval card carries the parse errors (see
+            # _project_prepare_build_approval), so the user decides with them in
+            # view rather than being silently handed code that will not run.
             return {
                 "project_context": project_context,
                 "project_iterations": iterations + 1,
+                "project_malformed_streak": 0,
                 "project_pending_call": {},
-                "response_text": step.response,
+                "response_text": response,
                 "artifacts": [],
             }
         assert step.tool_call is not None
@@ -1011,8 +2116,14 @@ class ControlPlane:
         return {
             "project_context": project_context,
             "project_iterations": iterations + 1,
+            "project_malformed_streak": 0,
+            "project_empty_finish_streak": 0,
             "project_pending_call": step.tool_call.model_dump(mode="json"),
             "project_verify_pending": pending_verification,
+            # The narrowing lasts exactly one step: the model has now answered
+            # under it, and the execute node decides whether another is owed.
+            "project_retry_tool": "",
+            "project_write_pin": [],
         }
 
     async def _search_memories(self, prompt: str) -> list[str]:
@@ -1045,25 +2156,54 @@ class ControlPlane:
         return view.model_dump(mode="json")
 
     def _route_after_project_step(self, state: AgentState) -> str:
+        staged = state.get("project_staged") or {}
         if state.get("response_text") and not state.get("project_pending_call"):
-            return "publish"
+            # A finished turn with staged work raises the one batch approval;
+            # with nothing staged there is nothing to gate.
+            return "build_approval" if staged else "publish"
         call = state.get("project_pending_call", {})
+        if not call:
+            # No answer and no tool call: the step was unreadable and has been
+            # recorded as evidence. Hand the model the next step to correct it.
+            return "retry"
         if call.get("name") == "run_check":
+            # Checks run against the real tree. While changes are staged that
+            # tree is not what the model has been building, so execute answers
+            # with that fact as evidence instead of gating a misleading run.
+            if staged:
+                return "execute"
             return "approval" if state.get("project_verify_pending") else "execute"
-        return "approval" if call.get("name") in {"apply_patch", "create_file"} else "execute"
+        # Writes stage into the overlay and keep the loop moving; the approval
+        # moved to the end of the turn, covering the whole changeset at once.
+        return "execute"
 
     async def _project_execute(self, state: AgentState) -> dict[str, Any]:
         await self._guard(state)
         project_id = state.get("model_aliases", {}).get("_project_id", "")
         call = ProjectToolCallV1.model_validate(state.get("project_pending_call", {}))
+        staged: dict[str, Any] = dict(state.get("project_staged") or {})
         checks_run = int(state.get("project_checks_run", 0))
         is_check = call.name == "run_check"
         if is_check:
+            if staged:
+                # The command would test the disk, not the staged build — a
+                # green run against files the model is mid-way through
+                # replacing is exactly the false assurance to refuse.
+                result: dict[str, Any] = {
+                    "ok": False,
+                    "error": (
+                        f"{len(staged)} staged file change(s) are not applied yet, "
+                        "so a check would run against the pre-build files. Finish "
+                        "with status=complete; after the user applies the staged "
+                        "changes, a follow-up turn can verify them."
+                    ),
+                }
+                return self._project_evidence(state, call, result, checks_run)
             budget = self.settings.project_verify_max_runs
             if checks_run >= budget:
                 # Without a per-turn ceiling a check that never passes becomes a
                 # loop that spends the whole step budget re-running it.
-                result: dict[str, Any] = {
+                result = {
                     "ok": False,
                     "error": (
                         f"the verification budget of {budget} run(s) for this turn "
@@ -1080,15 +2220,76 @@ class ControlPlane:
             await self._stage(
                 state, "project_tool", f"Using {call.name.replace('_', ' ')}…"
             )
+        blocked = dict(state.get("project_blocked_targets") or {})
+        target = f"{call.name}:{str(call.arguments.get('path', ''))[:200]}"
+        repeat = _repeated_project_call(state, call)
+        if repeat is not None and blocked.get(target, 0) < _MAX_TARGET_REFUSALS:
+            # Re-running a read the model already has answers nothing and burns
+            # a step. It also counts against the target: this refusal used to
+            # return before the breaker was even consulted, so a repeated read
+            # could never trip it and the loop had no ceiling but the step
+            # budget. A model spent 44 straight steps re-reading one file.
+            blocked[target] = blocked.get(target, 0) + 1
+            return self._project_evidence(
+                state, call, repeat, checks_run, blocked_targets=blocked
+            )
+        if not is_check and blocked.get(target, 0) >= _MAX_TARGET_REFUSALS:
+            # The same call failing over and over is not progress the loop can
+            # wait out: a model that kept re-creating one already-staged file
+            # spent eight steps on it. Close the target and say so, rather than
+            # answering with the same refusal a ninth time.
+            return self._project_evidence(
+                state,
+                call,
+                {
+                    "ok": False,
+                    "error": (
+                        f"{target} has now been refused {blocked[target]} times and is "
+                        "closed for this turn. Do something different — a different "
+                        "file, or a different tool."
+                    ),
+                },
+                checks_run,
+                blocked_targets=blocked,
+            )
+        staged_update: dict[str, Any] | None = None
+        retry_tool = ""
+        write_pin: list[str] = []
+        # What this turn planned and still has not staged, so a refused write can
+        # name the file the build actually owes instead of saying "a different
+        # path" and letting the model guess at it.
+        owed = [
+            path
+            for path in (state.get("project_planned_files") or [])
+            if path not in staged
+        ]
         try:
-            output = await self.projects.execute(project_id, call)
+            if is_check:
+                output = await self.projects.execute(project_id, call)
+            else:
+                output, staged_update = await self.projects.execute_staged(
+                    project_id, call, staged, owed
+                )
             result = {"ok": True, "output": output}
+            blocked.pop(target, None)
         except VerificationNotApprovedError as exc:
             # Reachable only if approval was revoked mid-turn; the gate before
             # this node normally routes an unapproved recipe to its approval.
             result = {"ok": False, "error": str(exc)[:1_000]}
         except Exception as exc:  # tool errors are evidence for the next model step
             result = {"ok": False, "error": str(exc)[:1_000]}
+            if not is_check:
+                blocked[target] = blocked.get(target, 0) + 1
+            # Only the raiser knows whether resending this tool could work. A
+            # semantic refusal narrowed to the same tool is a trap, so the
+            # classification comes from the exception, not from its wording.
+            if getattr(exc, "argument_shape", False):
+                retry_tool = call.name
+            elif getattr(exc, "wrong_target", False) and owed:
+                # Right tool, well-formed arguments, wrong file. The next step's
+                # grammar can carry the answer: the files still owed, plus the
+                # path just refused so revising it stays available.
+                write_pin = [*owed, str(call.arguments.get("path", ""))]
         if is_check:
             checks_run += 1
             await self._emit_check_result(state, call, result)
@@ -1097,9 +2298,32 @@ class ControlPlane:
                 state["run_id"],
                 state["conversation_id"],
                 "project.tool_result",
-                {"tool": call.name, "ok": result["ok"]},
+                {
+                    "tool": call.name,
+                    "ok": result["ok"],
+                    "staged": staged_update is not None,
+                    "staged_files": len(staged_update)
+                    if staged_update is not None
+                    else len(staged),
+                },
             )
-        return self._project_evidence(state, call, result, checks_run)
+        evidence = self._project_evidence(
+            state, call, result, checks_run,
+            retry_tool=retry_tool, write_pin=write_pin, blocked_targets=blocked,
+        )
+        if staged_update is not None:
+            evidence["project_staged"] = staged_update
+        # Progress is measured in staged bytes, not in steps taken: a step that
+        # changed the overlay resets the stall counter, anything else advances
+        # it toward releasing the manifest gate.
+        changed = staged_update is not None and staged_update != staged
+        evidence["project_stall_steps"] = (
+            0 if changed else int(state.get("project_stall_steps", 0)) + 1
+        )
+        evidence["project_refused_streak"] = (
+            0 if result["ok"] else int(state.get("project_refused_streak", 0)) + 1
+        )
+        return evidence
 
     async def _emit_check_result(
         self, state: AgentState, call: ProjectToolCallV1, result: dict[str, Any]
@@ -1132,15 +2356,30 @@ class ControlPlane:
         call: ProjectToolCallV1,
         result: dict[str, Any],
         checks_run: int,
+        *,
+        retry_tool: str = "",
+        write_pin: list[str] | None = None,
+        blocked_targets: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         trace = list(state.get("project_trace", []))
         trace.append(
             {"tool": call.name, "arguments": call.arguments, "result": result}
         )
+        # retry_tool and write_pin are written on every path, defaulting to
+        # cleared. Graph state merges partial dicts, so a key left out keeps its
+        # previous value — and a narrowing that outlives the refusal that
+        # justified it would pin the model for the rest of the turn.
         return {
             "project_trace": trace[-24:],
             "project_pending_call": {},
             "project_checks_run": checks_run,
+            "project_retry_tool": retry_tool,
+            "project_write_pin": list(write_pin or []),
+            "project_blocked_targets": (
+                blocked_targets
+                if blocked_targets is not None
+                else dict(state.get("project_blocked_targets") or {})
+            ),
         }
 
     async def _project_prepare_approval(self, state: AgentState) -> dict[str, Any]:
@@ -1173,6 +2412,66 @@ class ControlPlane:
             risk_level=RiskLevel.R3,
             input_digest=preview["digest"],
             permissions=[PolicyPermission.WIDER_FILESYSTEM.value],
+        )
+        approval = await self.database.create_approval(approval)
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "approval.required",
+            approval.model_dump(mode="json"),
+        )
+        return {"approval_request": approval.model_dump(mode="json")}
+
+    async def _project_prepare_build_approval(self, state: AgentState) -> dict[str, Any]:
+        """One approval for the turn's whole staged changeset.
+
+        The card lists every file with its size and whether it is created or
+        modified, and the digest binds the decision to the exact staged bytes:
+        approving applies precisely what was reviewed, nothing that arrived
+        after.
+        """
+        await self._guard(state)
+        staged: dict[str, Any] = dict(state.get("project_staged") or {})
+        summary, digest, files = self.projects.staged_summary(staged)
+        # The card is the last checkpoint before the user's disk, and the only
+        # one the step-budget path reaches, so it verifies the changeset itself:
+        # anything that will not run is flagged here, on the decision, rather
+        # than discovered after it is applied.
+        project_id = state.get("model_aliases", {}).get("_project_id", "")
+        verification = await self._verify_staged_changeset(
+            project_id,
+            staged,
+            full=True,
+            planned=state.get("project_planned_files") or [],
+        )
+        summary = _annotate_summary(summary, verification)
+        # A changeset the host has proven cannot work does not get an Approve
+        # button. The user can still reject it or send a follow-up that fixes
+        # it; what they cannot do is put it on disk by clicking past a warning.
+        blocked_reason = _blocking_reason(verification)
+        policy = await self._policy_gate(
+            state,
+            PolicyRequest(
+                action="project.file.write",
+                declared_risk=RiskLevel.R3,
+                permissions=frozenset({PolicyPermission.WIDER_FILESYSTEM}),
+            ),
+        )
+        policy.require_approval()
+        action_id = f"project-build:{state['run_id']}:{digest[:20]}"
+        approval = ApprovalRequestV1(
+            id=f"appr_{hashlib.sha256(action_id.encode('utf-8')).hexdigest()[:32]}",
+            run_id=state["run_id"],
+            action_id=action_id,
+            kind="project_apply_build",
+            title=(
+                f"Apply {len(files)} staged file change(s) to this project?"
+            ),
+            summary=summary,
+            risk_level=RiskLevel.R3,
+            input_digest=digest,
+            permissions=[PolicyPermission.WIDER_FILESYSTEM.value],
+            blocked_reason=blocked_reason,
         )
         approval = await self.database.create_approval(approval)
         await self.events.emit(
@@ -1317,6 +2616,29 @@ class ControlPlane:
     async def _plan(self, state: AgentState) -> dict[str, Any]:
         await self._guard(state)
         await self._stage(state, "planning", "Planning a safe route…")
+        # Asking for files to be written with no project open has exactly one
+        # answer, and it is not a model's to give: there is nowhere to write.
+        # Saying so costs one deterministic reply, where routing it onward
+        # spends minutes and fails on whatever schema it lands in.
+        if not state.get("model_aliases", {}).get("_project_id") and (
+            is_project_build_instruction(state["prompt"])
+        ):
+            plan = PlanEnvelopeV1(
+                summary="A build request with no project open; explain how to open one.",
+                route="direct",
+                risk_level=RiskLevel.R0,
+            )
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "plan.created",
+                plan.model_dump(mode="json"),
+            )
+            return {
+                "plan": plan.model_dump(mode="json"),
+                "route_kind": "guidance",
+                "response_text": _NO_PROJECT_GUIDANCE,
+            }
         direct_reason = _direct_fast_path_reason(state)
         if (
             state.get("model_aliases", {}).get("_knowledge_scope") == "notion"
@@ -1526,6 +2848,19 @@ class ControlPlane:
                 {"delta": delta},
             )
 
+        # Thinking travels on its own event type so the reader can open it, and
+        # so it can never be concatenated into the answer by accident.
+        async def on_reasoning(delta: str) -> None:
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "message.reasoning",
+                {"delta": delta},
+            )
+
+        show_reasoning = (
+            self.settings.stream_model_reasoning and not is_revision
+        )
         result = await self.model.generate(
             ModelRequestV1(
                 role="planner",
@@ -1561,6 +2896,7 @@ class ControlPlane:
             ),
             on_token=None if is_revision else on_token,
             model_aliases=state.get("model_aliases", {}),
+            on_reasoning=on_reasoning if show_reasoning else None,
         )
         await self.events.emit(
             state["run_id"],
@@ -1575,8 +2911,23 @@ class ControlPlane:
                 "service_memory": (result.structured or {}).get("service_memory"),
             },
         )
+        response_text, dropped_markers = _append_cited_sources(result.content, sources)
+        if dropped_markers:
+            # The marker is gone from the prose, so the reader never chases a
+            # reference to nowhere. Emitting it keeps the miss auditable in the
+            # run timeline instead of silently disappearing.
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "answer.citation_dropped",
+                {
+                    "markers": sorted(set(dropped_markers)),
+                    "source_count": len(sources),
+                    "revision": is_revision,
+                },
+            )
         return {
-            "response_text": _append_cited_sources(result.content, sources),
+            "response_text": response_text,
             "artifacts": [],
         }
 
@@ -2762,6 +4113,8 @@ class ControlPlane:
             raise PolicyViolation("approval decision does not match the pending action")
         if request.kind == "project_write":
             return await self._apply_project_approval(state, request, decision)
+        if request.kind == "project_apply_build":
+            return await self._apply_project_build(state, request, decision)
         if request.kind == "project_verify":
             return await self._apply_verification_approval(state, request, decision)
         if request.kind == "define_tool":
@@ -2885,6 +4238,96 @@ class ControlPlane:
         )
         return {
             "project_trace": trace[-24:],
+            "project_pending_call": {},
+            "approval_request": {},
+            "approval_decision": {},
+        }
+
+    async def _apply_project_build(
+        self,
+        state: AgentState,
+        request: ApprovalRequestV1,
+        decision: ApprovalDecisionV1,
+    ) -> dict[str, Any]:
+        """Materialize the approved changeset — or discard it whole.
+
+        Either way the staged overlay is cleared: an approved build now lives
+        on disk, and a rejected one was declined as a unit, not parked for
+        renegotiation file by file.
+        """
+        project_id = state.get("model_aliases", {}).get("_project_id", "")
+        staged: dict[str, Any] = dict(state.get("project_staged") or {})
+        base = str(state.get("response_text") or "").strip()
+        approved = decision.decision == Decision.APPROVE.value
+        if approved:
+            policy = await self._policy_gate(
+                state,
+                PolicyRequest(
+                    action="project.file.write",
+                    declared_risk=RiskLevel.R3,
+                    permissions=frozenset({PolicyPermission.WIDER_FILESYSTEM}),
+                    approval_granted=True,
+                ),
+            )
+            policy.enforce()
+            report = await self.projects.materialize_staged(project_id, staged)
+            applied = list(report.get("applied", []))
+            skipped = list(report.get("skipped", []))
+            parts = [base] if base else []
+            if applied:
+                parts.append(
+                    f"Applied {len(applied)} file(s):\n"
+                    + "\n".join(f"- `{item}`" for item in applied)
+                )
+            if skipped:
+                parts.append(
+                    "Skipped — the project changed after these were staged, so "
+                    "they were not overwritten:\n"
+                    + "\n".join(
+                        f"- `{item['path']}` · {item['reason']}" for item in skipped
+                    )
+                )
+            if not applied and not skipped:
+                parts.append("There was nothing staged to apply.")
+            manifest_written = ""
+            if applied:
+                try:
+                    manifest_written = await self.projects.ensure_asset_manifest(
+                        project_id
+                    )
+                except Exception:  # noqa: BLE001 - launchability must not fail the apply
+                    manifest_written = ""
+            if manifest_written:
+                parts.append(
+                    f"Metis wrote `{manifest_written}` from the applied build, so "
+                    "this project can launch from the Assets tab — after the "
+                    "one-time launch-recipe approval there."
+                )
+            text = "\n\n".join(parts)
+        else:
+            report = {"applied": [], "skipped": []}
+            text = "\n\n".join(
+                part
+                for part in (
+                    base,
+                    "You declined the staged changes; nothing was written to the project.",
+                )
+                if part
+            )
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.build_decided",
+            {
+                "approved": approved,
+                "staged": len(staged),
+                "applied": len(report.get("applied", [])),
+                "skipped": len(report.get("skipped", [])),
+            },
+        )
+        return {
+            "response_text": text,
+            "project_staged": {},
             "project_pending_call": {},
             "approval_request": {},
             "approval_decision": {},
@@ -3184,8 +4627,18 @@ def initial_state(
         project_trace=[],
         project_pending_call={},
         project_iterations=0,
+        project_staged={},
         project_verify_pending={},
         project_checks_run=0,
+        project_retry_tool="",
+        project_write_pin=[],
+        project_blocked_targets={},
+        project_planned_files=[],
+        project_stall_steps=0,
+        project_refused_streak=0,
+        project_malformed_streak=0,
+        project_empty_finish_streak=0,
+        project_syntax_retries=0,
         answer_revisions=0,
         answer_critique="",
         grounding={},
@@ -3211,6 +4664,289 @@ def initial_state(
 
 class AuthoredReviewRejected(RuntimeError):
     """The optional code review flagged authored tool code as unsafe."""
+
+
+# Consecutive unreadable steps before the turn gives up. Two is a stumble a
+# model recovers from with the error in front of it; three is a model that
+# cannot hold this contract right now.
+_MAX_MALFORMED_PROJECT_STEPS = 3
+
+
+# Empty "finishes" the host will decline on a build-instruction turn before it
+# lets one stand. Each decline hands the model the fact that nothing is staged;
+# two nudges is enough to turn a fabricated summary into real create_file calls,
+# and a model that still will not write falls through to the honest footer.
+_MAX_EMPTY_PROJECT_FINISHES = 2
+
+
+# Fix-and-recheck cycles the host runs when a completed changeset does not hold
+# up — a file that will not parse, an import that resolves nowhere, a project
+# that will not run in the sandbox. One shared budget, whichever rung found it:
+# each cycle hands the model the exact errors, and after the budget the
+# changeset is offered anyway with those errors on the approval card, so the
+# user is never silently handed broken code and the model is never looped.
+_MAX_STAGED_VERIFY_RETRIES = 2
+
+
+# Refusals one "tool:path" target may collect before the loop closes it for the
+# turn. The step budget is the only thing that used to stop a model repeating a
+# call it cannot get past — one spent eight consecutive steps trying to
+# create_file a path it had already staged, because the refusal never suggested
+# anything else. Two retries is room to correct a genuine mistake; a third means
+# the target, not the arguments, is the problem.
+_MAX_TARGET_REFUSALS = 3
+
+
+# Steps the overlay may go unchanged before the manifest gate stops withholding
+# `complete`. The gate is what stops a model calling a five-of-eighteen build
+# finished, but it removes the only honest exit too — and an edit turn whose
+# planned file already exists can only be satisfied by a patch, so a model that
+# cannot produce one has no legal move at all. One real turn spent all 48 steps
+# that way and staged nothing. Six steps is room to recover; past it, ending the
+# turn with a truthful account beats grinding to the budget.
+_MAX_STALL_STEPS = 6
+
+# Consecutive host-refused tool calls before the turn ends on its own. Kept
+# below the step budget by an order of magnitude: every refusal is a step
+# spent making the trace worse, and a model five refusals deep does not
+# recover by being given forty more.
+_MAX_REFUSED_STEPS = 5
+
+
+_NO_PROJECT_GUIDANCE = """That reads like a request to write files, but no project is open in this conversation — so there is nowhere for me to write them.
+
+**Open one first:** use the **Project** picker in the header above, choose the project, and send this message again. In project mode I read the existing files, then build across as many steps as the work needs — writing, reading back, and refining — and show you every file in a **single approval** before anything reaches your disk.
+
+If the project isn't in the list yet, create its folder inside your configured projects folder, then use **Assets → Scan for updates**.
+
+Without a project open I can still design the approach, draft individual files here in chat, or draw an architecture diagram — just say which."""
+
+
+def _distinct_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The same defect reported by two rungs is one defect.
+
+    Keyed on the pair the user actually reads — the file and the message — and
+    order-preserving, so the cheapest rung's phrasing of a shared finding is
+    the one that survives.
+    """
+    seen: set[tuple[str, str]] = set()
+    distinct: list[dict[str, Any]] = []
+    for item in findings:
+        key = (str(item.get("path", "")), str(item.get("error", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        distinct.append(item)
+    return distinct
+
+
+def _from_rung(findings: list[dict[str, Any]], rung: str) -> list[dict[str, Any]]:
+    """Stamp each finding with the rung that produced it.
+
+    Which rung spoke decides whether a finding can block, so it has to travel
+    with the finding rather than be inferred from its wording later.
+    """
+    return [{**item, "rung": rung} for item in findings]
+
+
+# The static rungs read the staged text exactly as written: a file either parses
+# or it does not, an import either resolves within the changeset or it does not,
+# a planned file is either in the changeset or it is not. Nothing about the
+# environment can change any of those answers, so all three may veto.
+_STATIC_RUNGS = frozenset({"syntax", "typecheck", "wiring", "conformance"})
+
+# Container failures the missing environment cannot explain away. A name that is
+# not in a module is not in that module whether or not OCI_COMPARTMENT_ID is set,
+# so these keep their veto; anything else the container reports only advises.
+# "raised at import over missing configuration" is the sandbox's classification
+# of an app that cannot even be imported without environment values — under the
+# lazy-config contract that appkit and the reference doc both teach, that is a
+# code defect the model must fix, not an environment gap to shrug at. It is how
+# a Grok build with a broken central integration was once offered for approval.
+_PROVABLE_RUNTIME_FAILURES = (
+    "ImportError",
+    "ModuleNotFoundError",
+    "AttributeError",
+    "NameError",
+    "TypeError",
+    "SyntaxError",
+    "IndentationError",
+    "no file in this project provides that module",
+    "neither declared in the",
+    "raised at import over missing configuration",
+)
+
+
+def _blocks_approval(finding: dict[str, Any]) -> bool:
+    """Whether this finding is strong enough to withhold the Approve button."""
+    if finding.get("rung", "syntax") in _STATIC_RUNGS:
+        return True
+    error = str(finding.get("error", ""))
+    return any(marker in error for marker in _PROVABLE_RUNTIME_FAILURES)
+
+
+def _blocking_reason(verification: dict[str, Any]) -> str | None:
+    """Why this changeset must not reach disk, or None if it may.
+
+    The line is what the host can *prove*, not which rung spoke. The contract
+    on configuration flipped once and the story matters: the reference used to
+    recommend validating settings at import, so the sandbox — which runs with
+    no environment — had to tolerate config-shaped import failures, and that
+    tolerance is how a build with a broken central integration was offered for
+    approval. The reference and the vendored appkit now both teach lazy config
+    ("import must succeed with no environment at all"), which makes an
+    import-time configuration failure a provable code defect again; the
+    sandbox classifies it explicitly and it vetoes here.
+
+    The container also proves plenty that no environment could excuse. A build
+    once invented `load_client_config` in `oci_genai_auth`; that symbol does not
+    exist under any configuration, and with the package now baked into the
+    verify image the container is the only rung that can see it. So import-,
+    name- and type-shaped failures veto, and the rest advises.
+
+    Non-blocking findings still appear on the card, in the count, and in the
+    model's retry evidence. Warnings never block, and neither does a rung that
+    could not run — refusing on a check that never happened would make an
+    unavailable sandbox indistinguishable from broken code.
+    """
+    errors = [
+        item for item in (verification.get("errors") or []) if _blocks_approval(item)
+    ]
+    if not errors:
+        return None
+    first = errors[0]
+    rest = f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""
+    return (
+        f"{len(errors)} problem(s) would stop this project working — "
+        f"{first.get('path', '?')}: {first.get('error', 'unknown error')}{rest}. "
+        "Send a follow-up to fix it, or reject the changeset."
+    )
+
+
+def _sandbox_verdict(checks: list[dict[str, Any]]) -> str:
+    """An honest one-line verdict for a changeset the rungs did not error on.
+
+    The old text was a fixed sentence — "the imports resolve, and the project
+    imported and served its routes" — emitted whenever nothing *errored*. But an
+    import that fails only because a declared package is absent from the verify
+    image is downgraded to a warning, not an error, so a project that cannot
+    even import reached the user under a green check claiming it served routes.
+    Measured live: a build whose ``app/main.py`` imported ``PyPDF2`` (absent from
+    the image) never imported at all, yet the card led with the ✅. The verdict
+    now says only what the sandbox actually did, read from the checks themselves.
+    """
+    import_checks = [c for c in checks if c.get("kind") == "import"]
+    failed_imports = [c for c in import_checks if not c.get("ok")]
+    served = [c for c in checks if c.get("kind") == "request"]
+    app_found = any(
+        c.get("kind") == "application"
+        and "no ASGI application found" not in str(c.get("detail", ""))
+        for c in checks
+    )
+    count = len(checks)
+    if failed_imports:
+        # No blocking error, but a module still would not import — the only way
+        # here is a package the verify image lacks (a real ImportError of an
+        # undeclared name is an error and takes the ⚠️ branch). Either way the
+        # app was never started, so this is not a green check.
+        names = ", ".join(
+            f"`{str(c.get('name', 'a module')).replace('import ', '')}`"
+            for c in failed_imports[:3]
+        )
+        return (
+            f"⚠ Could not confirm this project runs. The static checks pass, but the "
+            f"sandbox could not import {names} (see below), so the application was "
+            "never started here. Review before applying."
+        )
+    if served:
+        return (
+            f"✅ Every file parses, the imports resolve, and the project imported and "
+            f"served its routes in the sandbox ({count} checks). That is not proof it "
+            "does the right thing."
+        )
+    if app_found:
+        return (
+            f"✅ Every file parses and imports cleanly, and the application loaded in "
+            f"the sandbox ({count} checks) — but it declared no routes of its own to "
+            "exercise. That is not proof it does the right thing."
+        )
+    return (
+        f"✅ Every file parses and imports cleanly in the sandbox ({count} checks), but "
+        "no runnable application object was found to exercise. That is not proof it "
+        "does the right thing."
+    )
+
+
+def _collapse_by_cause(findings: list[dict[str, Any]]) -> list[str]:
+    """One line per underlying cause, with how many modules it took down.
+
+    A config module that raises at import fails the import of every module that
+    imports it, so the sandbox reports the same exception once per importer. The
+    user needs the cause once — "7 modules could not import" — not the same
+    ValueError seven times.
+    """
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for item in findings:
+        error = str(item.get("error", ""))
+        cause = error.split(" failed: ", 1)[1] if " failed: " in error else error
+        if cause not in groups:
+            groups[cause] = []
+            order.append(cause)
+        groups[cause].append(str(item.get("path", "?")))
+    lines: list[str] = []
+    for cause in order:
+        paths = groups[cause]
+        if len(paths) == 1:
+            lines.append(f"`{paths[0]}`: {cause}")
+        else:
+            lines.append(f"{len(paths)} modules could not import — {cause}")
+    return lines
+
+
+def _annotate_summary(summary: str, verification: dict[str, Any]) -> str:
+    """Put the changeset's verdict at the top of the approval card.
+
+    The user is deciding right here, so everything the host learned about
+    whether this code works belongs on the decision itself — including the case
+    where it could not be checked, which reads far too much like "fine" when it
+    is left unsaid.
+    """
+    blocks: list[str] = []
+    errors = list(verification.get("errors") or [])
+    warnings = list(verification.get("warnings") or [])
+    checks = list(verification.get("checks") or [])
+    # A finding is only a "problem that would stop this working" if it actually
+    # withholds approval. A runtime finding the missing sandbox environment can
+    # explain — a config that requires a setting at import is correct fail-fast
+    # code — is an "error" for the count but must not be dressed up as a defect,
+    # or a perfectly good build reads as broken (measured: one such build showed
+    # "7 problems" for a single correct `raise` seen from seven import paths).
+    blocking = [item for item in errors if _blocks_approval(item)]
+    advisory = [item for item in errors if not _blocks_approval(item)]
+    if blocking:
+        listed = "\n".join(f"- `{item['path']}`: {item['error']}" for item in blocking[:12])
+        blocks.append(
+            f"⚠️ {len(blocking)} problem(s) would stop this project working — review "
+            f"before applying:\n{listed}"
+        )
+    elif checks:
+        blocks.append(_sandbox_verdict(checks))
+    if advisory:
+        listed = "\n".join(f"- {line}" for line in _collapse_by_cause(advisory)[:6])
+        blocks.append(
+            "Could not be exercised in the sandbox, which runs without the project's "
+            "environment — correct fail-fast code (a required setting checked at "
+            "import) looks exactly like this, so it is a limit of the check, not a "
+            f"proven defect:\n{listed}"
+        )
+    if warnings:
+        listed = "\n".join(f"- `{item['path']}`: {item['error']}" for item in warnings[:6])
+        blocks.append(f"Worth a look:\n{listed}")
+    blocks.extend(f"Note: {note}." for note in verification.get("notes") or [])
+    if not blocks:
+        return summary
+    return "\n\n".join([*blocks, summary])[:12_000]
 
 
 def _direct_fast_path_reason(state: AgentState) -> str:

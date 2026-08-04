@@ -11,7 +11,6 @@ that fails if the model degrades or if the reported margin becomes flattering.
 """
 from __future__ import annotations
 
-import math
 
 import pytest
 

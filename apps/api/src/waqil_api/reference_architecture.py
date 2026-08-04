@@ -22,7 +22,6 @@ from .config import Settings
 from .contracts import ArchitectureSpecV1, EvalReportV1, EvalResultV1
 from .diagram_source import (
     canonical_architecture_spec,
-    canonical_diagram_source,
     canonical_diagram_source_for,
     validate_diagram_source,
     validate_diagram_source_for,

@@ -14,6 +14,33 @@ export function messageBelongsToRun(message: ChatMessage, runId: string | null):
 }
 
 /**
+ * Append a thinking delta to the run's assistant message. Reasoning arrives on
+ * its own event type and is kept in its own field, so it can be read alongside
+ * the answer but never becomes part of it.
+ */
+export function mergeAssistantReasoning(
+  messages: readonly ChatMessage[],
+  runId: string,
+  delta: string,
+): ChatMessage[] {
+  if (!delta) return [...messages];
+  const existingIndex = messages.findIndex((message) => messageBelongsToRun(message, runId));
+  if (existingIndex < 0) {
+    return [...messages, {
+      id: `assistant-${runId}`,
+      run_id: runId,
+      role: "assistant",
+      content: "",
+      reasoning: delta,
+      streaming: true,
+    }];
+  }
+  return messages.map((message, index) => index === existingIndex
+    ? { ...message, run_id: runId, reasoning: `${message.reasoning ?? ""}${delta}` }
+    : message);
+}
+
+/**
  * Merge response events without duplicating an assistant message that was
  * already hydrated from the durable conversation store. SSE replay is still
  * used for the timeline and artifacts; persisted final text remains canonical.

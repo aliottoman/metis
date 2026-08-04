@@ -25,8 +25,142 @@ def _as_text(value: Any) -> str:
         return str(value)
 
 
+# JSON-Schema keywords that bound a *value* rather than describe the *shape* of
+# a reply. Pydantic enforces every one of them when the reply is validated, so
+# dropping them from a decoding grammar loses no guarantee — see grammar_schema.
+_VALUE_CONSTRAINT_KEYWORDS = frozenset(
+    {
+        "maxLength",
+        "minLength",
+        "pattern",
+        "format",
+        "maxItems",
+        "minItems",
+        "uniqueItems",
+        "maxProperties",
+        "minProperties",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+    }
+)
+
+# Structural keywords a grammar compiler has to interpret rather than ignore.
+# They are legal, but each one has broken a real backend, so a schema headed for
+# local decode is checked for them (see grammar_risks) instead of trusting them.
+_GRAMMAR_RISK_KEYWORDS = ("$ref", "anyOf", "allOf", "oneOf", "not", "if")
+
+
+def _const_to_enum(node: Any) -> None:
+    """Rewrite JSON-Schema ``const`` as a one-element ``enum``, in place, recursively."""
+    if isinstance(node, dict):
+        if "const" in node:
+            # Always drop const; keep an existing enum if one is somehow present.
+            node.setdefault("enum", [node["const"]])
+            node.pop("const")
+        for value in node.values():
+            _const_to_enum(value)
+    elif isinstance(node, list):
+        for item in node:
+            _const_to_enum(item)
+
+
+def grammar_schema(contract: type[BaseModel]) -> dict[str, Any]:
+    """The shape-only JSON Schema used to constrain a local model's decode.
+
+    A local backend compiles this schema into a decoding grammar, and that
+    compiler is far less forgiving than a JSON-Schema validator. Three separate
+    outages were the same mistake — handing it a keyword it could not compile. A
+    nested ``anyOf``/``$ref`` collapsed MLX output to empty; ``const`` made
+    llama.cpp reject the request outright; and a ``maxLength`` of 2000 or more
+    still does, with HTTP 400 "failed to parse grammar" on every project step,
+    which the host could only read as the model replying unintelligibly.
+
+    Patching one keyword at a time never converged, because the underlying
+    mistake is sending a *validation* contract to a *decoder*. So the grammar is
+    now told only what shape to produce — types, properties, required keys,
+    enums, items — and every keyword that merely bounds a value is dropped.
+    Nothing is actually unenforced: the reply is validated against the full
+    contract on arrival, where the bounds still apply. The trade is deliberate,
+    and lopsided in our favour: overrunning a bound costs one repair round-trip,
+    while a schema the compiler rejects costs the entire turn.
+    """
+    return _project_for_grammar(contract.model_json_schema())
+
+
+def _project_for_grammar(node: Any) -> Any:
+    """Copy one JSON-Schema node, keeping only what a decoding grammar can use."""
+    if isinstance(node, dict):
+        projected = {
+            key: _project_for_grammar(value)
+            for key, value in node.items()
+            if key not in _VALUE_CONSTRAINT_KEYWORDS
+        }
+        if "const" in projected:
+            # The identical constraint, in the spelling every backend compiles.
+            projected.setdefault("enum", [projected.pop("const")])
+        return projected
+    if isinstance(node, list):
+        return [_project_for_grammar(item) for item in node]
+    return node
+
+
+def value_constraints(schema: dict[str, Any], path: str = "") -> list[str]:
+    """Locations of value-bounding keywords still present in a schema.
+
+    A projected schema must report none: every one of these is a keyword some
+    grammar compiler has to interpret, and ``maxLength`` alone took out five of
+    the eight schemas the local path decodes with.
+    """
+    found: list[str] = []
+    if isinstance(schema, dict):
+        for keyword in sorted(_VALUE_CONSTRAINT_KEYWORDS & set(schema)):
+            found.append(f"{path or '.'}:{keyword}")
+        for key, value in schema.items():
+            found.extend(value_constraints(value, f"{path}.{key}"))
+    elif isinstance(schema, list):
+        for index, item in enumerate(schema):
+            found.extend(value_constraints(item, f"{path}[{index}]"))
+    return found
+
+
+def grammar_risks(schema: dict[str, Any], path: str = "") -> list[str]:
+    """Locations of keywords a grammar compiler has historically mishandled.
+
+    Empty means the schema is flat enough that no backend has to resolve a
+    reference or choose between branches to build its grammar. This is an
+    assertion for tests and the preflight, not a transform: a risk here is a
+    schema that needs rethinking, not one the host can quietly rewrite.
+    """
+    found: list[str] = []
+    if isinstance(schema, dict):
+        for keyword in _GRAMMAR_RISK_KEYWORDS:
+            if keyword in schema:
+                found.append(f"{path or '.'}:{keyword}")
+        for key, value in schema.items():
+            found.extend(grammar_risks(value, f"{path}.{key}"))
+    elif isinstance(schema, list):
+        for index, item in enumerate(schema):
+            found.extend(grammar_risks(item, f"{path}[{index}]"))
+    return found
+
+
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        # No contract emits ``const``, in any direction. grammar_schema would
+        # rewrite it for local decode anyway, but the OCI Responses path sends
+        # ``model_json_schema()`` straight through under strict mode, and that
+        # strict subset has never included ``const`` — so a single-value Literal
+        # has to arrive as a one-element enum there too. Identical constraint,
+        # universally understood spelling.
+        schema = handler(core_schema)
+        _const_to_enum(handler.resolve_ref_schema(schema))
+        return schema
 
 
 class RunStatus(StrEnum):
@@ -328,17 +462,6 @@ class ProjectVerificationV1(Contract):
     error: str | None = Field(default=None, max_length=400)
 
 
-class ProjectCheckResultV1(Contract):
-    name: str = Field(min_length=1, max_length=32)
-    command: str = Field(default="", max_length=2_000)
-    ok: bool = False
-    exit_code: int | None = None
-    timed_out: bool = False
-    duration_seconds: float = Field(default=0.0, ge=0.0)
-    output: str = Field(default="", max_length=200_000)
-    truncated: bool = False
-
-
 class ProjectToolCallV1(Contract):
     name: Literal[
         "list_files",
@@ -347,8 +470,31 @@ class ProjectToolCallV1(Contract):
         "apply_patch",
         "create_file",
         "run_check",
+        "inspect_api",
     ]
     arguments: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_argument_key(cls, value: Any) -> Any:
+        """Accept the argument-key synonyms coder models actually emit.
+
+        A live run died on ``{"name": "read_file", "parameters": {...}}`` —
+        three retries, same key, turn over. The intent is unambiguous, so the
+        synonym is renamed rather than rejected. Shape only: the tool name
+        Literal and the workspace's own bounds still decide what may run, and
+        an *unrecognized* extra key still fails exactly as before.
+        """
+        if not isinstance(value, dict) or isinstance(value.get("arguments"), dict):
+            return value
+        payload = dict(value)
+        for synonym in ("parameters", "params", "args", "inputs", "input"):
+            candidate = payload.get(synonym)
+            if isinstance(candidate, dict):
+                payload.pop(synonym)
+                payload["arguments"] = candidate
+                return payload
+        return value
 
 
 class ProjectAgentStepV1(Contract):
@@ -357,6 +503,48 @@ class ProjectAgentStepV1(Contract):
     tool_call: ProjectToolCallV1 | None = None
     learnings: list[str] = Field(default_factory=list, max_length=16)
 
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_step_envelope(cls, value: Any) -> Any:
+        """Accept the collapsed shapes a coder model reaches for.
+
+        Small local models routinely return the tool call itself —
+        ``{"name": "list_files", "arguments": {...}}`` — instead of the
+        envelope that carries it. The intent is unambiguous, so the host
+        reshapes it rather than spending a repair round-trip and then failing
+        the turn. This widens the accepted *shape*, never the authority: the
+        tool name is still checked against the fixed Literal below, so an
+        invented tool is rejected exactly as before.
+        """
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        status = payload.get("status")
+        name = payload.get("name") or payload.get("tool")
+        if (
+            "tool_call" not in payload
+            and isinstance(name, str)
+            and name
+            and status in (None, "tool")
+        ):
+            arguments = payload.get("arguments")
+            if not isinstance(arguments, dict):
+                arguments = {}
+                for synonym in ("args", "parameters", "params", "inputs", "input"):
+                    candidate = payload.get(synonym)
+                    if isinstance(candidate, dict):
+                        arguments = candidate
+                        break
+            payload = {
+                key: item
+                for key, item in payload.items()
+                if key in {"response", "learnings"}
+            }
+            payload["tool_call"] = {"name": name, "arguments": arguments}
+        if "status" not in payload:
+            payload["status"] = "tool" if payload.get("tool_call") else "complete"
+        return payload
+
     @model_validator(mode="after")
     def valid_project_step(self) -> "ProjectAgentStepV1":
         if self.status == "tool" and self.tool_call is None:
@@ -364,6 +552,303 @@ class ProjectAgentStepV1(Contract):
         if self.status == "complete" and not self.response.strip():
             raise ValueError("a completed project step requires a response")
         return self
+
+
+# Every argument key the six project tools accept, as one flat table. The
+# grammar shows this closed set for `arguments`, and that alone is what stops
+# the model inventing keys: against a free-form object it produced
+# {"path","patch"} for apply_patch on every single attempt, and against this one
+# it produces {"path","original","replacement"} with a verbatim block. The host
+# was requiring argument names it never told the model — only Grok, which gets
+# real function schemas, was ever shown them.
+#
+# Deliberately one flat table rather than a per-tool model: a $ref or a
+# discriminated union is the exact construct that collapsed MLX decode to empty
+# output, which is what the wire contracts below were written to avoid.
+PROJECT_TOOL_ARGUMENT_PROPERTIES: dict[str, dict[str, Any]] = {
+    "path": {"type": "string"},
+    "content": {"type": "string"},
+    "original": {"type": "string"},
+    "replacement": {"type": "string"},
+    "query": {"type": "string"},
+    "case_sensitive": {"type": "boolean"},
+    "name": {"type": "string"},
+    "module": {"type": "string"},
+    "symbol": {"type": "string"},
+    "start_line": {"type": "integer"},
+    "end_line": {"type": "integer"},
+    "limit": {"type": "integer"},
+}
+
+# What each tool actually needs, mirroring the host's own refusals so the
+# grammar and the workspace cannot disagree about what a valid call looks like.
+PROJECT_TOOL_REQUIRED_ARGUMENTS: dict[str, list[str]] = {
+    "list_files": [],
+    "search_code": ["query"],
+    "read_file": ["path"],
+    "create_file": ["path", "content"],
+    "apply_patch": ["path", "original", "replacement"],
+    "run_check": ["name"],
+    "inspect_api": ["module"],
+}
+
+# Merged into the emitted schema for `arguments`, replacing the open
+# `additionalProperties: true` a dict[str, Any] would otherwise produce. The
+# Python type stays a plain dict so the argument-synonym coercion below still
+# runs — the grammar narrows what is generated, not what the host will accept.
+_CLOSED_TOOL_ARGUMENTS: dict[str, Any] = {
+    "properties": PROJECT_TOOL_ARGUMENT_PROPERTIES,
+    "additionalProperties": False,
+}
+
+
+# Listed per tool rather than derived, because "every key this tool does not
+# require" is not the same thing as "every key it accepts" — offering
+# create_file an `original` invites exactly the confusion this table exists to
+# remove.
+PROJECT_TOOL_OPTIONAL_ARGUMENTS: dict[str, list[str]] = {
+    "list_files": ["path", "limit"],
+    "search_code": ["case_sensitive", "limit"],
+    "read_file": ["start_line", "end_line"],
+    "create_file": [],
+    "apply_patch": [],
+    "run_check": [],
+    "inspect_api": ["symbol"],
+}
+
+# One line per tool saying what it is for, in the terms the model has to get
+# right. The local model is given no function schemas at all — the system prompt
+# names the tools and never their arguments — so this is the only place it can
+# learn that a patch is an exact-match replacement rather than a diff.
+_PROJECT_TOOL_NOTES: dict[str, str] = {
+    "list_files": 'List project files. Send path "" for the whole project.',
+    "search_code": "Find an exact string in the project's readable text.",
+    "read_file": "Read one file. The text returned is verbatim, safe to copy.",
+    "create_file": (
+        "Create a new file. content must be the complete file text and cannot be "
+        "empty. Refuses to overwrite; use apply_patch to change a file that exists "
+        "or is already staged."
+    ),
+    "apply_patch": (
+        "Replace one block of an existing or staged file. original must appear "
+        "exactly once in the current file text, copied verbatim; replacement is "
+        "what it becomes. This is not a diff — do not send patch text."
+    ),
+    "run_check": "Run one declared verification check by name.",
+    "inspect_api": (
+        "Look up an INSTALLED library before you write against it: its real "
+        "exported names, and the real signature of one function or class. Use it "
+        "whenever you are about to call an API you have not verified — a keyword "
+        "argument that does not exist parses perfectly and fails at runtime. "
+        "module is an import path such as \"openai\"; symbol is optional. It "
+        "reads libraries, never this project's own files — use read_file for those."
+    ),
+}
+
+
+def project_tool_catalog() -> list[dict[str, Any]]:
+    """The tool reference sent to a local model, which sees no function schemas."""
+    return [
+        {
+            "name": name,
+            "required_arguments": list(required),
+            "optional_arguments": list(PROJECT_TOOL_OPTIONAL_ARGUMENTS[name]),
+            "note": _PROJECT_TOOL_NOTES[name],
+        }
+        for name, required in PROJECT_TOOL_REQUIRED_ARGUMENTS.items()
+    ]
+
+
+def project_step_retry_schema(tool: str) -> dict[str, Any]:
+    """A flat step schema pinned to one tool, carrying its exact required keys.
+
+    Used for the step immediately after the host refused a call for the shape of
+    its arguments. The general schema lists every key the six tools share, so a
+    model can still omit one this particular tool needs; narrowing to the tool it
+    just got wrong makes the omission ungrammatical for one step. Finishing is
+    also removed — the model is mid-correction, not done.
+    """
+    schema = grammar_schema(ProjectAgentStepWireV1)
+    properties = dict(schema["properties"])
+    properties["status"] = {"type": "string", "enum": ["tool"]}
+    properties["tool"] = {"type": "string", "enum": [tool]}
+    properties["arguments"] = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": PROJECT_TOOL_ARGUMENT_PROPERTIES,
+        "required": list(PROJECT_TOOL_REQUIRED_ARGUMENTS[tool]),
+    }
+    return {**schema, "properties": properties, "required": ["status", "tool", "arguments"]}
+
+
+def project_write_schema(paths: list[str]) -> dict[str, Any]:
+    """A flat step schema whose write target must be a file the build still owes.
+
+    Used for the step after a create_file was refused for aiming at a path that
+    already exists. Prose does not fix this: one live build spent 43 create_file
+    calls to produce 11 files, re-sending paths it had already staged, and
+    another spent eight consecutive steps on a single one. The host knows the
+    manifest and the overlay, so it makes the wrong target ungrammatical — the
+    same move that took apply_patch from 0/4 to 4/4 correct calls.
+
+    Deliberately not narrowed to create_file alone. The refused path stays in the
+    enum and apply_patch stays legal, so a model that meant to *revise* the file
+    it just wrote can still do exactly that; what becomes unexpressible is only
+    the thing it was measurably getting wrong. Flat, with no `$ref` or `anyOf`,
+    so the MLX grammar-collapse protection holds.
+    """
+    schema = grammar_schema(ProjectAgentStepWireV1)
+    properties = dict(schema["properties"])
+    properties["status"] = {"type": "string", "enum": ["tool"]}
+    properties["tool"] = {"type": "string", "enum": ["create_file", "apply_patch"]}
+    properties["arguments"] = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "path": {"type": "string", "enum": list(paths)},
+            "content": {"type": "string"},
+            "original": {"type": "string"},
+            "replacement": {"type": "string"},
+        },
+        "required": ["path"],
+    }
+    return {**schema, "properties": properties, "required": ["status", "tool", "arguments"]}
+
+
+class ProjectBuildPlanV1(Contract):
+    """The files a build turn commits to writing, named before it starts.
+
+    Completion used to mean only "the model says it is done", and the sole
+    guard was whether *anything* had been staged — so a build asked for
+    eighteen files could stage five, declare success, and be believed. Fixing
+    the list up front turns that into a checkable claim: the host keeps
+    ``complete`` out of the grammar until every planned file exists in the
+    overlay, and the model is answering against its own plan rather than the
+    host's guess at one.
+    """
+
+    files: list[str] = Field(default_factory=list, max_length=24)
+
+    @field_validator("files")
+    @classmethod
+    def validate_files(cls, value: list[str]) -> list[str]:
+        """Keep only plausible project-relative paths, in the order given.
+
+        The "./" prefix is removed a prefix at a time, not with lstrip: lstrip
+        takes a character set, so it would turn ".gitignore" into "gitignore" —
+        a planned path that could then never equal the key the overlay stores,
+        leaving the gate waiting forever for a file that was already written.
+        """
+        seen: list[str] = []
+        for item in value:
+            path = " ".join(str(item or "").split())[:400]
+            while path.startswith("./"):
+                path = path[2:]
+            if not path or path.startswith("/") or ".." in path or path in seen:
+                continue
+            seen.append(path)
+        return seen
+
+
+class ProjectAgentStepWireV1(Contract):
+    """The flat wire form of a project step, shaped for grammar-constrained decode.
+
+    A local model's structured output is constrained by a GBNF grammar the
+    runtime derives from this schema. The nested ``tool_call`` union in
+    ``ProjectAgentStepV1`` becomes an ``anyOf`` over a ``$ref`` — and on the MLX
+    backend that grammar collapses a non-trivial reply to empty output, which is
+    what ended real build turns after three "unreadable" steps. This form is
+    deliberately flat: no ``$ref``, no ``anyOf``, so the grammar is simple enough
+    for the model to satisfy, and the tool name is a closed enum the grammar
+    itself enforces. The host converts it back to the nested step it uses
+    everywhere else, so nothing downstream sees the wire shape.
+    """
+
+    status: Literal["tool", "complete"]
+    # "" is how a completion carries no tool; the seven real names are the
+    # only other values the grammar will emit. A test pins this list to
+    # PROJECT_TOOL_REQUIRED_ARGUMENTS — a tool present in one and not the
+    # other is advertised-but-unusable, which is how inspect_api spent months
+    # implemented, catalogued, and impossible for any provider to call.
+    tool: Literal[
+        "",
+        "list_files",
+        "search_code",
+        "read_file",
+        "apply_patch",
+        "create_file",
+        "run_check",
+        "inspect_api",
+    ] = ""
+    arguments: dict[str, Any] = Field(
+        default_factory=dict, json_schema_extra=_CLOSED_TOOL_ARGUMENTS
+    )
+    response: str = Field(default="", max_length=40_000)
+    learnings: list[str] = Field(default_factory=list, max_length=16)
+
+    def to_step(self) -> "ProjectAgentStepV1":
+        """The nested ``ProjectAgentStepV1`` this flat reply stands for."""
+        if self.status == "tool":
+            if not self.tool:
+                raise ValueError("a project tool step requires a tool name")
+            return ProjectAgentStepV1(
+                status="tool",
+                response=self.response,
+                learnings=self.learnings,
+                tool_call=ProjectToolCallV1(name=self.tool, arguments=self.arguments),
+            )
+        if not self.response.strip():
+            raise ValueError("a completed project step requires a response")
+        return ProjectAgentStepV1(
+            status="complete", response=self.response, learnings=self.learnings
+        )
+
+
+class ProjectBuildStepWireV1(Contract):
+    """The build-turn narrowing of the flat wire step: a completion is unexpressible.
+
+    ``ProjectAgentStepWireV1`` lets the model finish on token one — ``status`` is
+    the first field and ``status="complete"`` needs nothing but a non-empty
+    ``response`` (``to_step`` above), so a grammar-constrained decoder can satisfy
+    a build request by *describing* files it never wrote. The rule against that
+    lived only in prose the decoder is free to ignore, which is why the failure
+    reproduced even on a non-reasoning model.
+
+    This schema removes the empty-completion branch from the grammar itself, for
+    the one population where it is the bug: a build instruction that has staged
+    nothing. ``status`` is pinned to ``"tool"`` and ``tool`` drops its empty
+    member, so the model's first legal object must name a real tool and carry
+    arguments — it has to write or inspect a file before it can talk about one.
+    The shape stays flat (no ``$ref``/``anyOf``) so the MLX grammar-collapse
+    protection documented on ``ProjectAgentStepWireV1`` carries over, and the
+    permissive schema returns as soon as one file is staged, where finishing is
+    legitimately allowed again.
+    """
+
+    status: Literal["tool"] = "tool"
+    tool: Literal[
+        "list_files",
+        "search_code",
+        "read_file",
+        "apply_patch",
+        "create_file",
+        "run_check",
+        "inspect_api",
+    ]
+    arguments: dict[str, Any] = Field(
+        default_factory=dict, json_schema_extra=_CLOSED_TOOL_ARGUMENTS
+    )
+    response: str = Field(default="", max_length=40_000)
+    learnings: list[str] = Field(default_factory=list, max_length=16)
+
+    def to_step(self) -> "ProjectAgentStepV1":
+        """The nested tool step this build-turn reply stands for."""
+        return ProjectAgentStepV1(
+            status="tool",
+            response=self.response,
+            learnings=self.learnings,
+            tool_call=ProjectToolCallV1(name=self.tool, arguments=self.arguments),
+        )
 
 
 class DiagramCodeV1(Contract):
@@ -398,25 +883,6 @@ class ToolManifestV1(Contract):
     content_hash: str
 
 
-class ToolInvocationV1(Contract):
-    invocation_id: str
-    run_id: str
-    tool_slug: str
-    tool_version: str
-    tool_content_hash: str
-    input_digest: str
-    arguments: dict[str, Any]
-
-
-class ToolResultV1(Contract):
-    invocation_id: str
-    status: Literal["succeeded", "failed", "cancelled"]
-    output: dict[str, Any] = Field(default_factory=dict)
-    artifacts: list[ArtifactRefV1] = Field(default_factory=list)
-    logs: str = ""
-    error: str | None = None
-
-
 class EvalCaseV1(Contract):
     id: str
     name: str
@@ -448,7 +914,11 @@ class ApprovalRequestV1(Contract):
         "define_tool",
         "activate_definition",
         "filesystem",
+        # A single legacy per-file write. New project turns stage their writes
+        # and raise one project_apply_build instead; the kind survives so an
+        # approval persisted before the upgrade still resumes.
         "project_write",
+        "project_apply_build",
         "project_verify",
         "network",
         "dependency",
@@ -460,6 +930,14 @@ class ApprovalRequestV1(Contract):
     tool_version_id: str | None = None
     input_digest: str
     permissions: list[str] = Field(default_factory=list)
+    # Set when the host has already proven this action cannot work — a staged
+    # build with a file that will not parse or will not import. Approving is
+    # refused while it is set, because a warning at the top of a card is only
+    # as strong as the attention of whoever is reading it, and the one that
+    # mattered was approved three minutes after it was raised. Rejecting and
+    # sending a follow-up stay available. Optional and defaulted so approvals
+    # persisted before this field round-trip unchanged.
+    blocked_reason: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -792,6 +1270,10 @@ class LocalModelOptionV1(Contract):
     quantization: str = ""
     context_length: int | None = Field(default=None, ge=0)
     loaded: bool = False
+    # What this model actually occupies right now, reported by the runtime. It
+    # starts at the weight size and grows as the KV cache fills, so it is the
+    # honest number to show rather than an estimate from the file size.
+    resident_bytes: int = Field(default=0, ge=0)
     expires_at: datetime | None = None
     owned_by_metis: bool = False
 
@@ -805,13 +1287,17 @@ class LocalModelSessionV1(Contract):
     owned_by_metis: bool = False
     busy_count: int = Field(default=0, ge=0)
     error: str | None = None
+    # Live unified-memory footprint of everything Ollama has loaded, against the
+    # machine's total, so the cost of a running model is visible while it runs.
+    resident_bytes: int = Field(default=0, ge=0)
+    total_memory_bytes: int = Field(default=0, ge=0)
     models: list[LocalModelOptionV1] = Field(default_factory=list)
 
 
 class LocalModelSessionLaunchV1(Contract):
     model: str = Field(min_length=1, max_length=200)
     idle_timeout_seconds: Literal[60, 300, 900, 1800, 86400] = 300
-    context_window: Literal[32768, 65536, 131072] = 32768
+    context_window: Literal[8192, 16384, 32768, 65536, 131072] = 32768
 
 
 class LocalModelSessionStopV1(Contract):
@@ -862,11 +1348,28 @@ class CustomerPersonExtractV1(Contract):
     evidence: CustomerEvidenceV1 = Field(default_factory=CustomerEvidenceV1)
 
 
+class CustomerPersonV1(CustomerPersonExtractV1):
+    """A saved contact. Carries the row id an extraction has no reason to know,
+    because editing or removing one addresses the record rather than the name."""
+
+    id: str
+
+
+class CustomerPersonUpsertV1(Contract):
+    name: str = Field(min_length=1, max_length=160)
+    role: str = Field(default="", max_length=160)
+    organization: str = Field(default="", max_length=160)
+
+
+CustomerFactKind = Literal[
+    "requirement", "decision", "use_case", "risk", "question",
+    "constraint", "model", "dac_note", "other"
+]
+CustomerFactStatus = Literal["active", "superseded", "disputed"]
+
+
 class CustomerFactExtractV1(Contract):
-    kind: Literal[
-        "requirement", "decision", "use_case", "risk", "question",
-        "constraint", "model", "dac_note", "other"
-    ] = "other"
+    kind: CustomerFactKind = "other"
     content: str = Field(min_length=1, max_length=4_000)
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
     evidence: CustomerEvidenceV1 = Field(default_factory=CustomerEvidenceV1)
@@ -928,6 +1431,9 @@ class CustomerProposalSaveV1(Contract):
 class CustomerActionV1(Contract):
     id: str
     account_id: str
+    # Populated on the cross-account queue, where a description without the
+    # customer it belongs to is not actionable. Empty on account-scoped reads.
+    account_name: str = ""
     interaction_id: str | None = None
     description: str
     owner: str = ""
@@ -940,6 +1446,16 @@ class CustomerActionV1(Contract):
 
 class CustomerActionStatusV1(Contract):
     status: Literal["open", "done", "cancelled"]
+
+
+class CustomerActionCreateV1(Contract):
+    description: str = Field(min_length=1, max_length=2_000)
+    owner: str = Field(default="", max_length=160)
+    due_at: datetime | None = None
+
+
+class CustomerActionEditV1(CustomerActionCreateV1):
+    status: Literal["open", "done", "cancelled"] = "open"
 
 
 class CustomerInteractionV1(Contract):
@@ -958,10 +1474,146 @@ class CustomerFactV1(Contract):
     interaction_id: str | None = None
     kind: str
     content: str
-    status: Literal["active", "superseded", "disputed"] = "active"
+    status: CustomerFactStatus = "active"
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: CustomerEvidenceV1 = Field(default_factory=CustomerEvidenceV1)
     created_at: datetime
+
+
+class CustomerFactCreateV1(Contract):
+    """A fact the user writes themselves.
+
+    It carries no evidence quote because there is no note behind it, and full
+    confidence because a person asserted it rather than a model inferring it.
+    """
+
+    kind: CustomerFactKind = "other"
+    content: str = Field(min_length=1, max_length=4_000)
+
+
+class CustomerFactEditV1(CustomerFactCreateV1):
+    status: CustomerFactStatus = "active"
+
+
+class CustomerSourceUpdateV1(Contract):
+    title: str = Field(min_length=1, max_length=240)
+    content: str = Field(min_length=1, max_length=100_000)
+    source_kind: Literal["note", "meeting", "chat", "notion", "attachment"] = "note"
+    occurred_at: datetime | None = None
+
+
+class CustomerNoteCreateV1(Contract):
+    title: str = Field(default="", max_length=240)
+    body: str = Field(min_length=1, max_length=100_000)
+    pinned: bool = False
+    # A note written in the workbench is 'manual'; one saved out of a scoped
+    # conversation is 'chat', so its provenance survives the round trip.
+    origin: Literal["manual", "chat"] = "manual"
+    origin_ref: str = Field(default="", max_length=2_000)
+
+
+class CustomerNoteUpdateV1(Contract):
+    title: str = Field(default="", max_length=240)
+    body: str = Field(min_length=1, max_length=100_000)
+    pinned: bool = False
+
+
+class CustomerNoteV1(Contract):
+    id: str
+    account_id: str
+    title: str = ""
+    body: str
+    pinned: bool = False
+    origin: Literal["manual", "chat"] = "manual"
+    origin_ref: str = ""
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerSearchHitV1(Contract):
+    kind: Literal["account", "note", "fact", "action", "win", "source"]
+    id: str
+    account_id: str
+    account_name: str
+    title: str
+    snippet: str = ""
+    occurred_at: datetime | None = None
+
+
+class CustomerSearchResultV1(Contract):
+    query: str
+    hits: list[CustomerSearchHitV1] = Field(default_factory=list)
+    # True when the store held more matches than the limit returned, so the UI
+    # can say "showing the first N" instead of implying the list is exhaustive.
+    truncated: bool = False
+
+
+class WinValuationLineV1(Contract):
+    """One billable component of an estimated win, priced by the host."""
+
+    sku: str
+    part_number: str | None = None
+    name: str = ""
+    unit: str = ""
+    quantity: float = Field(default=0.0, ge=0)
+    utilization: float = Field(default=1.0, ge=0, le=1)
+    rate: float = Field(default=0.0, ge=0)
+    rate_verified: bool = False
+    yearly_amount: float = Field(default=0.0, ge=0)
+    basis: str = ""
+    why: str = ""
+
+
+class WinValuationV1(Contract):
+    id: str
+    win_id: str
+    estimated_yearly_arr: float | None = None
+    currency: str = "USD"
+    lines: list[WinValuationLineV1] = Field(default_factory=list)
+    explanation: str = ""
+    confidence: Literal["low", "medium", "high"] = "low"
+    # SKUs the model named that carry no rate — a real component nobody has
+    # priced yet, rather than something to silently value at zero.
+    unpriced: list[str] = Field(default_factory=list)
+    rates_verified: bool = False
+    model_used: str | None = None
+    prompt_version: str = ""
+    status: Literal["proposed", "accepted", "dismissed"] = "proposed"
+    created_at: datetime
+    updated_at: datetime
+
+
+class WinValuationAcceptV1(Contract):
+    yearly_arr: float | None = Field(default=None, ge=0)
+
+
+class SkuRateV1(Contract):
+    key: str
+    part_number: str | None = None
+    unit: str = ""
+    value: float = Field(default=0.0, ge=0)
+    label: str = ""
+    verified: bool = False
+    aliases: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
+class SkuRateCardV1(Contract):
+    currency: str = "USD"
+    hours_per_year: int = Field(default=8760, gt=0)
+    source_urls: list[str] = Field(default_factory=list)
+    rates: list[SkuRateV1] = Field(default_factory=list)
+    catalog_size: int = Field(default=0, ge=0)
+
+
+class SkuRateUpdateV1(Contract):
+    key: str
+    value: float | None = Field(default=None, ge=0)
+    verified: bool | None = None
+
+
+class SkuRateCardUpdateV1(Contract):
+    updates: list[SkuRateUpdateV1] = Field(default_factory=list, max_length=200)
 
 
 class CustomerWinCreateV1(Contract):
@@ -989,6 +1641,9 @@ class CustomerWinV1(Contract):
     yearly_arr: float | None = None
     won_at: datetime | None = None
     source_ref: str = ""
+    # The estimate, when one has been run. Never the win's value — that stays
+    # `yearly_arr`, and only an accepted estimate is written through to it.
+    valuation: WinValuationV1 | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -998,9 +1653,10 @@ class CustomerAccountDetailV1(Contract):
     interactions: list[CustomerInteractionV1] = Field(default_factory=list)
     facts: list[CustomerFactV1] = Field(default_factory=list)
     actions: list[CustomerActionV1] = Field(default_factory=list)
-    people: list[CustomerPersonExtractV1] = Field(default_factory=list)
+    people: list[CustomerPersonV1] = Field(default_factory=list)
     sources: list[CustomerSourceV1] = Field(default_factory=list)
     wins: list[CustomerWinV1] = Field(default_factory=list)
+    notes: list[CustomerNoteV1] = Field(default_factory=list)
 
 
 class CustomerDashboardV1(Contract):
@@ -1171,18 +1827,6 @@ class ToolDefinitionBuildV1(Contract):
     source_run_id: str | None = None
     created_at: datetime
     decided_at: datetime | None = None
-
-
-class ToolCodeReviewV1(Contract):
-    """Result of the optional OCI Grok review of freshly-authored tool code. The
-    host AST-gate still validates whatever code is used — Grok can improve or flag
-    but never widens capabilities; an unsafe verdict blocks the build."""
-
-    reviewed: bool
-    reviewer: str = ""
-    safe: bool = True
-    improved: bool = False
-    reasons: list[str] = Field(default_factory=list)
 
 
 class ToolDefinitionRecordV1(Contract):

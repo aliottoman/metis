@@ -23,6 +23,9 @@ export interface ChatMessage {
   run_id?: string;
   created_at?: string;
   attachments?: AttachmentRef[];
+  // The model's own thinking for this run, streamed on a separate channel and
+  // never merged into `content`. Live-only: it is not persisted with the message.
+  reasoning?: string;
   streaming?: boolean;
   failed?: boolean;
 }
@@ -45,6 +48,9 @@ export interface ApprovalRequest {
   permissions?: string[];
   action_digest?: string;
   status?: "pending" | "approved" | "rejected";
+  // Set when the host proved this action cannot work. Approve is withheld while
+  // it is present; the API refuses the same decision independently.
+  blocked_reason?: string;
 }
 
 export interface RunEventV1 {
@@ -488,6 +494,7 @@ export interface LocalModelOption {
   quantization: string;
   context_length: number | null;
   loaded: boolean;
+  resident_bytes: number;
   expires_at: string | null;
   owned_by_metis: boolean;
 }
@@ -496,11 +503,13 @@ export interface LocalModelSession {
   state: "off" | "loading" | "ready" | "busy" | "error";
   selected_model: string | null;
   idle_timeout_seconds: 60 | 300 | 900 | 1800 | 86400;
-  context_window: 32768 | 65536 | 131072;
+  context_window: 8192 | 16384 | 32768 | 65536 | 131072;
   expires_at: string | null;
   owned_by_metis: boolean;
   busy_count: number;
   error: string | null;
+  resident_bytes: number;
+  total_memory_bytes: number;
   models: LocalModelOption[];
 }
 
@@ -519,6 +528,37 @@ export interface CustomerAccount {
   updated_at: string;
 }
 
+export interface WinValuationLine {
+  sku: string;
+  part_number: string | null;
+  name: string;
+  unit: string;
+  quantity: number;
+  utilization: number;
+  rate: number;
+  rate_verified: boolean;
+  yearly_amount: number;
+  basis: string;
+  why: string;
+}
+
+export interface WinValuation {
+  id: string;
+  win_id: string;
+  estimated_yearly_arr: number | null;
+  currency: string;
+  lines: WinValuationLine[];
+  explanation: string;
+  confidence: "low" | "medium" | "high";
+  unpriced: string[];
+  rates_verified: boolean;
+  model_used: string | null;
+  prompt_version: string;
+  status: "proposed" | "accepted" | "dismissed";
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CustomerWin {
   id: string;
   account_id: string;
@@ -530,8 +570,30 @@ export interface CustomerWin {
   yearly_arr: number | null;
   won_at: string | null;
   source_ref: string;
+  /** The estimate, when one has been run. Never the win's value — only an
+   *  accepted estimate is written through to `yearly_arr`. */
+  valuation: WinValuation | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface SkuRate {
+  key: string;
+  part_number: string | null;
+  unit: string;
+  value: number;
+  label: string;
+  verified: boolean;
+  aliases: string[];
+  note: string;
+}
+
+export interface SkuRateCard {
+  currency: string;
+  hours_per_year: number;
+  source_urls: string[];
+  rates: SkuRate[];
+  catalog_size: number;
 }
 
 export interface CustomerEvidence {
@@ -541,11 +603,18 @@ export interface CustomerEvidence {
   line_end: number | null;
 }
 
-export interface CustomerPerson {
+/** A person as a model proposed them — no row yet, so no id. */
+export interface CustomerPersonExtract {
   name: string;
   role: string;
   organization: string;
   evidence: CustomerEvidence;
+}
+
+/** A saved contact. The id is what edit and delete address, so a rename stays
+ *  a rename rather than becoming a new person. */
+export interface CustomerPerson extends CustomerPersonExtract {
+  id: string;
 }
 
 export interface CustomerFact {
@@ -563,6 +632,8 @@ export interface CustomerFact {
 export interface CustomerAction {
   id: string;
   account_id: string;
+  /** Set on the cross-account attention queue; empty on account-scoped reads. */
+  account_name: string;
   interaction_id: string | null;
   description: string;
   owner: string;
@@ -596,10 +667,41 @@ export interface CustomerSource {
   updated_at: string;
 }
 
+export interface CustomerNote {
+  id: string;
+  account_id: string;
+  title: string;
+  body: string;
+  /** Pinned notes are the ones handed to a customer-scoped conversation. */
+  pinned: boolean;
+  origin: "manual" | "chat";
+  origin_ref: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerSearchHit {
+  kind: "account" | "note" | "fact" | "action" | "win" | "source";
+  id: string;
+  account_id: string;
+  account_name: string;
+  title: string;
+  snippet: string;
+  occurred_at: string | null;
+}
+
+export interface CustomerSearchResult {
+  query: string;
+  hits: CustomerSearchHit[];
+  /** True when more matched than were returned, so the UI never implies
+   *  the list is exhaustive. */
+  truncated: boolean;
+}
+
 export interface CustomerExtraction {
   summary: string;
   occurred_at: string | null;
-  people: CustomerPerson[];
+  people: CustomerPersonExtract[];
   facts: Array<{
     kind: string;
     content: string;
@@ -634,6 +736,7 @@ export interface CustomerAccountDetail {
   people: CustomerPerson[];
   sources: CustomerSource[];
   wins: CustomerWin[];
+  notes: CustomerNote[];
 }
 
 export interface CustomerDashboard {

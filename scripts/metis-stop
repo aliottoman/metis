@@ -1,0 +1,89 @@
+#!/bin/zsh
+# Stop everything Metis is running and give the memory back.
+#
+# Closing the Metis window does not do this: the app is a web app, so quitting
+# it closes a window while the API, the web server, and any model Metis loaded
+# into Ollama carry on. This is the full stop.
+#
+# SIGTERM first, deliberately: the API releases its model on shutdown, so a
+# graceful stop is what frees the weights. SIGKILL is only the fallback.
+#
+#   ./scripts/metis-stop            stop Metis, release its model
+#   ./scripts/metis-stop --keep-model   stop the servers, leave Ollama alone
+set -uo pipefail
+
+KEEP_MODEL=0
+[[ ${1:-} == "--keep-model" ]] && KEEP_MODEL=1
+
+OLLAMA_URL="${WAQIL_OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+WEB_PORT=3000
+API_PORT=8000
+
+say() { print -r -- "[metis] $1"; }
+
+pids_on_ports() {
+	lsof -ti "tcp:$WEB_PORT" -ti "tcp:$API_PORT" 2>/dev/null | sort -u
+}
+
+# The supervisor restarts nothing, but killing only its children leaves it
+# looping over dead processes, so it goes first.
+supervisor_pids() {
+	pgrep -f "scripts/run_local.py" 2>/dev/null
+	pgrep -f "scripts/metis --serve" 2>/dev/null
+}
+
+loaded_models() {
+	curl -s --max-time 2 "$OLLAMA_URL/api/ps" 2>/dev/null \
+		| /usr/bin/python3 -c 'import json,sys
+try:
+    for m in json.load(sys.stdin).get("models", []):
+        print(f"{m.get(\"name\",\"?\")}\t{(m.get(\"size_vram\") or m.get(\"size\") or 0)/1073741824:.1f}")
+except Exception:
+    pass' 2>/dev/null
+}
+
+targets=$( { supervisor_pids; pids_on_ports } | sort -u | tr '\n' ' ' )
+targets=${targets%% }
+
+if [[ -z $targets ]]; then
+	say "Metis is not running."
+else
+	say "stopping Metis (pids: $targets)"
+	kill $=targets 2>/dev/null
+	# Long enough for the API's shutdown to unload its model over HTTP.
+	for _ in {1..40}; do
+		sleep 0.5
+		remaining=$( { supervisor_pids; pids_on_ports } | sort -u | tr '\n' ' ' )
+		[[ -z ${remaining// /} ]] && break
+	done
+	remaining=$( { supervisor_pids; pids_on_ports } | sort -u | tr '\n' ' ' )
+	if [[ -n ${remaining// /} ]]; then
+		say "forcing: $remaining"
+		kill -9 $=remaining 2>/dev/null
+	fi
+	say "servers stopped."
+fi
+
+if (( KEEP_MODEL )); then
+	say "leaving Ollama as it is (--keep-model)."
+	exit 0
+fi
+
+# A graceful API shutdown already released the model it owned. This also covers
+# a model left behind by a crash, a force-quit, or a launch made outside Metis.
+freed=0
+while IFS=$'\t' read -r name gb; do
+	[[ -z $name ]] && continue
+	say "unloading $name (${gb} GB)"
+	curl -s --max-time 15 "$OLLAMA_URL/api/generate" \
+		-d "{\"model\":\"$name\",\"prompt\":\"\",\"stream\":false,\"keep_alive\":0}" \
+		-o /dev/null
+	freed=1
+done < <(loaded_models)
+
+if (( freed )); then
+	sleep 2
+	say "model memory released."
+else
+	say "no model was loaded."
+fi

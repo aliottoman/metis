@@ -22,11 +22,17 @@ import type {
   CustomerAction,
   CustomerDashboard,
   CustomerExtraction,
+  CustomerFact,
+  CustomerNote,
   CustomerOutput,
+  CustomerPerson,
   CustomerProposal,
+  CustomerSearchResult,
   CustomerSettings,
   CustomerSource,
   CustomerWin,
+  SkuRateCard,
+  WinValuation,
   CorpusHealth,
   CorpusReindexResult,
   CorpusSource,
@@ -1174,10 +1180,36 @@ export async function createCustomer(input: {
   });
 }
 
+export async function updateCustomer(
+  id: string,
+  input: {
+    name: string;
+    aliases?: string[];
+    industry?: string;
+    region?: string;
+    status?: CustomerAccount["status"];
+  },
+): Promise<CustomerAccount> {
+  return request<CustomerAccount>(`${API_PREFIX}/customers/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function deleteCustomer(id: string): Promise<void> {
   await request<void>(`${API_PREFIX}/customers/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+}
+
+/** Search every customer record at once — accounts, notes, facts, actions,
+ *  wins, and captured sources. */
+export async function searchCustomerRecords(
+  query: string,
+  limit = 40,
+): Promise<CustomerSearchResult> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  return request<CustomerSearchResult>(`${API_PREFIX}/customers/search?${params}`);
 }
 
 export async function getCustomer(id: string): Promise<CustomerAccountDetail> {
@@ -1260,6 +1292,51 @@ export async function deleteCustomerWin(winId: string): Promise<void> {
   });
 }
 
+/** Estimate a win's yearly value from the account's notes.
+ *
+ *  Always re-runnable, and never destructive: the result is stored beside the
+ *  win as a proposal, and only reaches `yearly_arr` through `acceptWinValuation`.
+ */
+export async function estimateWinValuation(winId: string): Promise<WinValuation> {
+  return request<WinValuation>(
+    `${API_PREFIX}/customers/wins/${encodeURIComponent(winId)}/valuation`,
+    { method: "POST" },
+  );
+}
+
+export async function acceptWinValuation(
+  winId: string,
+  yearlyArr?: number | null,
+): Promise<WinValuation> {
+  return request<WinValuation>(
+    `${API_PREFIX}/customers/wins/${encodeURIComponent(winId)}/valuation/accept`,
+    {
+      method: "POST",
+      body: JSON.stringify({ yearly_arr: yearlyArr ?? null }),
+    },
+  );
+}
+
+export async function dismissWinValuation(winId: string): Promise<WinValuation> {
+  return request<WinValuation>(
+    `${API_PREFIX}/customers/wins/${encodeURIComponent(winId)}/valuation/dismiss`,
+    { method: "POST" },
+  );
+}
+
+export async function getSkuRates(): Promise<SkuRateCard> {
+  return request<SkuRateCard>(`${API_PREFIX}/sku-rates`);
+}
+
+export async function saveSkuRates(
+  updates: Array<{ key: string; value?: number; verified?: boolean }>,
+): Promise<SkuRateCard> {
+  return request<SkuRateCard>(`${API_PREFIX}/sku-rates`, {
+    method: "PUT",
+    body: JSON.stringify({ updates }),
+  });
+}
+
 export async function updateCustomerAction(
   actionId: string,
   status: CustomerAction["status"],
@@ -1268,6 +1345,157 @@ export async function updateCustomerAction(
     `${API_PREFIX}/customers/actions/${encodeURIComponent(actionId)}`,
     { method: "PATCH", body: JSON.stringify({ status }) },
   );
+}
+
+// ── Hand edits ──────────────────────────────────────────────────────────────
+// The extraction path proposes records; these let the user write and correct
+// the same records directly, with no model in the loop.
+
+export interface CustomerActionInput {
+  description: string;
+  owner?: string;
+  due_at?: string | null;
+}
+
+export async function createCustomerAction(
+  accountId: string,
+  input: CustomerActionInput,
+): Promise<CustomerAction> {
+  return request<CustomerAction>(
+    `${API_PREFIX}/customers/${encodeURIComponent(accountId)}/actions`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export async function editCustomerAction(
+  actionId: string,
+  input: CustomerActionInput & { status: CustomerAction["status"] },
+): Promise<CustomerAction> {
+  return request<CustomerAction>(
+    `${API_PREFIX}/customers/actions/${encodeURIComponent(actionId)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+}
+
+export async function deleteCustomerAction(actionId: string): Promise<void> {
+  await request<void>(
+    `${API_PREFIX}/customers/actions/${encodeURIComponent(actionId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function createCustomerFact(
+  accountId: string,
+  input: { kind: string; content: string },
+): Promise<CustomerFact> {
+  return request<CustomerFact>(
+    `${API_PREFIX}/customers/${encodeURIComponent(accountId)}/facts`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export async function updateCustomerFact(
+  factId: string,
+  input: { kind: string; content: string; status: CustomerFact["status"] },
+): Promise<CustomerFact> {
+  return request<CustomerFact>(
+    `${API_PREFIX}/customers/facts/${encodeURIComponent(factId)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+}
+
+export async function deleteCustomerFact(factId: string): Promise<void> {
+  await request<void>(`${API_PREFIX}/customers/facts/${encodeURIComponent(factId)}`, {
+    method: "DELETE",
+  });
+}
+
+export interface CustomerPersonInput {
+  name: string;
+  role?: string;
+  organization?: string;
+}
+
+export async function addCustomerPerson(
+  accountId: string,
+  input: CustomerPersonInput,
+): Promise<CustomerPerson> {
+  return request<CustomerPerson>(
+    `${API_PREFIX}/customers/${encodeURIComponent(accountId)}/people`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export async function updateCustomerPerson(
+  personId: string,
+  input: CustomerPersonInput,
+): Promise<CustomerPerson> {
+  return request<CustomerPerson>(
+    `${API_PREFIX}/customers/people/${encodeURIComponent(personId)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+}
+
+export async function deleteCustomerPerson(personId: string): Promise<void> {
+  await request<void>(`${API_PREFIX}/customers/people/${encodeURIComponent(personId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function updateCustomerSource(
+  sourceId: string,
+  input: {
+    title: string;
+    content: string;
+    source_kind?: CustomerSource["source_kind"];
+    occurred_at?: string | null;
+  },
+): Promise<CustomerSource> {
+  return request<CustomerSource>(
+    `${API_PREFIX}/customers/sources/${encodeURIComponent(sourceId)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+}
+
+export async function deleteCustomerSource(sourceId: string): Promise<void> {
+  await request<void>(`${API_PREFIX}/customers/sources/${encodeURIComponent(sourceId)}`, {
+    method: "DELETE",
+  });
+}
+
+export interface CustomerNoteInput {
+  body: string;
+  title?: string;
+  pinned?: boolean;
+  origin?: CustomerNote["origin"];
+  origin_ref?: string;
+}
+
+/** Write a note straight onto an account: no model, no review queue. */
+export async function createCustomerNote(
+  accountId: string,
+  input: CustomerNoteInput,
+): Promise<CustomerNote> {
+  return request<CustomerNote>(
+    `${API_PREFIX}/customers/${encodeURIComponent(accountId)}/notes`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export async function updateCustomerNote(
+  noteId: string,
+  input: { title: string; body: string; pinned: boolean },
+): Promise<CustomerNote> {
+  return request<CustomerNote>(
+    `${API_PREFIX}/customers/notes/${encodeURIComponent(noteId)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+}
+
+export async function deleteCustomerNote(noteId: string): Promise<void> {
+  await request<void>(`${API_PREFIX}/customers/notes/${encodeURIComponent(noteId)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function getCustomerSettings(): Promise<CustomerSettings> {

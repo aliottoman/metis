@@ -1,0 +1,6077 @@
+{
+  "source": "All Available SKUs:Products.pdf",
+  "document": "Oracle PaaS and IaaS Universal Credits Service Descriptions",
+  "effective_date": "2025-02-06",
+  "version": "v020625",
+  "notes": [
+    "Names, part numbers, and billing metrics only. This document",
+    "publishes no prices — see rates.json for the dollar figures,",
+    "which are user-owned and separately verified."
+  ],
+  "entries": [
+    {
+      "part_number": "B92335",
+      "name": "Essbase for Oracle Cloud Infrastructure Marketplace",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Analytics",
+      "retired": false
+    },
+    {
+      "part_number": "B89631",
+      "name": "Oracle Analytics Cloud - Enterprise",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Analytics",
+      "retired": false
+    },
+    {
+      "part_number": "B92683",
+      "name": "Oracle Analytics Cloud - Enterprise",
+      "metric": "4 User Per Month",
+      "note": "",
+      "category": "Analytics",
+      "retired": false
+    },
+    {
+      "part_number": "B89637",
+      "name": "Oracle Analytics Cloud - Enterprise - BYOL",
+      "metric": "1 OCPU Per Hour",
+      "note": "",
+      "category": "Analytics",
+      "retired": false
+    },
+    {
+      "part_number": "B89630",
+      "name": "Oracle Analytics Cloud - Professional",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Analytics",
+      "retired": false
+    },
+    {
+      "part_number": "B92682",
+      "name": "Oracle Analytics Cloud - Professional",
+      "metric": "4 User Per Month",
+      "note": "",
+      "category": "Analytics",
+      "retired": false
+    },
+    {
+      "part_number": "B89636",
+      "name": "Oracle Analytics Cloud Professional - BYOL Conversion Ratios:",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Analytics",
+      "retired": false
+    },
+    {
+      "part_number": "B94568",
+      "name": "Oracle Analytics Server for Oracle Cloud Infrastructure",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Analytics",
+      "retired": false
+    },
+    {
+      "part_number": "B92911",
+      "name": "Oracle APEX Application Development",
+      "metric": "4 OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B99709",
+      "name": "Oracle APEX Application Development - ECPU",
+      "metric": "4 ECPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B93320",
+      "name": "Oracle APEX Application Development - Free",
+      "metric": "4 OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108130",
+      "name": "Oracle Backend for Spring Boot and Microservices Standard Edition - Marketplace",
+      "metric": "3 Each",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B109565",
+      "name": "Oracle Blockchain Platform Cloud - Digital Assets",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B92303",
+      "name": "Oracle Blockchain Platform Cloud - Enterprise",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B92305",
+      "name": "Oracle Blockchain Platform Cloud - Enterprise BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B92302",
+      "name": "Oracle Blockchain Platform Cloud - Standard",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B92304",
+      "name": "Oracle Blockchain Platform Cloud - Storage",
+      "metric": "Terabyte Storage",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B109545",
+      "name": "Oracle Blockchain Platform Enterprise Edition for",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B90260",
+      "name": "Oracle Digital Assistant Cloud Service",
+      "metric": "Request",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B88844",
+      "name": "Oracle Java Cloud Service - Standard - BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B88399",
+      "name": "Oracle Java Cloud Service-Enterprise - BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B88400",
+      "name": "Oracle Java Cloud Service-High Performance - BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B90304",
+      "name": "Oracle Mobile Hub Cloud Service",
+      "metric": "1 Request",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B96583",
+      "name": "Oracle Tuxedo Enterprise Edition for Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B96584",
+      "name": "Oracle Tuxedo Mainframe Modernization Runtimes for Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B96582",
+      "name": "Oracle Tuxedo for Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B89646",
+      "name": "Oracle Visual Builder",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B90203",
+      "name": "Oracle Visual Builder Studio - Additional Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B91346",
+      "name": "Oracle WebLogic Server Enterprise Edition for Oracle Cloud Infrastructure",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B92913",
+      "name": "Oracle WebLogic Server Enterprise Edition for Oracle Cloud Infrastructure Container Engine for Kubernetes",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B91347",
+      "name": "Oracle WebLogic Suite for Oracle Cloud Infrastructure",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B92914",
+      "name": "Oracle WebLogic Suite for Oracle Cloud Infrastructure Container Engine for Kubernetes",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108778",
+      "name": "We bCenter Enterprise Capture Standard Edition For",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108783",
+      "name": "WebCenter Content For Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108777",
+      "name": "WebCenter Enterprise Capture For Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108782",
+      "name": "WebCenter Forms Recognition For Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108776",
+      "name": "WebCenter Imaging For Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108781",
+      "name": "WebCenter Portal For Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108779",
+      "name": "WebCenter Sites For Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108780",
+      "name": "WebCenter Sites Satellite Server For Oracle Cloud Infrastructure",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B108784",
+      "name": "WebCenter Universal Content Management For",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Application Development",
+      "retired": false
+    },
+    {
+      "part_number": "B110993",
+      "name": "Cloud Success Assurance Service",
+      "metric": "5% of Oracle Cloud Infrastructure (“OCI”)",
+      "note": "",
+      "category": "Cloud Success Assurance",
+      "retired": false
+    },
+    {
+      "part_number": "B110464",
+      "name": "Oracle Cloud Success Protection Service",
+      "metric": "10% of Oracle Cloud Infrastructure",
+      "note": "",
+      "category": "Cloud Success Protection",
+      "retired": false
+    },
+    {
+      "part_number": "B97384",
+      "name": "E5",
+      "metric": "",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B97385",
+      "name": "E5",
+      "metric": "",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B88317",
+      "name": "Machine Standard - X5",
+      "metric": "",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B88315",
+      "name": "Metal Standard - X5",
+      "metric": "",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B88517",
+      "name": "Oracle Cloud Infrastructure - Compute - Bare Metal - GPU Standard - X7",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B88515",
+      "name": "Oracle Cloud Infrastructure - Compute - Bare Metal Dense I/O - X7",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B91119",
+      "name": "Oracle Cloud Infrastructure - Compute - Bare Metal Standard - B1",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B88513",
+      "name": "Oracle Cloud Infrastructure - Compute - Bare Metal Standard - X7",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B98204",
+      "name": "Oracle Cloud Infrastructure - Compute - Dense I/O",
+      "metric": "NVMe Terabyte Per",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B93121",
+      "name": "Oracle Cloud Infrastructure - Compute - Dense I/O E4",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B98202",
+      "name": "Oracle Cloud Infrastructure - Compute - Dense I/O E5 - OCPU",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B98203",
+      "name": "Oracle Cloud Infrastructure - Compute - Dense I/O E5- Memory",
+      "metric": "Gigabyte Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B92740",
+      "name": "Oracle Cloud Infrastructure - Compute - GPU - E3",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B95909",
+      "name": "Oracle Cloud Infrastructure - Compute - GPU A10",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B95907",
+      "name": "Oracle Cloud Infrastructure - Compute - GPU A100 - v2",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B98415",
+      "name": "Oracle Cloud Infrastructure - Compute - GPU H100",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B109479",
+      "name": "Oracle Cloud Infrastructure - Compute - GPU L40S",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B109485",
+      "name": "Oracle Cloud Infrastructure - Compute - GPU MI300X",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B89734",
+      "name": "Oracle Cloud Infrastructure - Compute - GPU Standard - V2",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96531",
+      "name": "Oracle Cloud Infrastructure - Compute - HPC - E5",
+      "metric": "4 OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B93312",
+      "name": "Oracle Cloud Infrastructure - Compute - Optimized X9 - Memory",
+      "metric": "Gigabyte Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B93311",
+      "name": "Oracle Cloud Infrastructure - Compute - Optimized X9 - OCPU",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B93297",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard A1  First three thousand (3000) OCPU Hours",
+      "metric": "2 OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B93298",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard A1-Memory  First eighteen thousand (18,000) Gigabyte",
+      "metric": "2 Gigabyte Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B109530",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard A2 Memory",
+      "metric": "Gigabyte Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B109529",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard A2 OCPU",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B90425",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard E2",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B92306",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard E3 - OCPU",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B93114",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard E4 - Memory",
+      "metric": "Gigabyte Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B93113",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard E4 - OCPU",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B94177",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard X9 - Memory",
+      "metric": "Gigabyte Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B94176",
+      "name": "Oracle Cloud Infrastructure - Compute - Standard X9 - OCPU",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B88516",
+      "name": "Oracle Cloud Infrastructure - Compute - Virtual Machine Dense I/O - X7",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B88518",
+      "name": "Oracle Cloud Infrastructure - Compute - Virtual Machine GPU Standard - X7",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B91120",
+      "name": "Oracle Cloud Infrastructure - Compute - Virtual Machine Standard - B1",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B91444",
+      "name": "Oracle Cloud Infrastructure - Compute - Virtual Machine Standard - E2 Micro-Free Compute Cloud@Customer",
+      "metric": "1 OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B88514",
+      "name": "Oracle Cloud Infrastructure - Compute - Virtual Machine Standard - X7",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B93122",
+      "name": "Oracle Cloud Infrastructure - Compute -Dense I/O E4 - Memory",
+      "metric": "Gigabyte Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B93123",
+      "name": "Oracle Cloud Infrastructure - Compute -Dense I/O E4 - NVMe",
+      "metric": "Terabyte Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B90398",
+      "name": "Oracle Cloud Infrastructure - Compute HPC - X7",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B95518",
+      "name": "Oracle Cloud Infrastructure - Secure Desktops Notes:",
+      "metric": "Desktop Per Month",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96545",
+      "name": "Oracle Cloud Infrastructure Kubernetes Engine Enhanced Cluster - Enhanced Cluster",
+      "metric": "Cluster Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96109",
+      "name": "Oracle Cloud Infrastructure Kubernetes Engine Virtual Node",
+      "metric": "Virtual Node Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96481",
+      "name": "Oracle Compute Cloud@Customer - Block Volume",
+      "metric": "5 Gigabyte Storage",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96482",
+      "name": "Oracle Compute Cloud@Customer - Block Volume",
+      "metric": "5 Gigabyte Storage",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96480",
+      "name": "Oracle Compute Cloud@Customer - Compute",
+      "metric": "5 Gibibyte Memory Per",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B110965",
+      "name": "Oracle Compute Cloud@Customer - Compute GPU.L40S",
+      "metric": "5 GPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96479",
+      "name": "Oracle Compute Cloud@Customer - Compute Standard - E5",
+      "metric": "5 OCPU Per Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96483",
+      "name": "Oracle Compute Cloud@Customer - File Storage",
+      "metric": "5 Gigabyte Storage",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96485",
+      "name": "Oracle Compute Cloud@Customer - Load Balancer",
+      "metric": "5 Load Balancer Hour",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96484",
+      "name": "Oracle Compute Cloud@Customer - Object",
+      "metric": "5 Gigabyte Storage",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B90618",
+      "name": "Oracle Functions - Invocations",
+      "metric": "1,000,000",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B90617",
+      "name": "Oracle Functions - Provisioned Concurrency",
+      "metric": "3 10,000 Gigabyte",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B96571",
+      "name": "metered",
+      "metric": ", B96572, B96573, B96574, B108966, B108967, B108968, B108969, B110963,",
+      "note": "",
+      "category": "Compute",
+      "retired": false
+    },
+    {
+      "part_number": "B95339",
+      "name": "Media Services - Media Flow - Quality - H264 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95340",
+      "name": "Media Services - Media Flow - Quality - H264 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95341",
+      "name": "Media Services - Media Flow - Quality - H264 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95336",
+      "name": "Media Services - Media Flow - Quality - H264 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95337",
+      "name": "Media Services - Media Flow - Quality - H264 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95338",
+      "name": "Media Services - Media Flow - Quality - H264 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95333",
+      "name": "Media Services - Media Flow - Quality - H264 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95334",
+      "name": "Media Services - Media Flow - Quality - H264 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95335",
+      "name": "Media Services - Media Flow - Quality - H264 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95351",
+      "name": "Media Services - Media Flow - Quality - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95352",
+      "name": "Media Services - Media Flow - Quality - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95353",
+      "name": "Media Services - Media Flow - Quality - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95354",
+      "name": "Media Services - Media Flow - Quality - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95355",
+      "name": "Media Services - Media Flow - Quality - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95356",
+      "name": "Media Services - Media Flow - Quality - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95357",
+      "name": "Media Services - Media Flow - Quality - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95358",
+      "name": "Media Services - Media Flow - Quality - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95359",
+      "name": "Media Services - Media Flow - Quality - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95348",
+      "name": "Media Services - Media Flow - Quality - VP8 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95349",
+      "name": "Media Services - Media Flow - Quality - VP8 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95345",
+      "name": "Media Services - Media Flow - Quality - VP8 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95346",
+      "name": "Media Services - Media Flow - Quality - VP8 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95347",
+      "name": "Media Services - Media Flow - Quality - VP8 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95342",
+      "name": "Media Services - Media Flow - Quality - VP8 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95343",
+      "name": "Media Services - Media Flow - Quality - VP8 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95344",
+      "name": "Media Services - Media Flow - Quality - VP8 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95350",
+      "name": "Media Services - Media Flow - Quality - VP8 -4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95312",
+      "name": "Media Services - Media Flow - Speed - H264 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95313",
+      "name": "Media Services - Media Flow - Speed - H264 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95314",
+      "name": "Media Services - Media Flow - Speed - H264 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95309",
+      "name": "Media Services - Media Flow - Speed - H264 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95310",
+      "name": "Media Services - Media Flow - Speed - H264 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95311",
+      "name": "Media Services - Media Flow - Speed - H264 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95306",
+      "name": "Media Services - Media Flow - Speed - H264 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95307",
+      "name": "Media Services - Media Flow - Speed - H264 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95308",
+      "name": "Media Services - Media Flow - Speed - H264 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95324",
+      "name": "Media Services - Media Flow - Speed - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95325",
+      "name": "Media Services - Media Flow - Speed - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95326",
+      "name": "Media Services - Media Flow - Speed - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95327",
+      "name": "Media Services - Media Flow - Speed - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95328",
+      "name": "Media Services - Media Flow - Speed - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95329",
+      "name": "Media Services - Media Flow - Speed - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95330",
+      "name": "Media Services - Media Flow - Speed - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95331",
+      "name": "Media Services - Media Flow - Speed - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95332",
+      "name": "Media Services - Media Flow - Speed - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95321",
+      "name": "Media Services - Media Flow - Speed - VP8 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95318",
+      "name": "Media Services - Media Flow - Speed - VP8 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95319",
+      "name": "Media Services - Media Flow - Speed - VP8 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95320",
+      "name": "Media Services - Media Flow - Speed - VP8 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95315",
+      "name": "Media Services - Media Flow - Speed - VP8 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95316",
+      "name": "Media Services - Media Flow - Speed - VP8 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95317",
+      "name": "Media Services - Media Flow - Speed - VP8 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95322",
+      "name": "Media Services - Media Flow - Speed - VP8 -4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95323",
+      "name": "Media Services - Media Flow - Speed - VP8 -4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95279",
+      "name": "Media Services - Media Flow - Standard - H264",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95280",
+      "name": "Media Services - Media Flow - Standard - H264",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95281",
+      "name": "Media Services - Media Flow - Standard - H264",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95282",
+      "name": "Media Services - Media Flow - Standard - H264",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95283",
+      "name": "Media Services - Media Flow - Standard - H264",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95284",
+      "name": "Media Services - Media Flow - Standard - H264",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95285",
+      "name": "Media Services - Media Flow - Standard - H264 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95286",
+      "name": "Media Services - Media Flow - Standard - H264 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95287",
+      "name": "Media Services - Media Flow - Standard - H264 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95297",
+      "name": "Media Services - Media Flow - Standard - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95298",
+      "name": "Media Services - Media Flow - Standard - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95299",
+      "name": "Media Services - Media Flow - Standard - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95300",
+      "name": "Media Services - Media Flow - Standard - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95301",
+      "name": "Media Services - Media Flow - Standard - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95302",
+      "name": "Media Services - Media Flow - Standard - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95303",
+      "name": "Media Services - Media Flow - Standard - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95304",
+      "name": "Media Services - Media Flow - Standard - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95305",
+      "name": "Media Services - Media Flow - Standard - H265VP9",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95294",
+      "name": "Media Services - Media Flow - Standard - VP8 - 4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95291",
+      "name": "Media Services - Media Flow - Standard - VP8 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95292",
+      "name": "Media Services - Media Flow - Standard - VP8 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95293",
+      "name": "Media Services - Media Flow - Standard - VP8 - HD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95288",
+      "name": "Media Services - Media Flow - Standard - VP8 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95289",
+      "name": "Media Services - Media Flow - Standard - VP8 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95290",
+      "name": "Media Services - Media Flow - Standard - VP8 - SD",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95295",
+      "name": "Media Services - Media Flow - Standard - VP8 -4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95296",
+      "name": "Media Services - Media Flow - Standard - VP8 -4k",
+      "metric": "Minute of Output",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95360",
+      "name": "Media Services - Media Streams - Metered - PaaS",
+      "metric": "Gigabyte (GB) of",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B922305",
+      "name": "Oracle Blockchain Platform-Enterprise-BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91210",
+      "name": "Oracle Content Management",
+      "metric": "5000 Assets Per",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B96502",
+      "name": "Oracle Content Management - Advanced Hosting",
+      "metric": "Instance Per",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92637",
+      "name": "Oracle Content Management - BYOL",
+      "metric": "5000 Assets Per",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91211",
+      "name": "Oracle Content Management - Outbound Data",
+      "metric": "Gigabtye",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B97408",
+      "name": "Oracle Content Management - Sales Accelerator Suite First 100 Users Per Month",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93411",
+      "name": "Oracle Content Management - Starter Edition",
+      "metric": "5000 Assets Per",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95422",
+      "name": "Oracle Content Management - Video Creation",
+      "metric": "Video Pack (500",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88405",
+      "name": "Oracle WebCenter Portal Cloud Service - BYOL Conversion Ratios:",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Content Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92992",
+      "name": "Oracle Cloud Infrastructure GoldenGate",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B92993",
+      "name": "Oracle Cloud Infrastructure GoldenGate - BYOL Conversion Ratios:",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B110500",
+      "name": "Oracle Cloud Infrastructure Streaming with Apache Kafka",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B89660",
+      "name": "Oracle Data Integration Platform Cloud Service",
+      "metric": "Gigabytes of Data",
+      "note": "",
+      "category": "Data Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B89661",
+      "name": "Oracle Data Integration Platform Cloud Service",
+      "metric": "Gigabytes of Data",
+      "note": "",
+      "category": "Data Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B89662",
+      "name": "Oracle Data Integration Platform Cloud Service",
+      "metric": "Gigabytes of Data",
+      "note": "",
+      "category": "Data Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B88299",
+      "name": "Oracle Data Integrator Cloud Service",
+      "metric": "1 OCPU Per Hour",
+      "note": "",
+      "category": "Data Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B88406",
+      "name": "Oracle Data Integrator Cloud Service - BYOL Conversion Ratios:",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B92695",
+      "name": "Oracle Stream Analytics for Oracle Cloud Infrastructure",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Data Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B91537",
+      "name": "Database",
+      "metric": "8, 9 Environment Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92380",
+      "name": "Database Exadata Infrastructure",
+      "metric": "8, 9 Environment Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110627",
+      "name": "Database Server - X11M",
+      "metric": "Environment Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92381",
+      "name": "Database Server - X8M. For use with Database Exadata Cloud",
+      "metric": "Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92421",
+      "name": "Exadata Cloud at Customer - Autonomous Data Warehouse - Database OCPU - BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92419",
+      "name": "Exadata Cloud at Customer Autonomous Data Warehouse Database OCPU",
+      "metric": "8, 9, 12 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92418",
+      "name": "Exadata Cloud at Customer Autonomous Transaction Processing",
+      "metric": "8 ,9, 12 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92420",
+      "name": "Exadata Cloud at Customer Autonomous Transaction Processing Database OCPU - BYOL",
+      "metric": "8, 9, 13 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110469",
+      "name": "Exadata Cloud@Customer - Database OCPU - Developer",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110662",
+      "name": "Exadata Cloud@Customer Database ECPU For use with enabled Exadata Cloud@Customer Racks",
+      "metric": "6,8,9 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88592",
+      "name": "Exadata Database OCPU - Dedicated Infrastructure Exadata Cloud Infrastructure",
+      "metric": "6, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B107954",
+      "name": "Exadata Database OCPU - Exascale Infrastructure",
+      "metric": "6,8,9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109375",
+      "name": "Exadata Exascale Additional Flash",
+      "metric": "Gigabyte Memory",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109356",
+      "name": "Exadata Exascale Database ECPU For Exadata Database Service on Exascale Infrastructure, the following",
+      "metric": "6, 8, 9 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109355",
+      "name": "Exadata Exascale RDMA Compute Infrastructure",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B107952",
+      "name": "Exadata Exascale Smart Database",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B107951",
+      "name": "Exadata Exascale VM Filesystem",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89972",
+      "name": "For use with Oracle Database Exadata Cloud at Customer Infrastructure",
+      "metric": ", B89973,",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91364",
+      "name": "Gen 2 Exadata Cloud at Customer Database OCPU - BYOL For use with Gen 2 Exadata Cloud at",
+      "metric": "3, 4, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91363",
+      "name": "Gen 2 Exadata Cloud at Customer Database OCPU For use with Gen 2 Exadata Cloud at",
+      "metric": "6,8,9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B99595",
+      "name": "Globally Distributed Autonomous Data Warehouse - Dedicated",
+      "metric": "8, 9, 12 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B99596",
+      "name": "Globally Distributed Autonomous Data Warehouse - Dedicated - BYOL",
+      "metric": "8, 9, 13 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B99593",
+      "name": "Globally Distributed Autonomous Transaction Processing - Dedicated",
+      "metric": "8, 9, 12 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B99594",
+      "name": "Globally Distributed Autonomous Transaction Processing - Dedicated BYOL",
+      "metric": "8, 9, 13 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B96626",
+      "name": "HeatWave",
+      "metric": "8,9 HeatWave Capacity",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92023",
+      "name": "HeatWave - Standard",
+      "metric": "8, 9, 11 Node Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B96625",
+      "name": "HeatWave - Storage",
+      "metric": "8,9 Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110631",
+      "name": "Infrastructure",
+      "metric": "",
+      "note": "6,8,9",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B96158",
+      "name": "MySQL Database - AWS",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95428",
+      "name": "MySQL Database - AWS - Backup",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109188",
+      "name": "MySQL Database - AWS - Egress Private Endpoint",
+      "metric": "Endpoint Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109187",
+      "name": "MySQL Database - AWS - Ingress Private Endpoint",
+      "metric": "Endpoint Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B96159",
+      "name": "MySQL Database - AWS - Outbound",
+      "metric": "Gigabyte of Data",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B96160",
+      "name": "MySQL Database - AWS - Outbound",
+      "metric": "Gigabyte of Data",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109458",
+      "name": "MySQL Database - AWS - Private",
+      "metric": "Gigabyte of Data",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95427",
+      "name": "MySQL Database - AWS - Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92483",
+      "name": "MySQL Database - Backup Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109384",
+      "name": "MySQL Database - Backup Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B108030",
+      "name": "MySQL Database - ECPU",
+      "metric": "8,9 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109380",
+      "name": "MySQL Database - ECPU - Free",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109169",
+      "name": "MySQL Database - Outbound Data",
+      "metric": "Gigabyte Outbound",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92426",
+      "name": "MySQL Database - Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109383",
+      "name": "MySQL Database - Storage - Free",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B896157",
+      "name": "MySQL HeatWave - AWS",
+      "metric": "HeatWave Capacity",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109166",
+      "name": "MySQL HeatWave - AWS - Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93712",
+      "name": "NoSQL Database Cloud Service",
+      "metric": "Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B97191",
+      "name": "NoSQL Database Cloud Service",
+      "metric": "Write Unit Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93711",
+      "name": "NoSQL Database Cloud Service - Read",
+      "metric": "Read Unit Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93710",
+      "name": "NoSQL Database Cloud Service - Write",
+      "metric": "Write Unit Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91392",
+      "name": "Oracle Autonomous Data Warehouse",
+      "metric": "1, 7 Terabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92182",
+      "name": "Oracle Autonomous Data Warehouse",
+      "metric": "8, 9 , 12 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95703",
+      "name": "Oracle Autonomous Data Warehouse - ECPU BYOL (Serverless)",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95710",
+      "name": "Oracle Autonomous Data Warehouse - Exadata Cloud@Customer - ECPU - BYOL",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92184",
+      "name": "Oracle Autonomous Data Warehouse Dedicated - BYOL For use with Oracle Cloud Infrastructure",
+      "metric": "8, 9, 13 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B98280",
+      "name": "Oracle Autonomous Data Warehouse Dedicated - Developer",
+      "metric": "8, 9, 12, 15 Instance Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95714",
+      "name": "Oracle Autonomous Data Warehouse Dedicated - ECPU - BYOL For use with Oracle Cloud Infrastructure",
+      "metric": "8, 9, 13 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95712",
+      "name": "Oracle Autonomous Data Warehouse Dedicated - ECPU For use with Oracle Cloud Infrastructure",
+      "metric": "8, 9, 12 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95701",
+      "name": "Oracle Autonomous Data Warehouse ECPU",
+      "metric": "8, 9, 12 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B98278",
+      "name": "Oracle Autonomous Data Warehouse Exadata Cloud @Customer-Developer For use with Gen 2 Exadata Cloud@",
+      "metric": "8, 9, 12, 15 Instance Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95708",
+      "name": "Oracle Autonomous Data Warehouse Exadata Cloud@Customer - ECPU For use with Gen 2 Exadata Cloud at",
+      "metric": "8, 9, 12 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91391",
+      "name": "Oracle Autonomous Data Warehouse Free",
+      "metric": "1, 7, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110316",
+      "name": "Oracle Autonomous Database Developer",
+      "metric": "1, 8, 9, 12 Instance Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95754",
+      "name": "Oracle Autonomous Database Storage",
+      "metric": "8, 9 Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95706",
+      "name": "Oracle Autonomous Database Storage",
+      "metric": "8, 9 Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92212",
+      "name": "Oracle Autonomous JSON Database",
+      "metric": "8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B99708",
+      "name": "Oracle Autonomous JSON Database ECPU",
+      "metric": "8, 9 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93307",
+      "name": "Oracle Autonomous JSON Database Free",
+      "metric": "1, 7, 8, 9, 12 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91394",
+      "name": "Oracle Autonomous Transaction",
+      "metric": "1, 7 Terabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90455",
+      "name": "Oracle Autonomous Transaction",
+      "metric": "8, 9 Terabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B98279",
+      "name": "Oracle Autonomous Transaction Processing - Dedicated - Developer",
+      "metric": "8, 9, 12 , 15 Instance Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95715",
+      "name": "Oracle Autonomous Transaction Processing - Dedicated - ECPU - BYOL For use with Oracle Cloud Infrastructure",
+      "metric": "8, 9, 13 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95713",
+      "name": "Oracle Autonomous Transaction Processing - Dedicated - ECPU For use with Oracle Cloud Infrastructure",
+      "metric": "8, 9, 12 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95702",
+      "name": "Oracle Autonomous Transaction Processing - ECPU",
+      "metric": "8, 9, 12 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95704",
+      "name": "Oracle Autonomous Transaction Processing - ECPU BYOL (Serverless)",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95709",
+      "name": "Oracle Autonomous Transaction Processing - Exadata Cloud@Customer ECPU",
+      "metric": "8 ,9, 12 ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91393",
+      "name": "Oracle Autonomous Transaction Processing - Free",
+      "metric": "1, 7, 8, 9, 12 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B98277",
+      "name": "Oracle Autonomous Transaction Processing -Exadata Cloud@Customer Developer",
+      "metric": "8, 9, 12, 15 Instance Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92181",
+      "name": "Oracle Autonomous Transaction Processing Dedicated",
+      "metric": "8, 9, 12 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92183",
+      "name": "Oracle Autonomous Transaction Processing Dedicated - BYOL",
+      "metric": "8, 9, 13 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95711",
+      "name": "Oracle Autonomous Transaction Processing Exadata Cloud@Customer - ECPU - BYOL Exadata Cloud at Customer - Autonomous",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90573",
+      "name": "Oracle Base Database Service - BYOL",
+      "metric": "3, 4, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90571",
+      "name": "Oracle Base Database Service - High Performance",
+      "metric": "5, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90570",
+      "name": "Oracle Base Database Service Enterprise",
+      "metric": "3, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90572",
+      "name": "Oracle Base Database Service Extreme Performance",
+      "metric": "6, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90569",
+      "name": "Oracle Base Database Service Standard",
+      "metric": "8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B97200",
+      "name": "Oracle Base Database Service on Arm BYOL",
+      "metric": "3, 4, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B97197",
+      "name": "Oracle Base Database Service on Arm Enterprise",
+      "metric": "3, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B97199",
+      "name": "Oracle Base Database Service on Arm Extreme Performance",
+      "metric": "8, 9, 14 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B97198",
+      "name": "Oracle Base Database Service on Arm High Performance",
+      "metric": "5, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88604",
+      "name": "Oracle Big Data Cloud Services",
+      "metric": "1,8, 9 Hosted Node Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88603",
+      "name": "Oracle Big Data Cloud Services - Starter",
+      "metric": "1, 8, 9 Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88605",
+      "name": "Oracle Big Data Cloud Services Additional OCPU's",
+      "metric": "1,8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88606",
+      "name": "Oracle Big Data SQL Cloud Services",
+      "metric": "1,8, 9 Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93555",
+      "name": "Oracle Big Data Service",
+      "metric": "10 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91129",
+      "name": "Oracle Big Data Service - Compute Dense I/O",
+      "metric": "10 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91130",
+      "name": "Oracle Big Data Service - Compute HPC",
+      "metric": "10 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91128",
+      "name": "Oracle Big Data Service - Compute Standard",
+      "metric": "10 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89999",
+      "name": "Oracle Cloud Infrastructure",
+      "metric": "8, 9 Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109382",
+      "name": "Oracle Cloud Infrastructure",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88593",
+      "name": "Oracle Cloud Infrastructure",
+      "metric": "6, 8, 9 Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88594",
+      "name": "Oracle Cloud Infrastructure",
+      "metric": "6, 8, 9 Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88595",
+      "name": "Oracle Cloud Infrastructure",
+      "metric": "6, 8, 9 Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90777",
+      "name": "Oracle Cloud Infrastructure",
+      "metric": "8, 9 Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90000",
+      "name": "Oracle Cloud Infrastructure",
+      "metric": "8, 9 Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90001",
+      "name": "Oracle Cloud Infrastructure",
+      "metric": "8, 9 Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92072",
+      "name": "Oracle Cloud Infrastructure - API",
+      "metric": "1,000,000 API",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91372",
+      "name": "Oracle Cloud Infrastructure - Compute Microsoft SQL Enterprise",
+      "metric": "8 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91373",
+      "name": "Oracle Cloud Infrastructure - Compute Microsoft SQL Standard",
+      "metric": "8 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91631",
+      "name": "Oracle Cloud Infrastructure - Data Safe",
+      "metric": "10,000 Audit",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92733",
+      "name": "Oracle Cloud Infrastructure - Data Safe",
+      "metric": "Target Database Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92734",
+      "name": "Oracle Cloud Infrastructure - Data Safe",
+      "metric": "10,000 Audit",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91632",
+      "name": "Oracle Cloud Infrastructure - Data Safe for Database Cloud Service",
+      "metric": "Each",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89625",
+      "name": "Oracle Cloud Infrastructure - Database All Editions",
+      "metric": "Hosted",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88856",
+      "name": "Oracle Cloud Infrastructure - Database Exadata",
+      "metric": "Hosted Environment",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88847",
+      "name": "Oracle Cloud Infrastructure - Database Exadata Additional OCPU - BYOL Conversion Ratios for Enterprise Edition:",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88854",
+      "name": "Oracle Cloud Infrastructure - Database Exadata Full",
+      "metric": "Hosted Environment",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88855",
+      "name": "Oracle Cloud Infrastructure - Database Exadata Half",
+      "metric": "Hosted Environment",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110632",
+      "name": "Oracle Cloud Infrastructure - Exadata Database ECPU Dedicated Infrastructure - BYOL",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B98217",
+      "name": "Oracle Cloud Infrastructure Cache with",
+      "metric": "Redis Memory",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B99591",
+      "name": "Oracle Cloud Infrastructure Cache with",
+      "metric": "Redis Memory",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B99062",
+      "name": "Oracle Cloud Infrastructure Database",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93199",
+      "name": "Oracle Cloud Infrastructure Database Migration",
+      "metric": "Migration Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B99060",
+      "name": "Oracle Cloud Infrastructure Database with PostgreSQL - X86",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95485",
+      "name": "Oracle Cloud Infrastructure Full Stack Disaster Recovery Service",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110274",
+      "name": "Oracle Cloud Infrastructure Full Stack Disaster Recovery Service",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109381",
+      "name": "Oracle Cloud Infrastructure HeatWave",
+      "metric": "HeatWave Capacity",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93709",
+      "name": "Oracle Cloud Infrastructure Search with OpenSearch HA",
+      "metric": "Node Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88845",
+      "name": "Oracle Cloud Infrastructure-Database All Editions I/O",
+      "metric": "Hosted Environment",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B91121",
+      "name": "Oracle Cloud SQL",
+      "metric": "10 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95240",
+      "name": "Oracle Database Autonomous Recovery",
+      "metric": "1 Virtualized-Gigabyte",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90231",
+      "name": "Oracle Database Backup Cloud - Archive",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B90230",
+      "name": "Oracle Database Backup Cloud - Object",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88295",
+      "name": "Oracle Database Backup Service - GET",
+      "metric": "1 10,000 Requests",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88296",
+      "name": "Oracle Database Backup Service - PUT,",
+      "metric": "1 1,000 Requests",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88294",
+      "name": "Oracle Database Backup Service Outbound Data Transfer",
+      "metric": "",
+      "note": "1",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88297",
+      "name": "Oracle Database Backup Service Storage Capacity",
+      "metric": "",
+      "note": "1",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88404",
+      "name": "Oracle Database Cloud Service - All Editions - BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88290",
+      "name": "Oracle Database Cloud Service Enterprise Edition",
+      "metric": "2, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88291",
+      "name": "Oracle Database Cloud Service Enterprise Edition Extreme Performance",
+      "metric": "2, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88292",
+      "name": "Oracle Database Cloud Service Enterprise Edition High Performance",
+      "metric": "2, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88293",
+      "name": "Oracle Database Cloud Service Standard Edition",
+      "metric": "2, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89980",
+      "name": "Oracle Database Exadata Cloud at Customer Database OCPU",
+      "metric": "6,8,9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89981",
+      "name": "Oracle Database Exadata Cloud at Customer- Database OCPU - BYOL For use with Oracle Database Exadata",
+      "metric": "3, 4, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95241",
+      "name": "Oracle Database Zero Data Loss",
+      "metric": "1 Virtualized-Gigabyte",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110663",
+      "name": "Oracle Exadata Cloud@Customer Database ECPU BYOL",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109357",
+      "name": "Oracle Exadata Exascale Database ECPU - BYOL",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92629",
+      "name": "Oracle NoSQL Database Cloud",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89737",
+      "name": "Oracle NoSQL Database Cloud Service",
+      "metric": "8, 9 Write Unit Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89738",
+      "name": "Oracle NoSQL Database Cloud Service",
+      "metric": "Read Unit Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89739",
+      "name": "Oracle NoSQL Database Cloud Service",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92628",
+      "name": "Oracle NoSQL Database Cloud-Read",
+      "metric": "Read Unit Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92627",
+      "name": "Oracle NoSQL Database Cloud-Write",
+      "metric": "Write Unit Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93380",
+      "name": "Quarter Rack - X9M",
+      "metric": "8, 9 Environment Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110629",
+      "name": "Storage Server - X11M",
+      "metric": "Environment Per",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92382",
+      "name": "Storage Server - X8M. For use with Database Exadata Cloud",
+      "metric": "Hour",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88888",
+      "name": "The BYOL requirements for all Database Cloud Services listed above (",
+      "metric": ", B88845,",
+      "note": "",
+      "category": "Data Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93423",
+      "name": "Oracle Cloud AI Services - Language - Pre",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B94896",
+      "name": "Oracle Cloud AI Services - Speech",
+      "metric": "Transcription",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B92598",
+      "name": "Oracle Cloud Infrastructure - Data Integration",
+      "metric": "Workspace",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B92599",
+      "name": "Oracle Cloud Infrastructure - Data Integration",
+      "metric": "Gigabyte of Data",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B93306",
+      "name": "Oracle Cloud Infrastructure - Data Integration Pipeline Operator Execution  First 30 Execution Hours",
+      "metric": "Execution Hour",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B94282",
+      "name": "Oracle Cloud Infrastructure - Data Labeling",
+      "metric": "Annotated Data",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B95917",
+      "name": "Oracle Cloud Infrastructure - Language",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B95918",
+      "name": "Oracle Cloud Infrastructure - Language",
+      "metric": "Inferencing Unit",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B108711",
+      "name": "Oracle Cloud Infrastructure - Language",
+      "metric": "Inferencing Unit",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B95920",
+      "name": "Oracle Cloud Infrastructure - Language - Text",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B95919",
+      "name": "Oracle Cloud Infrastructure - Language Custom Training",
+      "metric": "Training Hour",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B96110",
+      "name": "Oracle Cloud Infrastructure Document",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B96111",
+      "name": "Oracle Cloud Infrastructure Document",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B97193",
+      "name": "Oracle Cloud Infrastructure Document",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B96112",
+      "name": "Oracle Cloud Infrastructure Document",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B97194",
+      "name": "Oracle Cloud Infrastructure Document",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B96113",
+      "name": "Oracle Cloud Infrastructure Document Understanding - Custom Training  First 15 hoursGreater than 15 hours",
+      "metric": "Training Hour",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B110461",
+      "name": "Oracle Cloud Infrastructure Generative AI",
+      "metric": "3 10,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B110462",
+      "name": "Oracle Cloud Infrastructure Generative AI",
+      "metric": "3 Gigabyte",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B110463",
+      "name": "Oracle Cloud Infrastructure Generative AI",
+      "metric": "3 10,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B108080",
+      "name": "Oracle Cloud Infrastructure Generative AI",
+      "metric": "1, 3 10,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B110517",
+      "name": "Oracle Cloud Infrastructure Generative AI",
+      "metric": "3 10,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B110679",
+      "name": "Oracle Cloud Infrastructure Generative AI",
+      "metric": "3, 4 10,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B108077",
+      "name": "Oracle Cloud Infrastructure Generative AI",
+      "metric": "2 10,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B108078",
+      "name": "Oracle Cloud Infrastructure Generative AI",
+      "metric": "2 10,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B108079",
+      "name": "Oracle Cloud Infrastructure Generative AI",
+      "metric": "2 10,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B108084",
+      "name": "Oracle Cloud Infrastructure Generative AI Embed Cohere - Dedicated Notes:",
+      "metric": "2 AI Unit Per Hour",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B108082",
+      "name": "Oracle Cloud Infrastructure Generative AI Large Cohere - Dedicated",
+      "metric": "2 AI Unit Per Hour",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B108085",
+      "name": "Oracle Cloud Infrastructure Generative AI Large Meta - Dedicated",
+      "metric": "1, 3 AI Unit Per Hour",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B108083",
+      "name": "Oracle Cloud Infrastructure Generative AI Small Cohere - Dedicated",
+      "metric": "2 AI Unit Per Hour",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B94977",
+      "name": "Oracle Cloud Infrastructure Vision - Document Extraction  First 15 hours",
+      "metric": "Training Hour",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B94974",
+      "name": "Oracle Cloud Infrastructure Vision - OCR",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B94973",
+      "name": "Oracle Cloud Infrastructure Vision- Image",
+      "metric": "1,000",
+      "note": "",
+      "category": "Data and AI",
+      "retired": false
+    },
+    {
+      "part_number": "B89639",
+      "name": "Oracle Integration Cloud Service",
+      "metric": "5,000 Messages",
+      "note": "",
+      "category": "Enterprise Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B89640",
+      "name": "Oracle Integration Cloud Service",
+      "metric": "5,000 Messages",
+      "note": "",
+      "category": "Enterprise Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B109559",
+      "name": "Oracle Integration Cloud Service",
+      "metric": "5,000 Messages",
+      "note": "",
+      "category": "Enterprise Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B92450",
+      "name": "Oracle SOA Suite for Oracle Cloud Infrastructure",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Enterprise Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B92451",
+      "name": "Oracle SOA Suite for Oracle Cloud Infrastructure - with B2B Adapter for EDI",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Enterprise Integration",
+      "retired": false
+    },
+    {
+      "part_number": "B110519",
+      "name": " Oracle Cloud Infrastructure - Compute GPU - H200",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "GPU",
+      "retired": false
+    },
+    {
+      "part_number": "B91960",
+      "name": "Oracle Cloud Infrastructure - 10 Mbps Load Balancer - Free",
+      "metric": "",
+      "note": "",
+      "category": "General",
+      "retired": false
+    },
+    {
+      "part_number": "B92307",
+      "name": "Oracle Cloud Infrastructure - Compute E3.Flex V. CARBON EMISSIONS ANALYSIS",
+      "metric": "Gigabyte Per Hour",
+      "note": "",
+      "category": "General",
+      "retired": false
+    },
+    {
+      "part_number": "B91628",
+      "name": "Oracle Cloud Infrastructure - Object Storage - Storage",
+      "metric": "Gigabyte Storage Capacity Per Month",
+      "note": "",
+      "category": "General",
+      "retired": false
+    },
+    {
+      "part_number": "B88327",
+      "name": "Oracle Cloud Infrastructure - Outbound",
+      "metric": "Gigabyte Outbound Data Transfer Per",
+      "note": "",
+      "category": "General",
+      "retired": false
+    },
+    {
+      "part_number": "B96629",
+      "name": "Oracle Cloud Infrastructure Application Performance Monitoring Service Synthetic Usage - Free",
+      "metric": "",
+      "note": "",
+      "category": "General",
+      "retired": false
+    },
+    {
+      "part_number": "B92940",
+      "name": "Oracle Cloud Infrastructure Application Performance Monitoring Service Tracing Data - Free",
+      "metric": "",
+      "note": "",
+      "category": "General",
+      "retired": false
+    },
+    {
+      "part_number": "B90936",
+      "name": "Oracle Identity Foundation Cloud Service",
+      "metric": "Each",
+      "note": "",
+      "category": "General",
+      "retired": false
+    },
+    {
+      "part_number": "B88206",
+      "name": "Part #",
+      "metric": "",
+      "note": "",
+      "category": "General",
+      "retired": false
+    },
+    {
+      "part_number": "B92024",
+      "name": " Oracle Cloud Infrastructure - MySQL Database for Heatwave - Standard",
+      "metric": "",
+      "note": "",
+      "category": "General",
+      "retired": false
+    },
+    {
+      "part_number": "B93083",
+      "name": "Oracle Cloud Infrastructure - Database Management - External DB",
+      "metric": "CPU Core Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109560",
+      "name": "Oracle Cloud Infrastructure - Fleet Application",
+      "metric": "1 Managed Resource",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B108773",
+      "name": "Oracle Cloud Infrastructure - SQLPerformance",
+      "metric": "Host CPU Core Per",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B108764",
+      "name": "Oracle Cloud Infrastructure - Vulnerability",
+      "metric": "Host CPU Core Per",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92941",
+      "name": "Oracle Cloud Infrastructure Application",
+      "metric": "100,000 Events Per",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92942",
+      "name": "Oracle Cloud Infrastructure Application",
+      "metric": "",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95264",
+      "name": "Oracle Cloud Infrastructure Application",
+      "metric": "",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B99259",
+      "name": "Oracle Cloud Infrastructure Application",
+      "metric": "",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B110986",
+      "name": "Oracle Cloud Infrastructure Application",
+      "metric": "",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93426",
+      "name": "Oracle Cloud Infrastructure Database Management for Oracle Cloud Databases",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B96200",
+      "name": "Oracle Cloud Infrastructure Database Management for Oracle Cloud Databases",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B95634",
+      "name": "Oracle Cloud Infrastructure Logging Analytics",
+      "metric": "2,3 Logging Analytics",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92809",
+      "name": "Oracle Cloud Infrastructure Logging Analytics",
+      "metric": "Logging Analytics",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92888",
+      "name": "Oracle Cloud Infrastructure Ops Insights for",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B96199",
+      "name": "Oracle Cloud Infrastructure Ops Insights for",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92890",
+      "name": "Oracle Cloud Infrastructure Ops Insights for",
+      "metric": "Host CPU Core Per",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B92889",
+      "name": "Oracle Cloud Infrastructure Ops Insights for",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B97140",
+      "name": "Oracle Cloud Infrastructure Ops Insights for",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109359",
+      "name": "Oracle Cloud Infrastructure Ops Insights for MySQL HeatWave - ECPU",
+      "metric": "ECPU Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B109358",
+      "name": "Oracle Cloud Infrastructure Ops Insights for MySQL HeatWave - OCPU",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93705",
+      "name": "Oracle Cloud Infrastructure Ops Insights for Warehouse - Extract",
+      "metric": "Gigabyte Per Month",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B93706",
+      "name": "Oracle Cloud Infrastructure Ops Insights for Warehouse - Instance",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89644",
+      "name": "Oracle Integration Cloud Service - Enterprise - BYOL Conversion Ratios:",
+      "metric": "20,000 Messages Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B89643",
+      "name": "Oracle Integration Cloud Service - Standard - BYOL",
+      "metric": "20,000 Messages Per Hour",
+      "note": "",
+      "category": "Management",
+      "retired": false
+    },
+    {
+      "part_number": "B88325",
+      "name": "Oracle Cloud Infrastructure - FastConnect 1 Gbps",
+      "metric": "Port Hour",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B88326",
+      "name": "Oracle Cloud Infrastructure - FastConnect 10 Gbps",
+      "metric": "Port Hour",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93126",
+      "name": "Oracle Cloud Infrastructure - FastConnect 100Gbps",
+      "metric": "Port Hour",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B107975",
+      "name": "Oracle Cloud Infrastructure - FastConnect 400Gbps",
+      "metric": "Port Hour",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B90323",
+      "name": "Oracle Cloud Infrastructure - Health",
+      "metric": "Endpoints Per",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B90325",
+      "name": "Oracle Cloud Infrastructure - Health",
+      "metric": "Endpoints Per",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93031",
+      "name": "Oracle Cloud Infrastructure - Load Balancer - Bandwidth Usage  First ten (10) Mbps Per Hour",
+      "metric": "Mbps Per Hour",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93030",
+      "name": "Oracle Cloud Infrastructure - Load Balancer Instance  First one (1) Load Balancer instance",
+      "metric": "Load Balancer Hour",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B92593",
+      "name": "Oracle Cloud Infrastructure - Logging",
+      "metric": "Gigabyte Log",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B90926",
+      "name": "Oracle Cloud Infrastructure - Monitoring Retrieval  First 1 Billion Datapoints",
+      "metric": "1 Million Datapoints",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93004",
+      "name": "Oracle Cloud Infrastructure - Notifications",
+      "metric": "2 1 SMS Message",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93005",
+      "name": "Oracle Cloud Infrastructure - Notifications",
+      "metric": "2 1 SMS Message",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93006",
+      "name": "Oracle Cloud Infrastructure - Notifications",
+      "metric": "2 1 SMS Message",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93007",
+      "name": "Oracle Cloud Infrastructure - Notifications",
+      "metric": "2 1 SMS Message",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93008",
+      "name": "Oracle Cloud Infrastructure - Notifications",
+      "metric": "2 1 SMS Message",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B90941",
+      "name": "Oracle Cloud Infrastructure - Notifications Email Delivery",
+      "metric": "",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B90940",
+      "name": "Oracle Cloud Infrastructure - Notifications HTTPS Delivery",
+      "metric": "",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93455",
+      "name": "Oracle Cloud Infrastructure - Outbound",
+      "metric": "1 Gigabyte Outbound",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B93456",
+      "name": "Oracle Cloud Infrastructure - Outbound",
+      "metric": "1 Gigabyte Outbound",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B94277",
+      "name": "Oracle Cloud Infrastructure - Web",
+      "metric": "1,000,000",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B94579",
+      "name": "Oracle Cloud Infrastructure - Web Application Firewall - Instance Per Month",
+      "metric": "Instance Per Month",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B96503",
+      "name": "Oracle Cloud Infrastructure Content",
+      "metric": "1,000,000",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B96504",
+      "name": "Oracle Cloud Infrastructure Content",
+      "metric": "1,000,000",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B96505",
+      "name": "Oracle Cloud Infrastructure Content",
+      "metric": "1,000,000",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B96506",
+      "name": "Oracle Cloud Infrastructure Content",
+      "metric": "CDN Gigabyte",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B96507",
+      "name": "Oracle Cloud Infrastructure Content",
+      "metric": "CDN Gigabyte",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B96508",
+      "name": "Oracle Cloud Infrastructure Content",
+      "metric": "CDN Gigabyte",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B95697",
+      "name": "Oracle Cloud Infrastructure Queue Notes:",
+      "metric": "1,000,000 Requests",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B88525",
+      "name": "Oracle Cloud Infrastructure Service - DNS",
+      "metric": "1,000,000 Queries",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B88523",
+      "name": "Oracle Cloud Infrastructure Service - Email Delivery",
+      "metric": "",
+      "note": "1",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B90925",
+      "name": "Oracle Cloud Infrastructure-Monitoring Ingestion  First 500 Million Datapoints",
+      "metric": "1 Million Datapoints",
+      "note": "",
+      "category": "Network",
+      "retired": false
+    },
+    {
+      "part_number": "B88318",
+      "name": "Oracle Cloud Infrastructure - Compute Windows OS",
+      "metric": "1 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95404",
+      "name": "Oracle Cloud Infrastructure - Network Firewall",
+      "metric": "1 Gigabyte of Data",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95403",
+      "name": "Oracle Cloud Infrastructure - Network Firewall Instance",
+      "metric": "1 Instance Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B92386",
+      "name": "Oracle Cloud VMware Solution",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B93288",
+      "name": "Oracle Cloud VMware Solution",
+      "metric": "1, 2, OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95178",
+      "name": "Oracle Cloud VMware Solution",
+      "metric": "1, 2, OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95411",
+      "name": "Oracle Cloud VMware Solution",
+      "metric": "1, 2, OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95415",
+      "name": "Oracle Cloud VMware Solution",
+      "metric": "1, 2, OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B110680",
+      "name": "Oracle Cloud VMware Solution",
+      "metric": "1, 2, Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B110681",
+      "name": "Oracle Cloud VMware Solution",
+      "metric": "1, 2 , Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B110682",
+      "name": "Oracle Cloud VMware Solution",
+      "metric": "1, 2, Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B110683",
+      "name": "Oracle Cloud VMware Solution",
+      "metric": "1, 2 , Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B108807",
+      "name": "Oracle Cloud VMware Solution - BM.GPU.A10.4 1 Year Commit - Node Per Hour",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B108808",
+      "name": "Oracle Cloud VMware Solution - BM.GPU.A10.4 3 Year Commit - Node Per Hour",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B108806",
+      "name": "Oracle Cloud VMware Solution - BM.GPU.A10.4 Monthly Commit - Node Per Hour",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97102",
+      "name": "Oracle Cloud VMware Solution - Base",
+      "metric": "1, 2, Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97105",
+      "name": "Oracle Cloud VMware Solution - Base",
+      "metric": "1, 2 , Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97107",
+      "name": "Oracle Cloud VMware Solution - Base",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97108",
+      "name": "Oracle Cloud VMware Solution - Base",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97109",
+      "name": "Oracle Cloud VMware Solution - Base",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B108809",
+      "name": "Oracle Cloud VMware Solution - Base",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B108810",
+      "name": "Oracle Cloud VMware Solution - Base",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97110",
+      "name": "Oracle Cloud VMware Solution - Base BM.Standard.E4.32 - 3 Year Commit - Node Per Hour",
+      "metric": "1,2, 4 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B108811",
+      "name": "Oracle Cloud VMware Solution - Base BM.Standard.E5.48 - 3 Year Commit - Node Per Hour",
+      "metric": "1,2, 4 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97103",
+      "name": "Oracle Cloud VMware Solution - Base BM.Standard2.12 - 1 Year Commit - Node Per Hour",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97104",
+      "name": "Oracle Cloud VMware Solution - Base BM.Standard2.12 - 3 Year Commit - Node Per Hour",
+      "metric": "1, 2 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97106",
+      "name": "Oracle Cloud VMware Solution - Base BM.Standard3.16 - 1 Year Commit - Node Per Hour",
+      "metric": "1, 2,4 Node Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97111",
+      "name": "Oracle Cloud VMware Solution - Expansion",
+      "metric": "1,2 3, OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B110684",
+      "name": "Oracle Cloud VMware Solution - Expansion",
+      "metric": "1,2 , OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97112",
+      "name": "Oracle Cloud VMware Solution - Expansion - 1 Year Commit - OCPU Per Hour",
+      "metric": "1,2,5 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B97113",
+      "name": "Oracle Cloud VMware Solution - Expansion - 3 Year Commit",
+      "metric": "1,2,5 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B93421",
+      "name": "Oracle Cloud VMware Solution - HCX Enterprise Monthly",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95417",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO.E4.128 - 1 year Commit - OCPU Per Hour",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95418",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO.E4.128 - 3 year Commit - OCPU Per Hour",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95416",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO.E4.128 - Monthly Commit - OCPU Per Hour",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95413",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO.E4.32 - 1 year Commit - OCPU Per Hour",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95414",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO.E4.32 - 3 year Commit - OCPU Per Hour",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95412",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO.E4.32 - Monthly Commit - OCPU Per Hour",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95180",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO.E4.64 - 1 year Commit - OCPU Per Hour",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95181",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO.E4.64 - 3 year Commit - OCPU Per Hour",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B95179",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO.E4.64 - Monthly Commit - OCPU Per Hour",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B93289",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO2.52 - 1 Year Commit",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B93290",
+      "name": "Oracle Cloud VMware Solution BM.DenseIO2.52 - 3 Year Commit",
+      "metric": "1, 2 OCPU Per Hour",
+      "note": "",
+      "category": "Not Discount Eligible",
+      "retired": false
+    },
+    {
+      "part_number": "B93338",
+      "name": "Free Oracle Cloud Promotion - Universal Credits Arm Offers local currency equivalent credits for a variable",
+      "metric": "Currency Unit",
+      "note": "",
+      "category": "Optional Subscription",
+      "retired": false
+    },
+    {
+      "part_number": "B88384",
+      "name": "Free Oracle Cloud Promotion - Universal Credits Developer Offers $500USD or local currency equivalent credits for a",
+      "metric": "Currency Unit",
+      "note": "",
+      "category": "Optional Subscription",
+      "retired": false
+    },
+    {
+      "part_number": "B88385",
+      "name": "Free Oracle Cloud Promotion - Universal Credits Offers $300USD or local currency equivalent credits for a duration of 30 days. This promotion is generally",
+      "metric": "Currency Unit",
+      "note": "",
+      "category": "Optional Subscription",
+      "retired": false
+    },
+    {
+      "part_number": "B88464",
+      "name": "Free Oracle Cloud Promotion - Universal Credits Student Offers $5000USD or local currency equivalent credits for",
+      "metric": "Currency Unit",
+      "note": "",
+      "category": "Optional Subscription",
+      "retired": false
+    },
+    {
+      "part_number": "B89010",
+      "name": "Oracle Academy-Faculty Member Offers $300USD or local currency equivalent credits for a duration of 365 days. This promotion is available by",
+      "metric": "Currency Unit",
+      "note": "",
+      "category": "Optional Subscription",
+      "retired": false
+    },
+    {
+      "part_number": "B89009",
+      "name": "Oracle Cloud Research Program Offers local currency equivalent credits for a variable amount and variable duration. This promotion is",
+      "metric": "Currency Unit",
+      "note": "",
+      "category": "Optional Subscription",
+      "retired": false
+    },
+    {
+      "part_number": "B89016",
+      "name": "Part #",
+      "metric": "",
+      "note": "",
+      "category": "Optional Subscription",
+      "retired": false
+    },
+    {
+      "part_number": "B90994",
+      "name": "Part #",
+      "metric": "",
+      "note": "",
+      "category": "Optional Subscription",
+      "retired": false
+    },
+    {
+      "part_number": "B90176",
+      "name": "Part # METRICS",
+      "metric": "",
+      "note": "",
+      "category": "Optional Subscription",
+      "retired": false
+    },
+    {
+      "part_number": "B88367",
+      "name": "Classic-Security Monitoring and Analytics Edition",
+      "metric": "300 Gigabytes Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88366",
+      "name": "CloudClassic-Configuration and Compliance Edition",
+      "metric": "100 Entities Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88343",
+      "name": "Compute Capacity - M - Cost Optimized Advanced",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88346",
+      "name": "Compute Capacity - M - Cost Optimized Enterprise",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88349",
+      "name": "Compute Capacity - M - Performance Optimized Advanced",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88352",
+      "name": "Compute Capacity - M - Performance Optimized Enterprise",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88344",
+      "name": "Compute Capacity - R1 - Cost Optimized Advanced",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88347",
+      "name": "Compute Capacity - R1 - Cost Optimized Enterprise",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88350",
+      "name": "Compute Capacity - R1 - Performance Optimized Advanced",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88353",
+      "name": "Compute Capacity - R1 - Performance Optimized Enterprise",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88345",
+      "name": "Compute Capacity - R2 - Cost Optimized Advanced",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88348",
+      "name": "Compute Capacity - R2 - Cost Optimized Enterprise",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88351",
+      "name": "Compute Capacity - R2 - Performance Optimized Advanced",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88354",
+      "name": "Compute Capacity - R2 - Performance Optimized Enterprise",
+      "metric": "Ravello Compute Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88371",
+      "name": "Data Processed",
+      "metric": "Processed Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88365",
+      "name": "Edition",
+      "metric": "300 Gigabytes Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88335",
+      "name": "Edition-Dense I/O",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88332",
+      "name": "Edition-Dense I/O",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88333",
+      "name": "Extreme Performance Edition-Dense I/O",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88334",
+      "name": "High Performance Edition-Dense I/O",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88356",
+      "name": "Library Storage",
+      "metric": "Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88316",
+      "name": "Machine Dense I/O - X5",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88313",
+      "name": "Metal Dense I/O - X5",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88314",
+      "name": "Metal High I/O - X5",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92759",
+      "name": "MySQL Analytics - Bare Metal Standard - E2",
+      "metric": "1, 8, 9 Node Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92807",
+      "name": "MySQL Database - Bare Metal Standard - E2",
+      "metric": "1 Node Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95441",
+      "name": "MySQL Database - Optimized - Intel X9 - Compute",
+      "metric": "8,9 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95442",
+      "name": "MySQL Database - Optimized - Intel X9 - Memory",
+      "metric": "8,9 Gigabyte Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95435",
+      "name": "MySQL Database - Standard - AMD E4 - Compute",
+      "metric": "8,9 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95436",
+      "name": "MySQL Database - Standard - AMD E4 - Memory",
+      "metric": "8,9 Gigabyte Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92425",
+      "name": "MySQL Database - Standard - E2",
+      "metric": "1, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92962",
+      "name": "MySQL Database - Standard - E3",
+      "metric": "8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92963",
+      "name": "MySQL Database - Standard - E3 - Memory",
+      "metric": "Gigabyte Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95437",
+      "name": "MySQL Database - Standard - Intel X7 - Compute",
+      "metric": "8,9 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95438",
+      "name": "MySQL Database - Standard - Intel X7 - Memory",
+      "metric": "8,9 Gigabyte Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95439",
+      "name": "MySQL Database - Standard - Intel X9 - Compute",
+      "metric": "8,9 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95440",
+      "name": "MySQL Database - Standard - Intel X9 - Memory",
+      "metric": "8,9 Gigabyte Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B93546",
+      "name": "MySQL Database for HeatWave - Bare Metal Standard",
+      "metric": "Node Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87529",
+      "name": "Oracle API Platform Cloud Service - Classic",
+      "metric": "Gateway Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89652",
+      "name": "Oracle API Platform Cloud Service Oracle Cloud Service",
+      "metric": "Gateway Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95497",
+      "name": "Oracle Access Governance BYOL  First 10,000 users per",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95496",
+      "name": "Oracle Access Governance for Oracle Identity Manager  First 10,000 users per month",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89634",
+      "name": "Oracle Analytics Cloud - Data Lake - Classic BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89635",
+      "name": "Oracle Analytics Cloud - Enterprise - Classic BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89632",
+      "name": "Oracle Analytics Cloud - Essbase",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88434",
+      "name": "Oracle Analytics Cloud - Essbase - Classic",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89638",
+      "name": "Oracle Analytics Cloud - Essbase BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88304",
+      "name": "Oracle Analytics Cloud - Standard - Classic",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89633",
+      "name": "Oracle Analytics Cloud - Standard - Classic BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88303",
+      "name": "Oracle Analytics Cloud- Enterprise - Classic",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88651",
+      "name": "Oracle Apiary Cloud Service Professional",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88650",
+      "name": "Oracle Apiary Cloud Service Standard",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88305",
+      "name": "Oracle Application Container Cloud Service",
+      "metric": "GigabyteMemory Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89040",
+      "name": "Oracle Autonomous Data Warehouse",
+      "metric": "8, 9 , 12 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89041",
+      "name": "Oracle Autonomous Data Warehouse",
+      "metric": "8, 9 Terabyte Storage",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89039",
+      "name": "Oracle Autonomous Data Warehouse BYOL",
+      "metric": "8, 9, 13 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90453",
+      "name": "Oracle Autonomous Transaction Processing",
+      "metric": "8, 9, 12 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90454",
+      "name": "Oracle Autonomous Transaction Processing - BYOL",
+      "metric": "8, 9, 13 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88307",
+      "name": "Oracle Big Data Cloud Enterprise - Compute Capacity",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88308",
+      "name": "Oracle Big Data Cloud Service - Compute Edition",
+      "metric": "Gigabyte Storage Capacity",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88306",
+      "name": "Oracle Big Data Cloud Service - Compute Edition",
+      "metric": "Gigabyte Storage Capacity",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88887",
+      "name": "Oracle Blockchain Platform Cloud Service",
+      "metric": "500 Transactions Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88165",
+      "name": "Oracle CASB for Custom Apps",
+      "metric": "1 Monitored App Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89480",
+      "name": "Oracle CASB for Data Protection, Data Loss",
+      "metric": "1 Monitored Service User",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89481",
+      "name": "Oracle CASB for Data Protection, Data Loss",
+      "metric": "1 Gigabyte Data",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89476",
+      "name": "Oracle CASB for Discovery",
+      "metric": "1 User Per Month",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88163",
+      "name": "Oracle CASB for IaaS",
+      "metric": "1 Monitored Account Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88164",
+      "name": "Oracle CASB for IaaS - Additional Capacity",
+      "metric": "1 Gigabyte Data",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88161",
+      "name": "Oracle CASB for SaaS - Enterprise User",
+      "metric": "1 Monitored Service User",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88162",
+      "name": "Oracle CASB for SaaS - Non-Enterprise User",
+      "metric": "1 Monitored Service User",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B93545",
+      "name": "Oracle Cloud AI Services - Anomaly Detection",
+      "metric": "1,000",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B91446",
+      "name": "Oracle Cloud Infrastructure - 10 Mbps - Load Balancer Free",
+      "metric": "Load Balancer Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88319",
+      "name": "Oracle Cloud Infrastructure - 100 Mbps Load Balancer Capacity",
+      "metric": "Load Balancer Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88320",
+      "name": "Oracle Cloud Infrastructure - 400 Mbps Load Balancer Capacity",
+      "metric": "Load Balancer Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88321",
+      "name": "Oracle Cloud Infrastructure - 8000 Mbps Load Balancer Capacity",
+      "metric": "Load Balancer Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88277",
+      "name": "Oracle Cloud Infrastructure - Archive Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88281",
+      "name": "Oracle Cloud Infrastructure - Archive Storage ClassicOutbound Data Transfer",
+      "metric": "",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88322",
+      "name": "Oracle Cloud Infrastructure - Block Volume",
+      "metric": "Gigabyte Storage Capacity",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88270",
+      "name": "Oracle Cloud Infrastructure - Compute Classic - High I/O Compute Capacity",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88269",
+      "name": "Oracle Cloud Infrastructure - Compute Classic Compute Capacity",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88272",
+      "name": "Oracle Cloud Infrastructure - Compute Classic Unassociated Static IP",
+      "metric": "Static IP Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88268",
+      "name": "Oracle Cloud Infrastructure - Compute Classic Virtual GPU Standard Additional terms and conditions for Your use of",
+      "metric": "GPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89621",
+      "name": "Oracle Cloud Infrastructure - Database",
+      "metric": "8, 9 Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89622",
+      "name": "Oracle Cloud Infrastructure - Database",
+      "metric": "3, 8, 9 Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89623",
+      "name": "Oracle Cloud Infrastructure - Database",
+      "metric": "5,8, 9 Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89624",
+      "name": "Oracle Cloud Infrastructure - Database",
+      "metric": "6, 8, 9 Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88846",
+      "name": "Oracle Cloud Infrastructure - Database All Editions - Additional Capacity - BYOL",
+      "metric": "3, 4, 8, 9 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88329",
+      "name": "Oracle Cloud Infrastructure - Database Enterprise Edition High Performance Additional Capacity",
+      "metric": "5 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88328",
+      "name": "Oracle Cloud Infrastructure - Database Enterprise Edition-Additional Capacity",
+      "metric": "3 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88331",
+      "name": "Oracle Cloud Infrastructure - Database Standard Edition-Additional Capacity",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87820",
+      "name": "Oracle Cloud Infrastructure - FastConnect Classic Port Speed 10Gbps",
+      "metric": "Port Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87818",
+      "name": "Oracle Cloud Infrastructure - FastConnect Classic Port Speed 1Gbps",
+      "metric": "Port Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92602",
+      "name": "Oracle Cloud Infrastructure - Load Balancer Bandwidth",
+      "metric": "Load Balancer Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92601",
+      "name": "Oracle Cloud Infrastructure - Load Balancer Base",
+      "metric": "Load Balancer Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88283",
+      "name": "Oracle Cloud Infrastructure - Object Storage Classic",
+      "metric": "10,000 Requests Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88284",
+      "name": "Oracle Cloud Infrastructure - Object Storage Classic",
+      "metric": "1,000 Requests Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88285",
+      "name": "Oracle Cloud Infrastructure - Object Storage Classic",
+      "metric": "",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88282",
+      "name": "Oracle Cloud Infrastructure - Object Storage Classic - Outbound Data Transfer",
+      "metric": "",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92990",
+      "name": "Oracle Cloud Infrastructure - Outbound Data Transfer - Originating in APAC, Japan, and South America",
+      "metric": "",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92991",
+      "name": "Oracle Cloud Infrastructure - Outbound Data Transfer - Originating in Middle East and Africa",
+      "metric": "",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92989",
+      "name": "Oracle Cloud Infrastructure - Outbound Data Transfer - Originating in North America, Europe, and UK",
+      "metric": "",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90219",
+      "name": "Oracle Cloud Infrastructure - Ravello - Compute - Metal",
+      "metric": "Increments of 36 OCPUs",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90218",
+      "name": "Oracle Cloud Infrastructure - Ravello - Compute Enterprise",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90217",
+      "name": "Oracle Cloud Infrastructure - Ravello - Compute Standard",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90221",
+      "name": "Oracle Cloud Infrastructure - Ravello - Library Storage",
+      "metric": "Gigabyte Storage Capacity",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90222",
+      "name": "Oracle Cloud Infrastructure - Ravello - Outbound Data",
+      "metric": "Gigabyte Outbound Data",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90223",
+      "name": "Oracle Cloud Infrastructure - Ravello - Virtual Machine",
+      "metric": "Virtual Machine IP Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90220",
+      "name": "Oracle Cloud Infrastructure - Ravello - Volume Storage",
+      "metric": "Gigabyte Storage Capacity",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90329",
+      "name": "Oracle Cloud Infrastructure - Web",
+      "metric": "1,000,000 Incoming",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90330",
+      "name": "Oracle Cloud Infrastructure - Web",
+      "metric": "Gigabyte of Good",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90332",
+      "name": "Oracle Cloud Infrastructure - Web",
+      "metric": "1,000,000 Incoming",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90331",
+      "name": "Oracle Cloud Infrastructure - Web Application Firewall Non-OCI Endpoint",
+      "metric": "Endpoints Per Month",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88274",
+      "name": "Oracle Cloud Infrastructure Block Storage Classic",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88275",
+      "name": "Oracle Cloud Infrastructure Block Storage Classic",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92939",
+      "name": "Oracle Cloud Infrastructure Logging Analytics",
+      "metric": "Logging Analytics",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95504",
+      "name": "Oracle Cloud Infrastructure Process",
+      "metric": "Active Process",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B95505",
+      "name": "Oracle Cloud Infrastructure Process",
+      "metric": "Execution Pack",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B94976",
+      "name": "Oracle Cloud Infrastructure Vision - Document Extraction  First 5,000 transactions",
+      "metric": "1,000 Transactions",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B94975",
+      "name": "Oracle Cloud Infrastructure Vision - Document Properties  First 5,000 transactions",
+      "metric": "1,000 Transactions",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88522",
+      "name": "Oracle Cloud Infrastructure- Archive Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88330",
+      "name": "Oracle Cloud Infrastructure-Database Enterprise Edition Extreme Performance Additional Capacity",
+      "metric": "6 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88323",
+      "name": "Oracle Cloud Infrastructure-Object Storage",
+      "metric": "10,000 Requests Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88324",
+      "name": "Oracle Cloud Infrastructure-Object Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88899",
+      "name": "Oracle Compute Cloud Service - Dedicated Compute",
+      "metric": "Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88896",
+      "name": "Oracle Container Pipelines Cloud Service",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92217",
+      "name": "Oracle Content Management - Advanced Video",
+      "metric": "250 Video Assets",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89970",
+      "name": "Oracle Content and Experience Cloud - Enterprise",
+      "metric": "Active User Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87496",
+      "name": "Oracle Content and Experience Cloud - Enterprise Classic",
+      "metric": "Active User Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89969",
+      "name": "Oracle Content and Experience Cloud - Standard",
+      "metric": "Active User Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87494",
+      "name": "Oracle Content and Experience Cloud - Standard Classic",
+      "metric": "Active User Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87498",
+      "name": "Oracle Content and Experience Cloud - Visitor Classic",
+      "metric": "Active User Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89655",
+      "name": "Oracle Data Integration Platform Cloud Service",
+      "metric": "Gigabyte of Data Processed",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89656",
+      "name": "Oracle Data Integration Platform Cloud Service",
+      "metric": "Gigabyte of Data Processed",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87715",
+      "name": "Oracle Data Integration Platform Cloud Service Enterprise - Classic",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87716",
+      "name": "Oracle Data Integration Platform Cloud Service Governance - Classic",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87714",
+      "name": "Oracle Data Integration Platform Cloud Service Standard - Classic",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88181",
+      "name": "Oracle Data Visualization Cloud Service",
+      "metric": "Hosted Named User Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88403",
+      "name": "Oracle Database Exadata Cloud Service - Full",
+      "metric": "Hosted Environment Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88892",
+      "name": "Oracle Database Exadata Cloud Service - Full",
+      "metric": "Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88857",
+      "name": "Oracle Database Exadata Cloud Service - Half",
+      "metric": "Hosted Environment Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88891",
+      "name": "Oracle Database Exadata Cloud Service - Half",
+      "metric": "Hosted Environment Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88858",
+      "name": "Oracle Database Exadata Cloud Service - Quarter",
+      "metric": "Hosted Environment Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88890",
+      "name": "Oracle Database Exadata Cloud Service - Quarter",
+      "metric": "Hosted Environment Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88401",
+      "name": "Oracle Database Exadata Cloud Service Additional OCPU's - BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88599",
+      "name": "Oracle Database Exadata Cloud Service-Additional OCPU's",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88598",
+      "name": "Oracle Database Exadata Cloud Service-Full",
+      "metric": "Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88602",
+      "name": "Oracle Database Exadata Cloud Service-Full Rack",
+      "metric": "Hosted Environment Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88601",
+      "name": "Oracle Database Exadata Cloud Service-Half",
+      "metric": "Hosted Environment Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88597",
+      "name": "Oracle Database Exadata Cloud Service-Half",
+      "metric": "Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88600",
+      "name": "Oracle Database Exadata Cloud Service-Quarter",
+      "metric": "Hosted Environment Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88596",
+      "name": "Oracle Database Exadata Cloud Service-Quarter",
+      "metric": "Hosted Environment Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88408",
+      "name": "Oracle Database Exadata Express Cloud",
+      "metric": "8, 9 Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88409",
+      "name": "Oracle Database Exadata Express Cloud",
+      "metric": "1,8, 9 Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88410",
+      "name": "Oracle Database Exadata Express Cloud",
+      "metric": "1,8, 9 Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88411",
+      "name": "Oracle Database Exadata Express Cloud",
+      "metric": "1,8, 9 Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88412",
+      "name": "Oracle Database Exadata Express Cloud",
+      "metric": "1,8, 9 Hosted",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89159",
+      "name": "Oracle Developer Cloud Service - Additional",
+      "metric": "Gigabyte Storage Capacity",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B87954",
+      "name": "Oracle Event Hub Cloud Service - Partition Capacity",
+      "metric": "Partition Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88309",
+      "name": "Oracle Event Hub Cloud Service Dedicated Compute Capacity",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88310",
+      "name": "Oracle GoldenGate Cloud Service Enterprise",
+      "metric": "2 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88398",
+      "name": "Oracle GoldenGate Cloud Service Enterprise - BYOL",
+      "metric": "1 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88166",
+      "name": "Oracle Identity Cloud - Basic",
+      "metric": "Active User Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88167",
+      "name": "Oracle Identity Cloud - Standard",
+      "metric": "Active User Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88168",
+      "name": "Oracle Identity Cloud - Standard-Consumer User",
+      "metric": "Active User Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88159",
+      "name": "Oracle Integration Cloud Service - Enterprise Classic",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89642",
+      "name": "Oracle Integration Cloud Service - Enterprise Classic - BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88158",
+      "name": "Oracle Integration Cloud Service - Standard - Classic",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89641",
+      "name": "Oracle Integration Cloud Service - Standard Classic - BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88312",
+      "name": "Oracle Internet of Things Cloud - Enterprise",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88287",
+      "name": "Oracle Java Cloud Service - Enterprise",
+      "metric": "1 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88289",
+      "name": "Oracle Java Cloud Service - High Performance",
+      "metric": "1 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88288",
+      "name": "Oracle Java Cloud Service - Standard",
+      "metric": "1 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89162",
+      "name": "Oracle Management Cloud - Enterprise Edition",
+      "metric": "1 100 Entities Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89161",
+      "name": "Oracle Management Cloud - Standard Edition",
+      "metric": "1 100 Entities Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88364",
+      "name": "Oracle Management Cloud Classic - Enterprise Edition",
+      "metric": "100 Entities Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88363",
+      "name": "Oracle Management Cloud Classic - Standard Edition",
+      "metric": "100 Entities Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89163",
+      "name": "Oracle Management Cloud Service-Log Analytics",
+      "metric": "1 300 Gigabytes Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88461",
+      "name": "Oracle Messaging Cloud Service",
+      "metric": "1 1,000,000 API",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89647",
+      "name": "Oracle Mobile Cloud Service - Enterprise",
+      "metric": "Request Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88311",
+      "name": "Oracle MySQL Cloud Service",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88460",
+      "name": "Oracle SOA Suite Cloud Service",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88160",
+      "name": "Oracle SOA Suite Cloud Service - B2B Adapter for EDI",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88407",
+      "name": "Oracle SOA Suite Cloud Service BYOL",
+      "metric": "OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89164",
+      "name": "Oracle Security Monitoring and Compliance Cloud Configuration and Compliance Edition",
+      "metric": "100 Entities Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89165",
+      "name": "Oracle Security Monitoring and Compliance CloudSecurity Monitoring and Analytics Edition",
+      "metric": "300 Gigabytes Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88459",
+      "name": "Oracle Self-Service Integration Cloud Service",
+      "metric": "Recipe Jobs Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88435",
+      "name": "Oracle Visual Builder Cloud Service - Classic",
+      "metric": "OCPU",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88298",
+      "name": "Oracle WebCenter Portal Cloud Service",
+      "metric": "1 OCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B89971",
+      "name": "Oracle s Content and Experience Cloud - Visitor",
+      "metric": "Active User Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90225",
+      "name": "Ravello Service on 3rd party cloud - Compute Enterprise Ravello on 3rd party Cloud - Storage",
+      "metric": "vCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90224",
+      "name": "Ravello Service on 3rd party cloud - Compute Standard",
+      "metric": "vCPU Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90229",
+      "name": "Ravello Service on 3rd party cloud - Virtual Machine IP",
+      "metric": "Virtual Machine IP Per",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B90226",
+      "name": "Ravello Service on 3rd party cloud - Volume Storage",
+      "metric": "Gigabyte Storage Capacity",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B93650",
+      "name": "RoRoving Edge Cluster Kit - Resource Possession Per Month",
+      "metric": "Each",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B93653",
+      "name": "RoRoving Edge Cluster Kit - Unreturnable or Loss Fee",
+      "metric": "",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B93649",
+      "name": "RoRoving Edge Device - Compute Optimized Standard - Resource Possession Per Month",
+      "metric": "Each",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B93652",
+      "name": "RoRoving Edge Device - Compute Optimized Unreturnable or Loss Fee",
+      "metric": "",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B93651",
+      "name": "RoRoving Edge Station - Unreturnable or Loss Fee",
+      "metric": "",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B92616",
+      "name": "Roving Edge Cluster Kit - Standard",
+      "metric": "1 Resource",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B93041",
+      "name": "Roving Edge Cluster Kit - Unreturnable/Loss Fee",
+      "metric": "1 Each",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88358",
+      "name": "Virtual Machine IP",
+      "metric": "Virtual Machine IP Per Hour",
+      "note": "",
+      "category": "Retired",
+      "retired": true
+    },
+    {
+      "part_number": "B88640",
+      "name": "APPLICABLE PART #",
+      "metric": "",
+      "note": "",
+      "category": "Retired 6/1/18",
+      "retired": true
+    },
+    {
+      "part_number": "B88643",
+      "name": "PART #",
+      "metric": "",
+      "note": "",
+      "category": "Retired 6/1/18",
+      "retired": true
+    },
+    {
+      "part_number": "B92615",
+      "name": "Roving Edge Device - Compute",
+      "metric": "1 Resource",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B93039",
+      "name": "Roving Edge Device - Compute",
+      "metric": "1 Resource",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B93040",
+      "name": "Roving Edge Device - Compute Optimized - Unreturnable/Loss Fee",
+      "metric": "1 Each",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B109496",
+      "name": "Roving Edge Device - RED.2",
+      "metric": "1 Resource",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B109492",
+      "name": "Roving Edge Device - RED.2 Compute",
+      "metric": "1 Resource",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B109493",
+      "name": "Roving Edge Device - RED.2 GPU",
+      "metric": "1 Resource",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B109495",
+      "name": "Roving Edge Device - RED.2 Non Return Fee",
+      "metric": "1 Each",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B109494",
+      "name": "Roving Edge Device - RED.2.STG",
+      "metric": "1 Resource",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B95228",
+      "name": "Roving Edge Ultra",
+      "metric": "1 Resource",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B95229",
+      "name": "Roving Edge Ultra - Unreturnable or Loss Fee",
+      "metric": "1 Each",
+      "note": "",
+      "category": "Roving Edge Infrastructure",
+      "retired": false
+    },
+    {
+      "part_number": "B97179",
+      "name": "Oracle Access Governance Premium - Consumer",
+      "metric": "Consumer User Per",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B97181",
+      "name": "Oracle Access Governance Premium - Workforce",
+      "metric": "Workforce User Per",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B97172",
+      "name": "Oracle Access Governance for Oracle Cloud",
+      "metric": "Workforce User Per",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B97173",
+      "name": "Oracle Access Governance for Oracle Workloads",
+      "metric": "Workforce User Per",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B97180",
+      "name": "Oracle Access Governance for Oracle Workloads",
+      "metric": "Consumer User Per",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B93082",
+      "name": "Oracle Cloud Infrastructure - Database Management External DB - BYOL Conversion Ratios for Host CPU Core Per Hour:",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B99597",
+      "name": "Oracle Cloud Infrastructure - Dedicated Key",
+      "metric": "HSM Partition Per",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B98100",
+      "name": "Oracle Cloud Infrastructure - External Key",
+      "metric": "Key Version Per",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B90328",
+      "name": "Oracle Cloud Infrastructure - Key Management",
+      "metric": "Virtual Private Vault",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B92092",
+      "name": "Oracle Cloud Infrastructure - Key Management",
+      "metric": "Key Version Per",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B94173",
+      "name": "Oracle Cloud Infrastructure - Threat Intelligence Service",
+      "metric": "API Calls",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B108765",
+      "name": "Oracle Cloud Infrastructure - Vulnerability Detection and",
+      "metric": "Host CPU Core",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B108189",
+      "name": "Oracle Cloud Infrastructure Cloud Guard Workload Protection Limited",
+      "metric": "Node Per Hour",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B108190",
+      "name": "Oracle Cloud Infrastructure Cloud Guard Workload Protection Queries Standard",
+      "metric": "Request",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B108188",
+      "name": "Oracle Cloud Infrastructure Cloud Guard Workload Protection Standard",
+      "metric": "Node Per Hour",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B93493",
+      "name": "Oracle Cloud Infrastructure Identity and Access Management - External User",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B93494",
+      "name": "Oracle Cloud Infrastructure Identity and Access Management - Oracle Apps Premium",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B93495",
+      "name": "Oracle Cloud Infrastructure Identity and Access Management - Premium",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B93498",
+      "name": "Oracle Cloud Infrastructure Identity and Access Management - Replication",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B93496",
+      "name": "Oracle Cloud Infrastructure Identity and Access Management - SMS",
+      "metric": "1 SMS Message Sent",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B93497",
+      "name": "Oracle Cloud Infrastructure Identity and Access Management - Token",
+      "metric": "Token",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B90556",
+      "name": "Oracle Identity Cloud - Consumer User",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B90558",
+      "name": "Oracle Identity Cloud - Consumer User - BYOL Conversion Ratios for Enterprise User:",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B90555",
+      "name": "Oracle Identity Cloud - Enterprise User",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B90557",
+      "name": "Oracle Identity Cloud - Enterprise User - BYOL",
+      "metric": "User Per Month",
+      "note": "",
+      "category": "Security and Identity",
+      "retired": false
+    },
+    {
+      "part_number": "B91633",
+      "name": "Oracle Cloud Infrastructure - Archive",
+      "metric": "2 Gigabyte Storage",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B91445",
+      "name": "Oracle Cloud Infrastructure - Block Volume",
+      "metric": "1 Gibabyte Storage",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B91962",
+      "name": "Oracle Cloud Infrastructure - Block Volume",
+      "metric": "Performance",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B93001",
+      "name": "Oracle Cloud Infrastructure - Data Retrieval",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B89057",
+      "name": "Oracle Cloud Infrastructure - File Storage",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B93000",
+      "name": "Oracle Cloud Infrastructure - Infrequent",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B91627",
+      "name": "Oracle Cloud Infrastructure - Object",
+      "metric": "2, 3 10,000 Requests",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B90938",
+      "name": "Oracle Cloud Infrastructure - Streaming - PUT",
+      "metric": "3 Gigabytes of Data",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B90939",
+      "name": "Oracle Cloud Infrastructure - Streaming Storage",
+      "metric": "Gigabyte Per Hour",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B91961",
+      "name": "Oracle Cloud Infrastructure Block Volume",
+      "metric": "Gigabyte Storage",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B109546",
+      "name": "Oracle Cloud Infrastructure File Storage",
+      "metric": "Performance Units",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    },
+    {
+      "part_number": "B95410",
+      "name": "Oracle ZFS Storage - High Availability",
+      "metric": "Instance Per Hour",
+      "note": "",
+      "category": "Storage",
+      "retired": false
+    }
+  ]
+}

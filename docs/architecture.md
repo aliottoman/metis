@@ -6,6 +6,22 @@ The FastAPI process is the trusted control plane. Ollama is reachable only by th
 
 Uploaded text is evidence, never authority. It cannot approve an action, widen a filesystem grant, enable networking, add a dependency, or directly enter long-term memory.
 
+A project build is verified before it is offered, in three rungs that run
+cheapest first and stop at the first failure: every staged file parses
+(`project_workspace.staged_syntax_errors`), the staged files fit together
+(`project_wiring.staged_wiring_errors` — pure AST, nothing executed), and the
+project actually imports and serves its routes
+(`project_sandbox.ProjectSandboxService`). Only the third rung executes anything,
+and it executes nothing on the host: the reviewed wrapper at
+`infra/sandbox/project-verify/run_project_verify.py` owns every container flag,
+the changeset is materialized into a throwaway copy that is mounted read-only,
+and the container has no network, no capabilities, no writable root and a bounded
+CPU, memory and wall clock. A sandbox that cannot run degrades to the static
+rungs and says so on the approval card — it never reports the project as clean by
+default. Because the sandbox is offline, a package the project declares but the
+image does not carry is reported as a limit of the verifier, never as a defect in
+the code.
+
 The planner receives at most 12,000 characters of attachment text, labelled as an
 untrusted excerpt, plus a fixed vocabulary of host-derived document-shape signals
 such as `project_documentation`, `software_components`, and

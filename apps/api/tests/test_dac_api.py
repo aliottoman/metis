@@ -251,7 +251,7 @@ class ExplodingModel:
 
     name = "exploding"
 
-    async def generate(self, request, on_token=None, *, model_aliases=None):
+    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
         raise RuntimeError("model backend unreachable")
 
 
@@ -264,7 +264,7 @@ class ReorderingModel:
         self._order = order
         self.seen_aliases: dict | None = None
 
-    async def generate(self, request, on_token=None, *, model_aliases=None):
+    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
         import json as _json
 
         from waqil_api.contracts import ModelResultV1

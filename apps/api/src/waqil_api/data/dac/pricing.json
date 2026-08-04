@@ -1,0 +1,32 @@
+{
+  "generated_at": "2026-07-28",
+  "source_urls": [
+    "https://docs.oracle.com/en-us/iaas/Content/generative-ai/pay-dedicated.htm",
+    "https://www.oracle.com/artificial-intelligence/generative-ai/generative-ai-service/pricing/"
+  ],
+  "notes": [
+    "AI unit-hours are exact: ai_units (shapes.json) * unit_count * hours. That number is",
+    "derived entirely from Oracle's published shape table and needs no price to be correct.",
+    "",
+    "The dollar rate is NOT auto-verified. Oracle moved per-SKU Generative AI prices behind",
+    "the interactive cost estimator, so there is no stable public page or API to read it",
+    "from. Rather than ship an invented number dressed up as Oracle's, the rate below is a",
+    "placeholder the user is expected to replace with their contracted rate; the UI exposes",
+    "it as an editable field and labels any dollar figure derived from it as unverified.",
+    "",
+    "Imported models are exempt from the 744 unit-hour hosting minimum that applies to",
+    "Oracle's pretrained and fine-tuned models."
+  ],
+  "price_per_ai_unit_hour": {
+    "value": 1.0,
+    "currency": "USD",
+    "verified": false,
+    "source": "user_configurable",
+    "label": "Placeholder rate — replace with your contracted AI unit/hour price"
+  },
+  "minimum_commitment_unit_hours": {
+    "pretrained_hosting": 744,
+    "fine_tuning": 1,
+    "imported_hosting": 0
+  }
+}

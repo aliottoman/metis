@@ -19,6 +19,12 @@ dependencies = [
   "pydantic==2.11.7",
   "pydantic-settings==2.10.1",
   "python-multipart==0.0.20",
+  # The static rung of the build gate. Runtime dependencies, not dev tools: the
+  # build loop shells out to both on every staged changeset, and a type checker
+  # resolving against the really-installed packages is what catches an invented
+  # keyword argument that parses perfectly. Neither executes the code it reads.
+  "ruff==0.15.6",
+  "mypy==2.3.0",
   "uvicorn[standard]==0.35.0",
 ]
 
@@ -37,7 +43,6 @@ cloud = [
   "openai==2.46.0",
   "oci-genai-auth==1.0.0",
 ]
-
 [project.scripts]
 waqil-api = "waqil_api.main:run"
 

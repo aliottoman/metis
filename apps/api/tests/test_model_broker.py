@@ -12,7 +12,7 @@ class _FakeModel:
         self.reply = reply
         self.calls: list[dict] = []
 
-    async def generate(self, request, on_token=None, *, model_aliases=None):
+    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
         self.calls.append(
             {"role": request.role, "system": request.system_prompt, "user": request.user_prompt}
         )

@@ -184,6 +184,7 @@ function approvalFrom(event: RunEventV1): ApprovalRequest | null {
     permissions: Array.isArray(payload.permissions) ? payload.permissions.map(String) : [],
     action_digest: payload.action_digest ? String(payload.action_digest) : payload.input_digest ? String(payload.input_digest) : undefined,
     status: payload.status ? String(payload.status) as ApprovalRequest["status"] : "pending",
+    blocked_reason: payload.blocked_reason ? String(payload.blocked_reason) : undefined,
   };
 }
 
@@ -221,6 +222,16 @@ export function RunTimeline({ events, connection, streamError, onDecision, decid
                     {approval.action_digest ? <code title={approval.action_digest}>Action {approval.action_digest.slice(0, 12)}</code> : null}
                     {decided ? (
                       <div className="decisionRecorded">✓ Decision recorded</div>
+                    ) : approval.blocked_reason ? (
+                      // No Approve button at all, rather than a disabled one: a
+                      // greyed button reads as "try again", and this never
+                      // becomes approvable without a follow-up that fixes it.
+                      <div className="approvalBlocked">
+                        <p><strong>Cannot be applied.</strong> {approval.blocked_reason}</p>
+                        <div className="approvalActions">
+                          <button type="button" className="dangerButton" disabled={decisionBusy === approval.id} onClick={() => void onDecision(approval.id, "reject")}>Reject</button>
+                        </div>
+                      </div>
                     ) : (
                       <div className="approvalActions">
                         <button type="button" className="dangerButton" disabled={decisionBusy === approval.id} onClick={() => void onDecision(approval.id, "reject")}>Reject</button>
@@ -234,7 +245,7 @@ export function RunTimeline({ events, connection, streamError, onDecision, decid
           );
         })}
       </div>
-      <footer className="timelineFooter">Only operational summaries are shown. Private model reasoning is never exposed.</footer>
+      <footer className="timelineFooter">Operational summaries only. The model&rsquo;s thinking streams to the answer, under Thinking, and is never stored.</footer>
     </div>
   );
 }

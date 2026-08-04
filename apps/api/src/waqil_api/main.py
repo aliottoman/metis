@@ -46,6 +46,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.include_router(router)
 
+    @application.middleware("http")
+    async def mark_client_present(request, call_next):
+        """Every client call resets the model's idle-release clock.
+
+        The UI polls the session while a window is open and visible, so this is
+        what tells the runtime that somebody is still there — and its absence is
+        what tells it the app has been closed or put away.
+        """
+        app_runtime = getattr(request.app.state, "runtime", None)
+        if app_runtime is not None:
+            app_runtime.model_session.touch()
+        return await call_next(request)
+
     @application.get("/health", include_in_schema=False)
     async def root_health():
         return {"status": "ok", "api": "/api/v1/health"}

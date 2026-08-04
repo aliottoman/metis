@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any, AsyncIterator
@@ -22,6 +24,54 @@ from .model_preference import ModelPreferenceStore
 
 class LocalModelSessionError(RuntimeError):
     pass
+
+
+# The idle window at which "unload after N seconds" becomes "stay until I stop it".
+INDEFINITE_IDLE_SECONDS = 86_400
+
+# Ollama parses keep_alive with Go's time.ParseDuration, which rejects a bare
+# "-1" ("missing unit in duration"). Any negative duration means keep forever,
+# so the indefinite case has to carry a unit.
+KEEP_ALIVE_FOREVER = "-1m"
+
+
+def keep_alive_for(idle_timeout_seconds: int) -> str:
+    """Return the Ollama keep_alive duration for an idle window, in seconds."""
+    if idle_timeout_seconds >= INDEFINITE_IDLE_SECONDS:
+        return KEEP_ALIVE_FOREVER
+    return f"{max(0, idle_timeout_seconds)}s"
+
+
+def _error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    message = payload.get("error") if isinstance(payload, dict) else None
+    text = str(message or response.text or "").strip()
+    return f"{response.status_code} {text}"[:400] if text else str(response.status_code)
+
+
+def _resident_bytes(row: dict[str, Any] | None) -> int:
+    """Bytes a running model occupies, per Ollama's own accounting."""
+    if not row:
+        return 0
+    for key in ("size_vram", "size"):
+        try:
+            value = int(row.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return 0
+
+
+def _total_memory_bytes() -> int:
+    """Physical memory on this machine, or 0 when it cannot be determined."""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, OSError, ValueError):
+        return 0
 
 
 def _date(value: object) -> datetime | None:
@@ -42,6 +92,9 @@ class LocalModelSessionManager:
         self.preference = preference
         self._lock = asyncio.Lock()
         self._busy = 0
+        # Monotonic, so a clock change or a laptop waking from sleep cannot make
+        # an idle window look like it has already elapsed.
+        self._last_client_activity = time.monotonic()
         self._owned_model: str | None = None
         self._state = "off"
         self._error: str | None = None
@@ -51,6 +104,12 @@ class LocalModelSessionManager:
             saved.get("idle_timeout_seconds") or settings.local_model_idle_seconds
         )
         self.context_window = int(saved.get("context_window") or settings.context_window)
+        # A restart must not silently revert to the unload-after-every-call
+        # default: the saved idle window is what the user last asked for, and
+        # without this the next turn evicts a model they chose to keep warm.
+        if saved.get("idle_timeout_seconds"):
+            self.settings.ollama_keep_alive = self.keep_alive
+            self.settings.context_window = self.context_window
 
     @property
     def deterministic(self) -> bool:
@@ -58,9 +117,7 @@ class LocalModelSessionManager:
 
     @property
     def keep_alive(self) -> str:
-        if self.idle_timeout_seconds >= 86_400:
-            return "-1"
-        return f"{self.idle_timeout_seconds}s"
+        return keep_alive_for(self.idle_timeout_seconds)
 
     def _load(self) -> dict[str, Any]:
         try:
@@ -104,7 +161,13 @@ class LocalModelSessionManager:
                 base_url=self.settings.ollama_base_url, timeout=timeout
             ) as client:
                 response = await client.post(path, json=payload)
-                response.raise_for_status()
+                if response.is_error:
+                    # Ollama explains a rejected request in its own JSON body; the
+                    # bare status line does not, so surface the body instead.
+                    raise LocalModelSessionError(
+                        "Ollama could not update the model: "
+                        f"{_error_detail(response)}"
+                    )
         except httpx.HTTPError as exc:
             raise LocalModelSessionError(f"Ollama could not update the model: {exc}") from exc
 
@@ -145,6 +208,7 @@ class LocalModelSessionManager:
                         else None
                     ),
                     loaded=loaded_row is not None,
+                    resident_bytes=_resident_bytes(loaded_row),
                     expires_at=_date(loaded_row.get("expires_at")) if loaded_row else None,
                     owned_by_metis=name == self._owned_model,
                 )
@@ -176,6 +240,10 @@ class LocalModelSessionManager:
                     selected and selected.id == self._owned_model
                 ),
                 busy_count=self._busy,
+                # Everything loaded counts, not just the selected model, since a
+                # model left running elsewhere occupies the same memory.
+                resident_bytes=sum(item.resident_bytes for item in models),
+                total_memory_bytes=_total_memory_bytes(),
                 models=models if include_models else [],
             )
         except LocalModelSessionError as exc:
@@ -186,6 +254,7 @@ class LocalModelSessionManager:
                 idle_timeout_seconds=self.idle_timeout_seconds,
                 context_window=self.context_window,
                 busy_count=self._busy,
+                total_memory_bytes=_total_memory_bytes(),
                 error=str(exc),
             )
 
@@ -225,9 +294,7 @@ class LocalModelSessionManager:
                         "model": model,
                         "prompt": "",
                         "stream": False,
-                        "keep_alive": "-1"
-                        if idle_timeout_seconds >= 86_400
-                        else f"{idle_timeout_seconds}s",
+                        "keep_alive": keep_alive_for(idle_timeout_seconds),
                         "options": {"num_ctx": context_window},
                     },
                 )
@@ -258,6 +325,50 @@ class LocalModelSessionManager:
             self._owned_model = None
             self._state, self._error = "off", None
         return await self.status()
+
+    def touch(self) -> None:
+        """Record that a client is still here, resetting the idle release clock."""
+        self._last_client_activity = time.monotonic()
+
+    @property
+    def idle_seconds(self) -> float:
+        return time.monotonic() - self._last_client_activity
+
+    async def release_owned(self, *, reason: str = "shutdown") -> bool:
+        """Unload the model Metis launched, best effort and never raising.
+
+        Weights Metis put in memory are Metis's to take back. Left behind, they
+        stay wired for the whole keep_alive window — indefinitely when the user
+        chose "until stopped" — long after the app they belong to is gone.
+        """
+        if self.deterministic or not self._owned_model:
+            return False
+        model = self._owned_model
+        try:
+            await self._post(
+                "/api/generate",
+                {"model": model, "prompt": "", "stream": False, "keep_alive": 0},
+                timeout=15.0,
+            )
+        except Exception:  # noqa: BLE001 - releasing memory must never block a shutdown
+            # Ollama's own keep_alive stays the backstop if this could not run.
+            return False
+        self._owned_model = None
+        self._state, self._error = "off", None
+        return True
+
+    async def release_if_idle(self, after_seconds: float) -> bool:
+        """Unload once no client has called for a while and nothing is running.
+
+        The UI polls this session while it is open and visible, so a gap this
+        long means every window is closed or backgrounded — the case where
+        holding tens of gigabytes of weights buys nothing.
+        """
+        if after_seconds <= 0 or self._busy or not self._owned_model:
+            return False
+        if self.idle_seconds < after_seconds:
+            return False
+        return await self.release_owned(reason="idle")
 
     async def require_ready(self, model: str | None = None) -> None:
         if self.deterministic:

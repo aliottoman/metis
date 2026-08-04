@@ -28,7 +28,6 @@ from .dac_sizing import (
     ShapeSpec,
     SizingError,
     fit_coefficients,
-    minimum_shape,
 )
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / "dac"
@@ -191,12 +190,6 @@ class DacCatalog:
             return []
         resolved = [self.shape(name) for name in record.validated_shapes]
         return [shape for shape in resolved if shape is not None]
-
-    def minimum_shape_for(self, model_id: str, **kwargs: Any) -> ShapeSpec | None:
-        record = self.model(model_id)
-        if record is None or record.architecture is None:
-            return None
-        return minimum_shape(record.architecture, self.importable_shapes, **kwargs)
 
     # ── Benchmarks and calibration ───────────────────────────────────────────
 

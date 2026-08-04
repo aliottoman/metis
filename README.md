@@ -91,8 +91,10 @@ graph LR
 | --- | --- |
 | `apps/api` | FastAPI service, versioned contracts, LangGraph orchestration, SQLite stores, model broker, policy gates, tool registry |
 | `apps/web` | Next.js client with streamed run events, approvals, artifacts, tool versions, memory proposals, and model health |
+| `apps/api/src/waqil_api/scaffold` | The `appkit` runtime Metis vendors into the applications it builds |
 | `skills` | Immutable AgentSkills-compatible capability bundles |
-| `infra/sandbox` | Rootless Podman image, execution policy, and host runner |
+| `infra/sandbox` | Rootless Podman images, execution policies, and host runners |
+| `reference` | Verified API facts read from disk and injected into every build step |
 | `scripts` | Smoke tests, offline packaging, and local data export |
 | `docs` | Architecture invariants and offline packaging |
 
@@ -215,7 +217,56 @@ The chat header can open any project already present in the manually refreshed A
 - `.metis/project-context.json`, a deterministic bounded file and language map plus an initial architectural summary.
 - `.metis/METIS.md`, durable project conventions, important paths, verification guidance, risks, learnings, and a work log that evolves as Metis completes work.
 
-Two run-pinned modes are available. **Grok to Local** spends the cloud call on the initial map and then uses the configured local model for the bounded project loop. **Keep Grok** continues using Grok and OCI Responses function calling. Both modes expose the same host-owned tools: bounded file listing, exact-text search, ranged reads, exact-block replacement, new-file creation, and reviewed verification checks. Reads run immediately. Every write appears in the normal approval timeline and applies only after approval, and stale or ambiguous patches fail closed. Secret files, `.git`, `.metis`, symlinks, paths outside the selected project, arbitrary shell commands, and host networking are never exposed.
+Two run-pinned modes are available. **Grok to Local** spends the cloud call on the initial map and then uses the configured local model for the bounded project loop. **Keep Grok** continues using Grok and OCI Responses function calling. Both modes expose the same host-owned tools: bounded file listing, exact-text search, ranged reads, exact-block replacement, new-file creation, installed-library introspection, and reviewed verification checks. Reads run immediately. Secret files, `.git`, `.metis`, `appkit`, symlinks, paths outside the selected project, arbitrary shell commands, and host networking are never exposed.
+
+### Building a whole application
+
+Writes never touch your disk while the agent works. They land in a private overlay that the loop reads back like a real filesystem, so the agent can write a file, re-read it, and revise it across as many steps as the work needs. At the end you get **one** approval for the whole changeset — approve it and everything applies, decline it and nothing was ever written.
+
+```mermaid
+graph TD
+    REQ["Build request<br/>classified as a whole application"]
+    SCAF["1 · Scaffold<br/>Metis writes appkit/ into the overlay<br/>before the model's first step"]
+    PLAN["2 · Plan<br/>the model names every file it owes;<br/>an empty plan ends the turn"]
+    LOOP["3 · Agent loop<br/>staged writes, reads, patches<br/>bounded steps, fail-fast on refusal streaks"]
+
+    subgraph gates["4 · Verification gates, run on the staged changeset"]
+        direction TB
+        G1["syntax · every file parses"]
+        G2["typecheck · ruff and mypy against real packages"]
+        G3["wiring · imports, deps, mounts, asset references"]
+        G4["conformance · did it do what it planned"]
+        G5["runtime · imports and serves inside Podman"]
+        G1 --> G2 --> G3 --> G4 --> G5
+    end
+
+    CARD["5 · One approval card<br/>diff, verdict, findings"]
+    BLOCK["Blocked<br/>Approve withheld, findings named"]
+    APPLY["6 · Apply<br/>files written, .metis/asset.json generated"]
+    REPAIR["Follow-up message<br/>overlay carries forward, repair continues"]
+
+    REQ --> SCAF --> PLAN --> LOOP --> gates --> CARD
+    CARD -->|provable defect| BLOCK
+    CARD -->|clean| APPLY
+    BLOCK --> REPAIR --> LOOP
+
+    classDef host fill:#e8effc,stroke:#5669df,color:#16213e
+    classDef gate fill:#fdecea,stroke:#d9573f,color:#3d1710
+    classDef human fill:#eef6ee,stroke:#4a7c4a,color:#1d331d
+    class SCAF,PLAN,LOOP,APPLY host
+    class G1,G2,G3,G4,G5 gate
+    class CARD,BLOCK,REPAIR human
+```
+
+**The scaffold.** Ten reconstructed builds established that every model — frontier and local alike — reinvents the same infrastructure differently, and mostly wrongly. So Metis writes it instead. Before the first model step, a whole-application build receives a version-stamped `appkit/` package: lazy configuration that fails features rather than imports, `Decimal` money helpers where a missing value stays missing instead of becoming zero, upload handling that sniffs real MIME types and cleans up on every path, and a tested OCI Responses adapter. The model imports these and spends its budget on the domain. Writes under `appkit/` are refused exactly like `.metis`.
+
+**The gates.** A changeset is checked before you are ever asked about it. The four static rungs read the staged text; the runtime rung imports the project inside the network-less Podman sandbox and exercises what it declares — parameterless GETs, POST bodies synthesized from the app's own schema, multipart uploads, and parameterized routes. A generated application that imports cleanly but 500s on its central workflow no longer passes.
+
+**Blocked approvals.** When a rung proves a defect the environment cannot excuse — a name that does not exist, a call the callee will not accept, configuration read at import time, a page referencing a file nobody wrote — the Approve button is withheld and the card names the file and line. The staged work is not lost: send a follow-up and the exact verified overlay carries into the next run, so the repair edits what verification actually inspected rather than starting again from disk.
+
+**Launchability.** Models may not write `.metis`, so Metis writes the launch manifest itself after you approve an applied build, deriving the entry point, dependency file, and environment contract from what actually reached disk. Launching still requires the separate fingerprint approval described under **Asset library**.
+
+**Configuration.** Generated applications never see your secrets. Capabilities detected in their code select an allowlist of variable *names*, which are documented in the project's `.env.example` and shown to the model; the values are injected only into the launched child process, and the OCI private key never leaves `~/.oci`.
 
 ### Verification checks
 
@@ -285,14 +336,16 @@ make test
 make build
 ```
 
-That covers 416 backend and skill-bundle tests plus 52 web tests. The backend suite uses a deterministic model provider, so it needs neither Ollama nor Podman.
+That covers 755 backend and skill-bundle tests plus 68 web tests. The backend suite uses a deterministic model provider, so it needs neither Ollama nor Podman.
 
 Optional live checks require local model and container runtimes:
 
 - `make verify-ollama` exercises the configured Qwen and North contracts.
+- `make verify-schemas` compiles every structured-decode grammar against the running backend.
 - `make verify-podman` renders through the real rootless Podman boundary.
 - `make verify-restart` performs a real-Podman approval, restart, and exactly-once check.
-- `make verify-live` runs all three.
+- `make verify-live` runs all four.
+- `make verify-build` drives one real project build end to end against the pinned local model. Deterministic-provider tests cannot see how a live model shapes its replies — every defect in the build loop got past them — so run this after changing the loop, the gates, or the scaffold.
 - `make acceptance` drives the full API-backed integration path. It creates and approves a candidate, verifies all five artifacts and replayable events, reuses the active version from a new conversation, and confirms that corrective feedback creates pending learning proposals without changing the active tool.
 
 ## Offline environment package

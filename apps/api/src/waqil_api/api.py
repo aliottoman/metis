@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, AsyncIterator, Literal
+from typing import Annotated, Any, AsyncIterator, Literal
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -48,20 +49,37 @@ from .contracts import (
     CustomerAccountDetailV1,
     CustomerAccountUpdateV1,
     CustomerAccountV1,
+    CustomerActionCreateV1,
+    CustomerActionEditV1,
     CustomerActionStatusV1,
     CustomerActionV1,
     CustomerCaptureV1,
     CustomerDashboardV1,
+    CustomerFactCreateV1,
+    CustomerFactEditV1,
+    CustomerFactV1,
+    CustomerNoteCreateV1,
+    CustomerNoteUpdateV1,
+    CustomerNoteV1,
     CustomerOutputRequestV1,
     CustomerOutputV1,
+    CustomerPersonUpsertV1,
+    CustomerPersonV1,
     CustomerProposalSaveV1,
+    CustomerSearchResultV1,
     CustomerSettingsUpdateV1,
     CustomerSettingsV1,
+    CustomerSourceUpdateV1,
     CustomerSourceV1,
     CustomerUpdateProposalV1,
     CustomerWinCreateV1,
     CustomerWinUpdateV1,
     CustomerWinV1,
+    SkuRateCardUpdateV1,
+    SkuRateCardV1,
+    SkuRateV1,
+    WinValuationAcceptV1,
+    WinValuationV1,
     Decision,
     FeedbackV1,
     HealthV1,
@@ -113,6 +131,7 @@ from .local_model_session import LocalModelSessionError
 from .notion import NotionError
 from .reference_architecture import ReferenceRunnerError
 from .project_verification import ProjectVerificationError
+from .project_env import asset_environment
 from .project_workspace import ProjectWorkspaceError
 from .runtime import AppRuntime
 from .tool_evidence import build_tool_version_evidence
@@ -243,6 +262,21 @@ async def customer_dashboard(request: Request) -> CustomerDashboardV1:
     return await service.dashboard()
 
 
+@router.get("/customers/search", response_model=CustomerSearchResultV1)
+async def search_customers(
+    request: Request,
+    q: Annotated[str, Query(max_length=200)] = "",
+    limit: Annotated[int, Query(ge=1, le=100)] = 40,
+) -> CustomerSearchResultV1:
+    """Search every customer record at once.
+
+    Declared before `/customers/{account_id}` so the literal path wins the match.
+    """
+    service = runtime(request).customers
+    assert service is not None
+    return await service.search(q, limit=limit)
+
+
 @router.get("/customers", response_model=list[CustomerAccountV1])
 async def list_customer_accounts(request: Request) -> list[CustomerAccountV1]:
     service = runtime(request).customers
@@ -357,6 +391,26 @@ async def save_customer_update(
     return value
 
 
+def _action_contract(value: dict[str, Any]) -> CustomerActionV1:
+    value = dict(value)
+    value["evidence"] = json.loads(value.pop("evidence_json") or "{}")
+    return CustomerActionV1.model_validate(value)
+
+
+def _fact_contract(value: dict[str, Any]) -> CustomerFactV1:
+    value = dict(value)
+    value["evidence"] = json.loads(value.pop("evidence_json") or "{}")
+    return CustomerFactV1.model_validate(value)
+
+
+def _person_contract(value: dict[str, Any]) -> CustomerPersonV1:
+    value = dict(value)
+    value["evidence"] = json.loads(value.pop("evidence_json") or "{}")
+    for key in ("account_id", "created_at", "updated_at"):
+        value.pop(key, None)
+    return CustomerPersonV1.model_validate(value)
+
+
 @router.patch(
     "/customers/actions/{action_id}", response_model=CustomerActionV1
 )
@@ -368,8 +422,205 @@ async def update_customer_action(
     )
     if value is None:
         raise not_found("customer action")
-    value["evidence"] = json.loads(value.pop("evidence_json") or "{}")
-    return CustomerActionV1.model_validate(value)
+    return _action_contract(value)
+
+
+# ── Hand edits to account-scoped records ─────────────────────────────────────
+# Extraction proposes; the person decides. Every derived record is therefore
+# also directly creatable, editable, and removable, with no model involved.
+
+
+@router.post(
+    "/customers/{account_id}/actions", response_model=CustomerActionV1,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_customer_action(
+    account_id: str, body: CustomerActionCreateV1, request: Request
+) -> CustomerActionV1:
+    value = await runtime(request).database.create_customer_action(
+        account_id,
+        description=body.description,
+        owner=body.owner,
+        due_at=_utc_isoformat(body.due_at),
+    )
+    if value is None:
+        raise not_found("customer account")
+    return _action_contract(value)
+
+
+@router.put("/customers/actions/{action_id}", response_model=CustomerActionV1)
+async def edit_customer_action(
+    action_id: str, body: CustomerActionEditV1, request: Request
+) -> CustomerActionV1:
+    value = await runtime(request).database.edit_customer_action(
+        action_id,
+        description=body.description,
+        owner=body.owner,
+        due_at=_utc_isoformat(body.due_at),
+        status=body.status,
+    )
+    if value is None:
+        raise not_found("customer action")
+    return _action_contract(value)
+
+
+@router.delete(
+    "/customers/actions/{action_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_customer_action(action_id: str, request: Request) -> Response:
+    if not await runtime(request).database.delete_customer_action(action_id):
+        raise not_found("customer action")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/customers/{account_id}/facts", response_model=CustomerFactV1,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_customer_fact(
+    account_id: str, body: CustomerFactCreateV1, request: Request
+) -> CustomerFactV1:
+    value = await runtime(request).database.create_customer_fact(
+        account_id, kind=body.kind, content=body.content
+    )
+    if value is None:
+        raise not_found("customer account")
+    return _fact_contract(value)
+
+
+@router.put("/customers/facts/{fact_id}", response_model=CustomerFactV1)
+async def update_customer_fact(
+    fact_id: str, body: CustomerFactEditV1, request: Request
+) -> CustomerFactV1:
+    value = await runtime(request).database.update_customer_fact(
+        fact_id, kind=body.kind, content=body.content, status=body.status
+    )
+    if value is None:
+        raise not_found("customer fact")
+    return _fact_contract(value)
+
+
+@router.delete("/customers/facts/{fact_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer_fact(fact_id: str, request: Request) -> Response:
+    if not await runtime(request).database.delete_customer_fact(fact_id):
+        raise not_found("customer fact")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/customers/{account_id}/people", response_model=CustomerPersonV1,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_customer_person(
+    account_id: str, body: CustomerPersonUpsertV1, request: Request
+) -> CustomerPersonV1:
+    value = await runtime(request).database.upsert_customer_person(
+        account_id, name=body.name, role=body.role, organization=body.organization
+    )
+    if value is None:
+        raise not_found("customer account")
+    return _person_contract(value)
+
+
+@router.put("/customers/people/{person_id}", response_model=CustomerPersonV1)
+async def update_customer_person(
+    person_id: str, body: CustomerPersonUpsertV1, request: Request
+) -> CustomerPersonV1:
+    try:
+        value = await runtime(request).database.rename_customer_person(
+            person_id, name=body.name, role=body.role, organization=body.organization
+        )
+    except sqlite3.IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="another contact on this account already has that name",
+        ) from None
+    if value is None:
+        raise not_found("customer contact")
+    return _person_contract(value)
+
+
+@router.delete("/customers/people/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer_person(person_id: str, request: Request) -> Response:
+    if not await runtime(request).database.delete_customer_person(person_id):
+        raise not_found("customer contact")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put("/customers/sources/{source_id}", response_model=CustomerSourceV1)
+async def update_customer_source(
+    source_id: str, body: CustomerSourceUpdateV1, request: Request
+) -> CustomerSourceV1:
+    try:
+        row = await runtime(request).database.update_customer_source(
+            source_id,
+            title=body.title,
+            content=body.content,
+            source_kind=body.source_kind,
+            occurred_at=_utc_isoformat(body.occurred_at),
+        )
+    except sqlite3.IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="this account already holds a note with exactly that content",
+        ) from None
+    if row is None:
+        raise not_found("customer source")
+    return CustomerSourceV1.model_validate(
+        {key: value for key, value in row.items() if key != "content_hash"}
+    )
+
+
+@router.delete(
+    "/customers/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_customer_source(source_id: str, request: Request) -> Response:
+    if not await runtime(request).database.delete_customer_source(source_id):
+        raise not_found("customer source")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ── Direct notes ─────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/customers/{account_id}/notes", response_model=CustomerNoteV1,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_customer_note(
+    account_id: str, body: CustomerNoteCreateV1, request: Request
+) -> CustomerNoteV1:
+    """Write straight onto an account — no model, no review queue."""
+    value = await runtime(request).database.create_customer_note(
+        account_id,
+        title=body.title,
+        body=body.body,
+        pinned=body.pinned,
+        origin=body.origin,
+        origin_ref=body.origin_ref,
+    )
+    if value is None:
+        raise not_found("customer account")
+    return CustomerNoteV1.model_validate(value)
+
+
+@router.put("/customers/notes/{note_id}", response_model=CustomerNoteV1)
+async def update_customer_note(
+    note_id: str, body: CustomerNoteUpdateV1, request: Request
+) -> CustomerNoteV1:
+    value = await runtime(request).database.update_customer_note(
+        note_id, title=body.title, body=body.body, pinned=body.pinned
+    )
+    if value is None:
+        raise not_found("customer note")
+    return CustomerNoteV1.model_validate(value)
+
+
+@router.delete("/customers/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer_note(note_id: str, request: Request) -> Response:
+    if not await runtime(request).database.delete_customer_note(note_id):
+        raise not_found("customer note")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -419,6 +670,91 @@ async def delete_customer_win(win_id: str, request: Request) -> Response:
     if not await runtime(request).database.delete_customer_win(win_id):
         raise not_found("customer win")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/customers/wins/{win_id}/valuation", response_model=WinValuationV1)
+async def estimate_customer_win(win_id: str, request: Request) -> WinValuationV1:
+    """Estimate a win's yearly value from the account's notes.
+
+    Always safe to call, and always re-runnable: the result is a proposal
+    stored beside the win, never the win's own ARR figure.
+    """
+    try:
+        return await runtime(request).win_valuation.estimate(win_id)
+    except KeyError:
+        raise not_found("customer win") from None
+
+
+@router.get("/customers/wins/{win_id}/valuation", response_model=WinValuationV1)
+async def get_customer_win_valuation(win_id: str, request: Request) -> WinValuationV1:
+    valuation = await runtime(request).win_valuation.get(win_id)
+    if valuation is None:
+        raise not_found("win valuation")
+    return valuation
+
+
+@router.post("/customers/wins/{win_id}/valuation/accept", response_model=WinValuationV1)
+async def accept_customer_win_valuation(
+    win_id: str, body: WinValuationAcceptV1, request: Request
+) -> WinValuationV1:
+    """Adopt the estimate — or a figure the user corrected — as the win's ARR."""
+    try:
+        return await runtime(request).win_valuation.accept(win_id, body.yearly_arr)
+    except KeyError:
+        raise not_found("win valuation") from None
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+        ) from None
+
+
+@router.post("/customers/wins/{win_id}/valuation/dismiss", response_model=WinValuationV1)
+async def dismiss_customer_win_valuation(
+    win_id: str, request: Request
+) -> WinValuationV1:
+    try:
+        return await runtime(request).win_valuation.dismiss(win_id)
+    except KeyError:
+        raise not_found("win valuation") from None
+
+
+@router.get("/sku-rates", response_model=SkuRateCardV1)
+async def get_sku_rates(request: Request) -> SkuRateCardV1:
+    return _rate_card(runtime(request).sku_catalog)
+
+
+@router.put("/sku-rates", response_model=SkuRateCardV1)
+async def update_sku_rates(
+    body: SkuRateCardUpdateV1, request: Request
+) -> SkuRateCardV1:
+    catalog = runtime(request).sku_catalog
+    updates = {
+        item.key: {
+            key: value
+            for key, value in (("value", item.value), ("verified", item.verified))
+            if value is not None
+        }
+        for item in body.updates
+    }
+    try:
+        catalog.save_rates(updates)
+    except (OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"the rate card could not be saved: {error}",
+        ) from None
+    return _rate_card(catalog)
+
+
+def _rate_card(catalog: Any) -> SkuRateCardV1:
+    card = catalog.card
+    return SkuRateCardV1(
+        currency=card.currency,
+        hours_per_year=card.hours_per_year,
+        source_urls=list(card.source_urls),
+        rates=[SkuRateV1.model_validate(rate.to_json()) for rate in catalog.priced()],
+        catalog_size=catalog.size,
+    )
 
 
 @router.get("/customer-settings", response_model=CustomerSettingsV1)
@@ -480,8 +816,33 @@ async def scan_assets(request: Request) -> list[AssetV1]:
 async def start_asset(
     asset_id: str, request: Request, body: AssetStartV1 | None = None
 ) -> AssetV1:
+    app = runtime(request)
     try:
-        return await runtime(request).assets.start(asset_id, body.env if body else {})
+        # Capability-based projection: canonical Metis settings reach the child
+        # process under the stable names the app reads — but only names the
+        # asset's manifest declares, and never overriding a value supplied in
+        # the request. The model saw these names; only the process sees values.
+        provided = dict(body.env) if body else {}
+        try:
+            root = await app.assets.project_path(asset_id)
+            declared = {
+                key
+                for view in await app.assets.list()
+                if view.id == asset_id
+                for key in view.env_keys
+            }
+            # Detection walks the project tree, so it runs off the event loop.
+            environment = await asyncio.to_thread(
+                asset_environment, app.settings, root
+            )
+            projected = {
+                name: value
+                for name, value in environment.items()
+                if name in declared and name not in provided
+            }
+        except Exception:  # noqa: BLE001 - projection is additive, never load-bearing
+            projected = {}
+        return await app.assets.start(asset_id, {**projected, **provided})
     except AssetLibraryError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
@@ -870,6 +1231,10 @@ async def decide_run(
         raise HTTPException(status_code=409, detail="run has no pending approval")
     if body.approval_id is not None and body.approval_id != approval.id:
         raise HTTPException(status_code=409, detail="approval ID does not match pending action")
+    if body.decision == Decision.APPROVE and approval.blocked_reason:
+        # Enforced here rather than only in the UI: the button being hidden is a
+        # courtesy, this is the rule. Rejecting a blocked approval stays legal.
+        raise HTTPException(status_code=409, detail=approval.blocked_reason)
     if body.decision == Decision.APPROVE:
         record = await app.database.get_run_execution_record(run_id)
         aliases = record.get("model_aliases", {}) if record else {}

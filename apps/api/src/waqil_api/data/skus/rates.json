@@ -1,0 +1,169 @@
+{
+  "currency": "USD",
+  "hours_per_year": 8760,
+  "source_urls": [
+    "https://www.oracle.com/cloud/price-list/",
+    "https://www.oracle.com/cloud/compute/pricing/",
+    "https://www.oracle.com/cloud/storage/pricing/"
+  ],
+  "notes": [
+    "Oracle's UCM Service Descriptions PDF — the source of catalog.json — publishes",
+    "no prices at all. It names each SKU and the unit it bills in; the money has to",
+    "come from here.",
+    "",
+    "Every rate below is seeded from Oracle's public list pricing and is marked",
+    "verified: false. None of them was read from a machine-readable Oracle source,",
+    "so all of them should be reviewed, and replaced with your contracted rate,",
+    "before any figure derived from them is quoted to a customer. The UI edits this",
+    "file and labels every derived dollar figure as an estimate until you mark the",
+    "rates it used as verified.",
+    "",
+    "Only SKUs listed here can produce a dollar figure. A win whose notes describe",
+    "something with no rate is reported as unpriced with the SKU named, rather than",
+    "silently valued at zero.",
+    "",
+    "`aliases` are what a customer note is likely to call the thing ('4xH100',",
+    "'BM.GPU.A100-v2.8', 'block volume') so the estimator can match prose to a SKU."
+  ],
+  "rates": [
+    {
+      "part_number": "B98415",
+      "unit": "GPU Per Hour",
+      "value": 10.0,
+      "verified": false,
+      "label": "OCI Compute — GPU H100 (BM.GPU.H100.8)",
+      "aliases": ["H100", "H100 80GB", "BM.GPU.H100.8", "GPU.H100"]
+    },
+    {
+      "part_number": "B110519",
+      "unit": "GPU Per Hour",
+      "value": 10.0,
+      "verified": false,
+      "label": "OCI Compute — GPU H200 (BM.GPU.H200.8)",
+      "aliases": ["H200", "H200 141GB", "BM.GPU.H200.8", "GPU.H200"]
+    },
+    {
+      "part_number": "B95907",
+      "unit": "GPU Per Hour",
+      "value": 4.0,
+      "verified": false,
+      "label": "OCI Compute — GPU A100 v2 (BM.GPU.A100-v2.8, 80GB)",
+      "aliases": ["A100", "A100 80GB", "BM.GPU.A100-v2.8", "GPU.A100"]
+    },
+    {
+      "part_number": "B109479",
+      "unit": "GPU Per Hour",
+      "value": 3.5,
+      "verified": false,
+      "label": "OCI Compute — GPU L40S (BM.GPU.L40S.4)",
+      "aliases": ["L40S", "BM.GPU.L40S.4", "GPU.L40S"]
+    },
+    {
+      "part_number": "B109485",
+      "unit": "GPU Per Hour",
+      "value": 6.0,
+      "verified": false,
+      "label": "OCI Compute — GPU MI300X (BM.GPU.MI300X.8)",
+      "aliases": ["MI300X", "MI300", "BM.GPU.MI300X.8"]
+    },
+    {
+      "part_number": "B95909",
+      "unit": "GPU Per Hour",
+      "value": 2.0,
+      "verified": false,
+      "label": "OCI Compute — GPU A10 (VM.GPU.A10.x)",
+      "aliases": ["A10", "VM.GPU.A10.1", "VM.GPU.A10.2", "GPU.A10"]
+    },
+    {
+      "part_number": "B93113",
+      "unit": "OCPU Per Hour",
+      "value": 0.025,
+      "verified": false,
+      "label": "OCI Compute — Standard E4 Flex, per OCPU",
+      "aliases": ["E4", "VM.Standard.E4.Flex", "OCPU", "vCPU"]
+    },
+    {
+      "part_number": "B93114",
+      "unit": "Gigabyte Per Hour",
+      "value": 0.0015,
+      "verified": false,
+      "label": "OCI Compute — Standard E4 Flex, per GB of memory",
+      "aliases": ["E4 memory", "compute memory", "RAM"]
+    },
+    {
+      "part_number": "B94176",
+      "unit": "OCPU Per Hour",
+      "value": 0.064,
+      "verified": false,
+      "label": "OCI Compute — Standard X9, per OCPU",
+      "aliases": ["X9", "VM.Standard.X9", "Intel OCPU"]
+    },
+    {
+      "part_number": "B91628",
+      "unit": "Gigabyte Storage Capacity Per Month",
+      "value": 0.0255,
+      "verified": false,
+      "label": "OCI Object Storage — Standard tier",
+      "aliases": ["object storage", "bucket", "S3-compatible storage"]
+    },
+    {
+      "part_number": "B91961",
+      "unit": "Gigabyte Storage Capacity Per Month",
+      "value": 0.0255,
+      "verified": false,
+      "label": "OCI Block Volume — storage",
+      "aliases": ["block volume", "block storage", "boot volume"]
+    },
+    {
+      "part_number": "B91962",
+      "unit": "Performance Units Per Gigabyte Per Month",
+      "value": 0.0017,
+      "verified": false,
+      "label": "OCI Block Volume — performance units (VPU)",
+      "aliases": ["VPU", "block volume performance", "higher performance"]
+    },
+    {
+      "part_number": "B91633",
+      "unit": "Gigabyte Storage Capacity Per Month",
+      "value": 0.0026,
+      "verified": false,
+      "label": "OCI Archive Storage",
+      "aliases": ["archive storage", "cold storage"]
+    },
+    {
+      "part_number": "B93000",
+      "unit": "Gigabyte Storage Capacity Per Month",
+      "value": 0.0102,
+      "verified": false,
+      "label": "OCI Infrequent Access Storage",
+      "aliases": ["infrequent access", "IA storage"]
+    },
+    {
+      "part_number": "B89057",
+      "unit": "Gigabyte Storage Capacity Per Month",
+      "value": 0.3,
+      "verified": false,
+      "label": "OCI File Storage Service — metered",
+      "aliases": ["file storage", "FSS", "NFS"]
+    },
+    {
+      "part_number": "B93031",
+      "unit": "Mbps Per Hour",
+      "value": 0.0113,
+      "verified": false,
+      "label": "OCI Load Balancer — bandwidth",
+      "aliases": ["load balancer", "LB bandwidth"]
+    }
+  ],
+  "synthetic_rates": [
+    {
+      "key": "genai.dedicated_ai_unit",
+      "unit": "AI Unit Per Hour",
+      "value": 1.0,
+      "verified": false,
+      "label": "OCI Generative AI — Dedicated AI Cluster, per AI unit-hour",
+      "aliases": ["DAC", "dedicated AI cluster", "AI unit", "model import"],
+      "note": "Oracle moved per-SKU Generative AI prices behind their interactive cost estimator, so this has no part number in the UCM document and no scrapeable rate. Kept in step with data/dac/pricing.json, which carries the same placeholder for the Sizing tab."
+    }
+  ]
+}

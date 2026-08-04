@@ -1,10 +1,11 @@
 SHELL := /bin/zsh
 
 .PHONY: setup dev api web start run stop refresh install-agent uninstall-agent test verify-lock build sandbox-image acceptance \
-	verify-ollama verify-podman verify-live offline-bundle \
-	verify-restart \
+	verify-ollama verify-schemas verify-podman verify-live offline-bundle \
+	verify-restart verify-build \
 	offline-bundle-prerequisites offline-verify offline-verify-release \
-	offline-smoke-install offline-extract export-data verify-export clean-data dac-catalog
+	offline-smoke-install offline-extract export-data verify-export clean-data dac-catalog sku-catalog \
+	index-reference
 
 EXPORT ?= metis-export.zip
 ACCEPTANCE_URL ?= http://127.0.0.1:8000
@@ -37,8 +38,10 @@ start: build
 run:
 	./scripts/metis
 
+# Graceful, so the API's shutdown releases the model it loaded; the script
+# unloads anything left behind either way.
 stop:
-	@lsof -ti -i tcp:3000 -i tcp:8000 2>/dev/null | xargs -r kill || true
+	./scripts/metis-stop
 
 # Rebuild and restart the background service after code changes.
 refresh:
@@ -73,11 +76,26 @@ sandbox-image:
 dac-catalog:
 	.venv/bin/python scripts/build_dac_catalog.py
 
+# Re-vendors the Oracle SKU catalog from the UCM Service Descriptions PDF.
+# Same shape as dac-catalog: networked, run on demand, commit the JSON.
+sku-catalog:
+	.venv/bin/python scripts/build_sku_catalog.py
+
+# One real project build, end to end, against the pinned local model. The
+# deterministic-provider tests cannot see how a live model shapes its replies —
+# every defect in the build loop got past them — so run this after changing the
+# loop, the gates or the scaffold. Uses a throwaway project and data directory.
+verify-build:
+	PYTHONPATH="$(CURDIR)/apps/api/src" .venv/bin/python scripts/project_build_smoke.py
+
 acceptance:
 	.venv/bin/python scripts/acceptance_smoke.py --base-url "$(ACCEPTANCE_URL)" --readme README.md
 
 verify-ollama:
 	PYTHONPATH="$(CURDIR)/apps/api/src" .venv/bin/python scripts/ollama_smoke.py
+
+verify-schemas:
+	PYTHONPATH="$(CURDIR)/apps/api/src" .venv/bin/python scripts/schema_preflight.py
 
 verify-podman:
 	PYTHONPATH="$(CURDIR)/apps/api/src" .venv/bin/python scripts/podman_smoke.py --image "$(SANDBOX_IMAGE)"
@@ -85,7 +103,7 @@ verify-podman:
 verify-restart:
 	PYTHONPATH="$(CURDIR)/apps/api/src" .venv/bin/python scripts/restart_smoke.py --image "$(SANDBOX_IMAGE)"
 
-verify-live: verify-ollama verify-podman verify-restart
+verify-live: verify-schemas verify-ollama verify-podman verify-restart
 
 offline-bundle:
 	python3.13 scripts/offline_bundle.py create \
@@ -126,3 +144,9 @@ verify-export:
 
 clean-data:
 	@echo "Refusing to delete local state automatically. Remove ./.data manually after backing it up."
+
+# Legacy: registers reference/ as a corpus source for retrieval experiments.
+# Build turns do NOT read this index — they read reference/*.md from disk on
+# every step (control_plane._reference_notes), so edits are live immediately.
+index-reference:
+	.venv/bin/python scripts/index_reference.py --base-url "$(ACCEPTANCE_URL)/api/v1"

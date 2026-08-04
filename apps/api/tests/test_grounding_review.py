@@ -47,7 +47,7 @@ class _ScriptedModel(DeterministicModelProvider):
         self.generate_calls = 0
         self.last_request = None
 
-    async def generate(self, request, on_token=None, *, model_aliases=None):
+    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
         self.last_request = request
         index = min(self.generate_calls, len(self._answers) - 1)
         content = self._answers[index]

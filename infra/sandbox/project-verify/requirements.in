@@ -1,0 +1,26 @@
+# Packages the verify sandbox carries so a freshly built project can be imported
+# offline. Curated, not open-ended: the sandbox has no network, so anything a
+# build reaches for that is not here is reported as "not available in the verify
+# image" rather than as a defect in the code.
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+httpx
+jinja2
+python-multipart
+python-dotenv
+requests
+pypdf
+sqlalchemy
+openai
+pytest
+
+# The OCI client stack. Present because its absence was load-bearing: a build
+# invented `load_client_config` from oci_genai_auth, and because the package was
+# not in this image the sandbox could only call it "declared but not installed"
+# — a warning — so a module that raises ImportError on its first line reached an
+# approvable card. With the real package here, a fabricated symbol is an error.
+# It is the largest dependency in this set by far; that is the price of checking
+# the imports these projects actually make.
+oci-genai-auth

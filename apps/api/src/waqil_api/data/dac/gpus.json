@@ -1,0 +1,66 @@
+{
+  "generated_at": "2026-07-28",
+  "source_urls": [
+    "https://www.nvidia.com/en-us/data-center/products/a10-gpu/",
+    "https://www.nvidia.com/en-us/data-center/a100/",
+    "https://www.nvidia.com/en-us/data-center/h100/",
+    "https://www.nvidia.com/en-us/data-center/h200/",
+    "https://resources.nvidia.com/en-us-blackwell-architecture"
+  ],
+  "notes": [
+    "memory_bandwidth_gb_s and memory_gb are the vendor-published figures for a single GPU.",
+    "dense_bf16_tflops is the dense (non-sparse) tensor-core BF16/FP16 number. Sparsity-doubled",
+    "marketing figures are deliberately not used: no production serving stack reaches them.",
+    "dense_fp8_tflops is null where the GPU has no native FP8 tensor path (A10, A100)."
+  ],
+  "gpus": {
+    "A10": {
+      "label": "NVIDIA A10",
+      "memory_gb": 24,
+      "memory_bandwidth_gb_s": 600,
+      "dense_bf16_tflops": 125,
+      "dense_fp8_tflops": null,
+      "supports_fp8": false
+    },
+    "A100_40G": {
+      "label": "NVIDIA A100 40GB",
+      "memory_gb": 40,
+      "memory_bandwidth_gb_s": 1555,
+      "dense_bf16_tflops": 312,
+      "dense_fp8_tflops": null,
+      "supports_fp8": false
+    },
+    "A100_80G": {
+      "label": "NVIDIA A100 80GB",
+      "memory_gb": 80,
+      "memory_bandwidth_gb_s": 2039,
+      "dense_bf16_tflops": 312,
+      "dense_fp8_tflops": null,
+      "supports_fp8": false
+    },
+    "H100": {
+      "label": "NVIDIA H100 SXM",
+      "memory_gb": 80,
+      "memory_bandwidth_gb_s": 3350,
+      "dense_bf16_tflops": 989,
+      "dense_fp8_tflops": 1979,
+      "supports_fp8": true
+    },
+    "H200": {
+      "label": "NVIDIA H200 SXM",
+      "memory_gb": 141,
+      "memory_bandwidth_gb_s": 4800,
+      "dense_bf16_tflops": 989,
+      "dense_fp8_tflops": 1979,
+      "supports_fp8": true
+    },
+    "B200": {
+      "label": "NVIDIA B200",
+      "memory_gb": 180,
+      "memory_bandwidth_gb_s": 8000,
+      "dense_bf16_tflops": 2250,
+      "dense_fp8_tflops": 4500,
+      "supports_fp8": true
+    }
+  }
+}

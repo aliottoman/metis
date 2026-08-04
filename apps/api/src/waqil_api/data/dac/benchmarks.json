@@ -1,0 +1,5065 @@
+{
+ "generated_at": "2026-07-28",
+ "source_urls": [
+  "https://docs.oracle.com/en-us/iaas/Content/generative-ai/performance.htm",
+  "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmarks-cohere.htm",
+  "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmarks-meta.htm",
+  "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmarks-openai.htm"
+ ],
+ "notes": [
+  "Every row is copied from Oracle's published benchmark tables.",
+  "hardware_known marks grids whose cluster unit Oracle names as a GPU shape.",
+  "Only those can calibrate the roofline model; the rest report an opaque",
+  "unit label ('Large Generic'), so their GPU count and type are unknown.",
+  "request_throughput_rps is normalized to per-second on every row."
+ ],
+ "grid_count": 52,
+ "row_count": 468,
+ "calibration_grid_count": 12,
+ "grids": [
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "Random Length",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_COHERE_V3",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one LARGE_COHERE_V3 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.64,
+     "inference_speed_tps": 36.07,
+     "token_throughput_tps": 33.25,
+     "request_latency_s": 8.55,
+     "total_throughput_tps": 84.39,
+     "request_throughput_rps": 0.12
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.65,
+     "inference_speed_tps": 35.41,
+     "token_throughput_tps": 64.98,
+     "request_latency_s": 8.48,
+     "total_throughput_tps": 179.66,
+     "request_throughput_rps": 0.23
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.73,
+     "inference_speed_tps": 34.37,
+     "token_throughput_tps": 123.92,
+     "request_latency_s": 8.97,
+     "total_throughput_tps": 329.48,
+     "request_throughput_rps": 0.44
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.8,
+     "inference_speed_tps": 32.22,
+     "token_throughput_tps": 231.51,
+     "request_latency_s": 9.41,
+     "total_throughput_tps": 589.64,
+     "request_throughput_rps": 0.84
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.81,
+     "inference_speed_tps": 28.11,
+     "token_throughput_tps": 396.14,
+     "request_latency_s": 10.77,
+     "total_throughput_tps": 1132.72,
+     "request_throughput_rps": 1.44
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 1.01,
+     "inference_speed_tps": 23.12,
+     "token_throughput_tps": 634.55,
+     "request_latency_s": 13.25,
+     "total_throughput_tps": 1630.96,
+     "request_throughput_rps": 2.24
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 12.51,
+     "inference_speed_tps": 22.17,
+     "token_throughput_tps": 619.43,
+     "request_latency_s": 25.02,
+     "total_throughput_tps": 1816.53,
+     "request_throughput_rps": 2.28
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 30.89,
+     "inference_speed_tps": 21.9,
+     "token_throughput_tps": 622.78,
+     "request_latency_s": 42.94,
+     "total_throughput_tps": 1719.41,
+     "request_throughput_rps": 2.38
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 45.91,
+     "inference_speed_tps": 19.89,
+     "token_throughput_tps": 482.91,
+     "request_latency_s": 60.27,
+     "total_throughput_tps": 1345.8,
+     "request_throughput_rps": 1.86
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "Chat",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_COHERE_V3",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one LARGE_COHERE_V3 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150) for the Saudi Arabia Central (Riyadh) region.",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.8,
+     "inference_speed_tps": 44.25,
+     "token_throughput_tps": 39.38,
+     "request_latency_s": 7.31,
+     "total_throughput_tps": 105.57,
+     "request_throughput_rps": 0.14
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.8,
+     "inference_speed_tps": 44.17,
+     "token_throughput_tps": 77.29,
+     "request_latency_s": 7.29,
+     "total_throughput_tps": 206.67,
+     "request_throughput_rps": 0.27
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.86,
+     "inference_speed_tps": 42.09,
+     "token_throughput_tps": 148.23,
+     "request_latency_s": 7.64,
+     "total_throughput_tps": 393.64,
+     "request_throughput_rps": 0.52
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.88,
+     "inference_speed_tps": 38.8,
+     "token_throughput_tps": 271.18,
+     "request_latency_s": 8.48,
+     "total_throughput_tps": 701.66,
+     "request_throughput_rps": 0.92
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.94,
+     "inference_speed_tps": 33.89,
+     "token_throughput_tps": 463.68,
+     "request_latency_s": 9.49,
+     "total_throughput_tps": 1236.27,
+     "request_throughput_rps": 1.61
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 1.17,
+     "inference_speed_tps": 27.24,
+     "token_throughput_tps": 738.08,
+     "request_latency_s": 12.26,
+     "total_throughput_tps": 1932.98,
+     "request_throughput_rps": 2.45
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 10.53,
+     "inference_speed_tps": 25.87,
+     "token_throughput_tps": 739.56,
+     "request_latency_s": 21.41,
+     "total_throughput_tps": 2019.43,
+     "request_throughput_rps": 2.64
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 27.58,
+     "inference_speed_tps": 25.89,
+     "token_throughput_tps": 736.3,
+     "request_latency_s": 38.27,
+     "total_throughput_tps": 1986.29,
+     "request_throughput_rps": 2.65
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 44.59,
+     "inference_speed_tps": 24.74,
+     "token_throughput_tps": 616.97,
+     "request_latency_s": 56.67,
+     "total_throughput_tps": 1613.15,
+     "request_throughput_rps": 2.15
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "Generation Heavy",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "SMALL_COHERE_4",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one SMALL_COHERE_4 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.66,
+     "inference_speed_tps": 29.72,
+     "token_throughput_tps": 27.28,
+     "request_latency_s": 10.34,
+     "total_throughput_tps": 73.66,
+     "request_throughput_rps": 0.09
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.66,
+     "inference_speed_tps": 28.97,
+     "token_throughput_tps": 53.23,
+     "request_latency_s": 10.43,
+     "total_throughput_tps": 141.35,
+     "request_throughput_rps": 0.19
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.72,
+     "inference_speed_tps": 27.52,
+     "token_throughput_tps": 102.17,
+     "request_latency_s": 11.18,
+     "total_throughput_tps": 269.89,
+     "request_throughput_rps": 0.35
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 1.02,
+     "inference_speed_tps": 25.51,
+     "token_throughput_tps": 184.06,
+     "request_latency_s": 12.69,
+     "total_throughput_tps": 479.75,
+     "request_throughput_rps": 0.62
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.97,
+     "inference_speed_tps": 20.65,
+     "token_throughput_tps": 298.17,
+     "request_latency_s": 15.01,
+     "total_throughput_tps": 774.93,
+     "request_throughput_rps": 1.03
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 1.37,
+     "inference_speed_tps": 15.4,
+     "token_throughput_tps": 419.11,
+     "request_latency_s": 19.19,
+     "total_throughput_tps": 1166.62,
+     "request_throughput_rps": 1.54
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 2.41,
+     "inference_speed_tps": 9.99,
+     "token_throughput_tps": 514.52,
+     "request_latency_s": 30.97,
+     "total_throughput_tps": 1354.47,
+     "request_throughput_rps": 1.84
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 24.85,
+     "inference_speed_tps": 8.34,
+     "token_throughput_tps": 484.54,
+     "request_latency_s": 58.04,
+     "total_throughput_tps": 1318.84,
+     "request_throughput_rps": 1.75
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 45.98,
+     "inference_speed_tps": 6.87,
+     "token_throughput_tps": 352.45,
+     "request_latency_s": 87.8,
+     "total_throughput_tps": 995.58,
+     "request_throughput_rps": 1.33
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "RAG",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_COHERE_V3",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one LARGE_COHERE_V3 unit of a dedicated AI cluster, with scenario with prompt and response length of 100 tokens each.",
+   "prompt_tokens": 100,
+   "response_tokens": 100,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.71,
+     "inference_speed_tps": 35.92,
+     "token_throughput_tps": 28.36,
+     "request_latency_s": 3.29,
+     "total_throughput_tps": 57.73,
+     "request_throughput_rps": 0.3
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.67,
+     "inference_speed_tps": 35.93,
+     "token_throughput_tps": 57.53,
+     "request_latency_s": 3.25,
+     "total_throughput_tps": 117.0,
+     "request_throughput_rps": 0.61
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.78,
+     "inference_speed_tps": 35.49,
+     "token_throughput_tps": 109.42,
+     "request_latency_s": 3.38,
+     "total_throughput_tps": 223.01,
+     "request_throughput_rps": 1.17
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 1.0,
+     "inference_speed_tps": 34.22,
+     "token_throughput_tps": 198.45,
+     "request_latency_s": 3.7,
+     "total_throughput_tps": 404.7,
+     "request_throughput_rps": 2.13
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.34,
+     "inference_speed_tps": 31.51,
+     "token_throughput_tps": 333.75,
+     "request_latency_s": 4.29,
+     "total_throughput_tps": 680.26,
+     "request_throughput_rps": 3.57
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 1.92,
+     "inference_speed_tps": 26.64,
+     "token_throughput_tps": 517.73,
+     "request_latency_s": 5.5,
+     "total_throughput_tps": 1053.9,
+     "request_throughput_rps": 5.51
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 5.9,
+     "inference_speed_tps": 19.91,
+     "token_throughput_tps": 516.36,
+     "request_latency_s": 10.57,
+     "total_throughput_tps": 1050.88,
+     "request_throughput_rps": 5.51
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 14.3,
+     "inference_speed_tps": 19.88,
+     "token_throughput_tps": 514.45,
+     "request_latency_s": 18.96,
+     "total_throughput_tps": 1047.35,
+     "request_throughput_rps": 5.49
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 24.58,
+     "inference_speed_tps": 20.15,
+     "token_throughput_tps": 511.25,
+     "request_latency_s": 29.19,
+     "total_throughput_tps": 1041.15,
+     "request_throughput_rps": 5.46
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "scenario-5",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_COHERE_V3",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one LARGE_COHERE_V3 unit of a dedicated AI cluster, with scenario with prompt and response length of 100 tokens each for the Saudi Arabia Central (Riyadh) region.",
+   "prompt_tokens": 100,
+   "response_tokens": 100,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.86,
+     "inference_speed_tps": 44.47,
+     "token_throughput_tps": 31.66,
+     "request_latency_s": 2.96,
+     "total_throughput_tps": 64.24,
+     "request_throughput_rps": 0.34
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.84,
+     "inference_speed_tps": 44.81,
+     "token_throughput_tps": 64.06,
+     "request_latency_s": 2.91,
+     "total_throughput_tps": 130.43,
+     "request_throughput_rps": 0.68
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.94,
+     "inference_speed_tps": 43.94,
+     "token_throughput_tps": 120.99,
+     "request_latency_s": 3.05,
+     "total_throughput_tps": 246.5,
+     "request_throughput_rps": 1.29
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 1.15,
+     "inference_speed_tps": 42.81,
+     "token_throughput_tps": 221.2,
+     "request_latency_s": 3.33,
+     "total_throughput_tps": 449.37,
+     "request_throughput_rps": 2.36
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.49,
+     "inference_speed_tps": 38.47,
+     "token_throughput_tps": 374.52,
+     "request_latency_s": 3.92,
+     "total_throughput_tps": 761.89,
+     "request_throughput_rps": 4.0
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 2.05,
+     "inference_speed_tps": 32.03,
+     "token_throughput_tps": 576.48,
+     "request_latency_s": 5.05,
+     "total_throughput_tps": 1172.43,
+     "request_throughput_rps": 6.15
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 5.29,
+     "inference_speed_tps": 23.19,
+     "token_throughput_tps": 577.06,
+     "request_latency_s": 9.3,
+     "total_throughput_tps": 1173.82,
+     "request_throughput_rps": 6.15
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 12.91,
+     "inference_speed_tps": 22.95,
+     "token_throughput_tps": 576.3,
+     "request_latency_s": 16.96,
+     "total_throughput_tps": 1172.48,
+     "request_throughput_rps": 6.14
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 22.36,
+     "inference_speed_tps": 23.18,
+     "token_throughput_tps": 570.21,
+     "request_latency_s": 26.37,
+     "total_throughput_tps": 1158.97,
+     "request_throughput_rps": 6.07
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "scenario-6",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "SMALL_COHERE_4",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one SMALL_COHERE_4 unit of a dedicated AI cluster, with scenario with prompt and response length of 100 tokens each .",
+   "prompt_tokens": 100,
+   "response_tokens": 100,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.72,
+     "inference_speed_tps": 29.97,
+     "token_throughput_tps": 24.46,
+     "request_latency_s": 3.8,
+     "total_throughput_tps": 50.02,
+     "request_throughput_rps": 0.26
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.65,
+     "inference_speed_tps": 29.74,
+     "token_throughput_tps": 49.35,
+     "request_latency_s": 3.76,
+     "total_throughput_tps": 100.55,
+     "request_throughput_rps": 0.53
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.85,
+     "inference_speed_tps": 29.25,
+     "token_throughput_tps": 92.17,
+     "request_latency_s": 4.01,
+     "total_throughput_tps": 187.9,
+     "request_throughput_rps": 0.99
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 1.25,
+     "inference_speed_tps": 28.28,
+     "token_throughput_tps": 162.54,
+     "request_latency_s": 4.52,
+     "total_throughput_tps": 330.74,
+     "request_throughput_rps": 1.74
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 2.05,
+     "inference_speed_tps": 26.43,
+     "token_throughput_tps": 260.6,
+     "request_latency_s": 5.56,
+     "total_throughput_tps": 530.63,
+     "request_throughput_rps": 2.79
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 3.41,
+     "inference_speed_tps": 21.33,
+     "token_throughput_tps": 365.8,
+     "request_latency_s": 7.78,
+     "total_throughput_tps": 743.86,
+     "request_throughput_rps": 3.9
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 5.35,
+     "inference_speed_tps": 14.6,
+     "token_throughput_tps": 466.61,
+     "request_latency_s": 11.96,
+     "total_throughput_tps": 951.35,
+     "request_throughput_rps": 4.99
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 6.42,
+     "inference_speed_tps": 5.28,
+     "token_throughput_tps": 431.36,
+     "request_latency_s": 24.06,
+     "total_throughput_tps": 879.33,
+     "request_throughput_rps": 4.61
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 21.53,
+     "inference_speed_tps": 5.4,
+     "token_throughput_tps": 430.52,
+     "request_latency_s": 38.72,
+     "total_throughput_tps": 877.44,
+     "request_throughput_rps": 4.61
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "scenario-7",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_COHERE_V3",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one LARGE_COHERE_V3 unit of a dedicated AI cluster, with a scenario of prompt length of 100 tokens, and response length of 1,000 tokens.",
+   "prompt_tokens": 100,
+   "response_tokens": 1000,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 1.08,
+     "inference_speed_tps": 35.51,
+     "token_throughput_tps": 32.66,
+     "request_latency_s": 27.39,
+     "total_throughput_tps": 36.04,
+     "request_throughput_rps": 0.03
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.68,
+     "inference_speed_tps": 35.16,
+     "token_throughput_tps": 67.73,
+     "request_latency_s": 26.98,
+     "total_throughput_tps": 74.85,
+     "request_throughput_rps": 0.07
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.79,
+     "inference_speed_tps": 35.13,
+     "token_throughput_tps": 130.61,
+     "request_latency_s": 27.38,
+     "total_throughput_tps": 144.14,
+     "request_throughput_rps": 0.14
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 1.03,
+     "inference_speed_tps": 34.25,
+     "token_throughput_tps": 260.45,
+     "request_latency_s": 28.22,
+     "total_throughput_tps": 287.63,
+     "request_throughput_rps": 0.28
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.35,
+     "inference_speed_tps": 32.8,
+     "token_throughput_tps": 497.46,
+     "request_latency_s": 29.63,
+     "total_throughput_tps": 549.5,
+     "request_throughput_rps": 0.54
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 1.92,
+     "inference_speed_tps": 30.8,
+     "token_throughput_tps": 915.24,
+     "request_latency_s": 32.1,
+     "total_throughput_tps": 1010.8,
+     "request_throughput_rps": 0.98
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 29.85,
+     "inference_speed_tps": 29.67,
+     "token_throughput_tps": 916.69,
+     "request_latency_s": 61.12,
+     "total_throughput_tps": 1012.47,
+     "request_throughput_rps": 0.99
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 78.31,
+     "inference_speed_tps": 29.94,
+     "token_throughput_tps": 852.79,
+     "request_latency_s": 109.34,
+     "total_throughput_tps": 941.47,
+     "request_throughput_rps": 0.92
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 96.26,
+     "inference_speed_tps": 29.98,
+     "token_throughput_tps": 726.6,
+     "request_latency_s": 127.26,
+     "total_throughput_tps": 802.38,
+     "request_throughput_rps": 0.78
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "scenario-8",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_COHERE_V3",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one LARGE_COHERE_V3 unit of a dedicated AI cluster, with a scenario of prompt length of 100 tokens, and response length of 1,000 tokens for the Saudi Arabia Central (Riyadh) region.",
+   "prompt_tokens": 100,
+   "response_tokens": 1000,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 1.14,
+     "inference_speed_tps": 43.35,
+     "token_throughput_tps": 40.11,
+     "request_latency_s": 22.51,
+     "total_throughput_tps": 44.29,
+     "request_throughput_rps": 0.04
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.86,
+     "inference_speed_tps": 43.86,
+     "token_throughput_tps": 83.17,
+     "request_latency_s": 21.95,
+     "total_throughput_tps": 91.92,
+     "request_throughput_rps": 0.09
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.95,
+     "inference_speed_tps": 43.32,
+     "token_throughput_tps": 161.5,
+     "request_latency_s": 22.48,
+     "total_throughput_tps": 178.25,
+     "request_throughput_rps": 0.17
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 1.17,
+     "inference_speed_tps": 42.21,
+     "token_throughput_tps": 308.96,
+     "request_latency_s": 23.16,
+     "total_throughput_tps": 341.27,
+     "request_throughput_rps": 0.33
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.51,
+     "inference_speed_tps": 40.79,
+     "token_throughput_tps": 606.6,
+     "request_latency_s": 24.29,
+     "total_throughput_tps": 669.78,
+     "request_throughput_rps": 0.65
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 2.06,
+     "inference_speed_tps": 38.21,
+     "token_throughput_tps": 1115.21,
+     "request_latency_s": 26.41,
+     "total_throughput_tps": 1231.36,
+     "request_throughput_rps": 1.2
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 24.52,
+     "inference_speed_tps": 36.45,
+     "token_throughput_tps": 1117.31,
+     "request_latency_s": 49.89,
+     "total_throughput_tps": 1234.37,
+     "request_throughput_rps": 1.21
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 47.43,
+     "inference_speed_tps": 36.94,
+     "token_throughput_tps": 1099.25,
+     "request_latency_s": 72.62,
+     "total_throughput_tps": 1213.73,
+     "request_throughput_rps": 1.18
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 65.37,
+     "inference_speed_tps": 36.0,
+     "token_throughput_tps": 923.6,
+     "request_latency_s": 91.3,
+     "total_throughput_tps": 1019.91,
+     "request_throughput_rps": 0.99
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "scenario-9",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "SMALL_COHERE_4",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one SMALL_COHERE_4 unit of a dedicated AI cluster, with a scenario of prompt length of 100 tokens, and response length of 1,000 tokens.",
+   "prompt_tokens": 100,
+   "response_tokens": 1000,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 1.03,
+     "inference_speed_tps": 29.13,
+     "token_throughput_tps": 27.76,
+     "request_latency_s": 32.84,
+     "total_throughput_tps": 30.69,
+     "request_throughput_rps": 0.03
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.7,
+     "inference_speed_tps": 28.95,
+     "token_throughput_tps": 55.79,
+     "request_latency_s": 32.85,
+     "total_throughput_tps": 61.62,
+     "request_throughput_rps": 0.06
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.87,
+     "inference_speed_tps": 28.6,
+     "token_throughput_tps": 105.88,
+     "request_latency_s": 33.57,
+     "total_throughput_tps": 116.84,
+     "request_throughput_rps": 0.11
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 1.27,
+     "inference_speed_tps": 27.07,
+     "token_throughput_tps": 197.75,
+     "request_latency_s": 35.56,
+     "total_throughput_tps": 218.4,
+     "request_throughput_rps": 0.21
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 2.02,
+     "inference_speed_tps": 24.51,
+     "token_throughput_tps": 370.3,
+     "request_latency_s": 39.85,
+     "total_throughput_tps": 409.03,
+     "request_throughput_rps": 0.4
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 3.41,
+     "inference_speed_tps": 20.29,
+     "token_throughput_tps": 602.0,
+     "request_latency_s": 49.21,
+     "total_throughput_tps": 664.88,
+     "request_throughput_rps": 0.65
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 3.95,
+     "inference_speed_tps": 13.96,
+     "token_throughput_tps": 792.68,
+     "request_latency_s": 70.8,
+     "total_throughput_tps": 875.53,
+     "request_throughput_rps": 0.85
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 22.38,
+     "inference_speed_tps": 9.81,
+     "token_throughput_tps": 708.1,
+     "request_latency_s": 122.64,
+     "total_throughput_tps": 781.78,
+     "request_throughput_rps": 0.76
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 87.99,
+     "inference_speed_tps": 9.41,
+     "token_throughput_tps": 600.13,
+     "request_latency_s": 196.22,
+     "total_throughput_tps": 662.66,
+     "request_throughput_rps": 0.64
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "scenario-10",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_COHERE_V3",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one LARGE_COHERE_V3 unit of a dedicated AI cluster, with a scenario of prompt length of 2,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 2000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 1.01,
+     "inference_speed_tps": 34.27,
+     "token_throughput_tps": 28.56,
+     "request_latency_s": 6.25,
+     "total_throughput_tps": 344.06,
+     "request_throughput_rps": 0.16
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 1.12,
+     "inference_speed_tps": 34.29,
+     "token_throughput_tps": 56.05,
+     "request_latency_s": 6.38,
+     "total_throughput_tps": 673.78,
+     "request_throughput_rps": 0.31
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 1.35,
+     "inference_speed_tps": 31.44,
+     "token_throughput_tps": 100.94,
+     "request_latency_s": 7.08,
+     "total_throughput_tps": 1215.89,
+     "request_throughput_rps": 0.56
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 2.14,
+     "inference_speed_tps": 29.0,
+     "token_throughput_tps": 171.12,
+     "request_latency_s": 8.35,
+     "total_throughput_tps": 2072.96,
+     "request_throughput_rps": 0.95
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 3.27,
+     "inference_speed_tps": 23.98,
+     "token_throughput_tps": 259.25,
+     "request_latency_s": 10.94,
+     "total_throughput_tps": 3134.4,
+     "request_throughput_rps": 1.44
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 4.23,
+     "inference_speed_tps": 15.11,
+     "token_throughput_tps": 338.19,
+     "request_latency_s": 16.28,
+     "total_throughput_tps": 4060.07,
+     "request_throughput_rps": 1.86
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 16.39,
+     "inference_speed_tps": 12.1,
+     "token_throughput_tps": 332.78,
+     "request_latency_s": 31.24,
+     "total_throughput_tps": 4011.11,
+     "request_throughput_rps": 1.84
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 43.34,
+     "inference_speed_tps": 11.95,
+     "token_throughput_tps": 320.85,
+     "request_latency_s": 58.38,
+     "total_throughput_tps": 3870.48,
+     "request_throughput_rps": 1.78
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 41.98,
+     "inference_speed_tps": 10.81,
+     "token_throughput_tps": 22.63,
+     "request_latency_s": 62.65,
+     "total_throughput_tps": 275.02,
+     "request_throughput_rps": 0.13
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "scenario-11",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_COHERE_V3",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one LARGE_COHERE_V3 unit of a dedicated AI cluster, with a scenario of prompt length of 2,000 tokens, and response length of 200 tokens for the Saudi Arabia Central (Riyadh) region.",
+   "prompt_tokens": 2000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 1.06,
+     "inference_speed_tps": 42.4,
+     "token_throughput_tps": 33.84,
+     "request_latency_s": 5.32,
+     "total_throughput_tps": 405.82,
+     "request_throughput_rps": 0.19
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 1.25,
+     "inference_speed_tps": 42.78,
+     "token_throughput_tps": 65.84,
+     "request_latency_s": 5.47,
+     "total_throughput_tps": 789.91,
+     "request_throughput_rps": 0.36
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 1.66,
+     "inference_speed_tps": 40.07,
+     "token_throughput_tps": 116.06,
+     "request_latency_s": 6.14,
+     "total_throughput_tps": 1401.03,
+     "request_throughput_rps": 0.64
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 2.28,
+     "inference_speed_tps": 35.52,
+     "token_throughput_tps": 193.05,
+     "request_latency_s": 7.42,
+     "total_throughput_tps": 2321.7,
+     "request_throughput_rps": 1.07
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 3.43,
+     "inference_speed_tps": 29.09,
+     "token_throughput_tps": 288.39,
+     "request_latency_s": 9.88,
+     "total_throughput_tps": 3465.03,
+     "request_throughput_rps": 1.59
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 5.25,
+     "inference_speed_tps": 19.32,
+     "token_throughput_tps": 371.72,
+     "request_latency_s": 14.89,
+     "total_throughput_tps": 4496.7,
+     "request_throughput_rps": 2.07
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 15.06,
+     "inference_speed_tps": 13.44,
+     "token_throughput_tps": 366.1,
+     "request_latency_s": 28.46,
+     "total_throughput_tps": 4405.68,
+     "request_throughput_rps": 2.02
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 38.58,
+     "inference_speed_tps": 13.39,
+     "token_throughput_tps": 358.48,
+     "request_latency_s": 51.98,
+     "total_throughput_tps": 4327.78,
+     "request_throughput_rps": 1.99
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 42.95,
+     "inference_speed_tps": 13.33,
+     "token_throughput_tps": 28.62,
+     "request_latency_s": 56.34,
+     "total_throughput_tps": 347.19,
+     "request_throughput_rps": 0.16
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-a-03-2025.htm",
+   "scenario": "scenario-12",
+   "model": "cohere.command-a-03-2025",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "SMALL_COHERE_4",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-a-03-2025 (Cohere Command A) model hosted on one SMALL_COHERE_4 unit of a dedicated AI cluster, with a scenario of prompt length of 2,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 2000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 1.01,
+     "inference_speed_tps": 26.47,
+     "token_throughput_tps": 22.75,
+     "request_latency_s": 7.69,
+     "total_throughput_tps": 278.43,
+     "request_throughput_rps": 0.13
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 1.35,
+     "inference_speed_tps": 26.48,
+     "token_throughput_tps": 43.67,
+     "request_latency_s": 8.1,
+     "total_throughput_tps": 528.5,
+     "request_throughput_rps": 0.24
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 2.19,
+     "inference_speed_tps": 25.9,
+     "token_throughput_tps": 78.72,
+     "request_latency_s": 9.08,
+     "total_throughput_tps": 955.39,
+     "request_throughput_rps": 0.44
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 3.6,
+     "inference_speed_tps": 23.15,
+     "token_throughput_tps": 125.73,
+     "request_latency_s": 11.27,
+     "total_throughput_tps": 1536.67,
+     "request_throughput_rps": 0.71
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 5.72,
+     "inference_speed_tps": 17.93,
+     "token_throughput_tps": 177.7,
+     "request_latency_s": 15.91,
+     "total_throughput_tps": 2153.78,
+     "request_throughput_rps": 0.99
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 5.16,
+     "inference_speed_tps": 8.33,
+     "token_throughput_tps": 206.41,
+     "request_latency_s": 26.81,
+     "total_throughput_tps": 2491.38,
+     "request_throughput_rps": 1.14
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 28.94,
+     "inference_speed_tps": 8.25,
+     "token_throughput_tps": 205.11,
+     "request_latency_s": 50.65,
+     "total_throughput_tps": 2490.27,
+     "request_throughput_rps": 1.14
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 88.92,
+     "inference_speed_tps": 6.53,
+     "token_throughput_tps": 117.32,
+     "request_latency_s": 121.12,
+     "total_throughput_tps": 1427.63,
+     "request_throughput_rps": 0.66
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 46.78,
+     "inference_speed_tps": 7.74,
+     "token_throughput_tps": 9.14,
+     "request_latency_s": 76.55,
+     "total_throughput_tps": 112.07,
+     "request_throughput_rps": 0.05
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-08-2024.htm",
+   "scenario": "Random Length",
+   "model": "cohere.command-r-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Small Cohere V2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-08-2024 (Cohere Command R 08-2024) model hosted on one Small Cohere V2 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 66.43,
+     "token_throughput_tps": 52.84,
+     "request_latency_s": 2.68,
+     "total_throughput_tps": 230.39,
+     "request_throughput_rps": 0.37
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 64.11,
+     "token_throughput_tps": 105.8,
+     "request_latency_s": 3.01,
+     "total_throughput_tps": 432.6,
+     "request_throughput_rps": 0.66
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 59.66,
+     "token_throughput_tps": 198.97,
+     "request_latency_s": 3.27,
+     "total_throughput_tps": 763.19,
+     "request_throughput_rps": 1.2
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.53,
+     "inference_speed_tps": 53.36,
+     "token_throughput_tps": 357.07,
+     "request_latency_s": 3.62,
+     "total_throughput_tps": 1368.83,
+     "request_throughput_rps": 2.16
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.56,
+     "inference_speed_tps": 44.39,
+     "token_throughput_tps": 583.18,
+     "request_latency_s": 3.88,
+     "total_throughput_tps": 2505.03,
+     "request_throughput_rps": 3.92
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.65,
+     "inference_speed_tps": 35.61,
+     "token_throughput_tps": 906.21,
+     "request_latency_s": 5.03,
+     "total_throughput_tps": 3760.75,
+     "request_throughput_rps": 5.81
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 1.06,
+     "inference_speed_tps": 24.01,
+     "token_throughput_tps": 1073.21,
+     "request_latency_s": 6.86,
+     "total_throughput_tps": 4692.56,
+     "request_throughput_rps": 7.67
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 3.96,
+     "inference_speed_tps": 15.89,
+     "token_throughput_tps": 1034.44,
+     "request_latency_s": 12.18,
+     "total_throughput_tps": 5137.4,
+     "request_throughput_rps": 7.96
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 11.54,
+     "inference_speed_tps": 16.24,
+     "token_throughput_tps": 1052.12,
+     "request_latency_s": 19.47,
+     "total_throughput_tps": 5039.19,
+     "request_throughput_rps": 8.19
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-08-2024.htm",
+   "scenario": "Chat",
+   "model": "cohere.command-r-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Small Cohere V2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-08-2024 (Cohere Command R 08-2024) model hosted on one Small Cohere V2 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.4,
+     "inference_speed_tps": 77.29,
+     "token_throughput_tps": 69.62,
+     "request_latency_s": 3.89,
+     "total_throughput_tps": 190.39,
+     "request_throughput_rps": 0.26
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.4,
+     "inference_speed_tps": 76.36,
+     "token_throughput_tps": 138.03,
+     "request_latency_s": 4.03,
+     "total_throughput_tps": 374.14,
+     "request_throughput_rps": 0.49
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.41,
+     "inference_speed_tps": 73.69,
+     "token_throughput_tps": 266.03,
+     "request_latency_s": 4.03,
+     "total_throughput_tps": 754.56,
+     "request_throughput_rps": 0.98
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.41,
+     "inference_speed_tps": 70.41,
+     "token_throughput_tps": 505.38,
+     "request_latency_s": 4.33,
+     "total_throughput_tps": 1351.03,
+     "request_throughput_rps": 1.8
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.42,
+     "inference_speed_tps": 63.38,
+     "token_throughput_tps": 888.54,
+     "request_latency_s": 4.57,
+     "total_throughput_tps": 2528.83,
+     "request_throughput_rps": 3.33
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.48,
+     "inference_speed_tps": 55.54,
+     "token_throughput_tps": 1540.69,
+     "request_latency_s": 5.83,
+     "total_throughput_tps": 4160.4,
+     "request_throughput_rps": 5.14
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.68,
+     "inference_speed_tps": 42.29,
+     "token_throughput_tps": 2201.45,
+     "request_latency_s": 6.93,
+     "total_throughput_tps": 6020.98,
+     "request_throughput_rps": 8.12
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.48,
+     "inference_speed_tps": 28.35,
+     "token_throughput_tps": 2496.73,
+     "request_latency_s": 10.5,
+     "total_throughput_tps": 7168.11,
+     "request_throughput_rps": 9.7
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 8.6,
+     "inference_speed_tps": 28.69,
+     "token_throughput_tps": 2394.67,
+     "request_latency_s": 18.04,
+     "total_throughput_tps": 6593.74,
+     "request_throughput_rps": 9.02
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-08-2024.htm",
+   "scenario": "Generation Heavy",
+   "model": "cohere.command-r-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Small Cohere V2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-08-2024 (Cohere Command R 08-2024) model hosted on one Small Cohere V2 unit of a dedicated AI cluster, with scenario with prompt and response length of 100 tokens each.",
+   "prompt_tokens": 100,
+   "response_tokens": 100,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.49,
+     "inference_speed_tps": 67.4,
+     "token_throughput_tps": 46.63,
+     "request_latency_s": 1.58,
+     "total_throughput_tps": 107.89,
+     "request_throughput_rps": 0.63
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.48,
+     "inference_speed_tps": 65.55,
+     "token_throughput_tps": 90.56,
+     "request_latency_s": 1.59,
+     "total_throughput_tps": 211.04,
+     "request_throughput_rps": 1.24
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.49,
+     "inference_speed_tps": 61.38,
+     "token_throughput_tps": 173.89,
+     "request_latency_s": 1.71,
+     "total_throughput_tps": 398.14,
+     "request_throughput_rps": 2.31
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.49,
+     "inference_speed_tps": 55.53,
+     "token_throughput_tps": 317.1,
+     "request_latency_s": 1.81,
+     "total_throughput_tps": 736.5,
+     "request_throughput_rps": 4.32
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 49.01,
+     "token_throughput_tps": 555.54,
+     "request_latency_s": 2.03,
+     "total_throughput_tps": 1283.3,
+     "request_throughput_rps": 7.49
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.76,
+     "inference_speed_tps": 41.59,
+     "token_throughput_tps": 843.26,
+     "request_latency_s": 2.53,
+     "total_throughput_tps": 1969.48,
+     "request_throughput_rps": 11.59
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.82,
+     "inference_speed_tps": 29.63,
+     "token_throughput_tps": 1231.41,
+     "request_latency_s": 3.31,
+     "total_throughput_tps": 2867.06,
+     "request_throughput_rps": 16.86
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.84,
+     "inference_speed_tps": 19.64,
+     "token_throughput_tps": 1340.32,
+     "request_latency_s": 5.57,
+     "total_throughput_tps": 3141.31,
+     "request_throughput_rps": 18.54
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 5.71,
+     "inference_speed_tps": 20.1,
+     "token_throughput_tps": 1313.56,
+     "request_latency_s": 9.41,
+     "total_throughput_tps": 3050.8,
+     "request_throughput_rps": 17.91
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-08-2024.htm",
+   "scenario": "RAG",
+   "model": "cohere.command-r-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Small Cohere V2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-08-2024 (Cohere Command R 08-2024) model hosted on one Small Cohere V2 unit of a dedicated AI cluster, with scenario with prompt and response length of 100 tokens each.",
+   "prompt_tokens": 100,
+   "response_tokens": 100,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.36,
+     "inference_speed_tps": 76.4,
+     "token_throughput_tps": 59.84,
+     "request_latency_s": 1.61,
+     "total_throughput_tps": 119.86,
+     "request_throughput_rps": 0.62
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.36,
+     "inference_speed_tps": 75.94,
+     "token_throughput_tps": 118.12,
+     "request_latency_s": 1.62,
+     "total_throughput_tps": 236.67,
+     "request_throughput_rps": 1.22
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.36,
+     "inference_speed_tps": 75.32,
+     "token_throughput_tps": 233.5,
+     "request_latency_s": 1.64,
+     "total_throughput_tps": 467.06,
+     "request_throughput_rps": 2.41
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.38,
+     "inference_speed_tps": 73.41,
+     "token_throughput_tps": 450.63,
+     "request_latency_s": 1.69,
+     "total_throughput_tps": 902.0,
+     "request_throughput_rps": 4.65
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.41,
+     "inference_speed_tps": 70.81,
+     "token_throughput_tps": 835.46,
+     "request_latency_s": 1.76,
+     "total_throughput_tps": 1673.27,
+     "request_throughput_rps": 8.64
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 66.82,
+     "token_throughput_tps": 1407.97,
+     "request_latency_s": 1.95,
+     "total_throughput_tps": 2816.44,
+     "request_throughput_rps": 14.53
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.77,
+     "inference_speed_tps": 58.49,
+     "token_throughput_tps": 2320.21,
+     "request_latency_s": 2.42,
+     "total_throughput_tps": 4645.34,
+     "request_throughput_rps": 23.97
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.27,
+     "inference_speed_tps": 46.58,
+     "token_throughput_tps": 2866.51,
+     "request_latency_s": 3.35,
+     "total_throughput_tps": 5729.64,
+     "request_throughput_rps": 29.55
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 2.98,
+     "inference_speed_tps": 42.43,
+     "token_throughput_tps": 3057.44,
+     "request_latency_s": 5.26,
+     "total_throughput_tps": 6119.24,
+     "request_throughput_rps": 31.58
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-08-2024.htm",
+   "scenario": "scenario-5",
+   "model": "cohere.command-r-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Small Cohere V2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-08-2024 (Cohere Command R 08-2024) model hosted on one Small Cohere V2 unit of a dedicated AI cluster, with a scenario of prompt length of 100 tokens, and response length of 1,000 tokens.",
+   "prompt_tokens": 100,
+   "response_tokens": 1000,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.49,
+     "inference_speed_tps": 67.35,
+     "token_throughput_tps": 54.93,
+     "request_latency_s": 2.82,
+     "total_throughput_tps": 89.1,
+     "request_throughput_rps": 0.35
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.53,
+     "inference_speed_tps": 65.72,
+     "token_throughput_tps": 106.49,
+     "request_latency_s": 2.96,
+     "total_throughput_tps": 171.57,
+     "request_throughput_rps": 0.67
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.49,
+     "inference_speed_tps": 62.54,
+     "token_throughput_tps": 205.55,
+     "request_latency_s": 2.99,
+     "total_throughput_tps": 333.29,
+     "request_throughput_rps": 1.32
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.49,
+     "inference_speed_tps": 57.08,
+     "token_throughput_tps": 361.81,
+     "request_latency_s": 2.99,
+     "total_throughput_tps": 610.19,
+     "request_throughput_rps": 2.56
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.51,
+     "inference_speed_tps": 51.99,
+     "token_throughput_tps": 668.26,
+     "request_latency_s": 3.44,
+     "total_throughput_tps": 1097.11,
+     "request_throughput_rps": 4.41
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.58,
+     "inference_speed_tps": 44.49,
+     "token_throughput_tps": 1060.46,
+     "request_latency_s": 3.79,
+     "total_throughput_tps": 1790.39,
+     "request_throughput_rps": 7.52
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.68,
+     "inference_speed_tps": 35.05,
+     "token_throughput_tps": 1633.24,
+     "request_latency_s": 4.89,
+     "total_throughput_tps": 2702.83,
+     "request_throughput_rps": 11.02
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 2.2,
+     "inference_speed_tps": 25.59,
+     "token_throughput_tps": 1676.8,
+     "request_latency_s": 7.09,
+     "total_throughput_tps": 2985.41,
+     "request_throughput_rps": 13.5
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 7.02,
+     "inference_speed_tps": 26.23,
+     "token_throughput_tps": 1609.94,
+     "request_latency_s": 11.96,
+     "total_throughput_tps": 2819.72,
+     "request_throughput_rps": 12.5
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-08-2024.htm",
+   "scenario": "scenario-6",
+   "model": "cohere.command-r-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Small Cohere V2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-08-2024 (Cohere Command R 08-2024) model hosted on one Small Cohere V2 unit of a dedicated AI cluster, with a scenario of prompt length of 100 tokens, and response length of 1,000 tokens.",
+   "prompt_tokens": 100,
+   "response_tokens": 1000,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.36,
+     "inference_speed_tps": 76.15,
+     "token_throughput_tps": 77.02,
+     "request_latency_s": 4.62,
+     "total_throughput_tps": 99.43,
+     "request_throughput_rps": 0.23
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.38,
+     "inference_speed_tps": 78.71,
+     "token_throughput_tps": 151.85,
+     "request_latency_s": 12.97,
+     "total_throughput_tps": 166.68,
+     "request_throughput_rps": 0.15
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.37,
+     "inference_speed_tps": 77.94,
+     "token_throughput_tps": 296.54,
+     "request_latency_s": 13.07,
+     "total_throughput_tps": 325.57,
+     "request_throughput_rps": 0.3
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.39,
+     "inference_speed_tps": 76.05,
+     "token_throughput_tps": 587.0,
+     "request_latency_s": 13.41,
+     "total_throughput_tps": 644.47,
+     "request_throughput_rps": 0.59
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.42,
+     "inference_speed_tps": 73.99,
+     "token_throughput_tps": 1132.69,
+     "request_latency_s": 13.81,
+     "total_throughput_tps": 1243.49,
+     "request_throughput_rps": 1.14
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.56,
+     "inference_speed_tps": 69.18,
+     "token_throughput_tps": 2085.87,
+     "request_latency_s": 14.88,
+     "total_throughput_tps": 2290.54,
+     "request_throughput_rps": 2.1
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.91,
+     "inference_speed_tps": 60.54,
+     "token_throughput_tps": 3520.34,
+     "request_latency_s": 17.26,
+     "total_throughput_tps": 3864.78,
+     "request_throughput_rps": 3.55
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.4,
+     "inference_speed_tps": 47.76,
+     "token_throughput_tps": 5511.72,
+     "request_latency_s": 22.13,
+     "total_throughput_tps": 6050.87,
+     "request_throughput_rps": 5.56
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 15.84,
+     "inference_speed_tps": 47.14,
+     "token_throughput_tps": 5432.58,
+     "request_latency_s": 36.85,
+     "total_throughput_tps": 5963.23,
+     "request_throughput_rps": 5.48
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-08-2024.htm",
+   "scenario": "scenario-7",
+   "model": "cohere.command-r-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Small Cohere V2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-08-2024 (Cohere Command R 08-2024) model hosted on one Small Cohere V2 unit of a dedicated AI cluster, with a scenario of prompt length of 2,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 2000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.66,
+     "inference_speed_tps": 65.07,
+     "token_throughput_tps": 48.27,
+     "request_latency_s": 2.62,
+     "total_throughput_tps": 802.19,
+     "request_throughput_rps": 0.38
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.66,
+     "inference_speed_tps": 59.6,
+     "token_throughput_tps": 89.68,
+     "request_latency_s": 2.84,
+     "total_throughput_tps": 1480.35,
+     "request_throughput_rps": 0.7
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.68,
+     "inference_speed_tps": 50.85,
+     "token_throughput_tps": 156.94,
+     "request_latency_s": 3.23,
+     "total_throughput_tps": 2596.61,
+     "request_throughput_rps": 1.22
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.8,
+     "inference_speed_tps": 40.68,
+     "token_throughput_tps": 247.23,
+     "request_latency_s": 4.06,
+     "total_throughput_tps": 4098.09,
+     "request_throughput_rps": 1.93
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.97,
+     "inference_speed_tps": 28.73,
+     "token_throughput_tps": 351.66,
+     "request_latency_s": 5.6,
+     "total_throughput_tps": 5853.26,
+     "request_throughput_rps": 2.76
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 1.37,
+     "inference_speed_tps": 18.19,
+     "token_throughput_tps": 425.94,
+     "request_latency_s": 8.82,
+     "total_throughput_tps": 7157.15,
+     "request_throughput_rps": 3.37
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 2.54,
+     "inference_speed_tps": 9.78,
+     "token_throughput_tps": 440.59,
+     "request_latency_s": 15.46,
+     "total_throughput_tps": 7647.41,
+     "request_throughput_rps": 3.61
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 9.88,
+     "inference_speed_tps": 5.86,
+     "token_throughput_tps": 392.06,
+     "request_latency_s": 29.1,
+     "total_throughput_tps": 7488.14,
+     "request_throughput_rps": 3.55
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 28.75,
+     "inference_speed_tps": 6.13,
+     "token_throughput_tps": 425.79,
+     "request_latency_s": 48.52,
+     "total_throughput_tps": 7364.71,
+     "request_throughput_rps": 3.47
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-08-2024.htm",
+   "scenario": "scenario-8",
+   "model": "cohere.command-r-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Small Cohere V2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-08-2024 (Cohere Command R 08-2024) model hosted on one Small Cohere V2 unit of a dedicated AI cluster, with a scenario of prompt length of 2,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 2000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.47,
+     "inference_speed_tps": 76.63,
+     "token_throughput_tps": 64.4,
+     "request_latency_s": 2.97,
+     "total_throughput_tps": 731.96,
+     "request_throughput_rps": 0.33
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 74.08,
+     "token_throughput_tps": 122.71,
+     "request_latency_s": 3.11,
+     "total_throughput_tps": 1393.97,
+     "request_throughput_rps": 0.64
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.63,
+     "inference_speed_tps": 69.81,
+     "token_throughput_tps": 223.99,
+     "request_latency_s": 3.38,
+     "total_throughput_tps": 2553.48,
+     "request_throughput_rps": 1.17
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.86,
+     "inference_speed_tps": 62.8,
+     "token_throughput_tps": 382.46,
+     "request_latency_s": 3.93,
+     "total_throughput_tps": 4348.31,
+     "request_throughput_rps": 1.99
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.33,
+     "inference_speed_tps": 53.08,
+     "token_throughput_tps": 584.74,
+     "request_latency_s": 5.01,
+     "total_throughput_tps": 6652.72,
+     "request_throughput_rps": 3.04
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 2.28,
+     "inference_speed_tps": 40.67,
+     "token_throughput_tps": 809.47,
+     "request_latency_s": 7.2,
+     "total_throughput_tps": 9211.93,
+     "request_throughput_rps": 4.21
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 3.01,
+     "inference_speed_tps": 21.57,
+     "token_throughput_tps": 946.96,
+     "request_latency_s": 11.98,
+     "total_throughput_tps": 10736.65,
+     "request_throughput_rps": 4.9
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 5.32,
+     "inference_speed_tps": 10.4,
+     "token_throughput_tps": 866.21,
+     "request_latency_s": 23.76,
+     "total_throughput_tps": 9845.27,
+     "request_throughput_rps": 4.5
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 21.17,
+     "inference_speed_tps": 9.6,
+     "token_throughput_tps": 830.4,
+     "request_latency_s": 41.13,
+     "total_throughput_tps": 9441.68,
+     "request_throughput_rps": 4.31
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-plus-08-2024.htm",
+   "scenario": "Random Length",
+   "model": "cohere.command-r-plus-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Cohere V2_2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-plus-08-2024 (Cohere Command R+ 08-2024) model hosted on one Large Cohere V2_2 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.58,
+     "inference_speed_tps": 59.4,
+     "token_throughput_tps": 51.39,
+     "request_latency_s": 3.97,
+     "total_throughput_tps": 177.94,
+     "request_throughput_rps": 0.25
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.54,
+     "inference_speed_tps": 56.82,
+     "token_throughput_tps": 99.37,
+     "request_latency_s": 4.07,
+     "total_throughput_tps": 343.94,
+     "request_throughput_rps": 0.49
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.55,
+     "inference_speed_tps": 53.54,
+     "token_throughput_tps": 187.3,
+     "request_latency_s": 4.29,
+     "total_throughput_tps": 629.78,
+     "request_throughput_rps": 0.92
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.55,
+     "inference_speed_tps": 45.14,
+     "token_throughput_tps": 321.74,
+     "request_latency_s": 4.98,
+     "total_throughput_tps": 1086.9,
+     "request_throughput_rps": 1.57
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.58,
+     "inference_speed_tps": 37.45,
+     "token_throughput_tps": 527.84,
+     "request_latency_s": 6.06,
+     "total_throughput_tps": 1803.26,
+     "request_throughput_rps": 2.52
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.71,
+     "inference_speed_tps": 31.06,
+     "token_throughput_tps": 835.95,
+     "request_latency_s": 7.05,
+     "total_throughput_tps": 2930.36,
+     "request_throughput_rps": 4.17
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 1.12,
+     "inference_speed_tps": 21.23,
+     "token_throughput_tps": 1013.92,
+     "request_latency_s": 9.91,
+     "total_throughput_tps": 3690.25,
+     "request_throughput_rps": 5.36
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 2.46,
+     "inference_speed_tps": 12.27,
+     "token_throughput_tps": 1013.5,
+     "request_latency_s": 15.17,
+     "total_throughput_tps": 4184.62,
+     "request_throughput_rps": 6.28
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 28.89,
+     "inference_speed_tps": 11.97,
+     "token_throughput_tps": 711.27,
+     "request_latency_s": 41.84,
+     "total_throughput_tps": 2995.92,
+     "request_throughput_rps": 4.49
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-plus-08-2024.htm",
+   "scenario": "Chat",
+   "model": "cohere.command-r-plus-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Cohere V2_2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-plus-08-2024 (Cohere Command R+ 08-2024) model hosted on one Large Cohere V2_2 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.67,
+     "inference_speed_tps": 68.26,
+     "token_throughput_tps": 57.04,
+     "request_latency_s": 4.56,
+     "total_throughput_tps": 159.08,
+     "request_throughput_rps": 0.22
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.68,
+     "inference_speed_tps": 66.98,
+     "token_throughput_tps": 113.61,
+     "request_latency_s": 4.65,
+     "total_throughput_tps": 320.69,
+     "request_throughput_rps": 0.43
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.69,
+     "inference_speed_tps": 63.73,
+     "token_throughput_tps": 217.25,
+     "request_latency_s": 4.94,
+     "total_throughput_tps": 576.2,
+     "request_throughput_rps": 0.8
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.69,
+     "inference_speed_tps": 59.32,
+     "token_throughput_tps": 403.93,
+     "request_latency_s": 5.15,
+     "total_throughput_tps": 1175.95,
+     "request_throughput_rps": 1.53
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.7,
+     "inference_speed_tps": 54.51,
+     "token_throughput_tps": 737.83,
+     "request_latency_s": 5.63,
+     "total_throughput_tps": 2092.64,
+     "request_throughput_rps": 2.75
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.74,
+     "inference_speed_tps": 45.65,
+     "token_throughput_tps": 1213.09,
+     "request_latency_s": 6.57,
+     "total_throughput_tps": 3306.18,
+     "request_throughput_rps": 4.55
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.94,
+     "inference_speed_tps": 35.81,
+     "token_throughput_tps": 1791.62,
+     "request_latency_s": 8.42,
+     "total_throughput_tps": 4945.78,
+     "request_throughput_rps": 6.71
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.81,
+     "inference_speed_tps": 24.2,
+     "token_throughput_tps": 2030.12,
+     "request_latency_s": 11.87,
+     "total_throughput_tps": 5947.53,
+     "request_throughput_rps": 8.22
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 9.35,
+     "inference_speed_tps": 23.53,
+     "token_throughput_tps": 2064.19,
+     "request_latency_s": 19.82,
+     "total_throughput_tps": 6063.79,
+     "request_throughput_rps": 8.42
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-plus-08-2024.htm",
+   "scenario": "Generation Heavy",
+   "model": "cohere.command-r-plus-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Cohere V2_2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-plus-08-2024 (Cohere Command R+ 08-2024) model hosted on one Large Cohere V2_2 unit of a dedicated AI cluster, with scenario with prompt and response length of 100 tokens each.",
+   "prompt_tokens": 100,
+   "response_tokens": 100,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.51,
+     "inference_speed_tps": 59.64,
+     "token_throughput_tps": 44.86,
+     "request_latency_s": 1.99,
+     "total_throughput_tps": 93.29,
+     "request_throughput_rps": 0.5
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.5,
+     "inference_speed_tps": 57.81,
+     "token_throughput_tps": 87.16,
+     "request_latency_s": 2.02,
+     "total_throughput_tps": 182.21,
+     "request_throughput_rps": 0.98
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.51,
+     "inference_speed_tps": 54.31,
+     "token_throughput_tps": 164.73,
+     "request_latency_s": 2.12,
+     "total_throughput_tps": 344.89,
+     "request_throughput_rps": 1.86
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 46.73,
+     "token_throughput_tps": 290.36,
+     "request_latency_s": 2.43,
+     "total_throughput_tps": 601.4,
+     "request_throughput_rps": 3.22
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.57,
+     "inference_speed_tps": 40.77,
+     "token_throughput_tps": 496.24,
+     "request_latency_s": 2.76,
+     "total_throughput_tps": 1031.61,
+     "request_throughput_rps": 5.52
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.97,
+     "inference_speed_tps": 34.74,
+     "token_throughput_tps": 786.28,
+     "request_latency_s": 3.53,
+     "total_throughput_tps": 1634.87,
+     "request_throughput_rps": 8.77
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 1.03,
+     "inference_speed_tps": 25.08,
+     "token_throughput_tps": 1074.45,
+     "request_latency_s": 4.57,
+     "total_throughput_tps": 2249.96,
+     "request_throughput_rps": 12.13
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.93,
+     "inference_speed_tps": 17.46,
+     "token_throughput_tps": 1402.86,
+     "request_latency_s": 7.15,
+     "total_throughput_tps": 2908.96,
+     "request_throughput_rps": 15.58
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 6.39,
+     "inference_speed_tps": 14.68,
+     "token_throughput_tps": 1321.52,
+     "request_latency_s": 12.48,
+     "total_throughput_tps": 2754.62,
+     "request_throughput_rps": 14.82
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-plus-08-2024.htm",
+   "scenario": "RAG",
+   "model": "cohere.command-r-plus-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Cohere V2_2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-plus-08-2024 (Cohere Command R+ 08-2024) model hosted on one Large Cohere V2_2 unit of a dedicated AI cluster, with scenario with prompt and response length of 100 tokens each.",
+   "prompt_tokens": 100,
+   "response_tokens": 100,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.64,
+     "inference_speed_tps": 69.01,
+     "token_throughput_tps": 47.06,
+     "request_latency_s": 1.97,
+     "total_throughput_tps": 96.12,
+     "request_throughput_rps": 0.5
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.63,
+     "inference_speed_tps": 67.99,
+     "token_throughput_tps": 92.76,
+     "request_latency_s": 1.99,
+     "total_throughput_tps": 189.46,
+     "request_throughput_rps": 1.0
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.64,
+     "inference_speed_tps": 66.71,
+     "token_throughput_tps": 182.12,
+     "request_latency_s": 2.03,
+     "total_throughput_tps": 370.65,
+     "request_throughput_rps": 1.95
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.66,
+     "inference_speed_tps": 64.71,
+     "token_throughput_tps": 345.04,
+     "request_latency_s": 2.09,
+     "total_throughput_tps": 704.19,
+     "request_throughput_rps": 3.7
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.7,
+     "inference_speed_tps": 61.79,
+     "token_throughput_tps": 658.79,
+     "request_latency_s": 2.19,
+     "total_throughput_tps": 1343.09,
+     "request_throughput_rps": 7.06
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.76,
+     "inference_speed_tps": 57.74,
+     "token_throughput_tps": 1196.06,
+     "request_latency_s": 2.37,
+     "total_throughput_tps": 2437.58,
+     "request_throughput_rps": 12.79
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 1.01,
+     "inference_speed_tps": 50.01,
+     "token_throughput_tps": 1861.32,
+     "request_latency_s": 2.86,
+     "total_throughput_tps": 3798.59,
+     "request_throughput_rps": 19.97
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.53,
+     "inference_speed_tps": 37.88,
+     "token_throughput_tps": 2266.4,
+     "request_latency_s": 4.0,
+     "total_throughput_tps": 4611.58,
+     "request_throughput_rps": 24.28
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 3.56,
+     "inference_speed_tps": 35.73,
+     "token_throughput_tps": 2753.63,
+     "request_latency_s": 6.15,
+     "total_throughput_tps": 5616.33,
+     "request_throughput_rps": 29.5
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-plus-08-2024.htm",
+   "scenario": "scenario-5",
+   "model": "cohere.command-r-plus-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Cohere V2_2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-plus-08-2024 (Cohere Command R+ 08-2024) model hosted on one Large Cohere V2_2 unit of a dedicated AI cluster, with a scenario of prompt length of 100 tokens, and response length of 1,000 tokens.",
+   "prompt_tokens": 100,
+   "response_tokens": 1000,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.53,
+     "inference_speed_tps": 61.54,
+     "token_throughput_tps": 58.82,
+     "request_latency_s": 12.2,
+     "total_throughput_tps": 66.68,
+     "request_throughput_rps": 0.08
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.53,
+     "inference_speed_tps": 59.46,
+     "token_throughput_tps": 113.88,
+     "request_latency_s": 14.32,
+     "total_throughput_tps": 127.24,
+     "request_throughput_rps": 0.14
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 56.83,
+     "token_throughput_tps": 216.43,
+     "request_latency_s": 13.34,
+     "total_throughput_tps": 244.89,
+     "request_throughput_rps": 0.29
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 50.35,
+     "token_throughput_tps": 383.52,
+     "request_latency_s": 14.16,
+     "total_throughput_tps": 436.81,
+     "request_throughput_rps": 0.55
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.55,
+     "inference_speed_tps": 45.71,
+     "token_throughput_tps": 681.87,
+     "request_latency_s": 16.28,
+     "total_throughput_tps": 772.85,
+     "request_throughput_rps": 0.94
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.61,
+     "inference_speed_tps": 42.04,
+     "token_throughput_tps": 1203.12,
+     "request_latency_s": 16.03,
+     "total_throughput_tps": 1378.76,
+     "request_throughput_rps": 1.81
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.85,
+     "inference_speed_tps": 32.83,
+     "token_throughput_tps": 1870.11,
+     "request_latency_s": 19.12,
+     "total_throughput_tps": 2159.32,
+     "request_throughput_rps": 2.99
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.72,
+     "inference_speed_tps": 24.8,
+     "token_throughput_tps": 2728.79,
+     "request_latency_s": 27.59,
+     "total_throughput_tps": 3112.68,
+     "request_throughput_rps": 3.96
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 17.43,
+     "inference_speed_tps": 24.51,
+     "token_throughput_tps": 2532.47,
+     "request_latency_s": 43.73,
+     "total_throughput_tps": 2889.44,
+     "request_throughput_rps": 3.69
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-plus-08-2024.htm",
+   "scenario": "scenario-6",
+   "model": "cohere.command-r-plus-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Cohere V2_2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-plus-08-2024 (Cohere Command R+ 08-2024) model hosted on one Large Cohere V2_2 unit of a dedicated AI cluster, with a scenario of prompt length of 100 tokens, and response length of 1,000 tokens.",
+   "prompt_tokens": 100,
+   "response_tokens": 1000,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.65,
+     "inference_speed_tps": 66.69,
+     "token_throughput_tps": 62.92,
+     "request_latency_s": 14.14,
+     "total_throughput_tps": 69.68,
+     "request_throughput_rps": 0.07
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.66,
+     "inference_speed_tps": 66.4,
+     "token_throughput_tps": 123.84,
+     "request_latency_s": 14.32,
+     "total_throughput_tps": 137.02,
+     "request_throughput_rps": 0.14
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.66,
+     "inference_speed_tps": 64.72,
+     "token_throughput_tps": 244.79,
+     "request_latency_s": 14.51,
+     "total_throughput_tps": 271.17,
+     "request_throughput_rps": 0.27
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.67,
+     "inference_speed_tps": 63.87,
+     "token_throughput_tps": 486.7,
+     "request_latency_s": 14.9,
+     "total_throughput_tps": 538.49,
+     "request_throughput_rps": 0.53
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.71,
+     "inference_speed_tps": 60.49,
+     "token_throughput_tps": 915.45,
+     "request_latency_s": 15.54,
+     "total_throughput_tps": 1014.47,
+     "request_throughput_rps": 1.02
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.77,
+     "inference_speed_tps": 57.09,
+     "token_throughput_tps": 1708.15,
+     "request_latency_s": 16.57,
+     "total_throughput_tps": 1891.81,
+     "request_throughput_rps": 1.89
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 1.02,
+     "inference_speed_tps": 49.88,
+     "token_throughput_tps": 2943.89,
+     "request_latency_s": 18.9,
+     "total_throughput_tps": 3263.78,
+     "request_throughput_rps": 3.3
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.56,
+     "inference_speed_tps": 40.01,
+     "token_throughput_tps": 4514.92,
+     "request_latency_s": 23.89,
+     "total_throughput_tps": 5003.86,
+     "request_throughput_rps": 5.05
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 16.89,
+     "inference_speed_tps": 39.84,
+     "token_throughput_tps": 4740.55,
+     "request_latency_s": 39.5,
+     "total_throughput_tps": 5250.54,
+     "request_throughput_rps": 5.26
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-plus-08-2024.htm",
+   "scenario": "scenario-7",
+   "model": "cohere.command-r-plus-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Cohere V2_2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-plus-08-2024 (Cohere Command R+ 08-2024) model hosted on one Large Cohere V2_2 unit of a dedicated AI cluster, with a scenario of prompt length of 2,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 2000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.68,
+     "inference_speed_tps": 58.51,
+     "token_throughput_tps": 48.56,
+     "request_latency_s": 4.08,
+     "total_throughput_tps": 533.48,
+     "request_throughput_rps": 0.24
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.77,
+     "inference_speed_tps": 55.59,
+     "token_throughput_tps": 91.08,
+     "request_latency_s": 4.35,
+     "total_throughput_tps": 1001.07,
+     "request_throughput_rps": 0.46
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.98,
+     "inference_speed_tps": 51.26,
+     "token_throughput_tps": 162.12,
+     "request_latency_s": 4.87,
+     "total_throughput_tps": 1784.54,
+     "request_throughput_rps": 0.81
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 1.52,
+     "inference_speed_tps": 42.35,
+     "token_throughput_tps": 251.89,
+     "request_latency_s": 6.25,
+     "total_throughput_tps": 2768.79,
+     "request_throughput_rps": 1.26
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 2.3,
+     "inference_speed_tps": 32.91,
+     "token_throughput_tps": 371.92,
+     "request_latency_s": 8.47,
+     "total_throughput_tps": 4093.1,
+     "request_throughput_rps": 1.86
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 3.91,
+     "inference_speed_tps": 28.74,
+     "token_throughput_tps": 555.48,
+     "request_latency_s": 11.29,
+     "total_throughput_tps": 6108.24,
+     "request_throughput_rps": 2.78
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 5.98,
+     "inference_speed_tps": 15.69,
+     "token_throughput_tps": 627.51,
+     "request_latency_s": 19.0,
+     "total_throughput_tps": 6898.71,
+     "request_throughput_rps": 3.14
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 8.99,
+     "inference_speed_tps": 7.11,
+     "token_throughput_tps": 577.71,
+     "request_latency_s": 36.95,
+     "total_throughput_tps": 6359.07,
+     "request_throughput_rps": 2.9
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 31.42,
+     "inference_speed_tps": 6.27,
+     "token_throughput_tps": 541.87,
+     "request_latency_s": 63.18,
+     "total_throughput_tps": 5975.51,
+     "request_throughput_rps": 2.72
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-cohere-command-r-plus-08-2024.htm",
+   "scenario": "scenario-8",
+   "model": "cohere.command-r-plus-08-2024",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Cohere V2_2",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the cohere.command-r-plus-08-2024 (Cohere Command R+ 08-2024) model hosted on one Large Cohere V2_2 unit of a dedicated AI cluster, with a scenario of prompt length of 2,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 2000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.76,
+     "inference_speed_tps": 69.52,
+     "token_throughput_tps": 54.09,
+     "request_latency_s": 3.46,
+     "total_throughput_tps": 625.42,
+     "request_throughput_rps": 0.29
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.82,
+     "inference_speed_tps": 67.31,
+     "token_throughput_tps": 103.91,
+     "request_latency_s": 3.62,
+     "total_throughput_tps": 1200.85,
+     "request_throughput_rps": 0.55
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.94,
+     "inference_speed_tps": 63.19,
+     "token_throughput_tps": 189.23,
+     "request_latency_s": 3.91,
+     "total_throughput_tps": 2198.58,
+     "request_throughput_rps": 1.01
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 1.18,
+     "inference_speed_tps": 57.13,
+     "token_throughput_tps": 331.56,
+     "request_latency_s": 4.48,
+     "total_throughput_tps": 3858.68,
+     "request_throughput_rps": 1.77
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.7,
+     "inference_speed_tps": 48.48,
+     "token_throughput_tps": 524.4,
+     "request_latency_s": 5.64,
+     "total_throughput_tps": 6090.47,
+     "request_throughput_rps": 2.79
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 2.68,
+     "inference_speed_tps": 38.31,
+     "token_throughput_tps": 735.33,
+     "request_latency_s": 7.84,
+     "total_throughput_tps": 8523.79,
+     "request_throughput_rps": 3.9
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 4.09,
+     "inference_speed_tps": 22.66,
+     "token_throughput_tps": 894.11,
+     "request_latency_s": 12.58,
+     "total_throughput_tps": 10335.98,
+     "request_throughput_rps": 4.73
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 6.69,
+     "inference_speed_tps": 10.61,
+     "token_throughput_tps": 819.11,
+     "request_latency_s": 24.39,
+     "total_throughput_tps": 9499.74,
+     "request_throughput_rps": 4.35
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 21.64,
+     "inference_speed_tps": 9.16,
+     "token_throughput_tps": 803.95,
+     "request_latency_s": 42.18,
+     "total_throughput_tps": 9287.02,
+     "request_throughput_rps": 4.25
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "Random Length",
+   "model": "meta.llama-3.3-70b-instruct",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Generic",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct (Meta Llama 3.3 (70B)) model hosted on one Large Generic unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.05,
+     "inference_speed_tps": 58.64,
+     "token_throughput_tps": 58.02,
+     "request_latency_s": 5.19,
+     "total_throughput_tps": 143.72,
+     "request_throughput_rps": 0.0031666666666666666
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.06,
+     "inference_speed_tps": 57.98,
+     "token_throughput_tps": 114.84,
+     "request_latency_s": 5.34,
+     "total_throughput_tps": 286.52,
+     "request_throughput_rps": 0.006166666666666667
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.06,
+     "inference_speed_tps": 56.74,
+     "token_throughput_tps": 224.06,
+     "request_latency_s": 5.29,
+     "total_throughput_tps": 574.6,
+     "request_throughput_rps": 0.0125
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.07,
+     "inference_speed_tps": 54.74,
+     "token_throughput_tps": 425.3,
+     "request_latency_s": 5.44,
+     "total_throughput_tps": 1086.78,
+     "request_throughput_rps": 0.024
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.09,
+     "inference_speed_tps": 50.89,
+     "token_throughput_tps": 775.13,
+     "request_latency_s": 5.94,
+     "total_throughput_tps": 1999.12,
+     "request_throughput_rps": 0.043166666666666666
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.16,
+     "inference_speed_tps": 44.32,
+     "token_throughput_tps": 1296.53,
+     "request_latency_s": 6.59,
+     "total_throughput_tps": 3456.77,
+     "request_throughput_rps": 0.0755
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.4,
+     "inference_speed_tps": 35.74,
+     "token_throughput_tps": 1914.2,
+     "request_latency_s": 8.52,
+     "total_throughput_tps": 5132.42,
+     "request_throughput_rps": 0.10966666666666666
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.29,
+     "inference_speed_tps": 25.6,
+     "token_throughput_tps": 2314.73,
+     "request_latency_s": 11.93,
+     "total_throughput_tps": 6334.64,
+     "request_throughput_rps": 0.14150000000000001
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 4.09,
+     "inference_speed_tps": 15.27,
+     "token_throughput_tps": 1976.65,
+     "request_latency_s": 20.16,
+     "total_throughput_tps": 5691.5,
+     "request_throughput_rps": 0.13483333333333333
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "Chat",
+   "model": "meta.llama-3.3-70b-instruct",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Generic",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct (Meta Llama 3.3 (70B)) model hosted on one Large Generic unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.05,
+     "inference_speed_tps": 71.89,
+     "token_throughput_tps": 70.69,
+     "request_latency_s": 4.24,
+     "total_throughput_tps": 181.67,
+     "request_throughput_rps": 0.0038333333333333336
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.05,
+     "inference_speed_tps": 71.98,
+     "token_throughput_tps": 141.95,
+     "request_latency_s": 4.15,
+     "total_throughput_tps": 365.92,
+     "request_throughput_rps": 0.008
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.05,
+     "inference_speed_tps": 69.95,
+     "token_throughput_tps": 275.7,
+     "request_latency_s": 4.36,
+     "total_throughput_tps": 707.8,
+     "request_throughput_rps": 0.015166666666666667
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.05,
+     "inference_speed_tps": 67.52,
+     "token_throughput_tps": 531.75,
+     "request_latency_s": 4.57,
+     "total_throughput_tps": 1327.51,
+     "request_throughput_rps": 0.029
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.06,
+     "inference_speed_tps": 62.77,
+     "token_throughput_tps": 982.23,
+     "request_latency_s": 4.99,
+     "total_throughput_tps": 2475.3,
+     "request_throughput_rps": 0.05283333333333333
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.09,
+     "inference_speed_tps": 52.94,
+     "token_throughput_tps": 1639.05,
+     "request_latency_s": 5.74,
+     "total_throughput_tps": 4294.03,
+     "request_throughput_rps": 0.09116666666666666
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.16,
+     "inference_speed_tps": 42.07,
+     "token_throughput_tps": 2522.18,
+     "request_latency_s": 7.24,
+     "total_throughput_tps": 6564.64,
+     "request_throughput_rps": 0.14150000000000001
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 0.47,
+     "inference_speed_tps": 28.89,
+     "token_throughput_tps": 3274.75,
+     "request_latency_s": 10.69,
+     "total_throughput_tps": 8678.22,
+     "request_throughput_rps": 0.18516666666666665
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.42,
+     "inference_speed_tps": 16.84,
+     "token_throughput_tps": 3407.77,
+     "request_latency_s": 18.21,
+     "total_throughput_tps": 9006.65,
+     "request_throughput_rps": 0.20116666666666666
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "Generation Heavy",
+   "model": "meta.llama-3.3-70b-instruct-fp8-dynamic",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_GENERIC_V1",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct-fp8-dynamic (Meta Llama 3.3 (70B)) model hosted on one LARGE_GENERIC_V1 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.16,
+     "inference_speed_tps": 48.04,
+     "token_throughput_tps": 46.17,
+     "request_latency_s": 6.7,
+     "total_throughput_tps": 111.27,
+     "request_throughput_rps": 0.1465
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.17,
+     "inference_speed_tps": 47.6,
+     "token_throughput_tps": 92.31,
+     "request_latency_s": 6.35,
+     "total_throughput_tps": 234.74,
+     "request_throughput_rps": 0.313
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.19,
+     "inference_speed_tps": 44.98,
+     "token_throughput_tps": 173.37,
+     "request_latency_s": 7.1,
+     "total_throughput_tps": 455.1,
+     "request_throughput_rps": 0.5578333333333333
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.19,
+     "inference_speed_tps": 41.03,
+     "token_throughput_tps": 316.43,
+     "request_latency_s": 7.62,
+     "total_throughput_tps": 795.71,
+     "request_throughput_rps": 1.0391666666666668
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.22,
+     "inference_speed_tps": 33.54,
+     "token_throughput_tps": 514.93,
+     "request_latency_s": 8.85,
+     "total_throughput_tps": 1365.97,
+     "request_throughput_rps": 1.7890000000000001
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.29,
+     "inference_speed_tps": 24.98,
+     "token_throughput_tps": 759.52,
+     "request_latency_s": 12.4,
+     "total_throughput_tps": 1939.62,
+     "request_throughput_rps": 2.5316666666666667
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.64,
+     "inference_speed_tps": 16.78,
+     "token_throughput_tps": 984.11,
+     "request_latency_s": 18.71,
+     "total_throughput_tps": 2554.59,
+     "request_throughput_rps": 3.2853333333333334
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.7,
+     "inference_speed_tps": 9.84,
+     "token_throughput_tps": 1099.59,
+     "request_latency_s": 31.4,
+     "total_throughput_tps": 2846.33,
+     "request_throughput_rps": 3.772
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 17.22,
+     "inference_speed_tps": 6.88,
+     "token_throughput_tps": 1094.51,
+     "request_latency_s": 59.29,
+     "total_throughput_tps": 2874.42,
+     "request_throughput_rps": 3.771166666666667
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "RAG",
+   "model": "meta.llama-3.3-70b-instruct",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Generic",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct (Meta Llama 3.3 (70B)) model hosted on one Large Generic unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.03,
+     "inference_speed_tps": 58.84,
+     "token_throughput_tps": 58.33,
+     "request_latency_s": 1.71,
+     "total_throughput_tps": 113.87,
+     "request_throughput_rps": 0.009666666666666665
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.04,
+     "inference_speed_tps": 58.51,
+     "token_throughput_tps": 115.31,
+     "request_latency_s": 1.73,
+     "total_throughput_tps": 225.2,
+     "request_throughput_rps": 0.019166666666666665
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.05,
+     "inference_speed_tps": 57.7,
+     "token_throughput_tps": 225.43,
+     "request_latency_s": 1.77,
+     "total_throughput_tps": 440.2,
+     "request_throughput_rps": 0.0375
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.08,
+     "inference_speed_tps": 56.45,
+     "token_throughput_tps": 429.3,
+     "request_latency_s": 1.83,
+     "total_throughput_tps": 839.09,
+     "request_throughput_rps": 0.0715
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.09,
+     "inference_speed_tps": 53.98,
+     "token_throughput_tps": 820.89,
+     "request_latency_s": 1.92,
+     "total_throughput_tps": 1602.31,
+     "request_throughput_rps": 0.13683333333333333
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.17,
+     "inference_speed_tps": 49.8,
+     "token_throughput_tps": 1453.58,
+     "request_latency_s": 2.16,
+     "total_throughput_tps": 2839.35,
+     "request_throughput_rps": 0.24233333333333332
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.31,
+     "inference_speed_tps": 44.96,
+     "token_throughput_tps": 2457.59,
+     "request_latency_s": 2.51,
+     "total_throughput_tps": 4800.51,
+     "request_throughput_rps": 0.4096666666666666
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 0.63,
+     "inference_speed_tps": 36.7,
+     "token_throughput_tps": 3484.65,
+     "request_latency_s": 3.34,
+     "total_throughput_tps": 6797.06,
+     "request_throughput_rps": 0.5808333333333333
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.33,
+     "inference_speed_tps": 24.95,
+     "token_throughput_tps": 3137.39,
+     "request_latency_s": 5.34,
+     "total_throughput_tps": 6131.39,
+     "request_throughput_rps": 0.5228333333333334
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "scenario-5",
+   "model": "meta.llama-3.3-70b-instruct",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Generic",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct (Meta Llama 3.3 (70B)) model hosted on one Large Generic unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.02,
+     "inference_speed_tps": 70.87,
+     "token_throughput_tps": 70.46,
+     "request_latency_s": 1.42,
+     "total_throughput_tps": 137.38,
+     "request_throughput_rps": 0.011666666666666665
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.03,
+     "inference_speed_tps": 71.03,
+     "token_throughput_tps": 139.91,
+     "request_latency_s": 1.42,
+     "total_throughput_tps": 272.93,
+     "request_throughput_rps": 0.02333333333333333
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.03,
+     "inference_speed_tps": 69.9,
+     "token_throughput_tps": 275.32,
+     "request_latency_s": 1.45,
+     "total_throughput_tps": 537.34,
+     "request_throughput_rps": 0.04583333333333333
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.05,
+     "inference_speed_tps": 68.57,
+     "token_throughput_tps": 532.09,
+     "request_latency_s": 1.49,
+     "total_throughput_tps": 1039.21,
+     "request_throughput_rps": 0.08866666666666667
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.06,
+     "inference_speed_tps": 65.47,
+     "token_throughput_tps": 1000.33,
+     "request_latency_s": 1.58,
+     "total_throughput_tps": 1952.54,
+     "request_throughput_rps": 0.16666666666666666
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.13,
+     "inference_speed_tps": 59.57,
+     "token_throughput_tps": 1762.88,
+     "request_latency_s": 1.79,
+     "total_throughput_tps": 3442.56,
+     "request_throughput_rps": 0.29383333333333334
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.21,
+     "inference_speed_tps": 52.5,
+     "token_throughput_tps": 2933.83,
+     "request_latency_s": 2.1,
+     "total_throughput_tps": 5729.27,
+     "request_throughput_rps": 0.489
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 43.1,
+     "token_throughput_tps": 4243.57,
+     "request_latency_s": 2.84,
+     "total_throughput_tps": 8285.42,
+     "request_throughput_rps": 0.7073333333333333
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.06,
+     "inference_speed_tps": 27.89,
+     "token_throughput_tps": 5129.28,
+     "request_latency_s": 4.65,
+     "total_throughput_tps": 10008.78,
+     "request_throughput_rps": 0.8548333333333333
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "scenario-6",
+   "model": "meta.llama-3.3-70b-instruct-fp8-dynamic",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_GENERIC_V1",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct-fp8-dynamic (Meta Llama 3.3 (70B)) model hosted on one LARGE_GENERIC_V1 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.08,
+     "inference_speed_tps": 48.06,
+     "token_throughput_tps": 46.46,
+     "request_latency_s": 2.14,
+     "total_throughput_tps": 90.59,
+     "request_throughput_rps": 0.4646666666666667
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.08,
+     "inference_speed_tps": 47.76,
+     "token_throughput_tps": 92.6,
+     "request_latency_s": 2.15,
+     "total_throughput_tps": 180.97,
+     "request_throughput_rps": 0.926
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.11,
+     "inference_speed_tps": 46.29,
+     "token_throughput_tps": 177.34,
+     "request_latency_s": 2.25,
+     "total_throughput_tps": 346.25,
+     "request_throughput_rps": 1.7733333333333334
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.1,
+     "inference_speed_tps": 41.94,
+     "token_throughput_tps": 323.36,
+     "request_latency_s": 2.46,
+     "total_throughput_tps": 630.83,
+     "request_throughput_rps": 3.2336666666666667
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.23,
+     "inference_speed_tps": 37.87,
+     "token_throughput_tps": 556.47,
+     "request_latency_s": 2.85,
+     "total_throughput_tps": 1086.1,
+     "request_throughput_rps": 5.564666666666667
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.35,
+     "inference_speed_tps": 29.6,
+     "token_throughput_tps": 852.79,
+     "request_latency_s": 3.7,
+     "total_throughput_tps": 1664.38,
+     "request_throughput_rps": 8.528
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.48,
+     "inference_speed_tps": 20.76,
+     "token_throughput_tps": 1191.76,
+     "request_latency_s": 5.25,
+     "total_throughput_tps": 2325.16,
+     "request_throughput_rps": 11.917666666666666
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 0.79,
+     "inference_speed_tps": 12.25,
+     "token_throughput_tps": 1378.27,
+     "request_latency_s": 8.87,
+     "total_throughput_tps": 2691.0,
+     "request_throughput_rps": 13.782666666666668
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 3.23,
+     "inference_speed_tps": 7.21,
+     "token_throughput_tps": 1342.09,
+     "request_latency_s": 16.97,
+     "total_throughput_tps": 2620.44,
+     "request_throughput_rps": 13.420833333333333
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "scenario-7",
+   "model": "meta.llama-3.3-70b-instruct",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Generic",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct (Meta Llama 3.3 (70B)) model hosted on one Large Generic unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.03,
+     "inference_speed_tps": 58.67,
+     "token_throughput_tps": 58.3,
+     "request_latency_s": 17.06,
+     "total_throughput_tps": 63.82,
+     "request_throughput_rps": 0.001
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.04,
+     "inference_speed_tps": 58.32,
+     "token_throughput_tps": 113.26,
+     "request_latency_s": 17.17,
+     "total_throughput_tps": 124.07,
+     "request_throughput_rps": 0.0018333333333333333
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.05,
+     "inference_speed_tps": 57.67,
+     "token_throughput_tps": 226.53,
+     "request_latency_s": 17.38,
+     "total_throughput_tps": 248.17,
+     "request_throughput_rps": 0.0038333333333333336
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.08,
+     "inference_speed_tps": 56.64,
+     "token_throughput_tps": 439.73,
+     "request_latency_s": 17.72,
+     "total_throughput_tps": 481.54,
+     "request_throughput_rps": 0.007333333333333333
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.14,
+     "inference_speed_tps": 54.48,
+     "token_throughput_tps": 863.09,
+     "request_latency_s": 18.48,
+     "total_throughput_tps": 945.33,
+     "request_throughput_rps": 0.014333333333333333
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.15,
+     "inference_speed_tps": 50.83,
+     "token_throughput_tps": 1529.11,
+     "request_latency_s": 19.8,
+     "total_throughput_tps": 1674.84,
+     "request_throughput_rps": 0.025500000000000002
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.26,
+     "inference_speed_tps": 47.1,
+     "token_throughput_tps": 2960.77,
+     "request_latency_s": 21.47,
+     "total_throughput_tps": 3242.25,
+     "request_throughput_rps": 0.04933333333333333
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 0.59,
+     "inference_speed_tps": 39.95,
+     "token_throughput_tps": 4332.27,
+     "request_latency_s": 25.6,
+     "total_throughput_tps": 4743.64,
+     "request_throughput_rps": 0.07216666666666667
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.37,
+     "inference_speed_tps": 28.47,
+     "token_throughput_tps": 4197.95,
+     "request_latency_s": 36.47,
+     "total_throughput_tps": 4597.71,
+     "request_throughput_rps": 0.07
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "scenario-8",
+   "model": "meta.llama-3.3-70b-instruct",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Generic",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct (Meta Llama 3.3 (70B)) model hosted on one Large Generic unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.02,
+     "inference_speed_tps": 71.7,
+     "token_throughput_tps": 71.62,
+     "request_latency_s": 13.95,
+     "total_throughput_tps": 78.45,
+     "request_throughput_rps": 0.0011666666666666668
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.03,
+     "inference_speed_tps": 71.85,
+     "token_throughput_tps": 143.25,
+     "request_latency_s": 13.93,
+     "total_throughput_tps": 156.92,
+     "request_throughput_rps": 0.0023333333333333335
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.04,
+     "inference_speed_tps": 70.78,
+     "token_throughput_tps": 279.83,
+     "request_latency_s": 14.15,
+     "total_throughput_tps": 306.47,
+     "request_throughput_rps": 0.004666666666666667
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.06,
+     "inference_speed_tps": 69.8,
+     "token_throughput_tps": 546.34,
+     "request_latency_s": 14.37,
+     "total_throughput_tps": 598.4,
+     "request_throughput_rps": 0.009166666666666667
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.08,
+     "inference_speed_tps": 67.47,
+     "token_throughput_tps": 1066.03,
+     "request_latency_s": 14.88,
+     "total_throughput_tps": 1167.35,
+     "request_throughput_rps": 0.017833333333333333
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.13,
+     "inference_speed_tps": 62.06,
+     "token_throughput_tps": 1931.09,
+     "request_latency_s": 16.23,
+     "total_throughput_tps": 2115.0,
+     "request_throughput_rps": 0.03216666666666666
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.28,
+     "inference_speed_tps": 56.97,
+     "token_throughput_tps": 3575.74,
+     "request_latency_s": 17.82,
+     "total_throughput_tps": 3915.91,
+     "request_throughput_rps": 0.059666666666666666
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 0.49,
+     "inference_speed_tps": 47.49,
+     "token_throughput_tps": 5876.91,
+     "request_latency_s": 21.53,
+     "total_throughput_tps": 6436.45,
+     "request_throughput_rps": 0.098
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.1,
+     "inference_speed_tps": 31.5,
+     "token_throughput_tps": 7660.84,
+     "request_latency_s": 32.82,
+     "total_throughput_tps": 8389.08,
+     "request_throughput_rps": 0.12766666666666668
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "scenario-9",
+   "model": "meta.llama-3.3-70b-instruct-fp8-dynamic",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_GENERIC_V1",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct-fp8-dynamic (Meta Llama 3.3 (70B)) model hosted on one LARGE_GENERIC_V1 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.08,
+     "inference_speed_tps": 48.04,
+     "token_throughput_tps": 46.63,
+     "request_latency_s": 20.87,
+     "total_throughput_tps": 51.07,
+     "request_throughput_rps": 0.04666666666666666
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.09,
+     "inference_speed_tps": 48.43,
+     "token_throughput_tps": 93.27,
+     "request_latency_s": 20.72,
+     "total_throughput_tps": 102.15,
+     "request_throughput_rps": 0.09333333333333332
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.13,
+     "inference_speed_tps": 47.35,
+     "token_throughput_tps": 186.54,
+     "request_latency_s": 21.22,
+     "total_throughput_tps": 204.3,
+     "request_throughput_rps": 0.1865
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.17,
+     "inference_speed_tps": 45.78,
+     "token_throughput_tps": 359.64,
+     "request_latency_s": 21.99,
+     "total_throughput_tps": 393.9,
+     "request_throughput_rps": 0.35966666666666663
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.31,
+     "inference_speed_tps": 42.0,
+     "token_throughput_tps": 639.44,
+     "request_latency_s": 24.1,
+     "total_throughput_tps": 700.29,
+     "request_throughput_rps": 0.6395
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.38,
+     "inference_speed_tps": 35.04,
+     "token_throughput_tps": 1065.59,
+     "request_latency_s": 28.89,
+     "total_throughput_tps": 1167.2,
+     "request_throughput_rps": 1.0656666666666665
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.48,
+     "inference_speed_tps": 27.7,
+     "token_throughput_tps": 1719.72,
+     "request_latency_s": 36.55,
+     "total_throughput_tps": 1883.3,
+     "request_throughput_rps": 1.7196666666666667
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 0.84,
+     "inference_speed_tps": 18.49,
+     "token_throughput_tps": 2279.01,
+     "request_latency_s": 54.86,
+     "total_throughput_tps": 2496.1,
+     "request_throughput_rps": 2.2790000000000004
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 12.49,
+     "inference_speed_tps": 10.14,
+     "token_throughput_tps": 1923.79,
+     "request_latency_s": 112.88,
+     "total_throughput_tps": 2106.78,
+     "request_throughput_rps": 1.9238333333333335
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "scenario-10",
+   "model": "meta.llama-3.3-70b-instruct",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Generic",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct (Meta Llama 3.3 (70B)) model hosted on one Large Generic unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.15,
+     "inference_speed_tps": 58.36,
+     "token_throughput_tps": 55.63,
+     "request_latency_s": 3.56,
+     "total_throughput_tps": 600.44,
+     "request_throughput_rps": 0.004666666666666667
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.21,
+     "inference_speed_tps": 57.01,
+     "token_throughput_tps": 107.46,
+     "request_latency_s": 3.7,
+     "total_throughput_tps": 1160.14,
+     "request_throughput_rps": 0.009000000000000001
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.43,
+     "inference_speed_tps": 55.58,
+     "token_throughput_tps": 197.86,
+     "request_latency_s": 4.02,
+     "total_throughput_tps": 2135.93,
+     "request_throughput_rps": 0.0165
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.76,
+     "inference_speed_tps": 51.24,
+     "token_throughput_tps": 339.08,
+     "request_latency_s": 4.67,
+     "total_throughput_tps": 3659.93,
+     "request_throughput_rps": 0.028333333333333332
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.17,
+     "inference_speed_tps": 41.9,
+     "token_throughput_tps": 528.08,
+     "request_latency_s": 5.97,
+     "total_throughput_tps": 5701.12,
+     "request_throughput_rps": 0.044000000000000004
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 1.77,
+     "inference_speed_tps": 29.93,
+     "token_throughput_tps": 740.37,
+     "request_latency_s": 8.52,
+     "total_throughput_tps": 7992.66,
+     "request_throughput_rps": 0.06166666666666667
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 2.39,
+     "inference_speed_tps": 17.06,
+     "token_throughput_tps": 831.99,
+     "request_latency_s": 14.07,
+     "total_throughput_tps": 8980.85,
+     "request_throughput_rps": 0.06933333333333333
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 5.24,
+     "inference_speed_tps": 9.28,
+     "token_throughput_tps": 793.96,
+     "request_latency_s": 26.69,
+     "total_throughput_tps": 8570.79,
+     "request_throughput_rps": 0.06616666666666667
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 18.88,
+     "inference_speed_tps": 5.36,
+     "token_throughput_tps": 668.72,
+     "request_latency_s": 56.04,
+     "total_throughput_tps": 7219.15,
+     "request_throughput_rps": 0.05566666666666666
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "scenario-11",
+   "model": "meta.llama-3.3-70b-instruct",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "Large Generic",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct (Meta Llama 3.3 (70B)) model hosted on one Large Generic unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.14,
+     "inference_speed_tps": 72.03,
+     "token_throughput_tps": 68.29,
+     "request_latency_s": 2.9,
+     "total_throughput_tps": 737.19,
+     "request_throughput_rps": 0.005666666666666667
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.21,
+     "inference_speed_tps": 70.65,
+     "token_throughput_tps": 131.24,
+     "request_latency_s": 3.03,
+     "total_throughput_tps": 1416.72,
+     "request_throughput_rps": 0.011000000000000001
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.42,
+     "inference_speed_tps": 68.48,
+     "token_throughput_tps": 238.49,
+     "request_latency_s": 3.34,
+     "total_throughput_tps": 2574.37,
+     "request_throughput_rps": 0.01983333333333333
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.74,
+     "inference_speed_tps": 62.7,
+     "token_throughput_tps": 402.85,
+     "request_latency_s": 3.94,
+     "total_throughput_tps": 4348.39,
+     "request_throughput_rps": 0.033499999999999995
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.19,
+     "inference_speed_tps": 50.86,
+     "token_throughput_tps": 615.7,
+     "request_latency_s": 5.15,
+     "total_throughput_tps": 6646.93,
+     "request_throughput_rps": 0.051333333333333335
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 1.5,
+     "inference_speed_tps": 32.62,
+     "token_throughput_tps": 821.95,
+     "request_latency_s": 7.64,
+     "total_throughput_tps": 8873.44,
+     "request_throughput_rps": 0.0685
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 1.79,
+     "inference_speed_tps": 18.54,
+     "token_throughput_tps": 989.99,
+     "request_latency_s": 12.53,
+     "total_throughput_tps": 10686.14,
+     "request_throughput_rps": 0.0825
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 2.7,
+     "inference_speed_tps": 9.82,
+     "token_throughput_tps": 1054.49,
+     "request_latency_s": 22.96,
+     "total_throughput_tps": 11384.1,
+     "request_throughput_rps": 0.08783333333333333
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 5.92,
+     "inference_speed_tps": 4.91,
+     "token_throughput_tps": 995.45,
+     "request_latency_s": 46.42,
+     "total_throughput_tps": 10745.88,
+     "request_throughput_rps": 0.083
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-meta-llama-3-3-70b-instruct.htm",
+   "scenario": "scenario-12",
+   "model": "meta.llama-3.3-70b-instruct-fp8-dynamic",
+   "hf_id": null,
+   "shape": null,
+   "unit_label": "LARGE_GENERIC_V1",
+   "hardware_known": false,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the meta.llama-3.3-70b-instruct-fp8-dynamic (Meta Llama 3.3 (70B)) model hosted on one LARGE_GENERIC_V1 unit of a dedicated AI cluster, with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.61,
+     "inference_speed_tps": 47.82,
+     "token_throughput_tps": 41.63,
+     "request_latency_s": 4.77,
+     "total_throughput_tps": 449.51,
+     "request_throughput_rps": 0.20816666666666667
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.71,
+     "inference_speed_tps": 44.86,
+     "token_throughput_tps": 76.59,
+     "request_latency_s": 5.15,
+     "total_throughput_tps": 826.74,
+     "request_throughput_rps": 0.383
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.81,
+     "inference_speed_tps": 37.37,
+     "token_throughput_tps": 129.16,
+     "request_latency_s": 6.14,
+     "total_throughput_tps": 1394.37,
+     "request_throughput_rps": 0.6458333333333334
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.88,
+     "inference_speed_tps": 27.43,
+     "token_throughput_tps": 194.45,
+     "request_latency_s": 8.13,
+     "total_throughput_tps": 2099.01,
+     "request_throughput_rps": 0.9721666666666666
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.02,
+     "inference_speed_tps": 17.67,
+     "token_throughput_tps": 256.65,
+     "request_latency_s": 12.28,
+     "total_throughput_tps": 2770.52,
+     "request_throughput_rps": 1.2833333333333334
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 1.24,
+     "inference_speed_tps": 10.19,
+     "token_throughput_tps": 302.47,
+     "request_latency_s": 20.76,
+     "total_throughput_tps": 3265.01,
+     "request_throughput_rps": 1.5123333333333333
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 10.99,
+     "inference_speed_tps": 7.16,
+     "token_throughput_tps": 318.93,
+     "request_latency_s": 38.77,
+     "total_throughput_tps": 3443.02,
+     "request_throughput_rps": 1.5946666666666667
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 47.31,
+     "inference_speed_tps": 7.16,
+     "token_throughput_tps": 318.49,
+     "request_latency_s": 75.1,
+     "total_throughput_tps": 3438.12,
+     "request_throughput_rps": 1.5925
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 117.96,
+     "inference_speed_tps": 7.16,
+     "token_throughput_tps": 305.59,
+     "request_latency_s": 145.75,
+     "total_throughput_tps": 3299.34,
+     "request_throughput_rps": 1.528
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-120b.htm",
+   "scenario": "Random Length",
+   "model": "openai.gpt-oss-120b",
+   "hf_id": "openai/gpt-oss-120b",
+   "shape": "OAI_H100_X2",
+   "unit_label": "OAI_H100_X2",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-120b (OpenAI gpt-oss-120b ) model hosted on one OAI_H100_X2 unit of a dedicated AI cluster (two H100 GPUs), with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.22,
+     "inference_speed_tps": 261.95,
+     "token_throughput_tps": 220.15,
+     "request_latency_s": 1.36,
+     "total_throughput_tps": 548.46,
+     "request_throughput_rps": 0.73
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.09,
+     "inference_speed_tps": 213.71,
+     "token_throughput_tps": 398.6,
+     "request_latency_s": 1.51,
+     "total_throughput_tps": 1033.1,
+     "request_throughput_rps": 1.32
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.08,
+     "inference_speed_tps": 165.27,
+     "token_throughput_tps": 625.81,
+     "request_latency_s": 1.9,
+     "total_throughput_tps": 1622.33,
+     "request_throughput_rps": 2.08
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.18,
+     "inference_speed_tps": 119.84,
+     "token_throughput_tps": 862.0,
+     "request_latency_s": 2.62,
+     "total_throughput_tps": 2314.16,
+     "request_throughput_rps": 3.01
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.17,
+     "inference_speed_tps": 93.47,
+     "token_throughput_tps": 1343.22,
+     "request_latency_s": 3.38,
+     "total_throughput_tps": 3470.47,
+     "request_throughput_rps": 4.54
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.59,
+     "inference_speed_tps": 63.39,
+     "token_throughput_tps": 1596.95,
+     "request_latency_s": 5.27,
+     "total_throughput_tps": 4281.85,
+     "request_throughput_rps": 5.66
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.62,
+     "inference_speed_tps": 37.63,
+     "token_throughput_tps": 1795.69,
+     "request_latency_s": 8.87,
+     "total_throughput_tps": 4772.03,
+     "request_throughput_rps": 6.31
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.1,
+     "inference_speed_tps": 23.71,
+     "token_throughput_tps": 2180.46,
+     "request_latency_s": 12.86,
+     "total_throughput_tps": 5952.25,
+     "request_throughput_rps": 7.99
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.78,
+     "inference_speed_tps": 18.58,
+     "token_throughput_tps": 2222.52,
+     "request_latency_s": 15.93,
+     "total_throughput_tps": 6504.76,
+     "request_throughput_rps": 9.35
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-120b.htm",
+   "scenario": "Chat",
+   "model": "openai.gpt-oss-120b",
+   "hf_id": "openai/gpt-oss-120b",
+   "shape": "OAI_H100_X2",
+   "unit_label": "OAI_H100_X2",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-120b (OpenAI gpt-oss-120b ) model hosted on one OAI_H100_X2 unit of a dedicated AI cluster (two H100 GPUs), with scenario with prompt and response length of 100 tokens each.",
+   "prompt_tokens": 100,
+   "response_tokens": 100,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.07,
+     "inference_speed_tps": 261.23,
+     "token_throughput_tps": 222.83,
+     "request_latency_s": 0.45,
+     "total_throughput_tps": 442.72,
+     "request_throughput_rps": 2.23
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.13,
+     "inference_speed_tps": 223.12,
+     "token_throughput_tps": 346.88,
+     "request_latency_s": 0.57,
+     "total_throughput_tps": 689.14,
+     "request_throughput_rps": 3.47
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.14,
+     "inference_speed_tps": 185.16,
+     "token_throughput_tps": 583.72,
+     "request_latency_s": 0.68,
+     "total_throughput_tps": 1159.68,
+     "request_throughput_rps": 5.84
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.15,
+     "inference_speed_tps": 150.14,
+     "token_throughput_tps": 948.79,
+     "request_latency_s": 0.81,
+     "total_throughput_tps": 1884.99,
+     "request_throughput_rps": 9.49
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.17,
+     "inference_speed_tps": 131.49,
+     "token_throughput_tps": 1598.0,
+     "request_latency_s": 0.92,
+     "total_throughput_tps": 3175.39,
+     "request_throughput_rps": 15.98
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.75,
+     "inference_speed_tps": 99.64,
+     "token_throughput_tps": 1711.51,
+     "request_latency_s": 1.79,
+     "total_throughput_tps": 3399.46,
+     "request_throughput_rps": 17.12
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.87,
+     "inference_speed_tps": 81.13,
+     "token_throughput_tps": 2627.13,
+     "request_latency_s": 2.1,
+     "total_throughput_tps": 5219.7,
+     "request_throughput_rps": 26.27
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.89,
+     "inference_speed_tps": 54.58,
+     "token_throughput_tps": 2976.36,
+     "request_latency_s": 3.78,
+     "total_throughput_tps": 5911.72,
+     "request_throughput_rps": 29.76
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 2.07,
+     "inference_speed_tps": 31.58,
+     "token_throughput_tps": 3852.55,
+     "request_latency_s": 5.37,
+     "total_throughput_tps": 7653.63,
+     "request_throughput_rps": 38.53
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-120b.htm",
+   "scenario": "Generation Heavy",
+   "model": "openai.gpt-oss-120b",
+   "hf_id": "openai/gpt-oss-120b",
+   "shape": "OAI_H100_X2",
+   "unit_label": "OAI_H100_X2",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-120b (OpenAI gpt-oss-120b) model hosted on one OAI_H100_X2 unit of a dedicated AI cluster (two H100 GPUs), with a scenario of prompt length of 100 tokens, and response length of 1,000 tokens.",
+   "prompt_tokens": 100,
+   "response_tokens": 1000,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.07,
+     "inference_speed_tps": 261.81,
+     "token_throughput_tps": 256.51,
+     "request_latency_s": 3.89,
+     "total_throughput_tps": 281.77,
+     "request_throughput_rps": 0.26
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.14,
+     "inference_speed_tps": 224.09,
+     "token_throughput_tps": 434.47,
+     "request_latency_s": 4.6,
+     "total_throughput_tps": 477.39,
+     "request_throughput_rps": 0.43
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.14,
+     "inference_speed_tps": 182.54,
+     "token_throughput_tps": 710.36,
+     "request_latency_s": 5.62,
+     "total_throughput_tps": 780.48,
+     "request_throughput_rps": 0.71
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.15,
+     "inference_speed_tps": 144.99,
+     "token_throughput_tps": 1129.12,
+     "request_latency_s": 7.04,
+     "total_throughput_tps": 1240.52,
+     "request_throughput_rps": 1.13
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.27,
+     "inference_speed_tps": 124.21,
+     "token_throughput_tps": 1908.32,
+     "request_latency_s": 8.31,
+     "total_throughput_tps": 2096.68,
+     "request_throughput_rps": 1.91
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.6,
+     "inference_speed_tps": 101.42,
+     "token_throughput_tps": 3023.03,
+     "request_latency_s": 10.45,
+     "total_throughput_tps": 3321.46,
+     "request_throughput_rps": 3.02
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.84,
+     "inference_speed_tps": 81.18,
+     "token_throughput_tps": 4740.88,
+     "request_latency_s": 13.15,
+     "total_throughput_tps": 5208.51,
+     "request_throughput_rps": 4.74
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.28,
+     "inference_speed_tps": 62.05,
+     "token_throughput_tps": 7107.26,
+     "request_latency_s": 17.38,
+     "total_throughput_tps": 7808.01,
+     "request_throughput_rps": 7.11
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.6,
+     "inference_speed_tps": 42.8,
+     "token_throughput_tps": 9691.73,
+     "request_latency_s": 24.98,
+     "total_throughput_tps": 10647.89,
+     "request_throughput_rps": 9.69
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-120b.htm",
+   "scenario": "RAG Scenario 1",
+   "model": "openai.gpt-oss-120b",
+   "hf_id": "openai/gpt-oss-120b",
+   "shape": "OAI_H100_X2",
+   "unit_label": "OAI_H100_X2",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-120b (OpenAI gpt-oss-120b ) model hosted on one OAI_H100_X2 unit of a dedicated AI cluster (two H100 GPUs), with a scenario of prompt length of 2,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 2000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.09,
+     "inference_speed_tps": 257.79,
+     "token_throughput_tps": 226.9,
+     "request_latency_s": 0.86,
+     "total_throughput_tps": 2460.63,
+     "request_throughput_rps": 1.13
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.16,
+     "inference_speed_tps": 219.97,
+     "token_throughput_tps": 367.54,
+     "request_latency_s": 1.07,
+     "total_throughput_tps": 3985.78,
+     "request_throughput_rps": 1.84
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.29,
+     "inference_speed_tps": 181.6,
+     "token_throughput_tps": 555.09,
+     "request_latency_s": 1.39,
+     "total_throughput_tps": 6019.49,
+     "request_throughput_rps": 2.78
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.46,
+     "inference_speed_tps": 141.97,
+     "token_throughput_tps": 810.0,
+     "request_latency_s": 1.87,
+     "total_throughput_tps": 8784.09,
+     "request_throughput_rps": 4.05
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.6,
+     "inference_speed_tps": 112.0,
+     "token_throughput_tps": 1196.86,
+     "request_latency_s": 2.43,
+     "total_throughput_tps": 12981.05,
+     "request_throughput_rps": 5.98
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.97,
+     "inference_speed_tps": 79.31,
+     "token_throughput_tps": 1576.52,
+     "request_latency_s": 3.56,
+     "total_throughput_tps": 17096.63,
+     "request_throughput_rps": 7.88
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 1.74,
+     "inference_speed_tps": 57.86,
+     "token_throughput_tps": 1973.83,
+     "request_latency_s": 5.28,
+     "total_throughput_tps": 21404.97,
+     "request_throughput_rps": 9.87
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 3.45,
+     "inference_speed_tps": 33.18,
+     "token_throughput_tps": 2025.35,
+     "request_latency_s": 9.74,
+     "total_throughput_tps": 21963.02,
+     "request_throughput_rps": 10.13
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 6.73,
+     "inference_speed_tps": 20.0,
+     "token_throughput_tps": 2109.05,
+     "request_latency_s": 17.3,
+     "total_throughput_tps": 22872.85,
+     "request_throughput_rps": 10.55
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-120b.htm",
+   "scenario": "RAG Scenario 2",
+   "model": "openai.gpt-oss-120b",
+   "hf_id": "openai/gpt-oss-120b",
+   "shape": "OAI_H100_X2",
+   "unit_label": "OAI_H100_X2",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-120b (OpenAI gpt-oss-120b ) model hosted on one OAI_H100_X2 unit of a dedicated AI cluster (two H100 GPUs), with a scenario of prompt length of 7,800 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 7800,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.16,
+     "inference_speed_tps": 251.46,
+     "token_throughput_tps": 200.36,
+     "request_latency_s": 0.95,
+     "total_throughput_tps": 7892.53,
+     "request_throughput_rps": 1.0
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.25,
+     "inference_speed_tps": 198.46,
+     "token_throughput_tps": 303.35,
+     "request_latency_s": 1.26,
+     "total_throughput_tps": 11948.77,
+     "request_throughput_rps": 1.52
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.46,
+     "inference_speed_tps": 147.81,
+     "token_throughput_tps": 410.55,
+     "request_latency_s": 1.84,
+     "total_throughput_tps": 16172.35,
+     "request_throughput_rps": 2.05
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.89,
+     "inference_speed_tps": 104.17,
+     "token_throughput_tps": 513.98,
+     "request_latency_s": 2.88,
+     "total_throughput_tps": 20246.87,
+     "request_throughput_rps": 2.57
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.68,
+     "inference_speed_tps": 75.21,
+     "token_throughput_tps": 632.25,
+     "request_latency_s": 4.53,
+     "total_throughput_tps": 24904.43,
+     "request_throughput_rps": 3.16
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 3.13,
+     "inference_speed_tps": 49.11,
+     "token_throughput_tps": 725.39,
+     "request_latency_s": 7.57,
+     "total_throughput_tps": 28573.61,
+     "request_throughput_rps": 3.63
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 6.12,
+     "inference_speed_tps": 27.93,
+     "token_throughput_tps": 745.21,
+     "request_latency_s": 14.1,
+     "total_throughput_tps": 29354.61,
+     "request_throughput_rps": 3.73
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 10.91,
+     "inference_speed_tps": 16.76,
+     "token_throughput_tps": 824.68,
+     "request_latency_s": 23.41,
+     "total_throughput_tps": 32484.31,
+     "request_throughput_rps": 4.12
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 28.27,
+     "inference_speed_tps": 23.06,
+     "token_throughput_tps": 878.43,
+     "request_latency_s": 37.83,
+     "total_throughput_tps": 34600.76,
+     "request_throughput_rps": 4.39
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-120b.htm",
+   "scenario": "RAG Scenario 3",
+   "model": "openai.gpt-oss-120b",
+   "hf_id": "openai/gpt-oss-120b",
+   "shape": "OAI_H100_X2",
+   "unit_label": "OAI_H100_X2",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-120b (OpenAI gpt-oss-120b ) model hosted on one OAI_H100_X2 unit of a dedicated AI cluster (two H100 GPUs), with a scenario of prompt length of 128,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 128000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 4.9,
+     "inference_speed_tps": 193.51,
+     "token_throughput_tps": 30.28,
+     "request_latency_s": 5.93,
+     "total_throughput_tps": 19105.23,
+     "request_throughput_rps": 0.15
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 7.54,
+     "inference_speed_tps": 76.41,
+     "token_throughput_tps": 32.29,
+     "request_latency_s": 11.57,
+     "total_throughput_tps": 20375.68,
+     "request_throughput_rps": 0.16
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 12.76,
+     "inference_speed_tps": 34.53,
+     "token_throughput_tps": 33.6,
+     "request_latency_s": 22.17,
+     "total_throughput_tps": 21197.94,
+     "request_throughput_rps": 0.17
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 26.85,
+     "inference_speed_tps": 26.84,
+     "token_throughput_tps": 38.26,
+     "request_latency_s": 38.94,
+     "total_throughput_tps": 24138.69,
+     "request_throughput_rps": 0.19
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 65.93,
+     "inference_speed_tps": 26.53,
+     "token_throughput_tps": 38.17,
+     "request_latency_s": 78.04,
+     "total_throughput_tps": 24087.24,
+     "request_throughput_rps": 0.19
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 139.44,
+     "inference_speed_tps": 26.72,
+     "token_throughput_tps": 37.81,
+     "request_latency_s": 151.55,
+     "total_throughput_tps": 23857.98,
+     "request_throughput_rps": 0.19
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 268.6,
+     "inference_speed_tps": 26.67,
+     "token_throughput_tps": 36.95,
+     "request_latency_s": 280.69,
+     "total_throughput_tps": 23314.67,
+     "request_throughput_rps": 0.18
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 451.1,
+     "inference_speed_tps": 26.82,
+     "token_throughput_tps": 35.89,
+     "request_latency_s": 463.13,
+     "total_throughput_tps": 22643.98,
+     "request_throughput_rps": 0.18
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 592.11,
+     "inference_speed_tps": 26.18,
+     "token_throughput_tps": 32.51,
+     "request_latency_s": 604.78,
+     "total_throughput_tps": 20515.68,
+     "request_throughput_rps": 0.16
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-20b.htm",
+   "scenario": "Random Length",
+   "model": "openai.gpt-oss-20b",
+   "hf_id": "openai/gpt-oss-20b",
+   "shape": "OAI_H100_X1",
+   "unit_label": "OAI_H100_X1",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-20b (OpenAI gpt-oss-20b) model hosted on one OAI_H100_X1 unit of a dedicated AI cluster (one H100 GPU), with scenario: normal distribution of N(480,240), and response length: normal distribution of N(300,150).",
+   "prompt_tokens": 480,
+   "prompt_stddev": 240,
+   "response_tokens": 300,
+   "response_stddev": 150,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.15,
+     "inference_speed_tps": 310.18,
+     "token_throughput_tps": 267.85,
+     "request_latency_s": 1.1,
+     "total_throughput_tps": 703.41,
+     "request_throughput_rps": 0.9
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.06,
+     "inference_speed_tps": 246.49,
+     "token_throughput_tps": 467.94,
+     "request_latency_s": 1.32,
+     "total_throughput_tps": 1174.08,
+     "request_throughput_rps": 1.5
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.07,
+     "inference_speed_tps": 196.86,
+     "token_throughput_tps": 742.66,
+     "request_latency_s": 1.58,
+     "total_throughput_tps": 1961.26,
+     "request_throughput_rps": 2.51
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.06,
+     "inference_speed_tps": 167.75,
+     "token_throughput_tps": 1267.44,
+     "request_latency_s": 1.84,
+     "total_throughput_tps": 3342.67,
+     "request_throughput_rps": 4.24
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.11,
+     "inference_speed_tps": 138.54,
+     "token_throughput_tps": 2001.69,
+     "request_latency_s": 2.29,
+     "total_throughput_tps": 5252.2,
+     "request_throughput_rps": 6.71
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.28,
+     "inference_speed_tps": 87.77,
+     "token_throughput_tps": 2375.62,
+     "request_latency_s": 3.63,
+     "total_throughput_tps": 6290.45,
+     "request_throughput_rps": 8.26
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.31,
+     "inference_speed_tps": 66.31,
+     "token_throughput_tps": 3471.69,
+     "request_latency_s": 4.76,
+     "total_throughput_tps": 9094.38,
+     "request_throughput_rps": 11.95
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 0.43,
+     "inference_speed_tps": 37.61,
+     "token_throughput_tps": 3451.69,
+     "request_latency_s": 7.68,
+     "total_throughput_tps": 9724.71,
+     "request_throughput_rps": 13.19
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.39,
+     "inference_speed_tps": 27.15,
+     "token_throughput_tps": 3233.22,
+     "request_latency_s": 10.0,
+     "total_throughput_tps": 9461.31,
+     "request_throughput_rps": 13.7
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-20b.htm",
+   "scenario": "Chat",
+   "model": "openai.gpt-oss-20b",
+   "hf_id": "openai/gpt-oss-20b",
+   "shape": "OAI_H100_X1",
+   "unit_label": "OAI_H100_X1",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-20b (OpenAI gpt-oss-20b) model hosted on one OAI_H100_X1 unit of a dedicated AI cluster (one H100 GPU), with scenario with prompt and response length of 100 tokens each.",
+   "prompt_tokens": 100,
+   "response_tokens": 100,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.04,
+     "inference_speed_tps": 309.3,
+     "token_throughput_tps": 273.44,
+     "request_latency_s": 0.36,
+     "total_throughput_tps": 543.3,
+     "request_throughput_rps": 2.73
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.08,
+     "inference_speed_tps": 257.56,
+     "token_throughput_tps": 425.02,
+     "request_latency_s": 0.47,
+     "total_throughput_tps": 844.54,
+     "request_throughput_rps": 4.25
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.09,
+     "inference_speed_tps": 217.51,
+     "token_throughput_tps": 723.17,
+     "request_latency_s": 0.54,
+     "total_throughput_tps": 1436.95,
+     "request_throughput_rps": 7.23
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.12,
+     "inference_speed_tps": 197.51,
+     "token_throughput_tps": 1245.86,
+     "request_latency_s": 0.62,
+     "total_throughput_tps": 2475.46,
+     "request_throughput_rps": 12.46
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.12,
+     "inference_speed_tps": 180.34,
+     "token_throughput_tps": 2139.95,
+     "request_latency_s": 0.67,
+     "total_throughput_tps": 4252.45,
+     "request_throughput_rps": 21.4
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.34,
+     "inference_speed_tps": 146.2,
+     "token_throughput_tps": 2872.63,
+     "request_latency_s": 1.02,
+     "total_throughput_tps": 5707.83,
+     "request_throughput_rps": 28.73
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.9,
+     "inference_speed_tps": 106.26,
+     "token_throughput_tps": 3070.83,
+     "request_latency_s": 1.85,
+     "total_throughput_tps": 6100.5,
+     "request_throughput_rps": 30.71
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.44,
+     "inference_speed_tps": 67.53,
+     "token_throughput_tps": 3690.1,
+     "request_latency_s": 2.95,
+     "total_throughput_tps": 7332.91,
+     "request_throughput_rps": 36.9
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.08,
+     "inference_speed_tps": 42.15,
+     "token_throughput_tps": 5489.89,
+     "request_latency_s": 3.55,
+     "total_throughput_tps": 10905.91,
+     "request_throughput_rps": 54.9
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-20b.htm",
+   "scenario": "Generation Heavy",
+   "model": "openai.gpt-oss-20b",
+   "hf_id": "openai/gpt-oss-20b",
+   "shape": "OAI_H100_X1",
+   "unit_label": "OAI_H100_X1",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-20b (OpenAI gpt-oss-20b) model hosted on one OAI_H100_X1 unit of a dedicated AI cluster (one H100 GPU), with a scenario of prompt length of 100 tokens, and response length of 1,000 tokens.",
+   "prompt_tokens": 100,
+   "response_tokens": 1000,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.04,
+     "inference_speed_tps": 312.78,
+     "token_throughput_tps": 307.59,
+     "request_latency_s": 3.24,
+     "total_throughput_tps": 337.94,
+     "request_throughput_rps": 0.31
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.09,
+     "inference_speed_tps": 253.78,
+     "token_throughput_tps": 495.55,
+     "request_latency_s": 4.03,
+     "total_throughput_tps": 544.48,
+     "request_throughput_rps": 0.5
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.1,
+     "inference_speed_tps": 207.31,
+     "token_throughput_tps": 810.29,
+     "request_latency_s": 4.92,
+     "total_throughput_tps": 890.28,
+     "request_throughput_rps": 0.81
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.12,
+     "inference_speed_tps": 186.85,
+     "token_throughput_tps": 1453.29,
+     "request_latency_s": 5.46,
+     "total_throughput_tps": 1596.84,
+     "request_throughput_rps": 1.45
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.12,
+     "inference_speed_tps": 172.37,
+     "token_throughput_tps": 2663.04,
+     "request_latency_s": 5.92,
+     "total_throughput_tps": 2925.98,
+     "request_throughput_rps": 2.66
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.3,
+     "inference_speed_tps": 144.37,
+     "token_throughput_tps": 4349.11,
+     "request_latency_s": 7.22,
+     "total_throughput_tps": 4778.21,
+     "request_throughput_rps": 4.35
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 0.56,
+     "inference_speed_tps": 116.87,
+     "token_throughput_tps": 6803.86,
+     "request_latency_s": 9.11,
+     "total_throughput_tps": 7475.21,
+     "request_throughput_rps": 6.8
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 1.05,
+     "inference_speed_tps": 81.16,
+     "token_throughput_tps": 9142.52,
+     "request_latency_s": 13.37,
+     "total_throughput_tps": 10044.44,
+     "request_throughput_rps": 9.14
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 1.16,
+     "inference_speed_tps": 59.39,
+     "token_throughput_tps": 13147.16,
+     "request_latency_s": 18.01,
+     "total_throughput_tps": 14445.62,
+     "request_throughput_rps": 13.15
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-20b.htm",
+   "scenario": "RAG Scenario 1",
+   "model": "openai.gpt-oss-20b",
+   "hf_id": "openai/gpt-oss-20b",
+   "shape": "OAI_H100_X1",
+   "unit_label": "OAI_H100_X1",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-20b (OpenAI gpt-oss-20b) model hosted on one OAI_H100_X1 unit of a dedicated AI cluster (one H100 GPU), with a scenario of prompt length of 2,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 2000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.05,
+     "inference_speed_tps": 307.29,
+     "token_throughput_tps": 276.08,
+     "request_latency_s": 0.7,
+     "total_throughput_tps": 2993.75,
+     "request_throughput_rps": 1.38
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.11,
+     "inference_speed_tps": 252.42,
+     "token_throughput_tps": 437.08,
+     "request_latency_s": 0.89,
+     "total_throughput_tps": 4739.41,
+     "request_throughput_rps": 2.19
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.19,
+     "inference_speed_tps": 206.66,
+     "token_throughput_tps": 663.78,
+     "request_latency_s": 1.15,
+     "total_throughput_tps": 7199.38,
+     "request_throughput_rps": 3.32
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.35,
+     "inference_speed_tps": 177.05,
+     "token_throughput_tps": 1007.62,
+     "request_latency_s": 1.48,
+     "total_throughput_tps": 10927.18,
+     "request_throughput_rps": 5.04
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 0.52,
+     "inference_speed_tps": 144.84,
+     "token_throughput_tps": 1492.26,
+     "request_latency_s": 1.92,
+     "total_throughput_tps": 16183.54,
+     "request_throughput_rps": 7.46
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 0.92,
+     "inference_speed_tps": 97.78,
+     "token_throughput_tps": 1803.69,
+     "request_latency_s": 3.03,
+     "total_throughput_tps": 19559.41,
+     "request_throughput_rps": 9.02
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 1.68,
+     "inference_speed_tps": 66.08,
+     "token_throughput_tps": 2098.59,
+     "request_latency_s": 4.81,
+     "total_throughput_tps": 22758.87,
+     "request_throughput_rps": 10.49
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 3.3,
+     "inference_speed_tps": 38.69,
+     "token_throughput_tps": 2169.83,
+     "request_latency_s": 8.73,
+     "total_throughput_tps": 23530.04,
+     "request_throughput_rps": 10.85
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 6.59,
+     "inference_speed_tps": 22.97,
+     "token_throughput_tps": 2203.38,
+     "request_latency_s": 15.88,
+     "total_throughput_tps": 23892.56,
+     "request_throughput_rps": 11.02
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-20b.htm",
+   "scenario": "RAG Scenario 2",
+   "model": "openai.gpt-oss-20b",
+   "hf_id": "openai/gpt-oss-20b",
+   "shape": "OAI_H100_X1",
+   "unit_label": "OAI_H100_X1",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-20b (OpenAI gpt-oss-20b) model hosted on one OAI_H100_X1 unit of a dedicated AI cluster (one H100 GPU), with a scenario of prompt length of 7,800 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 7800,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 0.14,
+     "inference_speed_tps": 296.08,
+     "token_throughput_tps": 228.79,
+     "request_latency_s": 0.81,
+     "total_throughput_tps": 9011.37,
+     "request_throughput_rps": 1.14
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 0.24,
+     "inference_speed_tps": 222.84,
+     "token_throughput_tps": 333.43,
+     "request_latency_s": 1.14,
+     "total_throughput_tps": 13133.46,
+     "request_throughput_rps": 1.67
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 0.46,
+     "inference_speed_tps": 167.95,
+     "token_throughput_tps": 446.77,
+     "request_latency_s": 1.67,
+     "total_throughput_tps": 17599.0,
+     "request_throughput_rps": 2.23
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 0.84,
+     "inference_speed_tps": 126.22,
+     "token_throughput_tps": 590.38,
+     "request_latency_s": 2.48,
+     "total_throughput_tps": 23255.47,
+     "request_throughput_rps": 2.95
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 1.61,
+     "inference_speed_tps": 91.55,
+     "token_throughput_tps": 714.55,
+     "request_latency_s": 3.95,
+     "total_throughput_tps": 28146.38,
+     "request_throughput_rps": 3.57
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 3.0,
+     "inference_speed_tps": 55.52,
+     "token_throughput_tps": 785.96,
+     "request_latency_s": 6.98,
+     "total_throughput_tps": 30958.57,
+     "request_throughput_rps": 3.93
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 5.77,
+     "inference_speed_tps": 32.34,
+     "token_throughput_tps": 822.33,
+     "request_latency_s": 12.76,
+     "total_throughput_tps": 32391.21,
+     "request_throughput_rps": 4.11
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 11.35,
+     "inference_speed_tps": 16.82,
+     "token_throughput_tps": 808.94,
+     "request_latency_s": 24.97,
+     "total_throughput_tps": 31863.84,
+     "request_throughput_rps": 4.04
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 22.79,
+     "inference_speed_tps": 14.81,
+     "token_throughput_tps": 845.34,
+     "request_latency_s": 38.26,
+     "total_throughput_tps": 33297.87,
+     "request_throughput_rps": 4.23
+    }
+   ]
+  },
+  {
+   "source_url": "https://docs.oracle.com/en-us/iaas/Content/generative-ai/benchmark-openai-gpt-oss-20b.htm",
+   "scenario": "RAG Scenario 3",
+   "model": "openai.gpt-oss-20b",
+   "hf_id": "openai/gpt-oss-20b",
+   "shape": "OAI_H100_X1",
+   "unit_label": "OAI_H100_X1",
+   "hardware_known": true,
+   "summary": "The following table shows hosting dedicated AI cluster benchmarks with the openai.gpt-oss-20b (OpenAI gpt-oss-20b) model hosted on one OAI_H100_X1 unit of a dedicated AI cluster (one H100 GPU), with a scenario of prompt length of 128,000 tokens, and response length of 200 tokens.",
+   "prompt_tokens": 128000,
+   "response_tokens": 200,
+   "prompt_stddev": 0,
+   "response_stddev": 0,
+   "rows": [
+    {
+     "concurrency": 1,
+     "ttft_s": 5.43,
+     "inference_speed_tps": 208.76,
+     "token_throughput_tps": 28.33,
+     "request_latency_s": 6.38,
+     "total_throughput_tps": 17876.33,
+     "request_throughput_rps": 0.14
+    },
+    {
+     "concurrency": 2,
+     "ttft_s": 8.33,
+     "inference_speed_tps": 77.55,
+     "token_throughput_tps": 30.22,
+     "request_latency_s": 12.56,
+     "total_throughput_tps": 19068.05,
+     "request_throughput_rps": 0.15
+    },
+    {
+     "concurrency": 4,
+     "ttft_s": 14.16,
+     "inference_speed_tps": 33.64,
+     "token_throughput_tps": 30.84,
+     "request_latency_s": 24.39,
+     "total_throughput_tps": 19460.28,
+     "request_throughput_rps": 0.15
+    },
+    {
+     "concurrency": 8,
+     "ttft_s": 26.2,
+     "inference_speed_tps": 15.26,
+     "token_throughput_tps": 31.0,
+     "request_latency_s": 48.22,
+     "total_throughput_tps": 19559.97,
+     "request_throughput_rps": 0.16
+    },
+    {
+     "concurrency": 16,
+     "ttft_s": 61.38,
+     "inference_speed_tps": 11.42,
+     "token_throughput_tps": 34.23,
+     "request_latency_s": 87.75,
+     "total_throughput_tps": 21601.48,
+     "request_throughput_rps": 0.17
+    },
+    {
+     "concurrency": 32,
+     "ttft_s": 144.11,
+     "inference_speed_tps": 11.35,
+     "token_throughput_tps": 33.68,
+     "request_latency_s": 170.42,
+     "total_throughput_tps": 21253.95,
+     "request_throughput_rps": 0.17
+    },
+    {
+     "concurrency": 64,
+     "ttft_s": 286.47,
+     "inference_speed_tps": 11.33,
+     "token_throughput_tps": 33.45,
+     "request_latency_s": 312.79,
+     "total_throughput_tps": 21105.36,
+     "request_throughput_rps": 0.17
+    },
+    {
+     "concurrency": 128,
+     "ttft_s": 479.74,
+     "inference_speed_tps": 11.39,
+     "token_throughput_tps": 32.22,
+     "request_latency_s": 506.03,
+     "total_throughput_tps": 20326.17,
+     "request_throughput_rps": 0.16
+    },
+    {
+     "concurrency": 256,
+     "ttft_s": 570.15,
+     "inference_speed_tps": 11.44,
+     "token_throughput_tps": 28.66,
+     "request_latency_s": 596.46,
+     "total_throughput_tps": 18085.14,
+     "request_throughput_rps": 0.14
+    }
+   ]
+  }
+ ]
+}

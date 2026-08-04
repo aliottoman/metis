@@ -6,7 +6,6 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent a
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { MetisMark, MetisWordmark } from "@/components/metis-mark";
-import { ModelSessionControl } from "@/components/model-session-control";
 import { deleteConversation, listConversations } from "@/lib/api";
 import {
   CONVERSATIONS_CHANGED_EVENT,
@@ -110,8 +109,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // flex-basis transition fired during hydration sticks at its start value),
     // then enable transitions a frame later so user toggles animate smoothly.
     setCollapsed(window.localStorage.getItem("metis.sidebarCollapsed") === "1");
+    // An absent key reads back as null, and Number(null) is 0 — which is finite,
+    // so a plain isFinite check would clamp every fresh profile to the minimum
+    // width instead of leaving it at the default.
     const savedWidth = Number(window.localStorage.getItem("metis.sidebarWidth"));
-    if (Number.isFinite(savedWidth)) {
+    if (Number.isFinite(savedWidth) && savedWidth > 0) {
       const nextWidth = clampSidebarWidth(savedWidth);
       sidebarWidthRef.current = nextWidth;
       setSidebarWidth(nextWidth);
@@ -200,7 +202,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      // Shift is deliberately excluded: ⌘⇧K belongs to whichever page is open
+      // (the Customers page searches customer records with it), and this
+      // listener would otherwise steal the focus out from under it.
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setCollapsed(false);
         window.localStorage.setItem("metis.sidebarCollapsed", "0");
@@ -389,10 +394,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ><span /></div>
       </aside>
 
-      <main className="appMain">
-        <ModelSessionControl />
-        {children}
-      </main>
+      <main className="appMain">{children}</main>
     </div>
   );
 }

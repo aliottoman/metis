@@ -28,15 +28,3 @@ export function MetisMark({ animated = false, className = "", ...props }: MetisM
     </svg>
   );
 }
-
-export function MetisCompanion() {
-  return (
-    <div className="metisCompanion" aria-hidden="true">
-      <span className="companionHalo" />
-      <span className="companionOrbit companionOrbitCobalt"><i /></span>
-      <span className="companionOrbit companionOrbitCoral"><i /></span>
-      <MetisMark animated />
-      <span className="companionShadow" />
-    </div>
-  );
-}

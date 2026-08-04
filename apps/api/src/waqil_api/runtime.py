@@ -15,6 +15,8 @@ from .corpus import CorpusService
 from .customer_intelligence import CustomerIntelligenceService
 from .dac_catalog import DacCatalog
 from .dac_service import DacService
+from .sku_catalog import SkuCatalog
+from .win_valuation import WinValuationService
 from .database import Database
 from .deep_worker import build_deep_worker_factory
 from .embeddings import CohereRetrieval
@@ -25,6 +27,7 @@ from .model_preference import ModelPreferenceStore
 from .model_provider import RoutedModelProvider, build_model_provider
 from .notion import NotionService
 from .profile import ProfileStore
+from .project_sandbox import ProjectSandboxService
 from .project_verification import ProjectVerificationService
 from .project_workspace import ProjectWorkspaceService
 from .run_history import RunHistoryService
@@ -58,6 +61,12 @@ class AppRuntime:
         # recommender can use whichever model the user has selected.
         self.dac_catalog = DacCatalog()
         self.dac = DacService(self.dac_catalog, preference=self.model_preference)
+        # Same shape as the sizing catalog: vendored JSON, no I/O, model attached
+        # in start() so valuation uses whichever model the user has selected.
+        self.sku_catalog = SkuCatalog(rates_path=settings.sku_rates_path)
+        self.win_valuation = WinValuationService(
+            self.database, self.sku_catalog, preference=self.model_preference
+        )
         self.verification = ProjectVerificationService(
             settings, approval_path=settings.project_verify_approval_path
         )
@@ -69,6 +78,7 @@ class AppRuntime:
         self.reference_runner = ReferenceArchitectureRunner(settings)
         self.checkpointer: Any = None
         self.control_plane: ControlPlane | None = None
+        self.project_sandbox: ProjectSandboxService | None = None
         self.deep_worker_factory: Any = None
         self._checkpointer_context: AbstractAsyncContextManager[Any] | None = None
         self._background: set[asyncio.Task[None]] = set()
@@ -112,8 +122,17 @@ class AppRuntime:
         self.dac = DacService(
             self.dac_catalog, model=self.model, preference=self.model_preference
         )
+        self.win_valuation = WinValuationService(
+            self.database, self.sku_catalog,
+            model=self.model, preference=self.model_preference,
+        )
+        self.project_sandbox = ProjectSandboxService(self.settings)
         self.projects = ProjectWorkspaceService(
-            self.settings, self.assets, self.model, verification=self.verification
+            self.settings,
+            self.assets,
+            self.model,
+            verification=self.verification,
+            sandbox=self.project_sandbox,
         )
         self._checkpointer_context = AsyncSqliteSaver.from_conn_string(
             str(self.settings.checkpoint_path)
@@ -144,8 +163,42 @@ class AppRuntime:
             model_session=self.model_session,
         )
         await self.control_plane.reconcile_startup()
+        self.spawn(self._release_idle_model(), name="model-idle-release")
+
+    async def _release_idle_model(self) -> None:
+        """Give the weights back once every Metis window has gone away.
+
+        Nothing else does this: closing the app is a window closing, and Ollama
+        only counts idle time since the last *model* call, so a launched model
+        outlives the app that launched it for the whole keep_alive window.
+        """
+        after = self.settings.model_release_after_idle_seconds
+        if after <= 0:
+            return
+        # Four checks per window, so the release lands close to the deadline
+        # rather than a whole window late.
+        interval = max(1.0, min(60.0, after / 4))
+        while True:
+            await asyncio.sleep(interval)
+            # A run can be in flight without a model call being active, so the
+            # busy counter alone is not enough to call the session idle.
+            if await self.database.has_active_runs():
+                self.model_session.touch()
+                continue
+            await self.model_session.release_if_idle(after)
+            # The verify sandbox holds a VM the same way the session holds
+            # weights, on its own clock: a build verifies two or three times in
+            # a turn, so stopping it between them would pay the boot repeatedly.
+            if self.project_sandbox is not None:
+                await self.project_sandbox.release_if_idle(
+                    self.settings.project_sandbox_release_after_idle_seconds
+                )
 
     async def close(self) -> None:
+        # Before the loop goes away, so the unload request can still be sent.
+        await self.model_session.release_owned()
+        if self.project_sandbox is not None:
+            await self.project_sandbox.release_machine()
         for task in list(self._background):
             task.cancel()
         if self._background:

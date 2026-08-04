@@ -759,6 +759,52 @@ CREATE INDEX IF NOT EXISTS idx_customer_wins_account
     ON customer_wins(account_id, won_at DESC);
 """
 
+SCHEMA_V15 = """
+-- An estimated value for a win whose ARR nobody recorded. Kept in its own table
+-- rather than as a column on customer_wins so an estimate can never be mistaken
+-- for the figure a human confirmed: `customer_wins.yearly_arr` stays the single
+-- source of truth for money, and a row here only reaches it once accepted.
+CREATE TABLE IF NOT EXISTS customer_win_valuations (
+    id TEXT PRIMARY KEY,
+    win_id TEXT NOT NULL UNIQUE REFERENCES customer_wins(id) ON DELETE CASCADE,
+    estimated_yearly_arr REAL CHECK(
+        estimated_yearly_arr IS NULL OR estimated_yearly_arr >= 0
+    ),
+    currency TEXT NOT NULL DEFAULT 'USD',
+    lines_json TEXT NOT NULL DEFAULT '[]',
+    explanation TEXT NOT NULL DEFAULT '',
+    confidence TEXT NOT NULL DEFAULT 'low',
+    unpriced_json TEXT NOT NULL DEFAULT '[]',
+    rates_verified INTEGER NOT NULL DEFAULT 0,
+    model_used TEXT,
+    prompt_version TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'proposed'
+        CHECK(status IN ('proposed', 'accepted', 'dismissed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+SCHEMA_V16 = """
+-- A note written straight onto an account. Deliberately not a customer_source:
+-- a source is raw material awaiting extraction, whereas a note is already the
+-- knowledge the user meant to keep. It needs no model, never enters the review
+-- queue, and pinned notes join the account context a scoped chat is given.
+CREATE TABLE IF NOT EXISTS customer_notes (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES customer_accounts(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0 CHECK(pinned IN (0,1)),
+    origin TEXT NOT NULL DEFAULT 'manual' CHECK(origin IN ('manual','chat')),
+    origin_ref TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_customer_notes_account
+    ON customer_notes(account_id, pinned DESC, updated_at DESC);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -774,6 +820,8 @@ MIGRATIONS: dict[int, str] = {
     12: SCHEMA_V12,
     13: SCHEMA_V13,
     14: SCHEMA_V14,
+    15: SCHEMA_V15,
+    16: SCHEMA_V16,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -1325,6 +1373,26 @@ class Database:
                     records.append(record)
         return records
 
+    async def has_active_runs(self) -> bool:
+        """Whether any run is still in flight, including one paused for approval.
+
+        A run waiting on the user has made no model call for as long as they
+        have taken to answer, so the idle clock must not treat it as finished.
+        """
+        def operation() -> int:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT COUNT(*) FROM runs WHERE status IN (?, ?, ?)",
+                    (
+                        RunStatus.QUEUED.value,
+                        RunStatus.RUNNING.value,
+                        RunStatus.AWAITING_APPROVAL.value,
+                    ),
+                ).fetchone()
+                return int(row[0]) if row else 0
+
+        return await self._call(operation) > 0
+
     async def list_runs(
         self, status: str | None = None, *, limit: int = 100
     ) -> list[RunV1]:
@@ -1356,6 +1424,35 @@ class Database:
                 data.pop(field, None)
             result.append(RunV1.model_validate(data))
         return result
+
+    async def latest_awaiting_project_approval(
+        self, conversation_id: str
+    ) -> tuple[str, str] | None:
+        """The newest run of this conversation parked at an approval, with its project.
+
+        Returns (run_id, project_id) — the project read from the run's own
+        aliases rather than the conversation's current pin, so a changeset
+        staged for one project can never be carried into a run on another.
+        """
+
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT id, model_aliases_json FROM runs "
+                        "WHERE conversation_id = ? AND status = ? "
+                        "ORDER BY updated_at DESC LIMIT 1",
+                        (conversation_id, str(RunStatus.AWAITING_APPROVAL)),
+                    )
+                    .fetchone()
+                )
+
+        row = await self._call(operation)
+        if row is None:
+            return None
+        aliases = _loads(row["model_aliases_json"], {}) or {}
+        return str(row["id"]), str(aliases.get("_project_id", ""))
 
     async def set_run_status(
         self,
@@ -3575,23 +3672,6 @@ class Database:
         rows = await self._call(operation)
         return [self._definition_proposal_from_row(row) for row in rows]
 
-    async def get_tool_definition_proposal(
-        self, proposal_id: str
-    ) -> ToolDefinitionProposalV1 | None:
-        def operation() -> dict[str, Any] | None:
-            with self._lock:
-                row = self._connection().execute(
-                    "SELECT p.*, d.slug AS slug, d.version AS version "
-                    "FROM tool_definition_proposals p "
-                    "JOIN tool_definitions d ON d.id = p.definition_id "
-                    "WHERE p.id = ?",
-                    (proposal_id,),
-                ).fetchone()
-            return dict(row) if row else None
-
-        row = await self._call(operation)
-        return self._definition_proposal_from_row(row) if row else None
-
     async def get_tool_definition_by_id(self, definition_id: str) -> ToolDefinitionV1 | None:
         def operation() -> dict[str, str] | None:
             with self._lock:
@@ -3873,17 +3953,6 @@ class Database:
 
         row = await self._call(operation)
         return self._definition_build_from_row(row)
-
-    async def get_tool_definition_build(self, build_id: str) -> ToolDefinitionBuildV1 | None:
-        def operation() -> dict[str, Any] | None:
-            with self._lock:
-                row = self._connection().execute(
-                    "SELECT * FROM tool_definition_builds WHERE id = ?", (build_id,)
-                ).fetchone()
-            return dict(row) if row else None
-
-        row = await self._call(operation)
-        return self._definition_build_from_row(row) if row else None
 
     async def list_tool_definition_builds(
         self, status: str | None = None
@@ -4276,6 +4345,12 @@ class Database:
                             "ORDER BY COALESCE(won_at, created_at) DESC"
                         )
                     ],
+                    "notes": [
+                        self._note_row(item) for item in rows(
+                            "SELECT * FROM customer_notes WHERE account_id = ? "
+                            "ORDER BY pinned DESC, updated_at DESC"
+                        )
+                    ],
                 }
 
         return {"account": account, **await self._call(operation)}
@@ -4297,6 +4372,406 @@ class Database:
 
         row = await self._call(operation)
         return dict(row) if row else None
+
+    # ── Hand edits ─────────────────────────────────────────────────────────
+    # Everything an extraction can write, a person can correct. A model reading
+    # a note is a first draft of the record, never the last word on it, so each
+    # derived row is directly creatable, editable, and removable. Edits keep the
+    # row's evidence untouched: the quote records where the claim came from, and
+    # rewriting the claim does not rewrite its history.
+
+    async def create_customer_fact(
+        self, account_id: str, *, kind: str, content: str
+    ) -> dict[str, Any] | None:
+        fact_id, timestamp = _id("cfact"), _now()
+
+        def operation() -> sqlite3.Row | None:
+            with self._transaction() as conn:
+                if conn.execute(
+                    "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
+                ).fetchone() is None:
+                    return None
+                conn.execute(
+                    """INSERT INTO customer_facts
+                    (id, account_id, interaction_id, kind, content, status,
+                     confidence, evidence_json, created_at)
+                    VALUES (?, ?, NULL, ?, ?, 'active', 1.0, '{}', ?)""",
+                    (fact_id, account_id, kind, content.strip(), timestamp),
+                )
+                conn.execute(
+                    "UPDATE customer_accounts SET updated_at = ? WHERE id = ?",
+                    (timestamp, account_id),
+                )
+                return conn.execute(
+                    "SELECT * FROM customer_facts WHERE id = ?", (fact_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def update_customer_fact(
+        self, fact_id: str, *, kind: str, content: str, status: str
+    ) -> dict[str, Any] | None:
+        def operation() -> sqlite3.Row | None:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    "UPDATE customer_facts SET kind = ?, content = ?, status = ? WHERE id = ?",
+                    (kind, content.strip(), status, fact_id),
+                )
+                if not cursor.rowcount:
+                    return None
+                return conn.execute(
+                    "SELECT * FROM customer_facts WHERE id = ?", (fact_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def delete_customer_fact(self, fact_id: str) -> bool:
+        def operation() -> bool:
+            with self._transaction() as conn:
+                return conn.execute(
+                    "DELETE FROM customer_facts WHERE id = ?", (fact_id,)
+                ).rowcount > 0
+
+        return await self._call(operation)
+
+    async def create_customer_action(
+        self, account_id: str, *, description: str, owner: str, due_at: str | None
+    ) -> dict[str, Any] | None:
+        action_id, timestamp = _id("cact"), _now()
+
+        def operation() -> sqlite3.Row | None:
+            with self._transaction() as conn:
+                if conn.execute(
+                    "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
+                ).fetchone() is None:
+                    return None
+                conn.execute(
+                    """INSERT INTO customer_actions
+                    (id, account_id, interaction_id, description, owner, due_at,
+                     status, evidence_json, created_at, updated_at)
+                    VALUES (?, ?, NULL, ?, ?, ?, 'open', '{}', ?, ?)""",
+                    (
+                        action_id, account_id, description.strip(), owner.strip(),
+                        due_at, timestamp, timestamp,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE customer_accounts SET updated_at = ? WHERE id = ?",
+                    (timestamp, account_id),
+                )
+                return conn.execute(
+                    "SELECT * FROM customer_actions WHERE id = ?", (action_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def edit_customer_action(
+        self, action_id: str, *, description: str, owner: str,
+        due_at: str | None, status: str,
+    ) -> dict[str, Any] | None:
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row | None:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    """UPDATE customer_actions SET description = ?, owner = ?,
+                    due_at = ?, status = ?, updated_at = ? WHERE id = ?""",
+                    (
+                        description.strip(), owner.strip(), due_at, status,
+                        timestamp, action_id,
+                    ),
+                )
+                if not cursor.rowcount:
+                    return None
+                return conn.execute(
+                    "SELECT * FROM customer_actions WHERE id = ?", (action_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def delete_customer_action(self, action_id: str) -> bool:
+        def operation() -> bool:
+            with self._transaction() as conn:
+                return conn.execute(
+                    "DELETE FROM customer_actions WHERE id = ?", (action_id,)
+                ).rowcount > 0
+
+        return await self._call(operation)
+
+    async def upsert_customer_person(
+        self, account_id: str, *, name: str, role: str, organization: str
+    ) -> dict[str, Any] | None:
+        """Add or correct a contact. Name is unique per account, so re-adding an
+        existing person is an edit of that person rather than a second card."""
+        person_id, timestamp = _id("cp"), _now()
+
+        def operation() -> sqlite3.Row | None:
+            with self._transaction() as conn:
+                if conn.execute(
+                    "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
+                ).fetchone() is None:
+                    return None
+                conn.execute(
+                    """INSERT INTO customer_people
+                    (id, account_id, name, role, organization, evidence_json,
+                     created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, '{}', ?, ?)
+                    ON CONFLICT(account_id, name) DO UPDATE SET
+                        role = excluded.role,
+                        organization = excluded.organization,
+                        updated_at = excluded.updated_at""",
+                    (
+                        person_id, account_id, name.strip(), role.strip(),
+                        organization.strip(), timestamp, timestamp,
+                    ),
+                )
+                return conn.execute(
+                    "SELECT * FROM customer_people WHERE account_id = ? AND name = ?",
+                    (account_id, name.strip()),
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def rename_customer_person(
+        self, person_id: str, *, name: str, role: str, organization: str
+    ) -> dict[str, Any] | None:
+        """Edit a contact in place, including their name.
+
+        A rename can collide with another contact on the same account; the
+        UNIQUE constraint is left to say so rather than silently merging two
+        people into one.
+        """
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row | None:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    """UPDATE customer_people SET name = ?, role = ?,
+                    organization = ?, updated_at = ? WHERE id = ?""",
+                    (
+                        name.strip(), role.strip(), organization.strip(),
+                        timestamp, person_id,
+                    ),
+                )
+                if not cursor.rowcount:
+                    return None
+                return conn.execute(
+                    "SELECT * FROM customer_people WHERE id = ?", (person_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def delete_customer_person(self, person_id: str) -> bool:
+        def operation() -> bool:
+            with self._transaction() as conn:
+                return conn.execute(
+                    "DELETE FROM customer_people WHERE id = ?", (person_id,)
+                ).rowcount > 0
+
+        return await self._call(operation)
+
+    async def update_customer_source(
+        self, source_id: str, *, title: str, content: str, source_kind: str,
+        occurred_at: str | None,
+    ) -> dict[str, Any] | None:
+        """Correct a captured note.
+
+        Records already extracted from it are left alone: they were reviewed and
+        saved as their own facts, and rewriting the note is not a decision to
+        withdraw them. The content hash is recomputed so the edited text keeps
+        de-duplicating future captures; colliding with another note on the same
+        account raises, because two identical sources is exactly what the unique
+        constraint exists to prevent.
+        """
+        timestamp = _now()
+        digest = hashlib.sha256(content.strip().encode("utf-8")).hexdigest()
+
+        def operation() -> sqlite3.Row | None:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    """UPDATE customer_sources SET title = ?, content = ?,
+                    content_hash = ?, source_kind = ?, occurred_at = ?,
+                    updated_at = ? WHERE id = ?""",
+                    (
+                        title.strip(), content.strip(), digest, source_kind,
+                        occurred_at, timestamp, source_id,
+                    ),
+                )
+                if not cursor.rowcount:
+                    return None
+                return conn.execute(
+                    "SELECT * FROM customer_sources WHERE id = ?", (source_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def delete_customer_source(self, source_id: str) -> bool:
+        def operation() -> bool:
+            with self._transaction() as conn:
+                return conn.execute(
+                    "DELETE FROM customer_sources WHERE id = ?", (source_id,)
+                ).rowcount > 0
+
+        return await self._call(operation)
+
+    # ── Direct notes ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _note_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        value = dict(row)
+        value["pinned"] = bool(value["pinned"])
+        return value
+
+    async def create_customer_note(
+        self, account_id: str, *, title: str, body: str, pinned: bool,
+        origin: str, origin_ref: str,
+    ) -> dict[str, Any] | None:
+        note_id, timestamp = _id("cnote"), _now()
+
+        def operation() -> sqlite3.Row | None:
+            with self._transaction() as conn:
+                if conn.execute(
+                    "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
+                ).fetchone() is None:
+                    return None
+                conn.execute(
+                    """INSERT INTO customer_notes
+                    (id, account_id, title, body, pinned, origin, origin_ref,
+                     created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        note_id, account_id, title.strip(), body.strip(),
+                        int(pinned), origin, origin_ref.strip(), timestamp, timestamp,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE customer_accounts SET updated_at = ? WHERE id = ?",
+                    (timestamp, account_id),
+                )
+                return conn.execute(
+                    "SELECT * FROM customer_notes WHERE id = ?", (note_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return self._note_row(row) if row else None
+
+    async def update_customer_note(
+        self, note_id: str, *, title: str, body: str, pinned: bool
+    ) -> dict[str, Any] | None:
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row | None:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    """UPDATE customer_notes SET title = ?, body = ?, pinned = ?,
+                    updated_at = ? WHERE id = ?""",
+                    (title.strip(), body.strip(), int(pinned), timestamp, note_id),
+                )
+                if not cursor.rowcount:
+                    return None
+                return conn.execute(
+                    "SELECT * FROM customer_notes WHERE id = ?", (note_id,)
+                ).fetchone()
+
+        row = await self._call(operation)
+        return self._note_row(row) if row else None
+
+    async def delete_customer_note(self, note_id: str) -> bool:
+        def operation() -> bool:
+            with self._transaction() as conn:
+                return conn.execute(
+                    "DELETE FROM customer_notes WHERE id = ?", (note_id,)
+                ).rowcount > 0
+
+        return await self._call(operation)
+
+    # ── Cross-account search ───────────────────────────────────────────────
+
+    async def search_customer_records(
+        self, query: str, *, limit: int = 40
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Find anything customer-scoped that mentions `query`.
+
+        A substring scan rather than an FTS index: this store holds a personal
+        book of business — hundreds of accounts and thousands of rows — where
+        one pass over six small tables is immediate, and an FTS index would mean
+        six sets of sync triggers to keep honest for no felt gain. It also keeps
+        partial words ("Coher") matching, which is what a search-as-you-type box
+        is actually asked to do.
+        """
+        needle = query.strip().lower()
+        if not needle:
+            return [], False
+        # LIKE's own wildcards have to be neutralised, or a stray "%" from the
+        # user's query would silently match every row.
+        escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                return [
+                    dict(row) for row in self._connection().execute(
+                        """SELECT * FROM (
+                        SELECT 'account' AS kind, a.id AS id, a.id AS account_id,
+                               a.name AS account_name, a.name AS title,
+                               TRIM(a.industry || ' ' || a.region) AS snippet,
+                               a.updated_at AS at
+                        FROM customer_accounts a
+                        WHERE LOWER(a.name) LIKE :q ESCAPE '\\'
+                           OR LOWER(a.aliases_json) LIKE :q ESCAPE '\\'
+                           OR LOWER(a.industry) LIKE :q ESCAPE '\\'
+                           OR LOWER(a.region) LIKE :q ESCAPE '\\'
+                        UNION ALL
+                        SELECT 'note', n.id, n.account_id, a.name,
+                               CASE WHEN n.title != '' THEN n.title ELSE 'Note' END,
+                               n.body, n.updated_at
+                        FROM customer_notes n JOIN customer_accounts a ON a.id = n.account_id
+                        WHERE LOWER(n.title) LIKE :q ESCAPE '\\'
+                           OR LOWER(n.body) LIKE :q ESCAPE '\\'
+                        UNION ALL
+                        SELECT 'win', w.id, w.account_id, a.name, w.title,
+                               TRIM(w.brief || ' ' || w.dac_shape), COALESCE(w.won_at, w.created_at)
+                        FROM customer_wins w JOIN customer_accounts a ON a.id = w.account_id
+                        WHERE LOWER(w.title) LIKE :q ESCAPE '\\'
+                           OR LOWER(w.brief) LIKE :q ESCAPE '\\'
+                           OR LOWER(w.dac_shape) LIKE :q ESCAPE '\\'
+                           OR LOWER(w.services_json) LIKE :q ESCAPE '\\'
+                        UNION ALL
+                        SELECT 'fact', f.id, f.account_id, a.name, f.kind,
+                               f.content, f.created_at
+                        FROM customer_facts f JOIN customer_accounts a ON a.id = f.account_id
+                        WHERE LOWER(f.content) LIKE :q ESCAPE '\\'
+                        UNION ALL
+                        SELECT 'action', c.id, c.account_id, a.name,
+                               c.description, c.owner, c.created_at
+                        FROM customer_actions c JOIN customer_accounts a ON a.id = c.account_id
+                        WHERE LOWER(c.description) LIKE :q ESCAPE '\\'
+                           OR LOWER(c.owner) LIKE :q ESCAPE '\\'
+                        UNION ALL
+                        SELECT 'source', s.id, s.account_id, a.name, s.title,
+                               s.content, COALESCE(s.occurred_at, s.created_at)
+                        FROM customer_sources s JOIN customer_accounts a ON a.id = s.account_id
+                        WHERE LOWER(s.title) LIKE :q ESCAPE '\\'
+                           OR LOWER(s.content) LIKE :q ESCAPE '\\'
+                        )
+                        ORDER BY CASE kind
+                            WHEN 'account' THEN 0 WHEN 'note' THEN 1 WHEN 'win' THEN 2
+                            WHEN 'fact' THEN 3 WHEN 'action' THEN 4 ELSE 5 END,
+                            at DESC
+                        LIMIT :limit""",
+                        {"q": pattern, "limit": limit + 1},
+                    ).fetchall()
+                ]
+
+        rows = await self._call(operation)
+        return rows[:limit], len(rows) > limit
 
     @staticmethod
     def _win_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
@@ -4378,6 +4853,107 @@ class Database:
         row = await self._call(operation)
         return self._win_row(row) if row else None
 
+    async def set_customer_win_arr(self, win_id: str, yearly_arr: float) -> bool:
+        """Write an accepted estimate through to the win's own ARR figure."""
+        timestamp = _now()
+
+        def operation() -> bool:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    "UPDATE customer_wins SET yearly_arr = ?, updated_at = ? WHERE id = ?",
+                    (yearly_arr, timestamp, win_id),
+                )
+                return cursor.rowcount > 0
+
+        return await self._call(operation)
+
+    async def upsert_win_valuation(
+        self, win_id: str, *, estimated_yearly_arr: float | None, currency: str,
+        lines: list[dict[str, Any]], explanation: str, confidence: str,
+        unpriced: list[str], rates_verified: bool, model_used: str | None,
+        prompt_version: str,
+    ) -> dict[str, Any]:
+        """Store the latest estimate for a win, replacing any earlier one.
+
+        Re-estimating resets the status to 'proposed': a fresh reading of the
+        notes has not been reviewed yet, whatever the user decided about the
+        previous one.
+        """
+        valuation_id, timestamp = _id("cval"), _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO customer_win_valuations
+                    (id, win_id, estimated_yearly_arr, currency, lines_json,
+                     explanation, confidence, unpriced_json, rates_verified,
+                     model_used, prompt_version, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)
+                    ON CONFLICT(win_id) DO UPDATE SET
+                        estimated_yearly_arr = excluded.estimated_yearly_arr,
+                        currency = excluded.currency,
+                        lines_json = excluded.lines_json,
+                        explanation = excluded.explanation,
+                        confidence = excluded.confidence,
+                        unpriced_json = excluded.unpriced_json,
+                        rates_verified = excluded.rates_verified,
+                        model_used = excluded.model_used,
+                        prompt_version = excluded.prompt_version,
+                        status = 'proposed',
+                        updated_at = excluded.updated_at""",
+                    (
+                        valuation_id, win_id, estimated_yearly_arr, currency,
+                        _json(lines), explanation.strip(), confidence,
+                        _json(unpriced), int(rates_verified), model_used,
+                        prompt_version, timestamp, timestamp,
+                    ),
+                )
+
+        await self._call(operation)
+        return (await self.get_win_valuation(win_id))  # type: ignore[return-value]
+
+    async def get_win_valuation(self, win_id: str) -> dict[str, Any] | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM customer_win_valuations WHERE win_id = ?",
+                    (win_id,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        return dict(row) if row else None
+
+    async def set_win_valuation_status(
+        self, win_id: str, status: str
+    ) -> dict[str, Any] | None:
+        timestamp = _now()
+
+        def operation() -> bool:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    """UPDATE customer_win_valuations SET status = ?, updated_at = ?
+                    WHERE win_id = ?""",
+                    (status, timestamp, win_id),
+                )
+                return cursor.rowcount > 0
+
+        return await self.get_win_valuation(win_id) if await self._call(operation) else None
+
+    async def win_valuations_for(self, win_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Every stored estimate for the given wins, keyed by win id."""
+        if not win_ids:
+            return {}
+
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                placeholders = ",".join("?" for _ in win_ids)
+                return self._connection().execute(
+                    f"SELECT * FROM customer_win_valuations WHERE win_id IN ({placeholders})",
+                    tuple(win_ids),
+                ).fetchall()
+
+        return {str(row["win_id"]): dict(row) for row in await self._call(operation)}
+
     async def customer_dashboard_data(self) -> dict[str, Any]:
         def operation() -> dict[str, Any]:
             with self._lock:
@@ -4392,11 +4968,21 @@ class Database:
                     (SELECT COUNT(*) FROM customer_sources WHERE status = 'waiting') waiting_notes""",
                     (now,),
                 ).fetchone()
+                # The attention queue is read across accounts, so each action
+                # arrives with the customer it belongs to; overdue first, then
+                # due-soon, then the undated backlog.
                 actions = [
                     dict(row) for row in conn.execute(
-                        """SELECT * FROM customer_actions WHERE status = 'open'
-                        ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at, created_at
-                        LIMIT 6"""
+                        """SELECT c.*, a.name AS account_name
+                        FROM customer_actions c
+                        JOIN customer_accounts a ON a.id = c.account_id
+                        WHERE c.status = 'open'
+                        ORDER BY CASE
+                            WHEN c.due_at IS NOT NULL AND c.due_at < ? THEN 0
+                            WHEN c.due_at IS NOT NULL THEN 1 ELSE 2 END,
+                            c.due_at, c.created_at
+                        LIMIT 25""",
+                        (now,),
                     ).fetchall()
                 ]
                 ids = [

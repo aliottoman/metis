@@ -1,0 +1,6 @@
+**
+!infra/
+!infra/sandbox/
+!infra/sandbox/project-verify/
+!infra/sandbox/project-verify/requirements.lock
+!infra/sandbox/project-verify/verify_tool.py

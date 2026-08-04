@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   latestRunId,
+  mergeAssistantReasoning,
   mergeAssistantRunEvent,
   messageBelongsToRun,
 } from "../lib/run-history.ts";
@@ -58,4 +59,26 @@ test("live response events create and complete one run-linked assistant message"
     content: "Finished",
     streaming: false,
   });
+});
+
+test("thinking accumulates on its own field and never joins the answer text", () => {
+  const thinking = mergeAssistantReasoning([], "run_think", "Considering the ");
+  const more = mergeAssistantReasoning(thinking, "run_think", "retrieved passages.");
+  const answered = mergeAssistantRunEvent(
+    more,
+    { run_id: "run_think", type: "message.delta" },
+    "Here is the answer.",
+  );
+
+  assert.equal(answered.length, 1);
+  assert.equal(answered[0]?.reasoning, "Considering the retrieved passages.");
+  assert.equal(answered[0]?.content, "Here is the answer.");
+});
+
+test("an empty thinking delta leaves the message untouched", () => {
+  const messages: ChatMessage[] = [
+    { id: "assistant-run_x", role: "assistant", content: "", run_id: "run_x", reasoning: "kept" },
+  ];
+  const merged = mergeAssistantReasoning(messages, "run_x", "");
+  assert.equal(merged[0]?.reasoning, "kept");
 });

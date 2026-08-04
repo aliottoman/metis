@@ -82,7 +82,7 @@ class SlowDeterministicProvider(DeterministicModelProvider):
     def __init__(self, started: threading.Event) -> None:
         self.started = started
 
-    async def generate(self, request, on_token=None, *, model_aliases=None):
+    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
         self.started.set()
         await asyncio.Event().wait()
 

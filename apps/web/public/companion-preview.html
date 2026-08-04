@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Metis companion</title>
+<style>
+:root {
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --canvas: #f2f4f3; --panel: #f8faf9; --ink: #191a20;
+  --muted: #777984; --faint: #a7a8b0; --line: rgba(25,26,32,.11); --danger: #d0453a;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+body { background: var(--canvas); color: var(--ink); font-family: var(--font-sans);
+        margin: 0; padding: 46px 32px 90px; -webkit-font-smoothing: antialiased; }
+header { max-width: 1120px; margin: 0 auto 34px; }
+h1 { font-size: 26px; font-weight: 650; letter-spacing: -.02em; margin: 0 0 8px; }
+header p { color: var(--muted); font-size: 14px; line-height: 1.6; margin: 0; max-width: 68ch; }
+.grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(206px, 1fr));
+         margin: 0 auto; max-width: 1120px; }
+.card { align-items: center; background: var(--panel); border: 1px solid var(--line);
+         border-radius: 18px; display: flex; flex-direction: column;
+         padding: 34px 18px 22px; text-align: center; }
+.card h2 { font-size: 13px; font-weight: 640; margin: 30px 0 4px; }
+.card p { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin: 0; }
+.card code { background: rgba(25,26,32,.05); border-radius: 5px; color: var(--muted);
+              font-size: 10px; margin-top: 7px; padding: 3px 7px; line-height: 1.5; }
+section { max-width: 1120px; margin: 40px auto 0; }
+h3 { color: var(--faint); font-size: 12px; font-weight: 640; letter-spacing: .06em;
+      margin: 0 0 14px; text-transform: uppercase; }
+.row { align-items: center; background: var(--panel); border: 1px solid var(--line);
+        border-radius: 18px; display: flex; flex-wrap: wrap; gap: 36px; padding: 32px 28px; }
+.sizeItem { text-align: center; }
+.sizeItem small { color: var(--muted); display: block; font-size: 10.5px; margin-top: 16px; }
+#buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+#buttons button { background: #fff; border: 1px solid var(--line); border-radius: 9px;
+                   color: var(--ink); cursor: pointer; font: inherit; font-size: 12px; padding: 7px 13px; }
+#buttons button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.onDark { background: #14151a; border-color: rgba(255,255,255,.10); }
+.onDark .companionDockLabel { color: #9a9ca6; }
+.fakeComposer { background: #fff; border: 1px solid var(--line); border-radius: 16px;
+                 box-shadow: 0 1px 2px rgba(24,27,22,.05), 0 6px 18px rgba(24,27,22,.07);
+                 padding: 14px 16px; max-width: 560px; }
+.fakeComposer p { color: var(--faint); font-size: 13px; margin: 6px 2px 0; }
+
+/* ── The companion ────────────────────────────────────────────────────────
+   A small luminous creature that lives beside the conversation. Liquid Glass
+   material — dark body, colour field inside, bright rim, travelling specular.
+   No seams. It is alive without a face: it breathes, it has weight, and its
+   core attends to what is happening. */
+
+.companion {
+  --size: 56px;
+  height: var(--size);
+  position: relative;
+  width: var(--size);
+}
+
+.companionBody {
+  animation: creatureBreathe 5.4s var(--ease) infinite, creatureBob 4.2s var(--ease) infinite;
+  background: #0c0d12;
+  /* An organic silhouette rather than a circle or a pill. */
+  border-radius: 58% 42% 46% 54% / 54% 50% 50% 46%;
+  height: 100%;
+  isolation: isolate;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+  box-shadow:
+    0 0 0 1px rgba(10, 11, 16, 0.55),
+    inset 0 1.2px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1.4px 2px rgba(255, 255, 255, 0.12),
+    inset 0 0 14px rgba(0, 0, 0, 0.5);
+  transition: box-shadow 600ms ease, transform 620ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+
+/* Breathing is a silhouette change, not a scale — that is what makes it read
+   as a body rather than a zooming graphic. */
+@keyframes creatureBreathe {
+  0%, 100% { border-radius: 58% 42% 46% 54% / 54% 50% 50% 46%; }
+  33%      { border-radius: 44% 56% 58% 42% / 46% 56% 44% 54%; }
+  66%      { border-radius: 52% 48% 40% 60% / 58% 44% 56% 42%; }
+}
+
+@keyframes creatureBob {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50%      { transform: translateY(-5px) rotate(1.5deg); }
+}
+
+.companionShadow {
+  animation: creatureShadow 4.2s var(--ease) infinite;
+  background: radial-gradient(ellipse, rgba(28, 26, 46, 0.34) 0%, rgba(28, 26, 46, 0) 72%);
+  border-radius: 50%;
+  bottom: -8%;
+  filter: blur(2px);
+  height: 9%;
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 62%;
+}
+
+@keyframes creatureShadow {
+  0%, 100% { opacity: 0.55; width: 62%; }
+  50%      { opacity: 0.28; width: 44%; }
+}
+
+/* The colour field. */
+.companionField {
+  filter: blur(10px) saturate(165%);
+  inset: -45%;
+  position: absolute;
+  transition: filter 600ms ease, opacity 600ms ease;
+}
+
+.fieldCell { border-radius: 50%; mix-blend-mode: screen; position: absolute; will-change: transform; }
+
+.cellCoral {
+  background: radial-gradient(circle, #ff8a63 0%, rgba(255, 138, 99, 0) 68%);
+  height: 150%; left: -8%; top: -22%; width: 62%;
+  animation: cellFlowA 7.5s var(--ease) infinite;
+}
+.cellCobalt {
+  background: radial-gradient(circle, #6f86ff 0%, rgba(111, 134, 255, 0) 68%);
+  height: 162%; left: 20%; top: -32%; width: 66%;
+  animation: cellFlowB 9.2s var(--ease) infinite;
+}
+.cellGreen {
+  background: radial-gradient(circle, #4fd39a 0%, rgba(79, 211, 154, 0) 68%);
+  height: 142%; left: 50%; top: -18%; width: 58%;
+  animation: cellFlowC 8.2s var(--ease) infinite;
+}
+.cellLilac {
+  background: radial-gradient(circle, #c8a2ff 0%, rgba(200, 162, 255, 0) 68%);
+  height: 132%; left: 32%; top: -8%; width: 52%;
+  animation: cellFlowD 10.6s var(--ease) infinite;
+}
+
+@keyframes cellFlowA {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(26%, 8%) scale(1.14); }
+  66%      { transform: translate(10%, -10%) scale(0.9); }
+}
+@keyframes cellFlowB {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  40%      { transform: translate(-22%, 10%) scale(0.88); }
+  75%      { transform: translate(14%, -6%) scale(1.16); }
+}
+@keyframes cellFlowC {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  38%      { transform: translate(-28%, -8%) scale(1.12); }
+  70%      { transform: translate(-8%, 12%) scale(0.92); }
+}
+@keyframes cellFlowD {
+  0%, 100% { transform: translate(0, 0) scale(0.96); }
+  50%      { transform: translate(18%, 14%) scale(1.2); }
+}
+
+/* The core — where its attention is. Not an eye; a concentration of light. */
+.companionCore {
+  animation: coreDrift 6.8s var(--ease) infinite;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.5) 38%, rgba(255, 255, 255, 0) 72%);
+  border-radius: 50%;
+  height: 34%;
+  left: 33%;
+  mix-blend-mode: screen;
+  position: absolute;
+  top: 30%;
+  width: 34%;
+  transition: background 600ms ease, height 620ms var(--ease), width 620ms var(--ease), opacity 600ms ease;
+}
+
+@keyframes coreDrift {
+  0%, 100% { transform: translate(0, 0); }
+  30%      { transform: translate(22%, -12%); }
+  60%      { transform: translate(-14%, 14%); }
+}
+
+.companionGlass {
+  background: linear-gradient(
+    176deg,
+    rgba(255, 255, 255, 0.30) 0%,
+    rgba(255, 255, 255, 0.08) 32%,
+    rgba(255, 255, 255, 0) 58%,
+    rgba(255, 255, 255, 0.10) 100%
+  );
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.companionSpecular {
+  animation: specularSweep 6s var(--ease) infinite;
+  background: linear-gradient(
+    104deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.24) 46%,
+    rgba(255, 255, 255, 0.78) 50%,
+    rgba(255, 255, 255, 0.24) 54%,
+    transparent 62%
+  );
+  inset: -25% -60%;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  position: absolute;
+}
+
+@keyframes specularSweep {
+  0%   { transform: translateX(-46%); }
+  55%  { transform: translateX(46%); }
+  100% { transform: translateX(46%); }
+}
+
+/* Listening — it perks up: taller, brighter, core lifts toward you. */
+.companion[data-mood="listening"] .companionBody {
+  animation-duration: 3.4s, 2.8s;
+  transform: scaleY(1.06) scaleX(0.97);
+}
+.companion[data-mood="listening"] .companionField { filter: blur(9px) saturate(200%); }
+.companion[data-mood="listening"] .fieldCell { animation-duration: 4.6s; }
+.companion[data-mood="listening"] .companionCore {
+  animation-duration: 3.2s;
+  height: 40%; width: 40%;
+}
+
+/* Thinking — the field churns and the core tightens to a bright point. */
+.companion[data-mood="thinking"] .companionBody { animation-duration: 1.5s, 1.2s; }
+.companion[data-mood="thinking"] .companionField { filter: blur(8px) saturate(215%); }
+.companion[data-mood="thinking"] .fieldCell { animation-duration: 2.1s; }
+.companion[data-mood="thinking"] .companionSpecular { animation-duration: 1.7s; }
+.companion[data-mood="thinking"] .companionShadow { animation-duration: 1.2s; }
+.companion[data-mood="thinking"] .companionCore {
+  animation-duration: 1.4s;
+  height: 22%; width: 22%;
+}
+
+/* Done — it settles, rounds out, and the light turns green. */
+.companion[data-mood="done"] .companionBody { animation-duration: 8s, 6.5s; }
+.companion[data-mood="done"] .fieldCell { animation-duration: 12s; }
+.companion[data-mood="done"] .cellCoral,
+.companion[data-mood="done"] .cellLilac,
+.companion[data-mood="done"] .cellCobalt { opacity: 0.18; }
+.companion[data-mood="done"] .cellGreen { opacity: 1; transform: scale(1.4); }
+.companion[data-mood="done"] .companionCore {
+  background: radial-gradient(circle, rgba(190, 255, 224, 0.98) 0%, rgba(79, 211, 154, 0.55) 40%, rgba(79, 211, 154, 0) 74%);
+  height: 42%; width: 42%;
+}
+
+/* Trouble — it deflates and the light drains. */
+.companion[data-mood="trouble"] .companionBody {
+  animation-duration: 9s, 7s;
+  transform: scaleY(0.9) scaleX(1.04);
+  box-shadow:
+    0 0 0 1px rgba(150, 40, 32, 0.6),
+    inset 0 1.2px 0 rgba(255, 190, 180, 0.34),
+    inset 0 0 14px rgba(0, 0, 0, 0.58);
+}
+.companion[data-mood="trouble"] .companionField { filter: blur(13px) saturate(30%); opacity: 0.55; }
+.companion[data-mood="trouble"] .fieldCell { animation-duration: 15s; }
+.companion[data-mood="trouble"] .cellCoral { opacity: 1; }
+.companion[data-mood="trouble"] .companionSpecular { animation-duration: 12s; }
+.companion[data-mood="trouble"] .companionCore {
+  animation: none;
+  background: radial-gradient(circle, rgba(255, 150, 140, 0.7) 0%, rgba(216, 64, 47, 0) 70%);
+  height: 26%; opacity: 0.7; width: 26%;
+}
+
+/* Docked beside the conversation: small, always present while you chat. */
+.companionDock {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  padding: 0 2px 10px;
+}
+.companionDock .companion { --size: 34px; }
+.companionDock .companionShadow { bottom: -6%; }
+.companionDockLabel {
+  color: var(--muted);
+  font-size: 11px;
+  transition: color 300ms ease;
+}
+.companionDock[data-mood="trouble"] .companionDockLabel { color: var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .companionBody, .fieldCell, .companionSpecular, .companionCore, .companionShadow {
+    animation: none !important;
+  }
+}
+
+</style></head><body>
+<header>
+  <h1>Metis companion</h1>
+  <p>The organic luminous body — dark liquid glass with a colour field drifting inside it, a bright
+     rim, a travelling specular, and a core that attends to what is happening. It breathes by
+     morphing its own silhouette and bobs above a shadow that tightens as it rises.</p>
+</header>
+
+<div class="grid">
+  <div class="card">
+    <div class="companion" data-mood="idle" style="--size:72px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+    <h2>idle</h2><p>Nothing happening</p><code>breathes at 5.4s, core drifts lazily</code>
+  </div>
+  <div class="card">
+    <div class="companion" data-mood="listening" style="--size:72px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+    <h2>listening</h2><p>You start typing</p><code>perks up taller, core lifts and widens</code>
+  </div>
+  <div class="card">
+    <div class="companion" data-mood="thinking" style="--size:72px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+    <h2>thinking</h2><p>A run is active</p><code>1.5s breath, core tightens to a bright point</code>
+  </div>
+  <div class="card">
+    <div class="companion" data-mood="done" style="--size:72px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+    <h2>done</h2><p>Run completed</p><code>settles, light turns green, core opens</code>
+  </div>
+  <div class="card">
+    <div class="companion" data-mood="trouble" style="--size:72px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+    <h2>trouble</h2><p>Error or failed run</p><code>deflates, light drains, core goes still</code>
+  </div>
+</div>
+
+<section>
+  <h3>Where it lives during a chat</h3>
+  <div class="row">
+    <div class="fakeComposer">
+      <div class="companionDock" data-mood="thinking">
+        <div class="companion" data-mood="thinking"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+        <span class="companionDockLabel">Searching your knowledge base</span>
+      </div>
+      <p>Message Metis&hellip;</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h3>At size</h3>
+  <div class="row">
+    <div class="sizeItem"><div class="companion" data-mood="idle" style="--size:26px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div><small>26px</small></div>
+    <div class="sizeItem"><div class="companion" data-mood="idle" style="--size:34px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div><small>34px</small></div>
+    <div class="sizeItem"><div class="companion" data-mood="idle" style="--size:44px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div><small>44px</small></div>
+    <div class="sizeItem"><div class="companion" data-mood="idle" style="--size:56px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div><small>56px</small></div>
+    <div class="sizeItem"><div class="companion" data-mood="idle" style="--size:76px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div><small>76px</small></div>
+    <div class="sizeItem"><div class="companion" data-mood="idle" style="--size:104px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div><small>104px</small></div>
+  </div>
+</section>
+
+<section>
+  <h3>On a dark surface</h3>
+  <div class="row onDark">
+    <div class="companion" data-mood="idle" style="--size:56px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+    <div class="companion" data-mood="thinking" style="--size:56px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+    <div class="companion" data-mood="done" style="--size:56px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+    <div class="companion" data-mood="trouble" style="--size:56px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+  </div>
+</section>
+
+<section>
+  <h3>Drive it manually</h3>
+  <div class="row">
+    <div class="companion" id="live" data-mood="idle" style="--size:96px"><div class="companionBody">
+        <div class="companionField">
+          <span class="fieldCell cellCoral"></span>
+          <span class="fieldCell cellCobalt"></span>
+          <span class="fieldCell cellGreen"></span>
+          <span class="fieldCell cellLilac"></span>
+        </div>
+        <span class="companionCore"></span>
+        <div class="companionGlass"></div>
+        <div class="companionSpecular"></div>
+      </div>
+      <span class="companionShadow"></span></div>
+    <div id="buttons"><button data-set="idle" aria-pressed="true">idle</button>
+<button data-set="listening" aria-pressed="false">listening</button>
+<button data-set="thinking" aria-pressed="false">thinking</button>
+<button data-set="done" aria-pressed="false">done</button>
+<button data-set="trouble" aria-pressed="false">trouble</button></div>
+  </div>
+</section>
+
+<script>
+const live = document.getElementById("live");
+const btns = [...document.querySelectorAll("#buttons button")];
+btns.forEach((b) => b.onclick = () => {
+  live.dataset.mood = b.dataset.set;
+  btns.forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+});
+</script>
+</body></html>

@@ -487,18 +487,6 @@ class Coefficients:
 DEFAULT_COEFFICIENTS = Coefficients()
 
 
-def decode_bytes_per_token(
-    architecture: ModelArchitecture, *, quantization: str | None = None
-) -> float:
-    """Weight bytes read to decode one token.
-
-    MoE reads only the routed experts per token, so the active parameter count
-    is what bandwidth sees — using the total would understate a 120B/5.7B model
-    by more than 20x.
-    """
-    return architecture.active_weight_bytes(quantization)
-
-
 def decode_step_bytes(
     architecture: ModelArchitecture,
     *,

@@ -1,0 +1,37 @@
+{
+  "schema_version": "1",
+  "image": "localhost/metis/project-verify:0.2.0",
+  "pull_policy": "never",
+  "network": "none",
+  "read_only_root": true,
+  "non_root": true,
+  "drop_capabilities": [
+    "ALL"
+  ],
+  "security_options": [
+    "no-new-privileges"
+  ],
+  "mounts": {
+    "/input": "read-only"
+  },
+  "tmpfs": {
+    "path": "/tmp",
+    "size_mib": 256,
+    "options": [
+      "rw",
+      "nosuid",
+      "nodev",
+      "mode=1777"
+    ]
+  },
+  "limits": {
+    "cpus": 2.0,
+    "memory_mib": 1024,
+    "pids": 128,
+    "timeout_seconds": 90,
+    "max_input_files": 2048,
+    "max_input_bytes": 33554432,
+    "max_stdin_bytes": 65536,
+    "max_logs_bytes": 4194304
+  }
+}

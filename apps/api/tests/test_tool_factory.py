@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from waqil_api.config import Settings
 from waqil_api.contracts import (
     ArchitectureComponentV1,
     ArchitectureEdgeV1,
@@ -53,7 +52,7 @@ class _Model:
     def __init__(self, broker_reply: str) -> None:
         self._broker_reply = broker_reply
 
-    async def generate(self, request, on_token=None, *, model_aliases=None):
+    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
         return ModelResultV1(model="fake", content=self._broker_reply)
 
     async def diagram_code(self, spec, *, model_aliases=None):

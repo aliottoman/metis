@@ -4,15 +4,19 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ArtifactViewer } from "@/components/artifact-viewer";
+import { CommandPicker, type PickerOption } from "@/components/command-picker";
 import { CustomerDashboardSnippet } from "@/components/customer-dashboard-snippet";
 import { MarkdownContent } from "@/components/markdown-content";
 import { RunTimeline } from "@/components/run-timeline";
-import { MetisCompanion, MetisMark, MetisWordmark } from "@/components/metis-mark";
+import { MetisCompanion } from "@/components/metis-companion";
+import { MetisMark, MetisWordmark } from "@/components/metis-mark";
+import { ModelControl } from "@/components/model-control";
 import {
   ApiError,
   cancelRun,
   createConversation,
   createCorpusSource,
+  createCustomerNote,
   decideRun,
   getConversation,
   getConversationProject,
@@ -32,7 +36,7 @@ import {
   uploadFile,
 } from "@/lib/api";
 import { rememberConversation } from "@/lib/recent-conversations";
-import { mergeAssistantRunEvent, messageBelongsToRun } from "@/lib/run-history";
+import { mergeAssistantReasoning, mergeAssistantRunEvent, messageBelongsToRun } from "@/lib/run-history";
 import { attachmentBadge, CHAT_ATTACHMENT_ACCEPT } from "@/lib/attachments";
 import {
   ATTACHMENT_TEXT_BUDGET_BYTES,
@@ -58,6 +62,42 @@ function UserAvatar() {
       <i className="userAvatarHead" />
       <i className="userAvatarBody" />
     </span>
+  );
+}
+
+/** The last complete-looking line of thinking, for the collapsed preview. */
+function reasoningTail(reasoning: string): string {
+  const lines = reasoning.split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines[lines.length - 1] ?? "";
+}
+
+/**
+ * The model's thinking, collapsed by default. While the run is live the header
+ * shows the newest line so there is a sense of progress without a wall of text;
+ * expanding shows everything received so far.
+ */
+function ReasoningPanel({ reasoning, live }: { reasoning: string; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Follow the newest thinking only while expanded and still streaming.
+  useEffect(() => {
+    if (!open || !live) return;
+    const body = bodyRef.current;
+    if (body) body.scrollTop = body.scrollHeight;
+  }, [live, open, reasoning]);
+
+  const preview = live ? reasoningTail(reasoning) : `${reasoning.trim().split(/\s+/).length} words of thinking`;
+  return (
+    <section className={`reasoningPanel ${live ? "isLive" : ""} ${open ? "isOpen" : ""}`}>
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <span className="reasoningGlyph" aria-hidden="true"><i /><i /><i /></span>
+        <span className="reasoningLabel">{live ? "Thinking" : "Thought process"}</span>
+        <span className="reasoningPreview">{preview}</span>
+        <span className="reasoningChevron" aria-hidden="true">⌄</span>
+      </button>
+      {open ? <div className="reasoningBody" ref={bodyRef}>{reasoning}</div> : null}
+    </section>
   );
 }
 
@@ -148,6 +188,16 @@ export function ChatWorkspace() {
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>("auto");
   const [customers, setCustomers] = useState<CustomerAccount[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
+  // The slash menu. A "/" that starts the message or follows a space opens it;
+  // the text after the slash filters it, and picking a command strips that
+  // fragment back out of the draft so it never gets sent.
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
+  // Answers already written back to the account, so the button can say so
+  // rather than silently accepting the same answer twice.
+  const [savedToAccount, setSavedToAccount] = useState<Set<string>>(new Set());
+  const [savingToAccount, setSavingToAccount] = useState<string | null>(null);
   // A dropped folder is routed, never uploaded: the scan below is local, and
   // only the option the user picks does anything.
   const [folderDrop, setFolderDrop] = useState<{ scan: FolderScan; ignored: string[] } | null>(null);
@@ -160,6 +210,7 @@ export function ChatWorkspace() {
   const [corpusSources, setCorpusSources] = useState<CorpusSource[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerWidthRef = useRef(0);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const loadedConversationRef = useRef<string | null>(null);
   const latestRunRef = useRef<string | null>(requestedRunId);
@@ -201,10 +252,45 @@ export function ChatWorkspace() {
     setProjectPickerOpen(false);
     setProjectOpening(false);
     setSelectedCustomerId(null);
+    setCustomerPickerOpen(false);
+    setSavedToAccount(new Set());
+    setSavingToAccount(null);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (textareaRef.current) textareaRef.current.style.height = "";
   }, []);
+
+  // The composer's height follows the draft rather than the keystroke, so
+  // sending, restoring a failed send, and "Edit & retry" all resize it too.
+  // Measuring from zero is what lets it shrink again, not only grow.
+  const resizeComposer = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "0";
+    textarea.style.height = textarea.value ? `${Math.min(textarea.scrollHeight, 180)}px` : "";
+    composerWidthRef.current = textarea.clientWidth;
+  }, []);
+
+  // A frame late, because scrollHeight measured mid-layout — while the welcome
+  // screen is still collapsing into the message list — reports the wrapping of
+  // a near-zero-width box and pins the composer to its 180px maximum.
+  useEffect(() => {
+    const frame = requestAnimationFrame(resizeComposer);
+    return () => cancelAnimationFrame(frame);
+  }, [draft, resizeComposer]);
+
+  // Width changes rewrap the text, so the measured height is stale: the sidebar
+  // collapsing, the activity drawer opening, or the window resizing all count.
+  // Height-only changes are this effect's own doing and must not re-trigger it.
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (textareaRef.current?.clientWidth !== composerWidthRef.current) resizeComposer();
+    });
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [resizeComposer]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("metis.knowledgeScope");
@@ -423,7 +509,18 @@ export function ChatWorkspace() {
         }
       })
       .catch((loadError) => {
-        if (mounted) setError(loadError instanceof Error ? loadError.message : "Could not open this conversation.");
+        if (!mounted) return;
+        // The conversation named in the URL is gone — an interrupted run, a
+        // restored tab, a database that moved on. Drop the dead ids instead of
+        // keeping them: the run stream would otherwise poll a 404 forever,
+        // leaving the activity drawer stuck on "Reconnecting" behind a Stop
+        // button for a run that already ended. The reset clears the error, so
+        // the explanation is restored after it.
+        resetConversationState();
+        setError(loadError instanceof Error ? loadError.message : "Could not open this conversation.");
+        // `router.replace("/")` does not strip an existing query string here, so
+        // a restored tab would surface this banner on every single reload.
+        window.history.replaceState(null, "", "/");
       })
       .finally(() => mounted && setLoadingConversation(false));
     return () => { mounted = false; };
@@ -459,6 +556,13 @@ export function ChatWorkspace() {
     // Descriptive stage narration for the in-flight indicator. Once the answer
     // starts streaming (or the run ends) the stage line is no longer shown, so
     // clear it to avoid a stale label leaking into the next run.
+    // Thinking is its own channel: it neither becomes answer text nor ends the
+    // stage narration, since the answer has not started yet while it streams.
+    if (type === "message.reasoning") {
+      setMessages((current) => mergeAssistantReasoning(current, event.run_id, text ?? ""));
+      return;
+    }
+
     if (type === "stage.entered") {
       setStageLabel(stringFrom(event.payload, "label") ?? null);
     } else if (type.includes("delta") || type.includes("failed") || type.includes("completed") || type.includes("cancelled")) {
@@ -772,6 +876,29 @@ export function ChatWorkspace() {
     }
   }
 
+  const SLASH_TRIGGER = /(^|\s)\/([a-zA-Z]*)$/;
+
+  function onDraftChange(value: string) {
+    setDraft(value);
+    const match = SLASH_TRIGGER.exec(value);
+    setSlashOpen(Boolean(match) && !runActive);
+    setSlashQuery(match?.[2] ?? "");
+  }
+
+  /** Remove the "/fragment" the user was typing once a command is chosen. */
+  function clearSlashFragment() {
+    setDraft((current) => current.replace(SLASH_TRIGGER, "$1"));
+    setSlashOpen(false);
+    setSlashQuery("");
+    textareaRef.current?.focus();
+  }
+
+  function runSlashCommand(id: string) {
+    clearSlashFragment();
+    if (id === "customer") { setCustomerPickerOpen(true); setProjectPickerOpen(false); }
+    if (id === "project") { setProjectPickerOpen(true); setCustomerPickerOpen(false); }
+  }
+
   function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -877,10 +1004,90 @@ export function ChatWorkspace() {
       live: false,
     };
   }, [events.length, latestRunEvent, runActive, stageLabel]);
+
+  // What the companion is feeling. Derived from the same signals the run
+  // timeline uses, so the creature can never contradict the activity panel.
+  const companionMood = useMemo<"idle" | "listening" | "thinking" | "done" | "trouble">(() => {
+    if (error) return "trouble";
+    if (runActive) return "thinking";
+    const type = latestRunEvent?.type ?? "";
+    if (type.includes("fail") || type.includes("error")) return "trouble";
+    if (type.includes("complete")) return "done";
+    if (draft.trim()) return "listening";
+    return "idle";
+  }, [draft, error, latestRunEvent, runActive]);
+
+  const companionLabel = useMemo(() => {
+    if (companionMood === "trouble") return "Something interrupted this";
+    if (companionMood === "thinking") return stageLabel ?? "Working on it";
+    if (companionMood === "listening") return "Listening";
+    if (companionMood === "done") return "Done";
+    return "Ready";
+  }, [companionMood, stageLabel]);
+
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
+  const selectedCustomer = useMemo(
+    () => customers.find((customer) => customer.id === selectedCustomerId) ?? null,
+    [customers, selectedCustomerId],
+  );
+
+  // The API already returns accounts most-recently-touched first, so the first
+  // few are the ones a scoped conversation is most likely about.
+  const customerOptions = useMemo<PickerOption[]>(() => {
+    const active = customers.filter((customer) => customer.status === "active");
+    return active.map((customer, index) => ({
+      id: customer.id,
+      label: customer.name,
+      meta: [customer.industry, customer.region].filter(Boolean).join(" · ") || "Customer account",
+      badge: customer.wins > 0
+        ? `🏆 ${customer.wins}`
+        : customer.open_actions > 0
+          ? `${customer.open_actions} open`
+          : undefined,
+      keywords: customer.aliases,
+      group: index < 5 ? "Recent" : "All accounts",
+    }));
+  }, [customers]);
+
+  const projectOptions = useMemo<PickerOption[]>(
+    () => projects.map((project) => ({
+      id: project.id,
+      label: project.name,
+      glyph: project.initialized ? "◆" : "◇",
+      meta: `${project.framework ? `${project.framework} · ` : ""}${project.initialized ? `${project.fileCount} files mapped` : "Grok map not created yet"}`,
+      keywords: project.framework ? [project.framework] : undefined,
+      badge: selectedProjectId === project.id ? "Active" : undefined,
+    })),
+    [projects, selectedProjectId],
+  );
+
+  /** Write an answer back onto the account this conversation is scoped to.
+   *
+   *  Scoping a chat to a customer used to be read-only: the account's facts
+   *  went in and nothing came out, so anything worth keeping had to be
+   *  retyped in the workbench. It lands as a note — the user's own record —
+   *  never as an extracted fact, which stays a reviewed decision. */
+  async function saveAnswerToAccount(message: ChatMessage) {
+    if (!selectedCustomerId || !message.content.trim() || savingToAccount) return;
+    setSavingToAccount(message.id);
+    setError(null);
+    try {
+      await createCustomerNote(selectedCustomerId, {
+        title: conversationTitle.slice(0, 200),
+        body: message.content,
+        origin: "chat",
+        origin_ref: conversationId ?? "",
+      });
+      setSavedToAccount((current) => new Set(current).add(message.id));
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "That answer could not be saved to the account.");
+    } finally {
+      setSavingToAccount(null);
+    }
+  }
 
   return (
     <div
@@ -894,53 +1101,20 @@ export function ChatWorkspace() {
             <strong title={conversationTitle}>{conversationTitle}</strong>
           </div>
           <div className="chatHeaderActions">
-            <label className={`customerScopeSelect ${selectedCustomerId ? "selected" : ""}`}>
-              <span aria-hidden="true">◎</span>
-              <select
-                value={selectedCustomerId ?? ""}
-                onChange={(event) => setSelectedCustomerId(event.target.value || null)}
-                disabled={runActive || Boolean(selectedProject)}
-                aria-label="Customer account scope"
-                title="Keep this conversation strictly scoped to one customer account"
-              >
-                <option value="">No customer</option>
-                {customers.filter((item) => item.status === "active").map((customer) => (
-                  <option key={customer.id} value={customer.id}>{customer.name}</option>
-                ))}
-              </select>
-            </label>
-            <button
-              className={`projectQuickSwitch ${selectedProject ? "selected" : ""}`}
-              type="button"
-              aria-expanded={projectPickerOpen}
-              onClick={() => setProjectPickerOpen((value) => !value)}
-              disabled={projectOpening || runActive}
-              title="Open a whole project as the current coding workspace"
-            >
-              <i aria-hidden="true">◇</i>
-              <span>{projectOpening ? "Mapping…" : selectedProject?.name ?? "Project"}</span>
-              <b aria-hidden="true">⌄</b>
-            </button>
-            <div className="modelQuickSwitch" role="group" aria-label="Reasoning model">
-              <span>Model</span>
-              <button
-                type="button"
-                className={modelPreference?.provider !== "oci" ? "selected" : ""}
-                aria-pressed={modelPreference?.provider !== "oci"}
-                disabled={providerSaving || Boolean(selectedProject)}
-                onClick={() => void chooseChatProvider("local")}
-                title="Use on-device Ollama models"
-              ><i aria-hidden="true" />Local</button>
-              <button
-                type="button"
-                className={modelPreference?.provider === "oci" ? "selected" : ""}
-                aria-pressed={modelPreference?.provider === "oci"}
-                disabled={providerSaving || modelPreference?.oci_available !== true || Boolean(selectedProject)}
-                onClick={() => void chooseChatProvider("oci")}
-                title={modelPreference?.oci_available ? "Use Grok 4.3 through OCI" : "Configure OCI in Settings first"}
-              ><i aria-hidden="true" />Cloud</button>
-              {providerSaving ? <small role="status">Saving…</small> : null}
-            </div>
+            {/* Customer and project scope live on the composer, next to the
+                message they actually scope — see .composerScope below. What
+                RUNS the message lives here, top-right: a provider for plain
+                chat, or the project's own two modes when one is scoped. */}
+            <ModelControl
+              preference={modelPreference}
+              onChooseProvider={(provider) => void chooseChatProvider(provider)}
+              providerSaving={providerSaving}
+              project={selectedProject}
+              projectMode={projectMode}
+              onChooseProjectMode={(mode) => void chooseProjectMode(mode)}
+              projectBusy={projectOpening}
+              disabled={runActive}
+            />
             <button className="headerNewChat" type="button" onClick={startFreshConversation} disabled={runActive} title={runActive ? "Stop the active run first" : "Start a new conversation"}>
               <span aria-hidden="true">＋</span><span>New chat</span>
             </button>
@@ -950,62 +1124,6 @@ export function ChatWorkspace() {
             </button>
           </div>
         </header>
-
-        {projectPickerOpen ? (
-          <section className="projectWorkspacePopover" aria-label="Project workspace">
-            <div className="projectWorkspaceIntro">
-              <span className="eyebrow">Whole-project mode</span>
-              <strong>{selectedProject ? selectedProject.name : "Choose a project"}</strong>
-              <p>Grok creates the first local map. Metis then reads, searches, and proposes exact edits with approval.</p>
-            </div>
-            <div className="projectModeSwitch" role="group" aria-label="Project reasoning mode">
-              <button
-                type="button"
-                className={projectMode === "grok_bootstrap_local" ? "selected" : ""}
-                aria-pressed={projectMode === "grok_bootstrap_local"}
-                onClick={() => void chooseProjectMode("grok_bootstrap_local")}
-              ><span>Fast &amp; private</span><strong>Grok → Local</strong><small>Grok maps once; North handles project turns.</small></button>
-              <button
-                type="button"
-                className={projectMode === "grok_continuous" ? "selected" : ""}
-                aria-pressed={projectMode === "grok_continuous"}
-                onClick={() => void chooseProjectMode("grok_continuous")}
-              ><span>Largest context</span><strong>Keep Grok</strong><small>Grok leads every bounded project step.</small></button>
-            </div>
-            <div className="projectWorkspaceList">
-              <button type="button" className={!selectedProject ? "selected" : ""} onClick={() => void chooseProject(null)}>
-                <span className="projectGlyph">—</span><span><strong>No project</strong><small>Return to ordinary chat routing.</small></span>
-              </button>
-              {projects.map((project) => (
-                <button key={project.id} type="button" className={selectedProjectId === project.id ? "selected" : ""} onClick={() => void chooseProject(project.id)}>
-                  <span className="projectGlyph">{project.initialized ? "◆" : "◇"}</span>
-                  <span><strong>{project.name}</strong><small>{project.framework ? `${project.framework} · ` : ""}{project.initialized ? `${project.fileCount} files mapped` : "Grok map not created yet"}</small></span>
-                  {selectedProjectId === project.id ? <b>Active</b> : null}
-                </button>
-              ))}
-              {!projects.length ? <div className="projectWorkspaceEmpty"><strong>No projects in the catalog</strong><small>Use Assets → Scan for updates first.</small></div> : null}
-            </div>
-            <footer><span><i />Writes always pause for approval</span><button type="button" onClick={() => setProjectPickerOpen(false)}>Done</button></footer>
-          </section>
-        ) : null}
-
-        {selectedProject ? (
-          <div className="projectContextStrip">
-            <span><i />{selectedProject.name}</span>
-            <small>{projectMode === "grok_continuous" ? "Grok leads · local project tools" : "Grok mapped · North leads locally"}</small>
-            <code>{selectedProject.metisMdPath}</code>
-            <button type="button" onClick={() => setProjectPickerOpen(true)}>Change</button>
-          </div>
-        ) : null}
-
-        {selectedCustomerId && !selectedProject ? (
-          <div className="customerContextStrip">
-            <span><i />Customer scope</span>
-            <strong>{customers.find((item) => item.id === selectedCustomerId)?.name}</strong>
-            <small>Only this account&apos;s reviewed facts are added to the model context.</small>
-            <button type="button" onClick={() => setSelectedCustomerId(null)}>Clear</button>
-          </div>
-        ) : null}
 
         {recoverableRuns.length ? (
           <section className="recoveryBanner" aria-label="Runs awaiting approval">
@@ -1164,7 +1282,7 @@ export function ChatWorkspace() {
           {dragActive ? <div className="dropOverlay"><span>＋</span><strong>Drop files or a folder</strong><small>Files become context · a folder can be indexed, opened as a project, or attached</small></div> : null}
           {!hasMessages ? (
             <div className="welcomeState">
-              <MetisCompanion />
+              <MetisCompanion mood={companionMood} />
               <span className="eyebrow">Your private thinking partner</span>
               <h1><MetisWordmark className="heroWordmark" /></h1>
               <p>Ask Metis to understand a project, create an artifact, or turn a workflow into a tested local capability.</p>
@@ -1181,7 +1299,8 @@ export function ChatWorkspace() {
                   </div>
                   <div className="messageBody">
                     <div className="messageAuthor"><strong>{message.role === "user" ? "You" : "Metis"}</strong>{message.streaming ? <span className="thinkingPulse"><i /><i /><i /></span> : null}</div>
-                    {message.content ? <MarkdownContent content={message.content} /> : message.streaming ? <p className="workingText">{(message.id === latestAssistant?.id ? stageLabel : null) ?? "Understanding the task and choosing a safe route…"}</p> : null}
+                    {message.reasoning ? <ReasoningPanel reasoning={message.reasoning} live={Boolean(message.streaming) && !message.content} /> : null}
+                    {message.content ? <MarkdownContent content={message.content} /> : message.streaming && !message.reasoning ? <p className="workingText">{(message.id === latestAssistant?.id ? stageLabel : null) ?? "Understanding the task and choosing a safe route…"}</p> : null}
                     {message.failed ? (
                       <div className="failedActions">
                         <button className="retryResponse" type="button" onClick={() => {
@@ -1218,6 +1337,21 @@ export function ChatWorkspace() {
                             >
                               Build a tool from this
                             </button>
+                            {selectedCustomer && message.content.trim() ? (
+                              <button
+                                type="button"
+                                className="textButton saveToAccountButton"
+                                disabled={savingToAccount === message.id || savedToAccount.has(message.id)}
+                                title={`Keep this answer on ${selectedCustomer.name} as an account note`}
+                                onClick={() => void saveAnswerToAccount(message)}
+                              >
+                                {savedToAccount.has(message.id)
+                                  ? `✓ Saved to ${selectedCustomer.name}`
+                                  : savingToAccount === message.id
+                                    ? "Saving…"
+                                    : `Save to ${selectedCustomer.name}`}
+                              </button>
+                            ) : null}
                           </div>
                         ) : null}
                       </section>
@@ -1252,12 +1386,36 @@ export function ChatWorkspace() {
               ))}
             </div>
           ) : null}
+          {selectedCustomer || selectedProject ? (
+            <div className="composerChips" aria-label="Context added to this message">
+              {selectedCustomer ? (
+                <span className="contextChip" data-kind="customer">
+                  <i aria-hidden="true">◎</i>
+                  <span>{selectedCustomer.name}</span>
+                  <button type="button" aria-label={`Remove ${selectedCustomer.name}`} onClick={() => setSelectedCustomerId(null)}>×</button>
+                </span>
+              ) : null}
+              {selectedProject ? (
+                <span className="contextChip" data-kind="project">
+                  <i aria-hidden="true">◇</i>
+                  <span>{projectOpening ? "Mapping…" : selectedProject.name}</span>
+                  <button type="button" aria-label={`Remove ${selectedProject.name}`} disabled={projectOpening} onClick={() => void chooseProject(null)}>×</button>
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {hasMessages ? (
+            <div className="companionDock" data-mood={companionMood}>
+              <MetisCompanion mood={companionMood} />
+              <span className="companionDockLabel">{companionLabel}</span>
+            </div>
+          ) : null}
           <form className="composer" onSubmit={(event) => void submit(event)}>
             <textarea
               ref={textareaRef}
               rows={1}
               value={draft}
-              onChange={(event) => { setDraft(event.target.value); event.target.style.height = "0"; event.target.style.height = `${Math.min(event.target.scrollHeight, 180)}px`; }}
+              onChange={(event) => onDraftChange(event.target.value)}
               onKeyDown={onComposerKeyDown}
               placeholder={knowledgeScope === "notion" ? "Ask only from your synced Notion…" : "Message Metis…"}
               aria-label="Message Metis"
@@ -1265,6 +1423,76 @@ export function ChatWorkspace() {
             />
             <div className="composerToolbar">
               <div>
+                {/* The composer carries per-message scope: what this message is
+                    about. What RUNS it (the model/provider) lives top-right in
+                    the header. Customer and project are mutually exclusive. */}
+                <div className="composerScope">
+                  <div className="headerPickerAnchor">
+                    <button
+                      className="composerAddContext"
+                      type="button"
+                      aria-expanded={slashOpen}
+                      aria-haspopup="listbox"
+                      onClick={() => setSlashOpen((value) => !value)}
+                      disabled={runActive}
+                      title="Add a customer or project to this message  ( / )"
+                    >
+                      <i aria-hidden="true">＋</i>
+                      <span>Context</span>
+                      <kbd>/</kbd>
+                    </button>
+                    {slashOpen ? (
+                      <CommandPicker
+                        label="Add to this message"
+                        placeholder="Type a command…"
+                        options={[
+                          { id: "customer", label: "Customer", meta: `Scope to one of ${customerOptions.length} accounts` },
+                          { id: "project", label: "Project", meta: "Open a project workspace" },
+                        ].filter((option) =>
+                          !slashQuery || option.id.startsWith(slashQuery.toLowerCase()),
+                        )}
+                        value={null}
+                        emptyMessage="No command matches that."
+                        onSelect={(id) => runSlashCommand(id)}
+                        onDismiss={() => setSlashOpen(false)}
+                        footer={<span>Type <code>/</code> in the message box to reach this any time.</span>}
+                      />
+                    ) : null}
+                    {customerPickerOpen ? (
+                      <CommandPicker
+                        label="Customer account scope"
+                        placeholder={`Search ${customerOptions.length} accounts…`}
+                        options={customerOptions}
+                        value={selectedCustomerId}
+                        clearOption={{ id: "", label: "No customer", meta: "Ordinary chat routing" }}
+                        emptyMessage="No account matches that."
+                        onSelect={(id) => { setSelectedCustomerId(id || null); setCustomerPickerOpen(false); }}
+                        onDismiss={() => setCustomerPickerOpen(false)}
+                        footer={<span>Only this account&rsquo;s reviewed facts and pinned notes enter the model context.</span>}
+                      />
+                    ) : null}
+                    {projectPickerOpen ? (
+                      <CommandPicker
+                        label="Project workspace"
+                        placeholder={`Search ${projects.length} project${projects.length === 1 ? "" : "s"}…`}
+                        options={projectOptions}
+                        value={selectedProjectId}
+                        clearOption={{ id: "", label: "No project", meta: "Return to ordinary chat routing." }}
+                        emptyMessage={projects.length ? "No project matches that." : "No projects in the catalog — use Assets → Scan for updates first."}
+                        busy={projectOpening}
+                        onSelect={(id) => void chooseProject(id || null)}
+                        onDismiss={() => setProjectPickerOpen(false)}
+                        header={
+                          <div className="projectWorkspaceIntro">
+                            <span className="eyebrow">Whole-project mode</span>
+                            <p>Grok maps once, then Metis reads, searches, and proposes exact edits under approval. Pick who leads each step from the model control, top-right.</p>
+                          </div>
+                        }
+                        footer={<span>{projectOpening ? "Opening…" : "Writes always pause for approval"}</span>}
+                      />
+                    ) : null}
+                  </div>
+                </div>
                 <button className="attachButton" type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading || runActive} aria-label="Attach images or files">＋ <span>{uploading ? "Uploading…" : "Attach"}</span></button>
                 <input ref={fileInputRef} type="file" multiple hidden accept={CHAT_ATTACHMENT_ACCEPT} onChange={(event) => event.target.files && void addFiles(event.target.files)} />
                 <div className="knowledgeScopeSwitch" role="group" aria-label="Answer sources">

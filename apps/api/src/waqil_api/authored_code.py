@@ -32,7 +32,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any

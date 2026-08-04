@@ -32,7 +32,15 @@ class Settings(BaseSettings):
     context_window: int = Field(default=32768, ge=4096, le=262144)
     max_output_tokens: int = Field(default=8192, ge=256, le=32768)
     # Turns a wedged model runtime into a typed failure instead of a stuck run.
+    # For a streamed answer this covers prompt evaluation and the first token;
+    # after that the stall timeout below takes over, so a slow-but-progressing
+    # local answer is never cut off mid-sentence.
     model_call_timeout_seconds: float = Field(default=600.0, ge=30.0, le=1800.0)
+    # Longest silence allowed between two streamed chunks before the call fails.
+    model_stall_timeout_seconds: float = Field(default=120.0, ge=15.0, le=600.0)
+    # Streams the planner's thinking to the run timeline as a separate channel,
+    # so it can be read without ever being mixed into the answer text.
+    stream_model_reasoning: bool = True
     # Bounds the advisory proposal worker so it cannot stall the root graph.
     deep_worker_timeout_seconds: int = Field(default=120, ge=15, le=300)
     # Unload after each call so two models never share unified memory.
@@ -40,6 +48,12 @@ class Settings(BaseSettings):
     # A manually launched model stays warm briefly after its last completed use.
     # The session control may override this per launch, but never starts a model.
     local_model_idle_seconds: int = Field(default=300, ge=60, le=86_400)
+    # How long the API waits, with no client calling it at all, before unloading
+    # the model it launched. The UI polls the session while it is open and
+    # visible, so a gap this long means every window is closed or in the
+    # background — the case where holding the weights costs memory and battery
+    # and buys nothing. 0 disables it and leaves Ollama's keep_alive in charge.
+    model_release_after_idle_seconds: int = Field(default=180, ge=0, le=86_400)
     max_upload_bytes: int = Field(
         default=10 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024
     )
@@ -57,6 +71,8 @@ class Settings(BaseSettings):
     # precondition falls back to local keyword search. Vectors are stored locally.
     allow_cloud_embeddings: bool = False
     oci_profile: str = "DEFAULT"
+    # Empty uses the SDK default ~/.oci/config; set to point somewhere else.
+    oci_config_file: str = ""
     oci_compartment_id: str = ""
     # Empty lets the SDK derive the endpoint from the profile region.
     oci_genai_endpoint: str = ""
@@ -108,12 +124,20 @@ class Settings(BaseSettings):
     oci_recent_history_chars: int = Field(default=64_000, ge=12_000, le=400_000)
     oci_memory_context_chars: int = Field(default=24_000, ge=8_000, le=100_000)
 
-    # Bounds the project read/search/edit loop; writes still pause for approval.
-    project_agent_max_steps: int = Field(default=16, ge=2, le=40)
+    # Bounds the project act→observe→decide loop. Writes are staged into an
+    # overlay as the loop runs and reach disk only through the single
+    # batch approval at the end, so a large step budget spends model time,
+    # never unreviewed filesystem authority.
+    project_agent_max_steps: int = Field(default=48, ge=2, le=200)
     project_manifest_max_files: int = Field(default=8_000, ge=100, le=50_000)
     project_manifest_sample_chars: int = Field(default=80_000, ge=8_000, le=400_000)
     project_tool_result_chars: int = Field(default=48_000, ge=4_000, le=200_000)
     project_max_write_bytes: int = Field(default=1_000_000, ge=1_024, le=8_000_000)
+    # Caps one turn's staged changeset. Files is the count of distinct paths;
+    # bytes is the total staged content held in graph state (which is
+    # checkpointed, so this also bounds checkpoint growth).
+    project_staged_max_files: int = Field(default=48, ge=1, le=256)
+    project_staged_max_bytes: int = Field(default=4_000_000, ge=10_000, le=32_000_000)
 
     # Reviewed verification checks. The agent may only name a check declared in
     # the project's own .metis/verify.json, and the recipe is approved once by
@@ -122,6 +146,53 @@ class Settings(BaseSettings):
     project_verify_timeout_seconds: int = Field(default=300, ge=5, le=1_800)
     project_verify_output_chars: int = Field(default=12_000, ge=500, le=120_000)
     project_verify_max_runs: int = Field(default=6, ge=0, le=30)
+
+    # Verified API facts injected into every build turn, deterministically.
+    #
+    # This is deliberately NOT retrieval. The reference was indexed as a corpus
+    # source first, and measured: a build prompt's nearest neighbours are the
+    # transcripts of previous build prompts, so all 31 retrieved passages were
+    # run history and none were the reference. Worse, it compounds — every build
+    # indexes its own transcript, growing the very corpus that outranks it.
+    # A coding reference for the stack being built on is not "possibly
+    # relevant", so it is read from disk and always sent.
+    # Budgets are per build step. The first values (14k/6k) were set by eye and
+    # measured wrong: the whole library is ~14.2k, so the cloud budget dropped
+    # the OCI reference by 222 characters on an OCI build, and the local budget
+    # was under the size of a single document so local builds got nothing at
+    # all. Sized to fit the library whole, with headroom for it to grow.
+    project_reference_enabled: bool = True
+    project_reference_max_chars: int = Field(default=40_000, ge=0, le=120_000)
+    project_reference_max_chars_local: int = Field(default=9_000, ge=0, le=60_000)
+
+    # The build loop's own checks on a staged changeset, before the user is ever
+    # offered it. The wiring gate is pure AST and always runs; the sandbox
+    # actually imports the project inside the reviewed container and is the only
+    # place model-authored project code is executed. Either can be turned off
+    # without a code change, and a sandbox that cannot run degrades to the
+    # wiring gate rather than passing the build silently.
+    # Ruff and mypy over the staged changeset, resolved against the packages the
+    # project will actually run on. This is the rung that knows things the code
+    # cannot say about itself: a keyword argument the callee does not accept
+    # parses perfectly and imports perfectly, and was invented independently by
+    # a frontier model and a local one. Neither tool executes what it reads.
+    project_typecheck_enabled: bool = True
+    project_typecheck_timeout_seconds: int = Field(default=60, ge=5, le=600)
+    project_wiring_gate_enabled: bool = True
+    project_sandbox_enabled: bool = True
+    project_sandbox_image: str = "localhost/metis/project-verify:0.2.0"
+    project_sandbox_timeout_seconds: int = Field(default=150, ge=30, le=600)
+    project_sandbox_max_modules: int = Field(default=40, ge=1, le=200)
+    # Booting the Podman VM costs about ten seconds, once per laptop boot. A
+    # verification that silently does not happen is the failure this whole gate
+    # exists to remove, so the default is to start it rather than skip the check.
+    project_sandbox_autostart: bool = True
+    # How long the VM may sit unused before Metis stops it again, mirroring what
+    # the model session does with its weights. Deliberately not per-request: a
+    # build turn verifies two or three times, and a stop between them would pay
+    # the ten-second boot repeatedly to reclaim 1.7 GB for a few seconds. Metis
+    # only ever stops a machine it started itself. 0 leaves it running.
+    project_sandbox_release_after_idle_seconds: int = Field(default=600, ge=0, le=86_400)
 
     # Containers whose child directories become Assets on an explicit scan.
     # NoDecode accepts a single path, a separated list, or a JSON array.
@@ -280,8 +351,19 @@ class Settings(BaseSettings):
         return self.repo_root / "skills" / "reference-architecture-generator"
 
     @property
+    def project_reference_dir(self) -> Path:
+        """The verified coding reference every build turn is given."""
+        return self.repo_root / "reference"
+
+    @property
     def reference_sandbox_runner(self) -> Path:
         return self.repo_root / "infra" / "sandbox" / "run_reference_architecture.py"
+
+    @property
+    def project_sandbox_runner(self) -> Path:
+        return (
+            self.repo_root / "infra" / "sandbox" / "project-verify" / "run_project_verify.py"
+        )
 
     @property
     def corpus_dir(self) -> Path:
@@ -310,6 +392,16 @@ class Settings(BaseSettings):
     def model_session_path(self) -> Path:
         """Last explicit local-model session choices (never credentials)."""
         return self.data_dir / "model_session.json"
+
+    @property
+    def sku_rates_path(self) -> Path:
+        """The Oracle SKU rate card (local, user-owned JSON).
+
+        Seeded once from the copy vendored beside the SKU catalog, then owned by
+        the user — a rate they verified or replaced with their contracted price
+        must survive an update that ships a new seed.
+        """
+        return self.data_dir / "sku_rates.json"
 
     def prepare_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

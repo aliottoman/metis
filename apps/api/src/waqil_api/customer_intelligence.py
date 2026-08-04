@@ -14,8 +14,11 @@ from .contracts import (
     CustomerExtractionV1,
     CustomerFactV1,
     CustomerInteractionV1,
+    CustomerNoteV1,
     CustomerOutputV1,
-    CustomerPersonExtractV1,
+    CustomerPersonV1,
+    CustomerSearchHitV1,
+    CustomerSearchResultV1,
     CustomerSettingsV1,
     CustomerSourceV1,
     CustomerUpdateProposalV1,
@@ -71,6 +74,19 @@ def _action(row: dict[str, Any]) -> CustomerActionV1:
     return CustomerActionV1.model_validate(value)
 
 
+def _snippet(text: str, needle: str, *, width: int = 180) -> str:
+    """A one-line excerpt centred on the match, so a hit shows why it matched."""
+    flat = " ".join(text.split())
+    if len(flat) <= width:
+        return flat
+    found = flat.lower().find(needle) if needle else -1
+    if found < 0:
+        return f"{flat[:width].rstrip()}…"
+    start = max(0, found - width // 3)
+    end = min(len(flat), start + width)
+    return ("…" if start else "") + flat[start:end].strip() + ("…" if end < len(flat) else "")
+
+
 def _proposal(row: dict[str, Any]) -> CustomerUpdateProposalV1:
     value = dict(row)
     if "extraction" not in value:
@@ -108,18 +124,16 @@ class CustomerIntelligenceService:
             value = dict(item)
             value["evidence"] = _evidence(value.pop("evidence_json", {}))
             facts.append(CustomerFactV1.model_validate(value))
-        people: list[CustomerPersonExtractV1] = []
+        people: list[CustomerPersonV1] = []
         for item in data["people"]:
             value = dict(item)
             value["evidence"] = _evidence(value.pop("evidence_json", {}))
-            for key in ("id", "account_id", "created_at", "updated_at"):
+            # The row id is kept: editing or removing a contact addresses the
+            # record, not the name it currently happens to carry.
+            for key in ("account_id", "created_at", "updated_at"):
                 value.pop(key, None)
-            people.append(CustomerPersonExtractV1.model_validate(value))
-        wins: list[CustomerWinV1] = []
-        for item in data["wins"]:
-            value = dict(item)
-            value["account_name"] = data["account"]["name"]
-            wins.append(CustomerWinV1.model_validate(value))
+            people.append(CustomerPersonV1.model_validate(value))
+        wins = await self._wins(data["wins"], account_name=data["account"]["name"])
         return CustomerAccountDetailV1(
             account=CustomerAccountV1.model_validate(data["account"]),
             interactions=interactions,
@@ -128,7 +142,28 @@ class CustomerIntelligenceService:
             people=people,
             sources=[_source(item) for item in data["sources"]],
             wins=wins,
+            notes=[CustomerNoteV1.model_validate(item) for item in data["notes"]],
         )
+
+    async def search(self, query: str, *, limit: int = 40) -> CustomerSearchResultV1:
+        """Find any customer record mentioning `query`, across every account."""
+        rows, truncated = await self.database.search_customer_records(
+            query, limit=limit
+        )
+        needle = query.strip().lower()
+        hits = [
+            CustomerSearchHitV1(
+                kind=row["kind"],
+                id=row["id"],
+                account_id=row["account_id"],
+                account_name=row["account_name"],
+                title=str(row["title"] or "").strip() or "Untitled",
+                snippet=_snippet(str(row["snippet"] or ""), needle),
+                occurred_at=row["at"],
+            )
+            for row in rows
+        ]
+        return CustomerSearchResultV1(query=query, hits=hits, truncated=truncated)
 
     async def dashboard(self) -> CustomerDashboardV1:
         data = await self.database.customer_dashboard_data()
@@ -146,10 +181,29 @@ class CustomerIntelligenceService:
                 for item in data["recent_accounts"]
             ],
             priority_actions=[_action(item) for item in data["priority_actions"]],
-            recent_wins=[
-                CustomerWinV1.model_validate(item) for item in data["recent_wins"]
-            ],
+            recent_wins=await self._wins(data["recent_wins"]),
         )
+
+    async def _wins(
+        self, rows: list[dict[str, Any]], *, account_name: str | None = None
+    ) -> list[CustomerWinV1]:
+        """Wins with their estimate attached, in one query rather than per win."""
+        from .win_valuation import WinValuationService
+
+        valuations = await self.database.win_valuations_for(
+            [str(row["id"]) for row in rows]
+        )
+        wins: list[CustomerWinV1] = []
+        for row in rows:
+            value = dict(row)
+            if account_name is not None:
+                value["account_name"] = account_name
+            found = valuations.get(str(row["id"]))
+            value["valuation"] = (
+                WinValuationService.to_contract(found) if found else None
+            )
+            wins.append(CustomerWinV1.model_validate(value))
+        return wins
 
     async def analyze(self, source_id: str) -> CustomerUpdateProposalV1:
         source = await self.database.get_customer_source(source_id)
@@ -243,9 +297,17 @@ class CustomerIntelligenceService:
             f"- {item.description} (owner: {item.owner or 'unassigned'})"
             for item in detail.actions if item.status == "open"
         ) or "- No open actions"
+        # Pinned notes only. A note is pinned precisely because the user decided
+        # it is standing context for the account, so the pin is the consent to
+        # spend conversation context on it.
+        pinned = "\n".join(
+            f"- {item.title or 'Note'}: {' '.join(item.body.split())[:600]}"
+            for item in detail.notes if item.pinned
+        )
         return (
             f"Selected customer: {detail.account.name} ({detail.account.id})\n"
             f"Saved customer facts:\n{facts}\nOpen actions:\n{actions}"
+            + (f"\nPinned account notes:\n{pinned}" if pinned else "")
         )[:16_000]
 
     async def output(

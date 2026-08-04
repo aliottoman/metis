@@ -6,7 +6,10 @@
 *.pem
 *.key
 .data/
-data/
+# Anchored to the repo root on purpose. Unanchored, this also matched
+# apps/api/src/waqil_api/data/, silently excluding the vendored DAC sizing
+# catalog and Oracle SKU catalog the app needs to run at all.
+/data/
 artifacts/
 uploads/
 *.db

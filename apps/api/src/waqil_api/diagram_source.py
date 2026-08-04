@@ -227,9 +227,6 @@ class _V2Auditor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
         func = node.func
-        name = func.id if isinstance(func, ast.Name) else (
-            func.attr if isinstance(func, ast.Attribute) else "<expr>"
-        )
         if isinstance(func, ast.Name):
             if func.id not in _V2_ALLOWED_CALL_NAMES:
                 self.violations.append(f"disallowed call: {func.id}(...)")
