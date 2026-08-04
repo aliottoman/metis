@@ -109,6 +109,24 @@ def _bounded_check_name(call: ProjectToolCallV1) -> str:
 _REPEATABLE_PROJECT_READS = frozenset({"list_files", "search_code", "read_file"})
 
 
+def _write_failed_since(trace: list[dict[str, Any]], start: int, path: str) -> bool:
+    """Whether a write to ``path`` was refused after trace position ``start``.
+
+    A read that follows a failed write is the recovery move, not a repeat: the
+    model needs the file's exact current bytes to build a patch that matches.
+    """
+    if not path:
+        return False
+    for entry in trace[start:]:
+        if entry.get("tool") not in {"apply_patch", "create_file"}:
+            continue
+        if str((entry.get("arguments") or {}).get("path", "")) != path:
+            continue
+        if not (entry.get("result") or {}).get("ok"):
+            return True
+    return False
+
+
 def _repeated_project_call(
     state: AgentState, call: ProjectToolCallV1
 ) -> dict[str, Any] | None:
@@ -117,19 +135,30 @@ def _repeated_project_call(
     Nothing in the loop otherwise notices that the same listing has been fetched
     ten times, and each repeat pushes the useful evidence further out of the
     trace window while spending a step.
+
+    The exception is a read chasing a refused write. apply_patch needs an exact
+    block, a near-miss on whitespace is refused, and the only way back is to
+    re-read the file — which is byte-identical to the earlier read, so this
+    guard called it a repeat and counted it toward closing the target. Three of
+    those and the model held a file it could neither patch nor read: one live
+    repair turn spent 39 of 48 steps against that closed door and never fixed a
+    two-line defect it had correctly diagnosed. Recovery reads are let through.
     """
     if call.name not in _REPEATABLE_PROJECT_READS:
         return None
     signature = json.dumps(
         {"tool": call.name, "arguments": call.arguments}, sort_keys=True, default=str
     )
-    for index, entry in enumerate(state.get("project_trace", []), start=1):
+    trace = list(state.get("project_trace", []))
+    for index, entry in enumerate(trace, start=1):
         previous = json.dumps(
             {"tool": entry.get("tool"), "arguments": entry.get("arguments") or {}},
             sort_keys=True,
             default=str,
         )
         if previous == signature and (entry.get("result") or {}).get("ok"):
+            if _write_failed_since(trace, index, str(call.arguments.get("path", ""))):
+                return None
             # The answer travels with the refusal. "Its result is still above"
             # was true when this was written and false in the case that matters:
             # each refusal is itself a trace entry, so a run of them pushes the
@@ -2272,6 +2301,16 @@ class ControlPlane:
                 )
             result = {"ok": True, "output": output}
             blocked.pop(target, None)
+            # A fresh read of a file reopens writing to it. The breaker exists
+            # to stop a model repeating a call that cannot work, but a patch
+            # built from bytes it has just re-read is not that call — it is the
+            # recovery the refusal asked for. Without this, three near-miss
+            # patches closed the write for the rest of the turn and the model
+            # could still not fix the file once it finally had the right text.
+            if call.name == "read_file":
+                path = str(call.arguments.get("path", ""))
+                blocked.pop(f"apply_patch:{path}", None)
+                blocked.pop(f"create_file:{path}", None)
         except VerificationNotApprovedError as exc:
             # Reachable only if approval was revoked mid-turn; the gate before
             # this node normally routes an unapproved recipe to its approval.
