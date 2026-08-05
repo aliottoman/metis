@@ -96,7 +96,7 @@ graph LR
 | `infra/sandbox` | Rootless Podman images, execution policies, and host runners |
 | `reference` | Verified API facts read from disk and injected into every build step |
 | `scripts` | Smoke tests, offline packaging, and local data export |
-| `docs` | Architecture invariants and offline packaging |
+| `docs` | Architecture invariants, offline packaging, and planned work |
 
 ## Prerequisites
 
@@ -263,6 +263,8 @@ graph TD
 **The gates.** A changeset is checked before you are ever asked about it. The four static rungs read the staged text; the runtime rung imports the project inside the network-less Podman sandbox and exercises what it declares — parameterless GETs, POST bodies synthesized from the app's own schema, multipart uploads, and parameterized routes. A generated application that imports cleanly but 500s on its central workflow no longer passes.
 
 **Blocked approvals.** When a rung proves a defect the environment cannot excuse — a name that does not exist, a call the callee will not accept, configuration read at import time, a page referencing a file nobody wrote — the Approve button is withheld and the card names the file and line. The staged work is not lost: send a follow-up and the exact verified overlay carries into the next run, so the repair edits what verification actually inspected rather than starting again from disk.
+
+A repair can also make things worse, and the card says so. It carries the count it started from, and when it ends with more blocking findings than it inherited it reports both numbers and points out that rejecting these edits leaves the earlier changeset pending. That stays a warning rather than an automatic reject: a repair that fixes a masking defect legitimately uncovers problems that were always there, which is a judgement about your code rather than something a counter can settle.
 
 **Launchability.** Models may not write `.metis`, so Metis writes the launch manifest itself after you approve an applied build, deriving the entry point, dependency file, and environment contract from what actually reached disk. Launching still requires the separate fingerprint approval described under **Asset library**.
 

@@ -665,6 +665,10 @@ class AgentState(TypedDict):
     # targets — and five in a row is a loop that will not recover. The turn
     # ends honestly instead of grinding to the step budget.
     project_refused_streak: int
+    # Blocking findings on the changeset this turn carried in, when it carried
+    # one. A repair that ends with more than it started with is a regression,
+    # and the card says so instead of only reporting a larger number.
+    project_prior_blocking: int
     # The bounded synthesize <-> ground_review loop.
     answer_revisions: int
     answer_critique: str
@@ -940,7 +944,16 @@ class ControlPlane:
                 ),
             },
         }
-        return {**state, "project_staged": staged, "project_trace": [note]}
+        return {
+            **state,
+            "project_staged": staged,
+            "project_trace": [note],
+            # What this repair inherited, so its own card can tell the user
+            # whether it improved on that or made it worse.
+            "project_prior_blocking": blocking_count(
+                str(getattr(approval, "blocked_reason", "") or "")
+            ),
+        }
 
     async def resume(
         self,
@@ -2488,6 +2501,11 @@ class ControlPlane:
         # button. The user can still reject it or send a follow-up that fixes
         # it; what they cannot do is put it on disk by clicking past a warning.
         blocked_reason = _blocking_reason(verification)
+        blocked_reason = _note_regression(
+            blocked_reason,
+            prior=int(state.get("project_prior_blocking", 0)),
+            verification=verification,
+        )
         policy = await self._policy_gate(
             state,
             PolicyRequest(
@@ -4675,6 +4693,7 @@ def initial_state(
         project_planned_files=[],
         project_stall_steps=0,
         project_refused_streak=0,
+        project_prior_blocking=0,
         project_malformed_streak=0,
         project_empty_finish_streak=0,
         project_syntax_retries=0,
@@ -4822,6 +4841,48 @@ def _blocks_approval(finding: dict[str, Any]) -> bool:
         return True
     error = str(finding.get("error", ""))
     return any(marker in error for marker in _PROVABLE_RUNTIME_FAILURES)
+
+
+# The count Metis puts at the front of every blocked reason it writes, read
+# back so a later turn can tell whether it improved on that changeset.
+_BLOCKING_COUNT = re.compile(r"^(\d+) problem")
+
+
+def blocking_count(reason: str) -> int:
+    """How many blocking problems a previous card reported, 0 if unreadable."""
+    found = _BLOCKING_COUNT.match(str(reason or "").strip())
+    return int(found.group(1)) if found else 0
+
+
+def _note_regression(
+    reason: str | None, *, prior: int, verification: dict[str, Any]
+) -> str | None:
+    """Say plainly when a repair turn handed back worse work than it received.
+
+    A repair carries the previous changeset forward, so it can also walk it
+    backwards: one measured turn took a changeset with a single finding and
+    returned thirteen, having spent its retry budget mid-regression. The card
+    reported the new count with no memory of the old one, so the only signal
+    that anything had gone wrong was a bigger number.
+
+    Deliberately a warning and a route back rather than an automatic reject.
+    A repair that fixes a masking defect legitimately uncovers problems that
+    were always there, and that is a judgement about this project's code, not
+    something a counter can settle. What the host owes the user is both
+    numbers and the fact that the earlier changeset is still theirs to take.
+    """
+    if reason is None or prior <= 0:
+        return reason
+    current = len(
+        [item for item in (verification.get("errors") or []) if _blocks_approval(item)]
+    )
+    if current <= prior:
+        return reason
+    return (
+        f"{reason} This is worse than the changeset it started from, which had "
+        f"{prior} — rejecting these edits leaves that earlier one pending, and a "
+        "narrower follow-up may do better than continuing from here."
+    )
 
 
 def _blocking_reason(verification: dict[str, Any]) -> str | None:

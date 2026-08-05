@@ -152,3 +152,21 @@ async def test_database_returns_the_parked_run_with_its_own_project(tmp_path) ->
         assert await database.latest_awaiting_project_approval(conversation.id) is None
     finally:
         await database.close()
+
+
+@pytest.mark.asyncio
+async def test_the_carried_changesets_finding_count_rides_along() -> None:
+    """The repair's own card compares against what it inherited, so the count
+    has to travel with the overlay — a live turn took a one-finding changeset
+    to thirteen and the card had no memory of the one."""
+    plane, _ = _plane(approval=_approval(), staged=STAGED)
+    seeded = await ControlPlane._carry_pending_overlay(plane, _state())
+    # _approval() carries a blocked_reason with no leading count, so nothing
+    # is claimed; a real card's wording is parsed in test_repair_regression.
+    assert "project_prior_blocking" in seeded
+
+    counted = _approval()
+    counted.blocked_reason = "4 problem(s) would stop this project working — app/x.py: boom."
+    plane, _ = _plane(approval=counted, staged=STAGED)
+    seeded = await ControlPlane._carry_pending_overlay(plane, _state())
+    assert seeded["project_prior_blocking"] == 4
