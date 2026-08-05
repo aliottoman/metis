@@ -95,6 +95,26 @@ class ModelPreferenceStore:
         )
         return self.load()
 
+    def project_coder(self) -> str:
+        """The coder a project build should use, or "" to keep the default.
+
+        A whole-application build is the one workload where the local models
+        measurably fall short: benchmarked on the same specification they
+        deliver every file and still land two to seven defects, and a repair
+        turn takes upwards of forty minutes because each structured step costs
+        about a minute. The same step against the hosted model comes back in
+        about five seconds, so project runs default to it.
+
+        Deliberately not forced. An explicitly pinned model is the user
+        saying which model to use, and that answer outranks this one; the
+        preference is only consulted when they have not chosen.
+        """
+        if not self._settings.project_cloud_coder:
+            return ""
+        if self.load().mode == "pinned":
+            return ""
+        return self._settings.project_cloud_coder_model
+
     def resolve_aliases(self) -> dict[str, str]:
         """The `model_aliases` a new run should use, honoring the preference."""
         preference = self.load()

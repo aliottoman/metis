@@ -1111,6 +1111,14 @@ async def create_message(
                 else "local",
             }
         )
+        # Opening a project shifts the coder to the hosted model by default.
+        # Only the coder: the planner stays wherever the preference put it,
+        # since routing is not the step that struggles. Grok's own mode is
+        # left alone, and a pinned preference already suppressed this.
+        if model_aliases["_provider"] != "oci":
+            cloud_coder = app.model_preference.project_coder()
+            if cloud_coder:
+                model_aliases["coder"] = cloud_coder
     if (
         model_aliases.get("_provider") != "oci"
         and app.settings.model_backend != "deterministic"

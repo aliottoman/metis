@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     max_text_attachment_bytes: int = Field(
         default=64 * 1024, ge=1024, le=512 * 1024
     )
+    # Project builds default to a hosted coder. Ollama serves cloud models
+    # through the same loopback API as local ones — the name carries the
+    # "-cloud" suffix and the daemon proxies it — so this is a model-name
+    # change, not a second provider. Benchmarked, a structured build step
+    # costs about a minute locally and about five seconds hosted, and the
+    # local models leave two to seven defects on the same specification.
+    # Set project_cloud_coder=false to keep whole-application builds local;
+    # an explicitly pinned model always outranks this either way.
+    project_cloud_coder: bool = True
+    project_cloud_coder_model: str = "gpt-oss:120b-cloud"
+
     reference_runner_mode: str = "podman"
     reference_runner_image: str = "localhost/metis/reference-architecture-tool:0.3.0"
     # The inner sandbox stops at 120s; the rest is Podman startup and cleanup.
