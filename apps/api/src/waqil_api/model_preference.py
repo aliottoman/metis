@@ -15,6 +15,17 @@ from .config import Settings
 from .contracts import ModelPreferenceV1
 
 
+def is_cloud_model(model: str) -> bool:
+    """Whether a model name names a hosted model rather than a local one.
+
+    Ollama spells the hosted variants two ways — the suffix form
+    ``gpt-oss:120b-cloud`` and the bare tag ``glm-5.2:cloud`` — and matching
+    only the first silently misread every model of the second kind as local.
+    """
+    name = model.strip()
+    return name.endswith("-cloud") or name.endswith(":cloud")
+
+
 class ModelPreferenceStore:
     """Read/write the local model-routing preference at `Settings.model_preference_path`."""
 
@@ -105,13 +116,20 @@ class ModelPreferenceStore:
         about a minute. The same step against the hosted model comes back in
         about five seconds, so project runs default to it.
 
-        Deliberately not forced. An explicitly pinned model is the user
-        saying which model to use, and that answer outranks this one; the
-        preference is only consulted when they have not chosen.
+        A pinned preference deliberately does NOT block this. Pinning is not
+        the statement it looks like: launching a local model session pins the
+        preference as a side effect, so anyone who has ever started a local
+        model has one, and gating on it meant the default never fired for the
+        people it was written for. Pinning a *cloud* model is a real choice
+        about this workload, and that one is honored.
+
+        The opt-outs are the settings: project_cloud_coder turns it off, and
+        project_cloud_coder_model chooses a different hosted model.
         """
         if not self._settings.project_cloud_coder:
             return ""
-        if self.load().mode == "pinned":
+        preference = self.load()
+        if preference.mode == "pinned" and is_cloud_model(preference.model or ""):
             return ""
         return self._settings.project_cloud_coder_model
 

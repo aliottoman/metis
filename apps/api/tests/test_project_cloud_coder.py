@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from waqil_api.config import Settings
-from waqil_api.model_preference import ModelPreferenceStore
+from waqil_api.model_preference import ModelPreferenceStore, is_cloud_model
 
 
 def _service(tmp_path: Path, **overrides: object) -> ModelPreferenceStore:
@@ -24,9 +24,18 @@ def test_a_project_run_defaults_to_the_hosted_coder(tmp_path: Path) -> None:
     assert _service(tmp_path).project_coder() == "gpt-oss:120b-cloud"
 
 
-def test_a_pinned_model_outranks_the_default(tmp_path: Path) -> None:
+def test_a_local_pin_does_not_block_the_default(tmp_path: Path) -> None:
+    """Pinning is not the statement it looks like: launching a local model
+    session pins the preference as a side effect, so gating on it meant the
+    default never fired for anyone who had ever started a local model."""
     service = _service(tmp_path)
     service.save("pinned", "qwen3-coder:30b")
+    assert service.project_coder() == "gpt-oss:120b-cloud"
+
+
+def test_pinning_a_cloud_model_is_a_real_choice_and_wins(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.save("pinned", "glm-5.2:cloud")
     assert service.project_coder() == ""
 
 
@@ -61,8 +70,17 @@ def test_a_corrupt_preference_file_does_not_break_the_default(tmp_path: Path) ->
     service._settings.model_preference_path.parent.mkdir(parents=True, exist_ok=True)
     service._settings.model_preference_path.write_text("{not json", encoding="utf-8")
     assert service.project_coder() == "gpt-oss:120b-cloud"
-    # And a well-formed pin still wins after the file is repaired.
+    # And a pinned cloud model still wins after the file is repaired.
     service._settings.model_preference_path.write_text(
-        json.dumps({"mode": "pinned", "model": "qwen3.5:35b-mlx"}), encoding="utf-8"
+        json.dumps({"mode": "pinned", "model": "kimi-k2.7-code:cloud"}), encoding="utf-8"
     )
     assert service.project_coder() == ""
+
+
+def test_both_cloud_tag_shapes_are_recognized() -> None:
+    """Ollama spells hosted models two ways; matching only one silently
+    misread every model of the other kind as local."""
+    for name in ("gpt-oss:120b-cloud", "glm-5.2:cloud", "kimi-k2.7-code:cloud"):
+        assert is_cloud_model(name), name
+    for name in ("qwen3-coder:30b", "qwen3.6:35b-mlx", "cloudy:7b", ""):
+        assert not is_cloud_model(name), name
