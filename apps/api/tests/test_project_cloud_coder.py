@@ -18,6 +18,9 @@ from waqil_api.model_preference import ModelPreferenceStore, is_cloud_model
 
 
 def _service(tmp_path: Path, **overrides: object) -> ModelPreferenceStore:
+    # The shipped default is off (Ollama Cloud does not enforce the step
+    # grammar); these tests are about the routing rule, so they opt in.
+    overrides.setdefault("project_cloud_coder", True)
     settings = Settings(_env_file=None, data_dir=tmp_path, **overrides)  # type: ignore[arg-type]
     return ModelPreferenceStore(settings)
 
@@ -49,6 +52,15 @@ def test_split_preference_still_gets_the_hosted_coder(tmp_path: Path) -> None:
 
 def test_the_setting_turns_it_off_entirely(tmp_path: Path) -> None:
     assert _service(tmp_path, project_cloud_coder=False).project_coder() == ""
+
+
+def test_the_shipped_default_is_off(tmp_path: Path) -> None:
+    """Ollama Cloud ignores the step grammar, so a hosted coder cannot drive
+    the build loop yet; a live build died after five steps on unreadable
+    replies. The routing stays built and stays off."""
+    settings = Settings(_env_file=None, data_dir=tmp_path)
+    assert settings.project_cloud_coder is False
+    assert ModelPreferenceStore(settings).project_coder() == ""
 
 
 def test_the_model_name_is_configurable(tmp_path: Path) -> None:

@@ -60,15 +60,23 @@ class Settings(BaseSettings):
     max_text_attachment_bytes: int = Field(
         default=64 * 1024, ge=1024, le=512 * 1024
     )
-    # Project builds default to a hosted coder. Ollama serves cloud models
-    # through the same loopback API as local ones — the name carries the
-    # "-cloud" suffix and the daemon proxies it — so this is a model-name
-    # change, not a second provider. Benchmarked, a structured build step
-    # costs about a minute locally and about five seconds hosted, and the
-    # local models leave two to seven defects on the same specification.
-    # Set project_cloud_coder=false to keep whole-application builds local;
-    # an explicitly pinned model always outranks this either way.
-    project_cloud_coder: bool = True
+    # Routes project builds to a hosted Ollama model. OFF until the provider
+    # learns to drive one.
+    #
+    # The speed case is real — a build step costs about a minute locally and
+    # seconds hosted — but the local build loop is grammar-constrained decode,
+    # and Ollama Cloud does not enforce a schema. Measured on the real build
+    # step: with `format` set to the step contract, and again with the
+    # OpenAI-compatible strict `json_schema`, the model returned well-formed
+    # JSON of its own invention ({"action","path","content"}) instead of the
+    # contract's shape. A live Ledger build died after five steps on three
+    # unreadable replies. Locally the same schema becomes a GBNF grammar the
+    # model cannot violate, which is why this never surfaced before.
+    #
+    # Tool calling IS enforced there, so the path forward is the protocol the
+    # OCI provider already uses — real function schemas rather than a
+    # constrained grammar. Turning this on before then breaks project builds.
+    project_cloud_coder: bool = False
     project_cloud_coder_model: str = "gpt-oss:120b-cloud"
 
     reference_runner_mode: str = "podman"
