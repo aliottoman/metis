@@ -19,7 +19,7 @@ import httpx
 
 from .config import Settings
 from .contracts import LocalModelOptionV1, LocalModelSessionV1
-from .model_preference import ModelPreferenceStore
+from .model_preference import ModelPreferenceStore, is_cloud_model
 
 
 class LocalModelSessionError(RuntimeError):
@@ -371,7 +371,17 @@ class LocalModelSessionManager:
         return await self.release_owned(reason="idle")
 
     async def require_ready(self, model: str | None = None) -> None:
-        if self.deterministic:
+        """Refuse a call whose local weights are not the ones now resident.
+
+        This session exists to keep two large models out of unified memory at
+        once, so everything it enforces is about weights on this machine. A
+        hosted model has none: nothing to launch, nothing that could be the
+        wrong thing already loaded. Checking one against the resident local
+        model asked the user to "launch gpt-oss:120b-cloud", which is not a
+        thing that can be launched, and failed every project build the hosted
+        coder was routed to.
+        """
+        if self.deterministic or (model and is_cloud_model(model)):
             return
         value = await self.status(include_models=False)
         expected = model or self.selected_model
@@ -391,6 +401,13 @@ class LocalModelSessionManager:
 
     @asynccontextmanager
     async def use(self, model: str) -> AsyncIterator[None]:
+        if is_cloud_model(model):
+            # A hosted call holds no local weights, so it must not mark the
+            # local session busy either: that would report "busy" with
+            # nothing loaded and hold an idle local model resident against
+            # work happening entirely off this machine.
+            yield
+            return
         await self.require_ready(model)
         self._busy += 1
         self._state = "busy"

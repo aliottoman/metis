@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from waqil_api.config import Settings
 from waqil_api.model_preference import ModelPreferenceStore, is_cloud_model
 
@@ -84,3 +86,27 @@ def test_both_cloud_tag_shapes_are_recognized() -> None:
         assert is_cloud_model(name), name
     for name in ("qwen3-coder:30b", "qwen3.6:35b-mlx", "cloudy:7b", ""):
         assert not is_cloud_model(name), name
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_model_needs_no_local_session(tmp_path: Path) -> None:
+    """The guard that failed every hosted build.
+
+    The session keeps two large models out of unified memory, so everything
+    it enforces is about local weights. A hosted model has none — asking the
+    user to "launch gpt-oss:120b-cloud" is asking for something that cannot
+    be launched — and it must not mark the local session busy either.
+    """
+    from waqil_api.local_model_session import LocalModelSessionManager
+
+    settings = Settings(_env_file=None, data_dir=tmp_path, model_backend="ollama")
+    session = LocalModelSessionManager(settings, ModelPreferenceStore(settings))
+
+    # Nothing is loaded: a local model is refused, a hosted one is allowed.
+    with pytest.raises(Exception):
+        await session.require_ready("qwen3-coder:30b")
+    await session.require_ready("gpt-oss:120b-cloud")
+
+    async with session.use("gpt-oss:120b-cloud"):
+        state = await session.status(include_models=False)
+        assert state.state == "off", "a hosted call must not report the local session busy"
