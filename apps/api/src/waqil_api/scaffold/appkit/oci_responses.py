@@ -152,7 +152,7 @@ class OciResponses:
         return text
 
 
-def parse_json_output(text: str) -> Any:
+def parse_json_output(text: Any) -> Any:
     """The JSON value inside a model reply — or ExtractionError, never {}.
 
     Swallowing a parse failure into an empty object turns "the extraction
@@ -160,6 +160,18 @@ def parse_json_output(text: str) -> Any:
     happily approve. A reply that is not JSON is an error with the reply
     attached, so it can be seen and fixed.
     """
+    if not isinstance(text, str):
+        # Measured: a build passed the coroutine straight through, and the
+        # only symptom was "'coroutine' object has no attribute 'strip'" from
+        # inside this function — a stack trace pointing at the scaffold for a
+        # missing await in the caller. Name the actual mistake instead.
+        hint = (
+            " — extract_document() and generate() are async, so the call needs"
+            " `await`" if type(text).__name__ == "coroutine" else ""
+        )
+        raise ExtractionError(
+            f"parse_json_output expects the reply text, got {type(text).__name__}{hint}"
+        )
     stripped = text.strip()
     if stripped.startswith("```"):
         lines = stripped.splitlines()

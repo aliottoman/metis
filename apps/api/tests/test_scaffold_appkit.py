@@ -247,3 +247,22 @@ def test_parse_json_output_handles_fences_and_prose_but_never_guesses() -> None:
     assert parse_json_output('The result is {"a": 1} as requested.') == {"a": 1}
     with pytest.raises(ExtractionError, match="not valid JSON"):
         parse_json_output("I could not read the document, sorry.")
+
+
+def test_parse_json_output_names_a_missing_await() -> None:
+    """The failure a live build actually produced: the coroutine went straight
+    into the parser, and the only symptom was "'coroutine' object has no
+    attribute 'strip'" raised from inside the scaffold."""
+
+    async def _reply() -> str:
+        return "{}"
+
+    coro = _reply()
+    try:
+        with pytest.raises(ExtractionError, match="await"):
+            parse_json_output(coro)
+    finally:
+        coro.close()
+
+    with pytest.raises(ExtractionError, match="got dict"):
+        parse_json_output({"already": "parsed"})
