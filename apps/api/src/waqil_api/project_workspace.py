@@ -578,15 +578,36 @@ class ProjectWorkspaceService:
         )
 
     async def _inspect_api(self, call: ProjectToolCallV1) -> dict[str, Any]:
-        """The real shape of an installed library, read rather than recalled."""
+        """The real shape of an installed library, read rather than recalled.
+
+        ``appkit`` is redirected to the canonical scaffold package. It is
+        vendored into the project rather than installed, so the probe — which
+        deliberately runs with no project on its path — could not see it, and
+        a model asking for the signature of a helper it was misusing got told
+        to "declare it in requirements". That is the correct question to ask
+        and the worst possible answer: measured live, a repair turn asked
+        three times, was refused, and never fixed the call. The vendored bytes
+        are copied from this package, so the signature it reports is the one
+        the project actually holds.
+        """
+        module = str(call.arguments.get("module", "")).strip()
+        probed = module
+        if module == "appkit" or module.startswith("appkit."):
+            probed = f"{__package__}.scaffold.{module}"
         try:
-            return await inspect_installed_api(
-                str(call.arguments.get("module", "")),
+            found = await inspect_installed_api(
+                probed,
                 str(call.arguments.get("symbol", "") or ""),
                 project_roots=tuple(self.settings.asset_roots),
             )
         except LookupError_ as exc:
-            raise ProjectWorkspaceError(str(exc), argument_shape=True) from exc
+            raise ProjectWorkspaceError(
+                str(exc).replace(probed, module), argument_shape=True
+            ) from exc
+        if probed != module and isinstance(found.get("module"), str):
+            # Report the name the project imports, not Metis's internal path.
+            found["module"] = module
+        return found
 
     def _overlay_text(
         self, root: Path, relative: str, staged: dict[str, dict[str, Any]]

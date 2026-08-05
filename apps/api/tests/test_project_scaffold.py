@@ -151,6 +151,45 @@ async def test_materialize_applies_scaffold_entries(tmp_path: Path) -> None:
     assert (project / "appkit" / "__init__.py").is_file()
 
 
+@pytest.mark.asyncio
+async def test_inspect_api_reaches_the_vendored_appkit(tmp_path: Path) -> None:
+    """The question the model actually asks when it misuses a helper.
+
+    appkit is vendored, not installed, so the probe — which runs with no
+    project on its path — could not see it and told the model to "declare it
+    in requirements". Measured live: a repair turn asked three times, was
+    refused, and never fixed the call it had correctly diagnosed.
+    """
+    service, asset_id, _ = await _service(tmp_path)
+    found = await service.execute_staged(
+        asset_id,
+        ProjectToolCallV1(
+            name="inspect_api", arguments={"module": "appkit.money", "symbol": "sum_money"}
+        ),
+        {},
+    )
+    result = found[0]
+    # The real signature, which is what the misuse needed: one argument.
+    assert result["has_symbol"] is True
+    assert result["signature"].startswith("sum_money(values")
+    assert "Decimal" in result["signature"]
+    # Reported under the name the project imports, not Metis's internal path.
+    assert result["module"] == "appkit.money"
+    assert "waqil_api" not in result["module"]
+
+
+@pytest.mark.asyncio
+async def test_inspect_api_still_refuses_the_projects_own_modules(tmp_path: Path) -> None:
+    """The redirect is for appkit only; read_file still owns project code."""
+    service, asset_id, _ = await _service(tmp_path)
+    with pytest.raises(ProjectWorkspaceError):
+        await service.execute_staged(
+            asset_id,
+            ProjectToolCallV1(name="inspect_api", arguments={"module": "definitely_not_real_pkg"}),
+            {},
+        )
+
+
 def test_scaffold_prompt_describes_what_the_project_carries() -> None:
     assert scaffold_prompt({}, {}) == ""
     base_note = scaffold_prompt({"appkit/__init__.py": {}}, {})
