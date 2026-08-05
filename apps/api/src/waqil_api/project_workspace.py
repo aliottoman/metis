@@ -31,6 +31,7 @@ from .contracts import (
 from .project_conformance import staged_conformance_errors
 from .project_lookup import LookupError_, inspect_installed_api
 from .project_env import CAPABILITY_VARS, capabilities_of_tree
+from .project_patch import EXACT, PatchProblem, locate_patch
 from .project_scaffold import SCAFFOLD_VERSION, scaffold_sources
 from .project_sandbox import ProjectSandboxService, SandboxOutcome
 from .project_typecheck import staged_static_analysis
@@ -692,6 +693,9 @@ class ProjectWorkspaceService:
         target = self._safe_target(root, relative, write=True)
         rel = str(target.relative_to(root))
         existing = staged.get(rel)
+        # Set when a patch matched on something looser than exact text, so the
+        # result can say so rather than letting a forgiven quote look verbatim.
+        matched_how = ""
 
         if call.name == "create_file":
             content = str(call.arguments.get("content", ""))
@@ -751,8 +755,8 @@ class ProjectWorkspaceService:
                 raise ProjectWorkspaceError(
                     "apply_patch target must be an existing or staged text file"
                 )
-            occurrences = text.count(original)
-            if occurrences != 1:
+            located = locate_patch(text, original, replacement)
+            if isinstance(located, PatchProblem):
                 # The old advice was "refresh the file and narrow it", which
                 # made things worse while reads were line-numbered: refreshing
                 # returned the same numbered text the model had just copied.
@@ -761,20 +765,22 @@ class ProjectWorkspaceService:
                 # and inventing the block it expects to find. The host has the
                 # real text right here, so it sends the opening of it back
                 # rather than asking for a read that costs another whole step.
-                if occurrences == 0:
+                if located.count == 0:
                     advice = (
-                        "nothing in the file matches it. Copy an exact block out of "
-                        "the current text below — no line numbers, exact indentation "
-                        f"— or read_file {rel} for the rest of it.\n"
+                        "nothing in the file matches it, even ignoring whitespace. "
+                        "Copy a block out of the current text below — whole lines, "
+                        f"no line numbers — or read_file {rel} for the rest of it.\n"
                         f"--- {rel} begins ---\n{text[:400]}"
                     )
                 else:
                     advice = "extend it with surrounding lines until it appears once."
                 raise ProjectWorkspaceError(
-                    f"exact patch context matched {occurrences} times; {advice}",
+                    f"patch context matched {located.count} times "
+                    f"({located.how}); {advice}",
                     argument_shape=True,
                 )
-            updated = text.replace(original, replacement, 1)
+            matched_how = located.how
+            updated = text[: located.start] + located.replacement + text[located.end :]
             if len(updated.encode("utf-8")) > self.settings.project_max_write_bytes:
                 raise ProjectWorkspaceError("updated project file exceeds the write limit")
             entry = {
@@ -824,6 +830,10 @@ class ProjectWorkspaceService:
             "staged_files": len(next_staged),
             "staged_bytes": total,
         }
+        if matched_how and matched_how != EXACT:
+            # Visible to the model, the trace and the approval card: the block
+            # was found by forgiving whitespace, not by matching what it sent.
+            result["matched"] = matched_how
         return result, next_staged
 
     def staged_summary(
