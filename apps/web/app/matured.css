@@ -1214,6 +1214,18 @@ select,
   .isCollapsed .primaryNav a.active { padding: 0; }
 }
 
+/* ── Header new chat: one continuous pill, same ink as primaryButton ──── */
+.headerNewChat { gap: 0; }
+.headerNewChat:hover:not(:disabled) { gap: 0; }
+.headerNewChat .segEnd { display: none; }
+.headerNewChat .segMain {
+  border-radius: 999px;
+  clip-path: none;
+  gap: 7px;
+  padding: 0 16px;
+}
+.headerNewChat::before { border-radius: 999px; }
+
 /* ── Recovery banner: paper and ink, not amber ────────────────────────── */
 .recoveryBanner {
   background: var(--m-paper-lift);
@@ -2742,112 +2754,4 @@ select { border-radius: var(--m-r-field); }
   border: 0;
   box-shadow: none;
   color: #fbf8f2;
-}
-
-/* ── The Cohere button ───────────────────────────────────────────────────
-   From the cohere.com sample, rebuilt properly this time: two segments,
-   not a chipped corner. A main slab whose right edge slants across its
-   full height, a thin diagonal of daylight, then a square chip carrying
-   the arrow, its left edge slanted to match. The header's New chat keeps
-   its real two-span build above; single-element buttons get the same
-   anatomy from their two pseudo-elements — which retires the bloom and
-   sheen those pseudos used to carry. Chat-bar controls are exempt: the
-   composer keeps its own chrome. */
-.primaryButton,
-.secondaryButton,
-.newChatButton {
-  --co-slant: 8px;
-  --co-chip: 33px;
-  --co-gap: 3px;
-  position: relative;
-  z-index: 0;
-  background: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  min-height: 34px;
-  padding: 0 calc(var(--co-chip) + var(--co-gap) + var(--co-slant) + 12px) 0 15px;
-}
-/* The old dark pill painted this button's text near-white, and page heros
-   painted their secondary buttons pure white; on the new light slab either
-   read as an empty button. */
-.newChatButton,
-.newChatButton .navLabel,
-.secondaryButton,
-.pageHeader .secondaryButton,
-.customerWorkbenchHeader .secondaryButton { color: var(--m-ink); }
-.primaryButton { color: #fbf8f2; }
-.primaryButton:hover:not(:disabled),
-.secondaryButton:hover:not(:disabled),
-.newChatButton:hover {
-  background: none;
-  border: 0;
-  box-shadow: none;
-  transform: none;
-}
-.primaryButton::before,
-.secondaryButton::before,
-.newChatButton::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 0 calc(var(--co-chip) + var(--co-gap)) 0 0;
-  border-radius: 10px 3px 3px 10px;
-  clip-path: polygon(0 0, 100% 0, calc(100% - var(--co-slant)) 100%, 0 100%);
-  filter: none;
-  opacity: 1;
-  transform: none;
-  transition: background-color 0.3s;
-}
-.primaryButton::after,
-.secondaryButton::after,
-.newChatButton::after {
-  content: "↗";
-  position: absolute;
-  z-index: -1;
-  inset: 0 0 0 auto;
-  width: var(--co-chip);
-  display: grid;
-  place-items: center;
-  border-radius: 3px 10px 10px 3px;
-  clip-path: polygon(var(--co-slant) 0, 100% 0, 100% 100%, 0 100%);
-  font-size: 14px;
-  font-style: normal;
-  line-height: 1;
-  opacity: 1;
-  transform: none;
-  transition: transform 0.3s var(--m-ease), background-color 0.3s;
-}
-.primaryButton::before,
-.primaryButton::after {
-  background: var(--m-ink-btn);
-  color: #fbf8f2;
-}
-.secondaryButton::before,
-.secondaryButton::after,
-.newChatButton::before,
-.newChatButton::after {
-  background: var(--m-paper-lift);
-  box-shadow: inset 0 0 0 1px var(--m-line);
-  color: var(--m-ink);
-}
-/* Theirs narrows the gap on hover; at app scale the chip leaning out
-   reads better — the same call the header button made. */
-.primaryButton:hover:not(:disabled)::after,
-.secondaryButton:hover:not(:disabled)::after,
-.newChatButton:hover::after { transform: translateX(2px); }
-.primaryButton:hover:not(:disabled)::before { background: var(--m-volcanic); }
-.secondaryButton:hover:not(:disabled)::before,
-.newChatButton:hover::before { background: var(--m-surface); }
-/* The collapsed rail's New chat is icon-only; two segments cannot fit in
-   a 34px square, so it returns to its plain form there. */
-@media (min-width: 901px) {
-  .isCollapsed .newChatButton {
-    padding: 0;
-    background: var(--m-paper-lift);
-    border: 1px solid var(--m-line);
-    border-radius: 9px;
-  }
-  .isCollapsed .newChatButton::before,
-  .isCollapsed .newChatButton::after { content: none; }
 }
