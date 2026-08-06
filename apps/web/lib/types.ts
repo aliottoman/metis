@@ -66,6 +66,8 @@ export interface RunEventV1 {
 
 export interface RunHandle {
   run_id: string;
+  /** Where the user's message was stored, so the optimistic id can be replaced. */
+  message_id?: string;
   conversation_id?: string;
   status?: string;
 }
@@ -481,9 +483,10 @@ export interface PersonalProfile {
 export interface ModelPreference {
   mode: "split" | "pinned";
   model: string | null;
-  provider: "local" | "oci";
+  provider: "local" | "oci" | "cohere";
   oci_tools: Array<"x_search" | "code_interpreter">;
   oci_available: boolean;
+  cohere_available: boolean;
 }
 
 export interface LocalModelOption {
@@ -768,7 +771,12 @@ export interface CustomerSettings {
   updated_at: string | null;
 }
 
-export type ProjectMode = "grok_bootstrap_local" | "grok_continuous";
+/**
+ * Who leads each bounded project step after the initial repository map.
+ * `grok_bootstrap_local` runs them on-device; the two continuous modes hand
+ * every step to their own cloud provider. Mirrors ProjectModeV1 in contracts.py.
+ */
+export type ProjectMode = "grok_bootstrap_local" | "grok_continuous" | "cohere_continuous";
 
 export interface ProjectWorkspace {
   id: string;

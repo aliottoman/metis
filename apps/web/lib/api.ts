@@ -255,6 +255,38 @@ export async function uploadFile(file: File): Promise<AttachmentRef> {
   return normalizeAttachment(unwrap(response));
 }
 
+/**
+ * Retire a message and everything after it, then re-read the thread.
+ *
+ * What makes an edited message an edit rather than a follow-up question: the
+ * turns that came after the original leave the model's view. The API marks
+ * them rather than deleting them, so the run history stays auditable.
+ */
+export async function rewindConversation(
+  conversationId: string,
+  messageId: string,
+): Promise<ConversationDetail> {
+  await request<unknown>(
+    `${API_PREFIX}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/rewind`,
+    { method: "POST" },
+  );
+  return getConversation(conversationId);
+}
+
+/**
+ * One dictated clip turned into composer text, via Cohere Transcribe.
+ *
+ * Nothing is stored on either side: this is not an upload, and what comes
+ * back is a draft the user still edits before sending.
+ */
+export async function transcribeAudio(audio: Blob, filename = "dictation.webm"): Promise<string> {
+  const body = new FormData();
+  body.append("file", audio, filename);
+  const response = await request<unknown>(`${API_PREFIX}/transcribe`, { method: "POST", body });
+  const payload = unwrap(response) as { text?: unknown };
+  return typeof payload.text === "string" ? payload.text : "";
+}
+
 export async function sendMessage(
   conversationId: string,
   content: string,
@@ -283,6 +315,11 @@ export async function sendMessage(
   const value = asRecord(unwrap(response));
   return {
     run_id: stringValue(value.run_id ?? value.id),
+    // The id the message was actually stored under. The composer shows an
+    // optimistic message immediately, under a client-side id that exists
+    // nowhere on the server — anything that later addresses that message by
+    // id (rewinding a thread to it) needs this to swap in.
+    message_id: value.message_id ? stringValue(value.message_id) : undefined,
     conversation_id: value.conversation_id ? stringValue(value.conversation_id) : conversationId,
     status: value.status ? stringValue(value.status) : undefined,
   };
@@ -1112,11 +1149,12 @@ function normalizeModelPreference(value: unknown): ModelPreference {
   return {
     mode: item.mode === "pinned" ? "pinned" : "split",
     model: item.model == null ? null : stringValue(item.model),
-    provider: item.provider === "oci" ? "oci" : "local",
+    provider: item.provider === "oci" ? "oci" : item.provider === "cohere" ? "cohere" : "local",
     oci_tools: listFrom(item.oci_tools)
       .map((entry) => stringValue(entry))
       .filter((entry): entry is "x_search" | "code_interpreter" => entry === "x_search" || entry === "code_interpreter"),
     oci_available: item.oci_available === true,
+    cohere_available: item.cohere_available === true,
   };
 }
 
@@ -1127,7 +1165,7 @@ export async function getModelPreference(): Promise<ModelPreference> {
 export async function setModelPreference(
   mode: "split" | "pinned",
   model: string | null,
-  provider: "local" | "oci" = "local",
+  provider: "local" | "oci" | "cohere" = "local",
   ociTools: Array<"x_search" | "code_interpreter"> = ["code_interpreter"],
 ): Promise<ModelPreference> {
   return normalizeModelPreference(
@@ -1681,6 +1719,16 @@ export async function scanAssets(): Promise<AssetV1[]> {
   return normalizeAssetList(
     await request<unknown>(`${API_PREFIX}/assets/scan`, { method: "POST" }),
   );
+}
+
+/** Create a brand-new empty project folder in the configured projects root.
+ *  The returned catalog id doubles as the project workspace id. */
+export async function createProjectAsset(name: string): Promise<AssetV1> {
+  const response = await request<unknown>(`${API_PREFIX}/assets/create`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  return normalizeAsset(unwrap(response));
 }
 
 export async function startAsset(

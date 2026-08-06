@@ -265,6 +265,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <div className="grain" aria-hidden="true" />
 
+      {/* Declared once for the whole app: the turbulence field that bends the
+          companion's colour film, so it pools like liquid rather than sliding
+          past as a rigid layer. */}
+      <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
+        <defs>
+          <filter id="metisWarp" x="-35%" y="-35%" width="170%" height="170%" colorInterpolationFilters="sRGB">
+            <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves={2} seed={9} result="n">
+              <animate attributeName="baseFrequency" dur="26s" values="0.015;0.028;0.015" repeatCount="indefinite" />
+            </feTurbulence>
+            <feDisplacementMap in="SourceGraphic" in2="n" scale={30} xChannelSelector="R" yChannelSelector="G" />
+          </filter>
+        </defs>
+      </svg>
+
       <button
         className="mobileMenuButton"
         type="button"

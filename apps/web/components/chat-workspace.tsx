@@ -17,12 +17,14 @@ import {
   createConversation,
   createCorpusSource,
   createCustomerNote,
+  createProjectAsset,
   decideRun,
   getConversation,
   getConversationProject,
   getModelPreference,
   getLocalModelSession,
   listCustomers,
+  rewindConversation,
   listCorpusSources,
   listProjectWorkspaces,
   listRecoverableRuns,
@@ -55,14 +57,35 @@ import {
 } from "@/lib/folder-drop";
 import type { ArtifactRef, AttachmentRef, ChatMessage, CorpusSource, CustomerAccount, KnowledgeScope, LocalModelSession, ModelPreference, ProjectMode, ProjectWorkspace, RecoverableRun, RunEventV1 } from "@/lib/types";
 import { useRunEvents } from "@/hooks/use-run-events";
+import { useDictation } from "@/hooks/use-dictation";
 
-function UserAvatar() {
-  return (
-    <span className="userAvatarGlyph" aria-hidden="true">
-      <i className="userAvatarHead" />
-      <i className="userAvatarBody" />
-    </span>
-  );
+/**
+ * Why a continuous project mode cannot run, or null when it can.
+ *
+ * Both continuous modes ride entirely on one cloud provider, so choosing one
+ * without its key is refused here rather than at the first step of a build.
+ * The local-led mode names no provider and is never blocked.
+ */
+function projectModeBlocked(mode: ProjectMode, preference: ModelPreference | null): string | null {
+  if (mode === "grok_continuous" && !preference?.oci_available) {
+    return "Keep Grok needs OCI Responses to be available. Configure it in Settings first.";
+  }
+  if (mode === "cohere_continuous" && !preference?.cohere_available) {
+    return "Command A+ mode needs a Cohere API key. Add WAQIL_COHERE_API_KEY in Settings first.";
+  }
+  return null;
+}
+
+/**
+ * Whether the server knows this message by the id we are holding.
+ *
+ * The composer renders your message before the API has answered, under a
+ * client-side id, and the streaming assistant message is keyed by its run.
+ * Neither can anchor a rewind, so anything that addresses a message by id
+ * has to wait for the real one — see where run.message_id is adopted.
+ */
+function isPersisted(message: ChatMessage): boolean {
+  return !message.id.startsWith("optimistic-") && !message.id.startsWith("assistant-");
 }
 
 /** The last complete-looking line of thinking, for the collapsed preview. */
@@ -104,8 +127,11 @@ function ReasoningPanel({ reasoning, live }: { reasoning: string; live: boolean 
 // Sent verbatim through the composer's send path when the user asks Metis to
 // distill a finished answer into a governed, reusable tool definition.
 const TOOL_BUILD_PROMPT = "Turn this repeatable process into a reusable tool.";
-const DEFAULT_ACTIVITY_WIDTH = 350;
-const MIN_ACTIVITY_WIDTH = 300;
+// The timeline reads as two columns of prose beside a rail; below about 340
+// the titles start wrapping mid-phrase, so that is the floor rather than a
+// width the panel merely survives.
+const DEFAULT_ACTIVITY_WIDTH = 396;
+const MIN_ACTIVITY_WIDTH = 340;
 const MAX_ACTIVITY_WIDTH = 620;
 
 function clampActivityWidth(value: number): number {
@@ -208,18 +234,48 @@ export function ChatWorkspace() {
   const [folderConsent, setFolderConsent] = useState(false);
   const [folderNotice, setFolderNotice] = useState<string | null>(null);
   const [corpusSources, setCorpusSources] = useState<CorpusSource[]>([]);
+  // Edit & rewind: which of your own messages is open for editing, and the
+  // text you are editing it into. Sending truncates the thread at that point.
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [rewinding, setRewinding] = useState(false);
+  // Queued send: what you typed while a run was still going. It fires itself
+  // the moment the run ends, so a thought does not have to wait on the model.
+  const [queued, setQueued] = useState<{ content: string; attachments: AttachmentRef[] } | null>(null);
+  // Copy feedback, keyed by message, so the button can say it worked.
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  // Scroll anchoring: streaming only pulls the view down while you are
+  // already at the bottom. Scroll up to read and it leaves you alone.
+  const [atBottom, setAtBottom] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerWidthRef = useRef(0);
   const messageEndRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const editRef = useRef<HTMLTextAreaElement>(null);
   const loadedConversationRef = useRef<string | null>(null);
   const latestRunRef = useRef<string | null>(requestedRunId);
+  // Runs this workspace started itself. Arriving at a URL that names a run is
+  // a deliberate request to see that run — the recovery banner's "Review
+  // approval" is exactly that — but the identical URL we write when sending a
+  // message is not, and treating the two the same is what made the activity
+  // drawer open on every send.
+  const selfStartedRunsRef = useRef<Set<string>>(new Set());
   const handledNewRequestRef = useRef<string | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const timelineWidthRef = useRef(DEFAULT_ACTIVITY_WIDTH);
   const timelineResizingRef = useRef(false);
   const timelineResizeOriginRef = useRef({ pointerX: 0, width: DEFAULT_ACTIVITY_WIDTH });
   const workspaceGenerationRef = useRef(0);
+
+  // Dictation appends rather than replaces, so you can type half a sentence,
+  // speak the rest, and keep both.
+  const dictation = useDictation(
+    useCallback((text: string) => {
+      setDraft((current) => (current.trim() ? `${current.replace(/\s+$/, "")} ${text}` : text));
+      textareaRef.current?.focus();
+    }, []),
+  );
 
   const resetConversationState = useCallback(() => {
     workspaceGenerationRef.current += 1;
@@ -255,6 +311,12 @@ export function ChatWorkspace() {
     setCustomerPickerOpen(false);
     setSavedToAccount(new Set());
     setSavingToAccount(null);
+    setEditingMessageId(null);
+    setEditDraft("");
+    setRewinding(false);
+    setQueued(null);
+    setCopiedMessageId(null);
+    setAtBottom(true);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (textareaRef.current) textareaRef.current.style.height = "";
@@ -357,17 +419,29 @@ export function ChatWorkspace() {
   }, []);
 
   /** Resolves true only when a project actually opened, so callers that own
-   *  surrounding UI (the folder-drop sheet) know whether to close it. */
-  async function chooseProject(projectId: string | null): Promise<boolean> {
+   *  surrounding UI (the folder-drop sheet) know whether to close it.
+   *  `known` lets a caller that just refreshed the catalog (create) pass the
+   *  fresh list instead of racing this render's `projects` closure. */
+  async function chooseProject(
+    projectId: string | null,
+    known: ProjectWorkspace[] = projects,
+  ): Promise<boolean> {
     if (projectOpening || runActive) return false;
     if (!projectId) {
       setSelectedProjectId(null);
       setProjectPickerOpen(false);
       return false;
     }
-    const target = projects.find((project) => project.id === projectId);
-    if (!modelPreference?.oci_available && (!target?.initialized || projectMode === "grok_continuous")) {
-      setError("Project mode needs Grok through OCI for the initial repository map. Configure OCI in Settings first.");
+    const target = known.find((project) => project.id === projectId);
+    const blocked = projectModeBlocked(projectMode, modelPreference)
+      // The first map is one cloud call. Grok makes it when OCI is configured
+      // and Command A+ stands in when it is not, so an unmapped project needs
+      // one of the two rather than OCI specifically.
+      ?? (target?.initialized || modelPreference?.oci_available || modelPreference?.cohere_available
+        ? null
+        : "Mapping a project for the first time needs a cloud model. Configure OCI or add a Cohere API key in Settings.");
+    if (blocked) {
+      setError(blocked);
       return false;
     }
     setProjectOpening(true);
@@ -386,10 +460,30 @@ export function ChatWorkspace() {
     }
   }
 
+  /** Create an empty project folder in the configured projects root, then
+   *  open it exactly like a picked one — one motion from typed name to
+   *  workspace. The folder is real immediately; the map comes later. */
+  async function createProject(name: string) {
+    if (projectOpening || runActive) return;
+    setProjectOpening(true);
+    setError(null);
+    try {
+      const created = await createProjectAsset(name);
+      const found = await listProjectWorkspaces();
+      setProjects(found);
+      setProjectOpening(false);
+      await chooseProject(created.id, found);
+    } catch (createError) {
+      setProjectOpening(false);
+      setError(createError instanceof Error ? createError.message : "Metis could not create that project.");
+    }
+  }
+
   async function chooseProjectMode(mode: ProjectMode) {
     if (projectOpening || runActive || projectMode === mode) return;
-    if (mode === "grok_continuous" && !modelPreference?.oci_available) {
-      setError("Keep Grok needs OCI Responses to be available.");
+    const blocked = projectModeBlocked(mode, modelPreference);
+    if (blocked) {
+      setError(blocked);
       return;
     }
     const previousMode = projectMode;
@@ -408,10 +502,14 @@ export function ChatWorkspace() {
     }
   }
 
-  async function chooseChatProvider(provider: "local" | "oci") {
+  async function chooseChatProvider(provider: "local" | "oci" | "cohere") {
     if (providerSaving || modelPreference?.provider === provider) return;
     if (provider === "oci" && !modelPreference?.oci_available) {
       setError("Cloud reasoning is not configured yet. Add the OCI project settings before selecting it.");
+      return;
+    }
+    if (provider === "cohere" && !modelPreference?.cohere_available) {
+      setError("Cohere is not configured yet. Add WAQIL_COHERE_API_KEY before selecting it.");
       return;
     }
     setProviderSaving(true);
@@ -423,6 +521,7 @@ export function ChatWorkspace() {
         provider: "local" as const,
         oci_tools: ["code_interpreter" as const],
         oci_available: false,
+        cohere_available: false,
       };
       setModelPreferenceState(await setModelPreference(
         current.mode,
@@ -482,7 +581,9 @@ export function ChatWorkspace() {
     setMessages([]);
     setArtifacts([]);
     setActiveRunId(requestedRunId);
-    if (requestedRunId) setTimelineOpen(true);
+    // A run named in the URL of a conversation we are only now loading is a
+    // deep link into that run — see selfStartedRunsRef.
+    if (requestedRunId && !selfStartedRunsRef.current.has(requestedRunId)) setTimelineOpen(true);
     setFeedbackMode("idle");
     setCorrection("");
     setDecidedApprovals(new Set());
@@ -539,7 +640,7 @@ export function ChatWorkspace() {
     setArtifacts([]);
     setDecidedApprovals(new Set());
     setStageLabel(null);
-    setTimelineOpen(true);
+    if (!selfStartedRunsRef.current.has(requestedRunId)) setTimelineOpen(true);
   }, [requestedConversationId, requestedRunId]);
 
   const handleRunEvent = useCallback((event: RunEventV1) => {
@@ -576,7 +677,40 @@ export function ChatWorkspace() {
 
   const { events, connection, error: streamError, reconnect } = useRunEvents(activeRunId, handleRunEvent);
 
+  const hasMessages = messages.length > 0 || loadingConversation;
+  const runActive = Boolean(activeRunId) && !["closed", "error"].includes(connection);
+
+  // Anything within this of the foot counts as "reading the newest message",
+  // which is what a streaming answer is allowed to follow. Wide enough to
+  // survive one line of text arriving between the scroll event and the frame
+  // that reads it, narrow enough that scrolling up one answer releases it.
+  const BOTTOM_THRESHOLD = 96;
+
+  const jumpToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
+    messageEndRef.current?.scrollIntoView({ behavior, block: "end" });
+    setAtBottom(true);
+  }, []);
+
+  // Whether the user is parked at the foot of the thread. Read from the
+  // scroll container rather than tracked through wheel events, so a keyboard
+  // scroll, a trackpad fling and a programmatic jump all agree.
   useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const sync = () => {
+      const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      setAtBottom(distance <= BOTTOM_THRESHOLD);
+    };
+    sync();
+    viewport.addEventListener("scroll", sync, { passive: true });
+    return () => viewport.removeEventListener("scroll", sync);
+  }, [hasMessages]);
+
+  // Follow the answer only while the user is at the foot. Scrolling up to
+  // re-read something used to be undone by the next token; now the thread
+  // stays where it was put and the jump-to-latest pill offers the way back.
+  useEffect(() => {
+    if (!atBottom) return;
     if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
     scrollFrameRef.current = requestAnimationFrame(() => {
       const streaming = messages.some((message) => message.streaming);
@@ -586,10 +720,24 @@ export function ChatWorkspace() {
     return () => {
       if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
     };
-  }, [messages]);
+  }, [atBottom, messages]);
 
-  const hasMessages = messages.length > 0 || loadingConversation;
-  const runActive = Boolean(activeRunId) && !["closed", "error"].includes(connection);
+  // The paper sheet fades over the colour field when a thread starts. That
+  // has to be a transition the USER causes, not one the page does to itself
+  // on arrival — opening an existing conversation would otherwise flash the
+  // purple for 700ms before settling, on every single load.
+  //
+  // Armed by the first CHANGE in hasMessages rather than by a frame or a
+  // timer: rAF does not fire while the document reports itself hidden, which
+  // is exactly what an embedded browser view does, and a transition that
+  // silently never arms is worse than no transition at all.
+  const [morphReady, setMorphReady] = useState(false);
+  const hadMessagesRef = useRef(hasMessages);
+  useEffect(() => {
+    if (hadMessagesRef.current === hasMessages) return;
+    hadMessagesRef.current = hasMessages;
+    setMorphReady(true);
+  }, [hasMessages]);
 
   const droppedName = folderDrop?.scan.name ?? "";
   const droppedFiles = folderDrop?.scan.files;
@@ -767,7 +915,18 @@ export function ChatWorkspace() {
     const usingOverride = typeof overrideContent === "string";
     const content = (overrideContent ?? draft).trim();
     const outgoingAttachments = usingOverride ? [] : attachments;
-    if ((!content && !outgoingAttachments.length) || sending || uploading || runActive) return;
+    if ((!content && !outgoingAttachments.length) || sending || uploading) return;
+    // A run is in flight, so this becomes the next message rather than a
+    // rejected keystroke. The composer clears exactly as if it had sent,
+    // because from the user's side it has: they are done with that thought.
+    if (runActive) {
+      setQueued({ content, attachments: outgoingAttachments });
+      if (!usingOverride) {
+        setDraft("");
+        setAttachments([]);
+      }
+      return;
+    }
     const generation = workspaceGenerationRef.current;
     setSending(true);
     setError(null);
@@ -811,12 +970,27 @@ export function ChatWorkspace() {
       );
       if (generation !== workspaceGenerationRef.current) return;
       if (!run.run_id) throw new Error("The API did not return a run ID.");
+      // Adopt the stored id for the message we optimistically rendered.
+      // Without this the message keeps a client-side id that exists nowhere
+      // on the server, and editing it rewinds nothing — the API is asked to
+      // rewind to a message it has never heard of.
+      if (run.message_id) {
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === userMessage.id ? { ...item, id: run.message_id! } : item,
+          ),
+        );
+      }
       setDecidedApprovals(new Set());
+      selfStartedRunsRef.current.add(run.run_id);
       setActiveRunId(run.run_id);
       latestRunRef.current = run.run_id;
       setFeedbackMode("idle");
       setCorrection("");
-      setTimelineOpen(true);
+      // Deliberately NOT opening the activity drawer. It used to open itself
+      // on every send, which pushed the thread aside for a panel almost
+      // nobody had asked to see; the header toggle and the in-thread pill
+      // both open it, and it stays open once opened.
       router.replace(`/?conversation=${encodeURIComponent(targetConversationId)}&run=${encodeURIComponent(run.run_id)}`);
       setMessages((current) => [...current, { id: `assistant-${run.run_id}`, run_id: run.run_id, role: "assistant", content: "", streaming: true }]);
     } catch (sendError) {
@@ -829,6 +1003,119 @@ export function ChatWorkspace() {
       setError(sendError instanceof Error ? sendError.message : "The message could not be sent.");
     } finally {
       if (generation === workspaceGenerationRef.current) setSending(false);
+    }
+  }
+
+  // The queued message fires when the run that blocked it ends. Kept as an
+  // effect rather than a callback on the run stream: a run can also end by
+  // failing, by being cancelled, or by the stream closing, and all four have
+  // to release the queue or the message is silently swallowed.
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+  useEffect(() => {
+    if (!queued || runActive || sending || uploading) return;
+    const pending = queued;
+    setQueued(null);
+    setAttachments(pending.attachments);
+    void submitRef.current(undefined, pending.content);
+  }, [queued, runActive, sending, uploading]);
+
+  /** Put one of your own messages back in an editable box. */
+  function startEditing(message: ChatMessage) {
+    if (runActive || rewinding || !isPersisted(message)) return;
+    setEditingMessageId(message.id);
+    setEditDraft(message.content);
+    window.setTimeout(() => {
+      const box = editRef.current;
+      if (!box) return;
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+    }, 0);
+  }
+
+  function cancelEditing() {
+    setEditingMessageId(null);
+    setEditDraft("");
+  }
+
+  /**
+   * Send an edited message, with the thread rewound to that point.
+   *
+   * Two steps that must not be reordered: the API retires the old message and
+   * everything after it FIRST, then the edited text is sent as a fresh turn.
+   * Sending first would put the new message into a thread that still contains
+   * the one it replaces.
+   */
+  async function submitEdit(message: ChatMessage) {
+    const content = editDraft.trim();
+    if (!content || !conversationId || rewinding) return;
+    if (content === message.content) {
+      cancelEditing();
+      return;
+    }
+    setRewinding(true);
+    setError(null);
+    const generation = workspaceGenerationRef.current;
+    try {
+      const rewound = await rewindConversation(conversationId, message.id);
+      if (generation !== workspaceGenerationRef.current) return;
+      setMessages(rewound.messages);
+      setArtifacts([]);
+      setActiveRunId(null);
+      latestRunRef.current = null;
+      setStageLabel(null);
+      cancelEditing();
+      // The original message's attachments are not carried over: they belong
+      // to a turn that no longer exists, and silently re-sending files the
+      // user cannot see in the composer is worse than making them re-attach.
+      await submit(undefined, content);
+    } catch (editError) {
+      if (generation !== workspaceGenerationRef.current) return;
+      setError(editError instanceof Error ? editError.message : "That message could not be edited.");
+    } finally {
+      if (generation === workspaceGenerationRef.current) setRewinding(false);
+    }
+  }
+
+  /** Ask the same question again — usually after switching model route. */
+  async function retryAnswer(assistant: ChatMessage) {
+    if (runActive || rewinding || !conversationId) return;
+    const index = messages.findIndex((item) => item.id === assistant.id);
+    const question = [...messages.slice(0, index)].reverse().find((item) => item.role === "user");
+    if (!question || !isPersisted(question)) return;
+    setRewinding(true);
+    setError(null);
+    const generation = workspaceGenerationRef.current;
+    try {
+      // Rewind to the QUESTION, not to the answer: re-asking has to remove
+      // the old question too, or the model sees it twice and reasonably
+      // assumes you are asking a follow-up.
+      const rewound = await rewindConversation(conversationId, question.id);
+      if (generation !== workspaceGenerationRef.current) return;
+      setMessages(rewound.messages);
+      setArtifacts([]);
+      setActiveRunId(null);
+      latestRunRef.current = null;
+      setStageLabel(null);
+      await submit(undefined, question.content);
+    } catch (retryError) {
+      if (generation !== workspaceGenerationRef.current) return;
+      setError(retryError instanceof Error ? retryError.message : "That answer could not be retried.");
+    } finally {
+      if (generation === workspaceGenerationRef.current) setRewinding(false);
+    }
+  }
+
+  async function copyMessage(message: ChatMessage) {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedMessageId(message.id);
+      window.setTimeout(
+        () => setCopiedMessageId((current) => (current === message.id ? null : current)),
+        1600,
+      );
+    } catch {
+      setError("This browser would not give Metis access to the clipboard.");
     }
   }
 
@@ -1091,10 +1378,25 @@ export function ChatWorkspace() {
 
   return (
     <div
-      className={`chatWorkspace ${!hasMessages ? "isEmpty" : ""} ${timelineOpen ? "timelineVisible" : ""} ${timelineResizing ? "timelineResizing" : ""}`}
+      className={`chatWorkspace ${!hasMessages ? "isEmpty" : ""} ${morphReady ? "morphReady" : ""} ${recoverableRuns.length ? "hasBanner" : ""} ${timelineOpen ? "timelineVisible" : ""} ${timelineResizing ? "timelineResizing" : ""}`}
       style={{ "--activity-width": `${timelineWidth}px` } as CSSProperties}
     >
       <section className="conversationPane">
+        {/* The room the whole pane sits in: chrome forms drifting behind the
+            work at four focal depths, under the app-wide grain. It stays for
+            the life of the conversation so the header and composer never sit
+            on a different surface than the one you arrived on. */}
+        <div className="atmos" aria-hidden="true">
+          <span className="chromeForm cf1" />
+          <span className="chromeForm cf2" />
+          <span className="chromeForm cf3" />
+          <span className="chromeForm cf4" />
+        </div>
+        {/* Paper for reading, laid over the field once a thread starts. It is
+            masked open at the top and bottom, so the colour keeps bleeding
+            behind the header and the composer and the two surfaces never meet
+            on a hard line. */}
+        <div className="paperSheet" aria-hidden="true" />
         <header className="chatHeader">
           <div className="chatTitle">
             <span className="localStatus"><i />{selectedProject ? "Project" : modelPreference?.provider === "oci" ? "Cloud" : "Local"}</span>
@@ -1104,10 +1406,11 @@ export function ChatWorkspace() {
             {/* Customer and project scope live on the composer, next to the
                 message they actually scope — see .composerScope below. What
                 RUNS the message lives here, top-right: a provider for plain
-                chat, or the project's own two modes when one is scoped. */}
+                chat, or the project's own three modes when one is scoped. */}
             <ModelControl
               preference={modelPreference}
               onChooseProvider={(provider) => void chooseChatProvider(provider)}
+              onPreferenceChange={setModelPreferenceState}
               providerSaving={providerSaving}
               project={selectedProject}
               projectMode={projectMode}
@@ -1115,8 +1418,11 @@ export function ChatWorkspace() {
               projectBusy={projectOpening}
               disabled={runActive}
             />
+            {/* Cohere's button shape: one diagonal cut, and the gap between
+                the two segments is a real hole you see the page through. */}
             <button className="headerNewChat" type="button" onClick={startFreshConversation} disabled={runActive} title={runActive ? "Stop the active run first" : "Start a new conversation"}>
-              <span aria-hidden="true">＋</span><span>New chat</span>
+              <span className="segMain"><i aria-hidden="true">＋</i>New chat</span>
+              <span className="segEnd" aria-hidden="true">→</span>
             </button>
             <button className={`timelineToggle ${runActive ? "isLive" : ""} ${timelineOpen ? "active" : ""}`} type="button" onClick={() => setTimelineOpen((value) => !value)} aria-pressed={timelineOpen}>
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 11.8 6.2 8.6l2.2 2.1L13 5.8M9.7 5.8H13v3.3" /></svg>
@@ -1264,6 +1570,7 @@ export function ChatWorkspace() {
         ) : null}
 
         <div
+          ref={viewportRef}
           className={`messageViewport ${dragActive ? "dragActive" : ""}`}
           onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
           onDragOver={(event) => event.preventDefault()}
@@ -1287,20 +1594,70 @@ export function ChatWorkspace() {
               <h1><MetisWordmark className="heroWordmark" /></h1>
               <p>Ask Metis to understand a project, create an artifact, or turn a workflow into a tested local capability.</p>
               <CustomerDashboardSnippet />
-              <div className="trustLine"><span><i />On-device models</span><span><i />Sandboxed tools</span><span><i />Approved memory</span></div>
             </div>
           ) : (
             <div className="messageList">
               {loadingConversation ? <div className="messageLoading"><span /><span /><span /></div> : null}
               {messages.map((message, messageIndex) => (
-                <article className={`chatMessage message-${message.role} ${message.failed ? "message-failed" : ""}`} key={message.id}>
-                  <div className={`messageAvatar ${message.role === "assistant" ? "metisAvatar" : "userAvatar"}`}>
-                    {message.role === "user" ? <UserAvatar /> : <MetisMark animated={message.streaming} />}
-                  </div>
+                <article className={`chatMessage message-${message.role} ${message.failed ? "message-failed" : ""} ${editingMessageId === message.id ? "isEditing" : ""}`} key={message.id}>
+                  {/* Only Metis gets a mark. Your own avatar told you nothing
+                      you did not already know and cost a whole gutter. */}
+                  {message.role === "assistant" ? (
+                    <div className="messageAvatar metisAvatar">
+                      <MetisMark animated={message.streaming} />
+                    </div>
+                  ) : null}
                   <div className="messageBody">
                     <div className="messageAuthor"><strong>{message.role === "user" ? "You" : "Metis"}</strong>{message.streaming ? <span className="thinkingPulse"><i /><i /><i /></span> : null}</div>
                     {message.reasoning ? <ReasoningPanel reasoning={message.reasoning} live={Boolean(message.streaming) && !message.content} /> : null}
-                    {message.content ? <MarkdownContent content={message.content} /> : message.streaming && !message.reasoning ? <p className="workingText">{(message.id === latestAssistant?.id ? stageLabel : null) ?? "Understanding the task and choosing a safe route…"}</p> : null}
+                    {editingMessageId === message.id ? (
+                      <div className="messageEditor">
+                        <textarea
+                          ref={editRef}
+                          value={editDraft}
+                          onChange={(event) => setEditDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") { event.preventDefault(); cancelEditing(); }
+                            if (event.key === "Enter" && !event.shiftKey) {
+                              event.preventDefault();
+                              void submitEdit(message);
+                            }
+                          }}
+                          aria-label="Edit your message"
+                          maxLength={20000}
+                        />
+                        <div className="messageEditorActions">
+                          <small>Everything after this message is removed from the conversation.</small>
+                          <button type="button" className="textButton" onClick={cancelEditing} disabled={rewinding}>Cancel</button>
+                          <button type="button" className="primaryButton" disabled={rewinding || !editDraft.trim()} onClick={() => void submitEdit(message)}>
+                            {rewinding ? "Rewinding…" : "Send"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : message.content ? (
+                      <MarkdownContent content={message.content} />
+                    ) : message.streaming && !message.reasoning ? (
+                      <p className="workingText">{(message.id === latestAssistant?.id ? stageLabel : null) ?? "Understanding the task and choosing a safe route…"}</p>
+                    ) : null}
+                    {/* Hover actions. Present on every settled message, not
+                        only the newest, because the thing you want to copy is
+                        rarely the last thing said. */}
+                    {!message.streaming && !message.failed && message.content && editingMessageId !== message.id ? (
+                      <div className="messageActions">
+                        <button type="button" onClick={() => void copyMessage(message)} title="Copy this message">
+                          {copiedMessageId === message.id ? "✓ Copied" : "Copy"}
+                        </button>
+                        {message.role === "user" ? (
+                          <button type="button" onClick={() => startEditing(message)} disabled={runActive || rewinding || !isPersisted(message)} title={runActive ? "Stop the active run first" : "Edit this message and rewind the conversation"}>
+                            Edit
+                          </button>
+                        ) : (
+                          <button type="button" onClick={() => void retryAnswer(message)} disabled={runActive || rewinding} title={runActive ? "Stop the active run first" : "Ask again — useful after changing the model route"}>
+                            {rewinding ? "Retrying…" : "Retry"}
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
                     {message.failed ? (
                       <div className="failedActions">
                         <button className="retryResponse" type="button" onClick={() => {
@@ -1404,20 +1761,60 @@ export function ChatWorkspace() {
               ) : null}
             </div>
           ) : null}
-          {hasMessages ? (
-            <div className="companionDock" data-mood={companionMood}>
-              <MetisCompanion mood={companionMood} />
-              <span className="companionDockLabel">{companionLabel}</span>
+          {/* The way back down, offered only when following the answer would
+              actually move the view. See the scroll-anchoring effect. */}
+          {hasMessages && !atBottom ? (
+            <button className="jumpToLatest" type="button" onClick={() => jumpToLatest()}>
+              <span aria-hidden="true">↓</span>
+              {runActive ? "Jump to the live answer" : "Jump to latest"}
+            </button>
+          ) : null}
+          {queued ? (
+            <div className="queuedMessage">
+              <span className="queuedPulse" aria-hidden="true" />
+              <p><strong>Queued</strong>{queued.content}</p>
+              <button type="button" aria-label="Discard the queued message" onClick={() => {
+                setDraft(queued.content);
+                setAttachments(queued.attachments);
+                setQueued(null);
+              }}>Undo</button>
+            </div>
+          ) : null}
+          {dictation.error ? (
+            <div className="composerError" role="alert">
+              <span>!</span>
+              <p><strong>Dictation</strong>{dictation.error}</p>
+              <button className="errorDismiss" type="button" aria-label="Dismiss" onClick={dictation.dismissError}>×</button>
             </div>
           ) : null}
           <form className="composer" onSubmit={(event) => void submit(event)}>
+            {/* The companion sits in the corner of the box you type into —
+                the thing you are talking to, where you are talking to it.
+                Bead only: it already carries its state in colour and tempo,
+                and a label here would cost the first line of every message
+                the width it needs. */}
+            <div className="companionPerch" data-mood={companionMood} title={companionLabel} aria-hidden="true">
+              {/* 28, not less: the component goes still below that, and a
+                  bead that never breathes is just a dot. */}
+              <MetisCompanion mood={companionMood} size={28} />
+            </div>
             <textarea
               ref={textareaRef}
               rows={1}
               value={draft}
               onChange={(event) => onDraftChange(event.target.value)}
               onKeyDown={onComposerKeyDown}
-              placeholder={knowledgeScope === "notion" ? "Ask only from your synced Notion…" : "Message Metis…"}
+              placeholder={
+                dictation.state === "recording"
+                  ? "Listening…"
+                  : dictation.state === "transcribing"
+                    ? "Writing down what you said…"
+                    : runActive
+                      ? "Type the next message — it sends when this run finishes"
+                      : knowledgeScope === "notion"
+                        ? "Ask only from your synced Notion…"
+                        : "Message Metis…"
+              }
               aria-label="Message Metis"
               disabled={sending}
             />
@@ -1478,9 +1875,11 @@ export function ChatWorkspace() {
                         options={projectOptions}
                         value={selectedProjectId}
                         clearOption={{ id: "", label: "No project", meta: "Return to ordinary chat routing." }}
-                        emptyMessage={projects.length ? "No project matches that." : "No projects in the catalog — use Assets → Scan for updates first."}
+                        emptyMessage={projects.length ? "No project matches that." : "No projects in the catalog — type a name to create one, or use Assets → Scan for updates."}
                         busy={projectOpening}
                         onSelect={(id) => void chooseProject(id || null)}
+                        onCreate={(name) => void createProject(name)}
+                        createMeta="New empty folder in your projects directory"
                         onDismiss={() => setProjectPickerOpen(false)}
                         header={
                           <div className="projectWorkspaceIntro">
@@ -1493,7 +1892,32 @@ export function ChatWorkspace() {
                     ) : null}
                   </div>
                 </div>
-                <button className="attachButton" type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading || runActive} aria-label="Attach images or files">＋ <span>{uploading ? "Uploading…" : "Attach"}</span></button>
+                {/* Not disabled during a run any more: a queued message is
+                    allowed to carry files, and staging one costs the run
+                    nothing. */}
+                <button className="attachButton" type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} aria-label="Attach images or files">＋ <span>{uploading ? "Uploading…" : "Attach"}</span></button>
+                {/* Dictation. The ring is a live level meter, analysed in the
+                    page and never sent anywhere — it is there so you can see
+                    it is hearing you before committing to a sentence. */}
+                {dictation.state !== "unsupported" ? (
+                  <button
+                    className={`micButton state-${dictation.state}`}
+                    type="button"
+                    onClick={dictation.toggle}
+                    disabled={sending || dictation.state === "transcribing"}
+                    aria-pressed={dictation.state === "recording"}
+                    aria-label={dictation.state === "recording" ? "Stop recording" : "Dictate a message"}
+                    title={dictation.state === "recording" ? "Stop and transcribe" : "Dictate with Cohere Transcribe"}
+                    style={{ "--mic-level": dictation.level.toFixed(3) } as CSSProperties}
+                  >
+                    <span className="micRing" aria-hidden="true" />
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="M8 2.4a1.7 1.7 0 0 1 1.7 1.7v3.6a1.7 1.7 0 1 1-3.4 0V4.1A1.7 1.7 0 0 1 8 2.4Z" />
+                      <path d="M4.2 7.3a3.8 3.8 0 0 0 7.6 0M8 11.1v2.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                    </svg>
+                    <span>{dictation.state === "recording" ? "Stop" : dictation.state === "transcribing" ? "Writing…" : "Speak"}</span>
+                  </button>
+                ) : null}
                 <input ref={fileInputRef} type="file" multiple hidden accept={CHAT_ATTACHMENT_ACCEPT} onChange={(event) => event.target.files && void addFiles(event.target.files)} />
                 <div className="knowledgeScopeSwitch" role="group" aria-label="Answer sources">
                   <span>Sources</span>
@@ -1514,13 +1938,25 @@ export function ChatWorkspace() {
                     title="Answer only from synced Notion pages; refuse when there is no support"
                   >Notion</button>
                 </div>
-                <span className="composerHint">Enter to send · Shift Enter for a new line</span>
+                <span className="composerHint">
+                  {runActive ? "Enter queues this for when the run finishes" : "Enter to send · Shift Enter for a new line"}
+                </span>
               </div>
+              {/* Stop and Send coexist during a run: Stop ends what is
+                  happening, Send queues what comes next. Before queueing, a
+                  live run simply blanked the composer's only button. */}
               {runActive ? (
                 <button className="stopButton" type="button" onClick={() => void handleCancel()} aria-label="Stop run"><span /> Stop</button>
-              ) : (
-                <button className="sendButton" type="submit" disabled={(!draft.trim() && !attachments.length) || sending || uploading} aria-label="Send message">↗</button>
-              )}
+              ) : null}
+              <button
+                className={`sendButton ${runActive ? "isQueueing" : ""}`}
+                type="submit"
+                disabled={(!draft.trim() && !attachments.length) || sending || uploading}
+                aria-label={runActive ? "Queue this message" : "Send message"}
+                title={runActive ? "Queue this message for when the run finishes" : "Send"}
+              >
+                {runActive ? "＋" : "↗"}
+              </button>
             </div>
           </form>
           <p className="composerDisclaimer">Metis can make mistakes. Review generated code and approve persistent changes deliberately.</p>

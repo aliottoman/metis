@@ -3307,55 +3307,6 @@ kbd {
 .sourceGrid .cardActions button { width: 100%; }
 }
 /* Whole-project coding mode: compact in the header, deliberate when opened. */
-.projectQuickSwitch {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.58);
-  border: 1px solid rgba(26, 25, 23, 0.09);
-  border-radius: 999px;
-  color: #56615b;
-  display: inline-flex;
-  font-size: 10px;
-  font-weight: 700;
-  gap: 7px;
-  max-width: 190px;
-  min-height: 38px;
-  padding: 0 12px;
-  transition: background 160ms ease, border-color 160ms ease, box-shadow 180ms ease;
-}
-.projectQuickSwitch > i {
-  color: var(--accent);
-  font-size: 14px;
-  font-style: normal;
-}
-.projectQuickSwitch > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.projectQuickSwitch > b { color: #8b948f; font-size: 10px; }
-.projectQuickSwitch:hover:not(:disabled),
-.projectQuickSwitch.selected {
-  background: #fff;
-  border-color: rgba(94, 78, 184, 0.25);
-  box-shadow: 0 6px 18px rgba(43, 39, 68, 0.08);
-  color: #252b28;
-}
-.projectWorkspacePopover {
-  background:
-    radial-gradient(circle, rgba(78, 111, 94, 0.12) 1px, transparent 1.05px) right 18px top 18px / 15px 15px,
-    rgba(249, 250, 248, 0.985);
-  border: 1px solid rgba(26, 25, 23, 0.1);
-  border-radius: 22px 22px 22px 8px;
-  box-shadow: 0 28px 80px rgba(26, 32, 29, 0.2);
-  max-height: min(680px, calc(100dvh - 96px));
-  overflow: auto;
-  padding: 20px;
-  position: absolute;
-  right: 24px;
-  top: 66px;
-  width: min(560px, calc(100% - 32px));
-  z-index: 30;
-}
 .projectWorkspaceIntro { padding: 2px 4px 15px; }
 .projectWorkspaceIntro > strong {
   display: block;
@@ -3369,187 +3320,6 @@ kbd {
   line-height: 1.55;
   margin: 6px 0 0;
   max-width: 470px;
-}
-.projectModeSwitch {
-  background: rgba(227, 231, 227, 0.68);
-  border: 1px solid rgba(26, 25, 23, 0.07);
-  border-radius: 17px 17px 17px 6px;
-  display: grid;
-  gap: 5px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 5px;
-}
-.projectModeSwitch > button {
-  background: transparent;
-  border: 0;
-  border-radius: 13px 13px 13px 5px;
-  color: #65706a;
-  min-height: 82px;
-  padding: 11px 13px;
-  text-align: left;
-}
-.projectModeSwitch > button.selected {
-  background: #fff;
-  box-shadow: 0 5px 15px rgba(26, 25, 23, 0.09);
-  color: #202824;
-}
-.projectModeSwitch span,
-.projectModeSwitch strong,
-.projectModeSwitch small { display: block; }
-.projectModeSwitch span {
-  color: #7668be;
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-.projectModeSwitch strong { font-size: 12px; margin-top: 5px; }
-.projectModeSwitch small { color: #7a847e; font-size: 9px; line-height: 1.4; margin-top: 4px; }
-.projectWorkspaceList {
-  display: grid;
-  gap: 5px;
-  margin-top: 14px;
-  max-height: 290px;
-  overflow: auto;
-  padding-right: 2px;
-}
-.projectWorkspaceList > button {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.46);
-  border: 1px solid transparent;
-  border-radius: 13px 13px 13px 5px;
-  color: #35403a;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  min-height: 58px;
-  padding: 9px 12px;
-  text-align: left;
-}
-.projectWorkspaceList > button:hover,
-.projectWorkspaceList > button.selected {
-  background: #fff;
-  border-color: rgba(43, 126, 84, 0.16);
-}
-.projectWorkspaceList > button.selected { box-shadow: inset 3px 0 #319467; }
-.projectWorkspaceList > button > span:nth-child(2) { min-width: 0; }
-.projectWorkspaceList > button strong,
-.projectWorkspaceList > button small { display: block; }
-.projectWorkspaceList > button strong { font-size: 11px; }
-.projectWorkspaceList > button small {
-  color: #7a847f;
-  font-size: 9px;
-  margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.projectWorkspaceList > button > b {
-  background: #e3f3e9;
-  border-radius: 999px;
-  color: #24754d;
-  font-size: 8px;
-  padding: 5px 8px;
-}
-.projectGlyph {
-  align-items: center;
-  background: #eeecf8;
-  border-radius: 10px 10px 10px 4px;
-  color: #6c5db2;
-  display: flex;
-  font-size: 12px;
-  height: 28px;
-  justify-content: center;
-  width: 28px;
-}
-.projectWorkspaceEmpty { color: #77817b; padding: 18px 12px; text-align: center; }
-.projectWorkspaceEmpty strong,
-.projectWorkspaceEmpty small { display: block; }
-.projectWorkspaceEmpty strong { font-size: 11px; }
-.projectWorkspaceEmpty small { font-size: 9px; margin-top: 4px; }
-.projectWorkspacePopover > footer {
-  align-items: center;
-  border-top: 1px solid rgba(26, 25, 23, 0.08);
-  display: flex;
-  justify-content: space-between;
-  margin-top: 14px;
-  padding: 14px 3px 0;
-}
-.projectWorkspacePopover > footer > span { color: #69746e; font-size: 9px; }
-.projectWorkspacePopover > footer > span i {
-  background: #32a16c;
-  border-radius: 50%;
-  display: inline-block;
-  height: 6px;
-  margin-right: 6px;
-  width: 6px;
-}
-.projectWorkspacePopover > footer > button {
-  background: #252d29;
-  border: 0;
-  border-radius: 999px;
-  color: #fff;
-  font-size: 9px;
-  font-weight: 700;
-  min-height: 32px;
-  padding: 0 14px;
-}
-.projectContextStrip {
-  align-items: center;
-  background: linear-gradient(90deg, rgba(232, 244, 237, .94), rgba(242, 239, 251, .9));
-  border-bottom: 1px solid rgba(26, 25, 23, 0.07);
-  color: #52605a;
-  display: flex;
-  flex: 0 0 36px;
-  gap: 12px;
-  min-width: 0;
-  padding: 0 clamp(18px, 3vw, 34px);
-}
-.projectContextStrip > span { color: #266e4c; font-size: 10px; font-weight: 750; }
-.projectContextStrip > span i {
-  background: #31a06b;
-  border-radius: 50%;
-  display: inline-block;
-  height: 6px;
-  margin-right: 7px;
-  width: 6px;
-}
-.projectContextStrip > small { font-size: 9px; }
-.projectContextStrip > code {
-  color: #746a9d;
-  font-size: 8px;
-  margin-left: auto;
-}
-.projectContextStrip > button {
-  background: rgba(255, 255, 255, .7);
-  border: 1px solid rgba(26, 25, 23, .08);
-  border-radius: 999px;
-  color: #4f5a54;
-  font-size: 8px;
-  min-height: 25px;
-  padding: 0 9px;
-}
-
-@media (max-width: 980px) {
-.projectQuickSwitch { max-width: 130px; }
-.projectQuickSwitch > b { display: none; }
-.projectContextStrip > code { display: none; }
-}
-
-@media (max-width: 720px) {
-.projectQuickSwitch { min-height: 36px; padding-inline: 10px; }
-.projectQuickSwitch > span { max-width: 72px; }
-.projectWorkspacePopover { right: 8px; top: 66px; width: calc(100% - 16px); }
-.projectContextStrip { gap: 8px; padding-inline: 14px; }
-.projectContextStrip > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-}
-
-@media (max-width: 560px) {
-.projectQuickSwitch > span { display: none; }
-.projectModeSwitch { grid-template-columns: 1fr; }
-.projectWorkspacePopover { padding: 16px; }
-.projectContextStrip > small { display: none; }
-.projectContextStrip > button { margin-left: auto; }
 }
 /* ── Knowledge (personal RAG + profile) ─────────────────────────────────── */
 .knowledgePage {
@@ -4681,20 +4451,6 @@ body {
   background: rgba(191, 61, 49, 0.09);
 }
 /* Lightweight companion: the logo behaves like a tiny, attentive character. */
-.metisCompanion {
-  align-items: center;
-  color: var(--accent);
-  display: flex;
-  height: 56px;
-  justify-content: center;
-  margin-bottom: 20px;
-  position: relative;
-  width: 56px;
-}
-.metisCompanion > svg {
-  height: 100%;
-  width: 100%;
-}
 /* The mark breathes only while a reply is streaming — it is a status signal,
    not decoration, so it says nothing when nothing is happening. */
 .metisMarkAnimated {
@@ -4731,15 +4487,6 @@ body {
   }
 .chatTitle > strong {
     max-width: 31vw;
-  }
-.metisCompanion {
-    height: 72px;
-    margin-bottom: 13px;
-    width: 72px;
-  }
-.metisCompanion > svg {
-    height: 49px;
-    width: 49px;
   }
 .composerError {
     align-items: flex-start;
@@ -5219,10 +4966,6 @@ to { transform: rotate(1turn); }
   padding: 0 7px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.assetTags > span.isMuted {
-  color: var(--muted);
-  font-weight: 550;
 }
 .assetCardFooter {
   align-items: flex-end;
@@ -6729,63 +6472,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
   min-height: 26px;
   padding: 4px 9px;
 }
-.modelQuickSwitch {
-  align-items: center;
-  background: rgba(227, 231, 227, 0.72);
-  border: 1px solid rgba(30, 38, 33, 0.07);
-  border-radius: 999px;
-  display: inline-flex;
-  gap: 3px;
-  min-height: 42px;
-  padding: 4px;
-  position: relative;
-}
-.modelQuickSwitch > span {
-  color: #7b847f;
-  font-size: 8px;
-  font-weight: 760;
-  letter-spacing: 0.1em;
-  margin-left: 8px;
-  text-transform: uppercase;
-}
-.modelQuickSwitch button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 999px;
-  color: #68716c;
-  display: inline-flex;
-  font-size: 10px;
-  font-weight: 680;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 11px;
-  transition: background 150ms ease, box-shadow 170ms ease, color 150ms ease;
-}
-.modelQuickSwitch button i {
-  background: #9aa29e;
-  border-radius: 50%;
-  height: 6px;
-  width: 6px;
-}
-.modelQuickSwitch button.selected {
-  background: #fff;
-  box-shadow: 0 3px 10px rgba(26, 25, 23, 0.1);
-  color: #1e2722;
-}
-.modelQuickSwitch button:first-of-type.selected i { background: #2f9b68; }
-.modelQuickSwitch button:nth-of-type(2).selected i { background: var(--accent); }
-.modelQuickSwitch button:disabled:not(.selected) { opacity: 0.42; }
-.modelQuickSwitch > small {
-  background: #242b27;
-  border-radius: 999px;
-  color: #fff;
-  font-size: 8px;
-  padding: 3px 7px;
-  position: absolute;
-  right: 3px;
-  top: calc(100% + 7px);
-}
 .headerNewChat,
 .timelineToggle {
   min-height: 38px;
@@ -6843,10 +6529,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
   top: -105px;
   width: 180px;
 }
-.notionTierTag {
-  background: rgba(102, 78, 159, 0.1);
-  color: #654b99;
-}
 .notionConnectionState {
   align-items: center;
   background: rgba(255, 255, 255, 0.7);
@@ -6875,33 +6557,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 0%,
 100% { box-shadow: 0 0 0 3px rgba(47, 125, 85, 0.08); }
 50% { box-shadow: 0 0 0 6px rgba(47, 125, 85, 0.02); }
-}
-.notionSteps {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-.notionSteps span {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.64);
-  border: 1px solid rgba(79, 62, 119, 0.09);
-  border-radius: 13px 13px 13px 5px;
-  color: var(--ink-soft);
-  display: flex;
-  font-size: 0.76rem;
-  gap: 8px;
-  padding: 9px 10px;
-}
-.notionSteps b {
-  align-items: center;
-  background: #6b519d;
-  border-radius: 8px 8px 8px 3px;
-  color: white;
-  display: inline-flex;
-  font-size: 0.65rem;
-  height: 21px;
-  justify-content: center;
-  width: 21px;
 }
 .notionForm {
   display: grid;
@@ -7014,7 +6669,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 }
 
 @media (max-width: 760px) {
-.notionSteps { grid-template-columns: 1fr; }
 .notionForm { grid-template-columns: 1fr; }
 .notionStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .notionRootsField,
@@ -7217,7 +6871,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 .assetEnvControl button { min-height: 34px; }
 
 @media (max-width: 980px) {
-.modelQuickSwitch > span { display: none; }
 .chatTitle .localStatus { display: none; }
 .assetToolbar { grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(130px, 170px)); }
 .assetToolbarSummary { grid-column: 1 / -1; min-height: 30px; padding-top: 0; }
@@ -7225,7 +6878,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 
 @media (max-width: 720px) {
 .chatHeader { padding-inline: 14px; }
-.modelQuickSwitch button { padding-inline: 9px; }
 .headerNewChat span:last-child { display: none; }
 .toolTrustBanner { align-items: flex-start; }
 .toolTrustTag { display: none; }
@@ -7238,7 +6890,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 }
 
 @media (max-width: 560px) {
-.modelQuickSwitch button i { display: none; }
 .timelineToggle { font-size: 0; padding-inline: 10px; }
 .timelineToggle svg { height: 16px; width: 16px; }
 .assetToolbar { grid-template-columns: minmax(0, 1fr); }
@@ -7252,8 +6903,7 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 .secondaryButton,
 .dangerButton,
 .textButton,
-.assetCard,
-.modelQuickSwitch button { transition-duration: 0.01ms !important; }
+.assetCard { transition-duration: 0.01ms !important; }
 }
 /* --------------------------------------------------------------------------
    Metis visual QA pass — collision-free navigation, readable examples,
@@ -7678,7 +7328,6 @@ to { background-position: 42px 23px; }
 
 @media (prefers-reduced-motion: reduce) {
 .appMain::before,
-.companionOrbit,
 .primaryNav a.active .navSignal::before,
 .workspacePage .pageHeader .eyebrow::before,
 .welcomeState > .eyebrow::before {
@@ -8208,31 +7857,6 @@ to { opacity: 1; transform: translateY(0); }
 .folderRoutePopover { right: 8px; top: 66px; width: calc(100% - 16px); }
 }
 /* ── Pinned local-model session ─────────────────────────────────────────── */
-.modelSessionDock {
-  position: fixed;
-  z-index: 120;
-  top: 12px;
-  right: 18px;
-}
-.modelSessionTrigger {
-  height: 36px;
-  max-width: 220px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border: 1px solid rgba(57, 71, 64, .16);
-  border-radius: 12px;
-  background: rgba(250, 251, 250, .92);
-  color: var(--ink);
-  box-shadow: 0 7px 24px rgba(38, 51, 45, .09);
-  backdrop-filter: blur(18px);
-  font: inherit;
-  cursor: pointer;
-}
-.modelSessionTrigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 680; }
-.modelSessionTrigger b { color: var(--muted); font-size: 11px; }
-.modelSessionTrigger i,
 .customerModelState i {
   width: 7px;
   height: 7px;
@@ -8241,47 +7865,7 @@ to { opacity: 1; transform: translateY(0); }
   background: #9da59f;
   box-shadow: 0 0 0 3px rgba(157, 165, 159, .12);
 }
-.modelSessionTrigger.state-ready i,
-.modelSessionTrigger.state-busy i,
 .customerModelState.state-ready i { background: #5b9b73; box-shadow: 0 0 0 3px rgba(91, 155, 115, .16); }
-.modelSessionTrigger.state-loading i,
-.modelSessionTrigger.state-busy i { animation: pulse 1.2s ease-in-out infinite; }
-.modelSessionTrigger.state-error i { background: #c96d62; }
-.modelSessionPanel {
-  position: absolute;
-  top: 44px;
-  right: 0;
-  width: min(430px, calc(100vw - 28px));
-  padding: 18px;
-  border: 1px solid rgba(48, 65, 57, .14);
-  border-radius: 20px;
-  background: rgba(249, 250, 249, .98);
-  box-shadow: 0 22px 70px rgba(29, 43, 36, .2);
-  color: var(--ink);
-}
-.modelSessionPanel > header,
-.modelSessionPanel > footer,
-.modelSessionRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.modelSessionPanel > header { margin-bottom: 16px; }
-.modelSessionPanel > header div { display: grid; gap: 3px; }
-.modelSessionPanel > header strong { font-size: 17px; }
-.modelSessionPanel > header > button {
-  width: 30px; height: 30px; border: 0; border-radius: 9px;
-  background: rgba(61, 73, 67, .07); font-size: 18px; cursor: pointer;
-}
-.modelSessionPanel label { display: grid; flex: 1; gap: 6px; margin-bottom: 12px; }
-.modelSessionPanel label > span { font-size: 11px; color: var(--muted); font-weight: 650; }
-.modelSessionPanel select {
-  width: 100%; height: 40px; padding: 0 10px; border: 1px solid rgba(49, 65, 57, .15);
-  border-radius: 10px; background: #fff; color: var(--ink); font: inherit; font-size: 12px;
-}
-.modelSessionAdvice,
-.modelSessionError {
-  margin: 0 0 14px; padding: 10px 12px; border-radius: 10px;
-  background: rgba(108, 138, 118, .08); color: var(--muted); font-size: 11px; line-height: 1.45;
-}
-.modelSessionError { background: rgba(191, 61, 49, .09); color: #914c43; }
-.modelSessionPanel > footer { padding-top: 2px; }
 .chatHeader { padding-right: 188px; }
 /* ── Chat-home customer pulse ───────────────────────────────────────────── */
 .customerSnippet {
@@ -8310,21 +7894,6 @@ to { opacity: 1; transform: translateY(0); }
 .customerSnippetRecent a { display: flex; gap: 8px; padding: 7px 10px; border-radius: 10px; background: white; color: var(--ink); text-decoration: none; font-size: 11px; }
 .customerSnippetRecent a b { color: var(--muted); font-weight: 550; }
 .customerSnippet > p { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
-.customerScopeSelect {
-  height: 34px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px;
-  border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.58);
-}
-.customerScopeSelect.selected { border-color: rgba(77, 135, 97, .35); background: rgba(91, 155, 115, .09); }
-.customerScopeSelect > span { color: var(--green-ink); }
-.customerScopeSelect select { max-width: 125px; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 11px; }
-.customerContextStrip {
-  display: flex; align-items: center; gap: 10px; min-height: 39px; padding: 6px 20px;
-  border-bottom: 1px solid rgba(61, 99, 74, .12); background: rgba(103, 151, 115, .08);
-}
-.customerContextStrip span { color: var(--green-ink); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
-.customerContextStrip strong { font-size: 12px; }
-.customerContextStrip small { color: var(--muted); font-size: 10px; }
-.customerContextStrip button { margin-left: auto; border: 0; background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 11px; }
 /* ── Customer intelligence workbench ────────────────────────────────────── */
 .customerWorkbench {
   height: 100%;
@@ -8473,8 +8042,6 @@ to { opacity: 1; transform: translateY(0); }
 .chatHeader { padding-right: 175px; }
 }
 @media (max-width: 760px) {
-.modelSessionDock { top: 9px; right: 10px; }
-.modelSessionTrigger span { max-width: 92px; }
 .customerWorkbench { padding: 70px 12px 28px; }
 .customerWorkbenchHeader { align-items: flex-start; }
 .customerWorkbenchHeader p { display: none; }
@@ -8550,9 +8117,6 @@ to { opacity: 1; transform: translateY(0); }
 /* Glass control family. The low-left radius keeps the Cohere-like cut shape. */
 .headerNewChat,
 .timelineToggle,
-.projectQuickSwitch,
-.customerScopeSelect,
-.modelSessionTrigger,
 .attachButton,
 .selectTrigger,
 .newChatButton,
@@ -8583,8 +8147,6 @@ to { opacity: 1; transform: translateY(0); }
 }
 .headerNewChat:hover:not(:disabled),
 .timelineToggle:hover:not(:disabled),
-.projectQuickSwitch:hover:not(:disabled),
-.modelSessionTrigger:hover:not(:disabled),
 .attachButton:hover:not(:disabled),
 .selectTrigger:hover:not(:disabled),
 .newChatButton:hover:not(:disabled),
@@ -8622,7 +8184,6 @@ to { opacity: 1; transform: translateY(0); }
   background: linear-gradient(145deg, var(--metis-blue), #8a69bd 52%, var(--metis-coral));
   box-shadow: 0 3px 9px rgba(99, 81, 145, 0.25);
 }
-.modelQuickSwitch,
 .knowledgeScopeSwitch {
   background: rgba(225, 229, 231, 0.52);
   -webkit-backdrop-filter: saturate(145%) blur(18px);
@@ -8632,7 +8193,6 @@ to { opacity: 1; transform: translateY(0); }
     inset 0 1px 0 rgba(255, 255, 255, 0.72),
     0 5px 14px rgba(41, 45, 53, 0.06);
 }
-.modelQuickSwitch button.selected,
 .knowledgeScopeSwitch button.selected {
   background: rgba(255, 255, 255, 0.88);
   box-shadow:
@@ -8783,36 +8343,6 @@ to { opacity: 1; transform: translateY(0); }
   font-size: 8px;
   letter-spacing: 0.02em;
 }
-.compactActivityWave {
-  align-items: center;
-  display: flex;
-  gap: 2px;
-  height: 20px;
-}
-.compactActivityWave i {
-  animation: compactWave 1.05s ease-in-out infinite;
-  background: linear-gradient(180deg, var(--metis-lilac), var(--metis-coral));
-  border-radius: 999px;
-  display: block;
-  height: 7px;
-  width: 2px;
-}
-.compactActivityWave i:nth-child(2) { animation-delay: -0.84s; }
-.compactActivityWave i:nth-child(3) { animation-delay: -0.63s; }
-.compactActivityWave i:nth-child(4) { animation-delay: -0.42s; }
-.compactActivityCount {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  border-radius: 999px;
-  color: var(--muted);
-  display: inline-flex;
-  font-size: 8px;
-  height: 20px;
-  justify-content: center;
-  min-width: 20px;
-  padding: 0 5px;
-}
 .compactActivityChevron {
   color: #777987;
   font-size: 12px;
@@ -8834,9 +8364,7 @@ to { opacity: 1; transform: translateY(0); }
 /* Open panels inherit the same material so button-to-panel expansion feels
    continuous instead of switching visual systems. */
 .runDrawer,
-.projectWorkspacePopover,
 .folderRoutePopover,
-.modelSessionPanel,
 .selectPopup {
   background:
     radial-gradient(circle at 12% -8%, rgba(120, 117, 109, 0.12), transparent 30%),
@@ -8899,15 +8427,6 @@ to { opacity: 1; transform: translateY(0) scale(1); }
     padding-bottom: 10px;
     padding-top: 10px;
   }
-.chatWorkspace.isEmpty .metisCompanion {
-    height: 58px;
-    margin-bottom: 4px;
-    width: 58px;
-  }
-.chatWorkspace.isEmpty .metisCompanion > svg {
-    height: 45px;
-    width: 45px;
-  }
 .chatWorkspace.isEmpty .heroWordmark {
     font-size: clamp(54px, 6vw, 76px);
   }
@@ -8942,7 +8461,6 @@ to { opacity: 1; transform: translateY(0) scale(1); }
 
 @media (prefers-reduced-motion: reduce) {
 .compactRunActivity,
-.compactActivityWave i,
 .timelineToggle.isLive svg {
     animation: none !important;
   }
@@ -9416,20 +8934,6 @@ to { filter: blur(0); opacity: 1; transform: translateY(0); }
 }
 /* The customer scope control became a button, so it joins the quick-switch
    family rather than wrapping a native select. */
-.customerScopeSelect {
-  height: auto; min-height: 38px; max-width: 190px;
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 0 12px;
-  border: 1px solid rgba(26, 25, 23, .09);
-  color: #56615b; font: inherit; font-size: 10px; font-weight: 700;
-  cursor: pointer;
-  transition: background 160ms ease, border-color 160ms ease, box-shadow 180ms ease;
-}
-.customerScopeSelect > i { color: var(--green-ink); font-size: 13px; font-style: normal; }
-.customerScopeSelect > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.customerScopeSelect > b { color: #8b948f; font-size: 10px; }
-.customerScopeSelect:disabled { opacity: .55; cursor: default; }
-.customerScopeSelect.selected { border-color: rgba(77, 135, 97, .35); color: #252b28; }
 .commandPicker {
   display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
@@ -9498,10 +9002,6 @@ to { filter: blur(0); opacity: 1; transform: translateY(0); }
   color: var(--muted); font-size: 9.5px; line-height: 1.45;
 }
 /* The project popover is now just a frame around the picker. */
-.projectWorkspacePopover.hasPicker { padding: 0; border: 0; background: none; box-shadow: none; }
-.projectWorkspacePopover.hasPicker .commandPicker { border-radius: 22px 22px 22px 8px; }
-.projectWorkspacePopover.hasPicker .projectWorkspaceIntro { padding: 0 0 12px; }
-.projectWorkspacePopover.hasPicker .projectWorkspaceIntro > p { margin: 4px 0 0; }
 /* ── Customers page: editing, notes, and the attention queue ──────────────
    Everything an extraction can write, a person can correct — so every list on
    this page carries its own row actions and inline form. */
@@ -9716,8 +9216,7 @@ to { filter: blur(0); opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
 .customerRailButton,
-.customerRowActions > button,
-.customerScopeSelect { transition: none; }
+.customerRowActions > button { transition: none; }
 }
 /* The rail's earlier `> button` rule was written when the only buttons in it
    were the two full-width actions; the count tiles are buttons now too and
@@ -9730,12 +9229,6 @@ to { filter: blur(0); opacity: 1; transform: translateY(0); }
   left: 0; right: auto;
   width: min(400px, calc(100vw - 40px));
 }
-.customerContextStrip a {
-  margin-left: auto;
-  color: var(--green-ink); font-size: 11px; font-weight: 600; text-decoration: none;
-}
-.customerContextStrip a:hover { text-decoration: underline; }
-.customerContextStrip a + button { margin-left: 0; }
 .customerPinToggle { flex: 1; }
 .customerPinToggle span { white-space: nowrap; }
 /* ── Chat identity, activity chip, and reasoning ─────────────────────────────
@@ -9981,24 +9474,6 @@ to { opacity: 1; }
 }
 /* The live footprint reads as a measurement, not as advice, so it sits above
    the advice block in its own quieter register. */
-.modelSessionMemory {
-  align-items: center;
-  color: var(--muted);
-  display: flex;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  gap: 7px;
-  margin: 0 0 8px;
-  padding: 0 2px;
-}
-.modelSessionMemory::before {
-  background: linear-gradient(160deg, var(--metis-lilac, var(--muted)), var(--metis-coral, var(--accent)));
-  border-radius: 2px;
-  content: "";
-  flex: none;
-  height: 9px;
-  width: 3px;
-}
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -10103,14 +9578,6 @@ body {
 }
 
 /* Reusable glass primitive: translucent white, backdrop blur, wet top edge */
-.glass {
-  position: relative;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  box-shadow: var(--glass-shadow), var(--glass-sheen);
-}
 
 /* Ambient light: soft Cohere-tone blooms behind frosted glass — green leads */
 .ambient {
@@ -10213,57 +9680,6 @@ body {
 .welcomeState h1 { line-height: 0.9; margin: 10px 0 0; max-width: none; }
 
 /* The logo companion, as it was. */
-.metisCompanion {
-  align-items: center;
-  display: flex;
-  height: 74px;
-  justify-content: center;
-  margin-bottom: 11px;
-  position: relative;
-  width: 74px;
-}
-.metisCompanion > svg {
-  animation: companionBob 3.8s cubic-bezier(0.45, 0, 0.3, 1) infinite;
-  filter:
-    drop-shadow(0 12px 13px rgba(72, 69, 106, 0.14))
-    drop-shadow(0 0 14px rgba(194, 143, 224, 0.1));
-  height: 54px;
-  overflow: visible;
-  position: relative;
-  width: 54px;
-  z-index: 2;
-}
-.companionHalo {
-  animation: companionHalo 4s ease-in-out infinite;
-  background:
-    radial-gradient(circle at 34% 32%, rgba(97, 117, 232, 0.2), transparent 33%),
-    radial-gradient(circle at 68% 34%, rgba(194, 143, 224, 0.2), transparent 35%),
-    radial-gradient(circle at 39% 72%, rgba(255, 123, 97, 0.18), transparent 37%),
-    radial-gradient(circle at 67% 70%, rgba(75, 155, 114, 0.14), transparent 33%);
-  border-radius: 50%;
-  inset: 0;
-  position: absolute;
-}
-.companionOrbit {
-  border: 1px dashed rgba(86, 105, 223, 0.18);
-  border-radius: 50%;
-  inset: 5px;
-  pointer-events: none;
-  position: absolute;
-  z-index: 1;
-}
-.companionOrbit i {
-  border-radius: 50%; display: block; height: 6px; left: 50%;
-  position: absolute; top: -3px; width: 6px;
-}
-.companionOrbitCobalt { animation: companionOrbitSpin 9s linear infinite; }
-.companionOrbitCobalt i { background: #5669df; box-shadow: 0 0 0 4px rgba(86, 105, 223, 0.08); }
-.companionOrbitCoral {
-  animation: companionOrbitSpin 13s linear infinite reverse;
-  border-color: rgba(255, 115, 92, 0.14);
-  inset: 12px;
-}
-.companionOrbitCoral i { background: #ff735c; height: 5px; top: -2.5px; width: 5px; }
 @keyframes companionOrbitSpin { to { transform: rotate(1turn); } }
 .metisMarkAnimated .metisShape { transform-box: fill-box; transform-origin: center; }
 .metisMarkAnimated .metisShapeCobalt { animation: shapeBreathe 2.6s ease-in-out infinite; }
@@ -10291,9 +9707,6 @@ body {
   45% { transform: scaleY(0.18); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .metisCompanion > svg,
-  .companionHalo,
-  .companionOrbit,
   .metisMarkAnimated .metisShape { animation: none !important; }
 }
 
@@ -10309,292 +9722,25 @@ body {
   margin-right: 8px;
 }
 
-.composerScope .headerPickerAnchor,
-.composerScope .modelSessionDock { position: relative; }
-
-.composerScope .modelSessionDock {
-  inset: auto;
-  right: auto;
-  top: auto;
-  z-index: 60;
-}
+.composerScope .headerPickerAnchor { position: relative; }
 
 /* Both popovers open upward now that they sit at the foot of the viewport. */
-.composerScope .commandPicker,
-.composerScope .modelSessionPanel {
+.composerScope .commandPicker {
   bottom: calc(100% + 8px);
   left: 0;
   right: auto;
   top: auto;
 }
 
-.composerScope .customerScopeSelect,
-.composerScope .projectQuickSwitch,
-.composerScope .modelSessionTrigger {
-  font-size: 11px;
-  gap: 5px;
-  max-width: 190px;
-  min-height: 30px;
-  padding: 0 9px;
-}
-
-.composerScope .customerScopeSelect > span,
-.composerScope .projectQuickSwitch > span,
-.composerScope .modelSessionTrigger > span {
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ── The companion ────────────────────────────────────────────────────────
-   A small luminous creature that lives beside the conversation. Liquid Glass
-   material — dark body, colour field inside, bright rim, travelling specular.
-   No seams. It is alive without a face: it breathes, it has weight, and its
-   core attends to what is happening. */
+/* ── The companion ────────────────────────────────────────────
+   Placement only. The body itself — an iridescent bead — lives in
+   matured.css under .pearlBody / .pearlFilm / .pearlSpec / .pearlShadow. */
 
 .companion {
   --size: 56px;
   height: var(--size);
   position: relative;
   width: var(--size);
-}
-
-.companionBody {
-  animation: creatureBreathe 5.4s var(--ease) infinite, creatureBob 4.2s var(--ease) infinite;
-  background: #0c0d12;
-  /* An organic silhouette rather than a circle or a pill. */
-  border-radius: 58% 42% 46% 54% / 54% 50% 50% 46%;
-  height: 100%;
-  isolation: isolate;
-  overflow: hidden;
-  /* WebKit will not clip composited descendants to a rounded parent — the
-     field's blur and the cells' blend layers spill out as a hard square, which
-     is what the Safari dock app shows. Masking the body forces the rounded clip
-     to be honoured. Both stops are opaque, so this paints identically in
-     engines that never had the bug. */
-  -webkit-mask-image: -webkit-radial-gradient(white, black);
-  mask-image: radial-gradient(#fff, #000);
-  position: relative;
-  width: 100%;
-  box-shadow:
-    0 0 0 1px rgba(10, 11, 16, 0.55),
-    inset 0 1.2px 0 rgba(255, 255, 255, 0.5),
-    inset 0 -1.4px 2px rgba(255, 255, 255, 0.12),
-    inset 0 0 14px rgba(0, 0, 0, 0.5);
-  transition: box-shadow 600ms ease, transform 620ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
-}
-
-/* Breathing is a silhouette change, not a scale — that is what makes it read
-   as a body rather than a zooming graphic. */
-@keyframes creatureBreathe {
-  0%, 100% { border-radius: 58% 42% 46% 54% / 54% 50% 50% 46%; }
-  33%      { border-radius: 44% 56% 58% 42% / 46% 56% 44% 54%; }
-  66%      { border-radius: 52% 48% 40% 60% / 58% 44% 56% 42%; }
-}
-
-@keyframes creatureBob {
-  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
-  50%      { transform: translateY(-5px) rotate(1.5deg); }
-}
-
-.companionShadow {
-  animation: creatureShadow 4.2s var(--ease) infinite;
-  background: radial-gradient(ellipse, rgba(28, 26, 46, 0.34) 0%, rgba(28, 26, 46, 0) 72%);
-  border-radius: 50%;
-  bottom: -8%;
-  filter: blur(2px);
-  height: 9%;
-  left: 50%;
-  position: absolute;
-  transform: translateX(-50%);
-  width: 62%;
-}
-
-@keyframes creatureShadow {
-  0%, 100% { opacity: 0.55; width: 62%; }
-  50%      { opacity: 0.28; width: 44%; }
-}
-
-/* The colour field. */
-.companionField {
-  filter: blur(10px) saturate(165%);
-  inset: -45%;
-  position: absolute;
-  transition: filter 600ms ease, opacity 600ms ease;
-}
-
-.fieldCell { border-radius: 50%; mix-blend-mode: screen; position: absolute; will-change: transform; }
-
-.cellCoral {
-  background: radial-gradient(circle, #ff8a63 0%, rgba(255, 138, 99, 0) 68%);
-  height: 150%; left: -8%; top: -22%; width: 62%;
-  animation: cellFlowA 7.5s var(--ease) infinite;
-}
-.cellCobalt {
-  background: radial-gradient(circle, #6f86ff 0%, rgba(111, 134, 255, 0) 68%);
-  height: 162%; left: 20%; top: -32%; width: 66%;
-  animation: cellFlowB 9.2s var(--ease) infinite;
-}
-.cellGreen {
-  background: radial-gradient(circle, #4fd39a 0%, rgba(79, 211, 154, 0) 68%);
-  height: 142%; left: 50%; top: -18%; width: 58%;
-  animation: cellFlowC 8.2s var(--ease) infinite;
-}
-.cellLilac {
-  background: radial-gradient(circle, #c8a2ff 0%, rgba(200, 162, 255, 0) 68%);
-  height: 132%; left: 32%; top: -8%; width: 52%;
-  animation: cellFlowD 10.6s var(--ease) infinite;
-}
-
-@keyframes cellFlowA {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33%      { transform: translate(26%, 8%) scale(1.14); }
-  66%      { transform: translate(10%, -10%) scale(0.9); }
-}
-@keyframes cellFlowB {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  40%      { transform: translate(-22%, 10%) scale(0.88); }
-  75%      { transform: translate(14%, -6%) scale(1.16); }
-}
-@keyframes cellFlowC {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  38%      { transform: translate(-28%, -8%) scale(1.12); }
-  70%      { transform: translate(-8%, 12%) scale(0.92); }
-}
-@keyframes cellFlowD {
-  0%, 100% { transform: translate(0, 0) scale(0.96); }
-  50%      { transform: translate(18%, 14%) scale(1.2); }
-}
-
-/* The core — where its attention is. Not an eye; a concentration of light. */
-.companionCore {
-  animation: coreDrift 6.8s var(--ease) infinite;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.5) 38%, rgba(255, 255, 255, 0) 72%);
-  border-radius: 50%;
-  height: 34%;
-  left: 33%;
-  mix-blend-mode: screen;
-  position: absolute;
-  top: 30%;
-  width: 34%;
-  transition: background 600ms ease, height 620ms var(--ease), width 620ms var(--ease), opacity 600ms ease;
-}
-
-@keyframes coreDrift {
-  0%, 100% { transform: translate(0, 0); }
-  30%      { transform: translate(22%, -12%); }
-  60%      { transform: translate(-14%, 14%); }
-}
-
-/* The field is screen-blended, so left alone it floods the whole silhouette and
-   the body reads as a pale ball. The vignette holds the colour in the middle and
-   returns the rim to the dark glass the body is actually painted in. */
-.companionGlass {
-  background:
-    radial-gradient(
-      circle at 50% 47%,
-      rgba(10, 11, 16, 0) 34%,
-      rgba(10, 11, 16, 0.22) 62%,
-      rgba(10, 11, 16, 0.56) 87%,
-      rgba(10, 11, 16, 0.7) 100%
-    ),
-    linear-gradient(
-      176deg,
-      rgba(255, 255, 255, 0.30) 0%,
-      rgba(255, 255, 255, 0.08) 32%,
-      rgba(255, 255, 255, 0) 58%,
-      rgba(255, 255, 255, 0.10) 100%
-    );
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-}
-
-.companionSpecular {
-  animation: specularSweep 6s var(--ease) infinite;
-  background: linear-gradient(
-    104deg,
-    transparent 38%,
-    rgba(255, 255, 255, 0.24) 46%,
-    rgba(255, 255, 255, 0.78) 50%,
-    rgba(255, 255, 255, 0.24) 54%,
-    transparent 62%
-  );
-  inset: -25% -60%;
-  mix-blend-mode: screen;
-  pointer-events: none;
-  position: absolute;
-}
-
-@keyframes specularSweep {
-  0%   { transform: translateX(-46%); }
-  55%  { transform: translateX(46%); }
-  100% { transform: translateX(46%); }
-}
-
-/* Listening — it perks up: taller, brighter, core lifts toward you. */
-.companion[data-mood="listening"] .companionBody {
-  animation-duration: 3.4s, 2.8s;
-  transform: scaleY(1.06) scaleX(0.97);
-}
-.companion[data-mood="listening"] .companionField { filter: blur(9px) saturate(200%); }
-.companion[data-mood="listening"] .fieldCell { animation-duration: 4.6s; }
-.companion[data-mood="listening"] .companionCore {
-  animation-duration: 3.2s;
-  height: 40%; width: 40%;
-}
-
-/* Thinking — the field churns and the core tightens to a bright point. */
-.companion[data-mood="thinking"] .companionBody { animation-duration: 1.5s, 1.2s; }
-.companion[data-mood="thinking"] .companionField { filter: blur(8px) saturate(215%); }
-.companion[data-mood="thinking"] .fieldCell { animation-duration: 2.1s; }
-.companion[data-mood="thinking"] .companionSpecular { animation-duration: 1.7s; }
-.companion[data-mood="thinking"] .companionShadow { animation-duration: 1.2s; }
-.companion[data-mood="thinking"] .companionCore {
-  animation-duration: 1.4s;
-  height: 22%; width: 22%;
-}
-
-/* Done — it settles, rounds out, and the light turns green. */
-.companion[data-mood="done"] .companionBody { animation-duration: 8s, 6.5s; }
-.companion[data-mood="done"] .fieldCell { animation-duration: 12s; }
-.companion[data-mood="done"] .cellCoral,
-.companion[data-mood="done"] .cellLilac,
-.companion[data-mood="done"] .cellCobalt { opacity: 0.18; }
-/* The cell's own keyframes animate `transform`, and a running animation beats a
-   normal declaration — so the swell has to come from the box, not a scale(). */
-.companion[data-mood="done"] .cellGreen {
-  height: 190%;
-  left: 26%;
-  opacity: 1;
-  top: -34%;
-  width: 84%;
-}
-.companion[data-mood="done"] .companionCore {
-  background: radial-gradient(circle, rgba(190, 255, 224, 0.98) 0%, rgba(79, 211, 154, 0.55) 40%, rgba(79, 211, 154, 0) 74%);
-  height: 42%; width: 42%;
-}
-
-/* Trouble — it deflates and the light drains. */
-.companion[data-mood="trouble"] .companionBody {
-  animation-duration: 9s, 7s;
-  transform: scaleY(0.9) scaleX(1.04);
-  box-shadow:
-    0 0 0 1px rgba(150, 40, 32, 0.6),
-    inset 0 1.2px 0 rgba(255, 190, 180, 0.34),
-    inset 0 0 14px rgba(0, 0, 0, 0.58);
-}
-/* Draining the light has to stop short of putting it out: the glass vignette
-   already darkens the rim, so the old 30%/0.55 left a dead grey sphere. */
-.companion[data-mood="trouble"] .companionField { filter: blur(13px) saturate(62%); opacity: 0.82; }
-.companion[data-mood="trouble"] .fieldCell { animation-duration: 15s; }
-.companion[data-mood="trouble"] .cellCoral { opacity: 1; }
-.companion[data-mood="trouble"] .companionSpecular { animation-duration: 12s; }
-.companion[data-mood="trouble"] .companionCore {
-  animation: none;
-  background: radial-gradient(circle, rgba(255, 168, 158, 0.92) 0%, rgba(216, 64, 47, 0) 72%);
-  height: 34%; opacity: 0.9; width: 34%;
 }
 
 /* Docked beside the conversation: small, always present while you chat. */
@@ -10605,7 +9751,6 @@ body {
   padding: 0 2px 10px;
 }
 .companionDock .companion { --size: 34px; }
-.companionDock .companionShadow { bottom: -6%; }
 .companionDockLabel {
   color: var(--muted);
   font-size: 11px;
@@ -10615,15 +9760,9 @@ body {
 
 /* In the empty-conversation hero it introduces the workspace. The shadow it
    casts sits outside its own box, so without clearance it lands on the eyebrow
-   directly beneath — and the bob would read as the orb nudging the text. */
+   directly beneath — and the bob would read as the bead nudging the text. */
 .welcomeState > .companion {
   margin-bottom: 20px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .companionBody, .fieldCell, .companionSpecular, .companionCore, .companionShadow {
-    animation: none !important;
-  }
 }
 
 /* ── Composer context: slash menu + chips ─────────────────────────────────

@@ -1,0 +1,2608 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   MATURED — the Cohere-derived layer.
+
+   Imported after globals.css so it wins on equal specificity. Kept as its
+   own file so the whole treatment can be reverted by removing one import
+   rather than unpicking edits across 10k lines.
+
+   Values measured off cohere.com rather than eyeballed:
+     surface   #F0EEE9 card greige · ink #212121 ("volcanic")
+     eyebrow   mono, uppercase, +0.02em, #75758A — a lavender-tinted grey
+     button    the whole shape is SLICED by one diagonal, and the cut is a
+               gap you see through. In units of button height h:
+               diagonal run .2225h · gap .478h · end block .873h · radius .15h
+     colour    the purple hero field, carrying chrome, under real grain
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --m-paper: #f7f4ef;
+  --m-paper-lift: #fcfaf6;
+  --m-surface: #ede9e1;
+  --m-ink: #211f1d;
+  --m-ink-btn: #1a1815;
+  --m-ink-2: #5e5a54;
+  --m-ink-3: #7b7789;
+  --m-line: #dfdacf;
+
+  --m-purple: #c29ce0;
+  --m-bloom: linear-gradient(270deg, #d18ee2, #ff7759);
+
+  /* Hard stops, not soft ones — soft gives plastic, hard gives metal. */
+  --m-chrome: linear-gradient(146deg,
+    #fffcf2 0%, #fffcf2 5%, #cfc7b0 9%, #6e6757 14%,
+    #1b1a19 20%, #141312 25%, #efe8d4 31%, #fbf8ec 37%,
+    #8a8271 42%, #2a2724 47%, #100f0e 54%, #d8d0bb 61%,
+    #faf6e9 66%, #4a4640 72%, #1a1817 79%, #ede6d2 88%,
+    #9a9280 94%, #232120 100%);
+  --m-fringe: conic-gradient(from 210deg, #ff7759, #7be3d8, #d18ee2, #ffe08a, #ff7759);
+
+  --m-ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body { background: var(--m-paper); color: var(--m-ink); }
+
+/* ── Grain over the whole app ────────────────────────────────────────────
+   Greyscale noise through overlay: mid-grey is a no-op, so only the
+   deviation shows and it reads as film rather than as a grey veil. */
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='220' height='220' filter='url(%23g)'/></svg>");
+  background-size: 220px 220px;
+}
+/* The old ambient blooms are replaced by the chrome field below. */
+.appShell > .ambient { display: none; }
+
+/* ── Sidebar: warm paper, quiet ─────────────────────────────────────────── */
+.appShell { background: var(--m-paper); }
+.sidebar {
+  background: var(--m-paper);
+  border-right: 1px solid var(--m-line);
+  box-shadow: none;
+}
+/* The rainbow logotype was doing most of the childish work. Ink here, so
+   the bead beside it is the only thing carrying the full spectrum. */
+.brand .metisWordmark {
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  -webkit-text-fill-color: var(--m-ink);
+  color: var(--m-ink);
+  font-weight: 400;
+  letter-spacing: -0.028em;
+}
+.sidebar .brandRow small,
+.historyHeader > span:first-child {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--m-ink-3);
+}
+.newChatButton {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  box-shadow: none;
+  color: var(--m-ink);
+  overflow: hidden;
+  position: relative;
+}
+.newChatButton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(76deg, transparent 34%, rgba(195, 156, 224, 0.3) 50%, transparent 66%);
+  transform: translateX(-115%);
+  transition: transform 0.62s var(--m-ease);
+}
+.newChatButton:hover { background: var(--m-paper-lift); border-color: #c6b8d6; }
+.newChatButton:hover::after { transform: translateX(115%); }
+.primaryNav a { color: var(--m-ink-2); border-radius: 8px; }
+.primaryNav a:hover,
+.primaryNav a.active { background: var(--m-surface); color: var(--m-ink); }
+.primaryNav a.active .navGlyph { color: var(--m-ink); }
+.sidebarDivider { background: var(--m-line); }
+.sidebarSearch { background: var(--m-surface); border-color: transparent; box-shadow: none; }
+.conversationHistory h2 {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--m-ink-3);
+}
+.conversationHistoryItem a:hover,
+.conversationHistoryItem a.active { background: var(--m-surface); color: var(--m-ink); }
+.privacyBadge { background: var(--m-surface); border: 0; box-shadow: none; }
+
+/* ── The button ─────────────────────────────────────────────────────────
+   One diagonal cut, and the gap is real: you see the page through it.
+   All four corners of each segment are rounded so the clip meets a curve
+   and the cut tips come out soft, the way their bezier does. */
+.headerNewChat {
+  --h: 36px;
+  display: inline-flex;
+  align-items: stretch;
+  /* Their ratio is a .478h total gap, but that is tuned for a wide
+     marketing button. On a two-word control it reads as a hole, so this
+     compact variant runs a .33h total — the flex gap, less the run. */
+  gap: calc(var(--h) * 0.1075);
+  height: var(--h);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  clip-path: none;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fbf8f2;
+  transition: gap 0.28s var(--m-ease);
+}
+.headerNewChat > span {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  background: var(--m-ink-btn);
+  border-radius: calc(var(--h) * 0.15);
+  transition: background-color 0.3s;
+}
+.headerNewChat > span.segMain,
+.headerNewChat > span.segEnd { font-size: 12px; font-weight: 400; color: inherit; line-height: 1; }
+.headerNewChat .segMain {
+  gap: 7px;
+  padding: 0 calc(var(--h) * 0.4) 0 calc(var(--h) * 0.36);
+  clip-path: polygon(0 0, 100% 0, calc(100% - var(--h) * 0.2225) 100%, 0 100%);
+}
+.headerNewChat .segEnd {
+  width: calc(var(--h) * 0.873);
+  flex: none;
+  justify-content: center;
+  padding-left: calc(var(--h) * 0.2);
+  font-size: 13px;
+  clip-path: polygon(calc(var(--h) * 0.2225) 0, 100% 0, 100% 100%, 0 100%);
+}
+.headerNewChat .segMain i { font-style: normal; font-size: 13px; }
+/* Theirs narrows on hover; at app scale opening the slice reads better. */
+.headerNewChat:hover:not(:disabled) { gap: calc(var(--h) * 0.185); }
+/* The bloom. It is a halo that hugs the control, not a coloured rectangle
+   dropped behind it: it takes the host's radius, sits a few pixels proud of
+   every edge, and grows into place. The original translated the bloom down
+   and left, which on a pill read as an orange smear escaping the bottom
+   corner rather than as the button lighting up. */
+.headerNewChat::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--m-bloom);
+  filter: blur(8px);
+  opacity: 0;
+  transform: scale(0.94);
+  transition: transform 0.34s var(--m-ease), opacity 0.34s var(--m-ease);
+}
+.headerNewChat { position: relative; z-index: 0; }
+.headerNewChat:hover:not(:disabled)::before { opacity: 0.85; transform: scale(1); }
+.headerNewChat .segMain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(76deg, transparent 30%,
+    rgba(255, 224, 138, 0.3) 42%, rgba(209, 142, 226, 0.44) 50%, rgba(123, 227, 216, 0.3) 58%, transparent 70%);
+  transform: translateX(-115%);
+  transition: transform 0.62s var(--m-ease);
+}
+.headerNewChat:hover:not(:disabled) .segMain::after { transform: translateX(115%); }
+.headerNewChat:disabled { opacity: 0.5; }
+
+/* The on-colour inversion of this button lives with the rest of the header
+   chrome, below — it applies in every state, not only the empty one. */
+
+/* ── The chat stage: a purple grain field carrying chrome ────────────────
+   The field is the room, and it does not go away when you start talking —
+   walking into a thread used to swap the whole pane for flat white, which
+   read as a different application. Instead a sheet of paper is laid over
+   the field for the reading passage, masked open at the head and foot so
+   the colour keeps bleeding behind the header and the composer. */
+.chatWorkspace .conversationPane {
+  position: relative;
+  background: var(--m-purple);
+  overflow: hidden;
+}
+.atmos {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+/* Three things stop these reading as pasted cut-outs: the edges dissolve
+   instead of ending on a hard silhouette, each sits at a different focal
+   depth, and the metal picks up the room's colour the way chrome does. */
+.chromeForm { position: absolute; }
+.chromeForm,
+.chromeForm::before,
+.chromeForm::after {
+  -webkit-mask-image: radial-gradient(closest-side, #000 40%, rgba(0, 0, 0, 0.6) 70%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 40%, rgba(0, 0, 0, 0.6) 70%, transparent 100%);
+}
+.chromeForm { background: var(--m-chrome); }
+.chromeForm::before,
+.chromeForm::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.chromeForm::before { background: var(--m-fringe); mix-blend-mode: screen; opacity: 0.42; }
+.chromeForm::after { background: var(--m-purple); mix-blend-mode: color; opacity: 0.5; }
+.cf1 {
+  width: 560px; height: 470px; left: -230px; top: -190px;
+  transform: rotate(-14deg); opacity: 0.92; filter: blur(2px);
+  border-radius: 64% 36% 42% 58% / 44% 62% 38% 56%;
+}
+.cf2 {
+  width: 500px; height: 440px; right: -205px; top: -175px;
+  transform: rotate(24deg); opacity: 0.86; filter: blur(5px);
+  border-radius: 38% 62% 66% 34% / 62% 38% 62% 38%;
+}
+.cf3 {
+  width: 600px; height: 470px; right: -250px; bottom: -230px;
+  transform: rotate(-10deg); opacity: 0.8; filter: blur(9px);
+  border-radius: 56% 44% 34% 66% / 38% 64% 36% 62%;
+}
+.cf4 {
+  width: 420px; height: 350px; left: 4%; bottom: -215px;
+  transform: rotate(16deg); opacity: 0.66; filter: blur(16px);
+  border-radius: 48% 52% 60% 40% / 56% 42% 58% 44%;
+}
+/* Purple poured back over the metal, densest where the type sits. */
+.atmos::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(48% 44% at 40% 46%, rgba(194, 156, 224, 0.94) 0%, rgba(194, 156, 224, 0.78) 40%,
+      rgba(194, 156, 224, 0.3) 74%, rgba(194, 156, 224, 0) 100%),
+    linear-gradient(200deg, rgba(163, 121, 206, 0.34), rgba(194, 156, 224, 0.12) 60%, rgba(255, 119, 89, 0.1));
+}
+
+/* ── The paper sheet ────────────────────────────────────────────────────
+   One element doing the whole transition: the field never moves, and this
+   fades in over it. The mask is what keeps the two surfaces from meeting
+   on a line — paper is fully opaque only through the reading column, and
+   dissolves before it reaches either end of the pane. */
+.paperSheet {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--m-paper);
+  opacity: 0;
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0, rgba(0, 0, 0, 0.5) 62px, #000 116px,
+    #000 calc(100% - 244px), rgba(0, 0, 0, 0.42) calc(100% - 138px), transparent calc(100% - 34px));
+  mask-image: linear-gradient(to bottom,
+    transparent 0, rgba(0, 0, 0, 0.5) 62px, #000 116px,
+    #000 calc(100% - 244px), rgba(0, 0, 0, 0.42) calc(100% - 138px), transparent calc(100% - 34px));
+}
+.chatWorkspace:not(.isEmpty) .paperSheet { opacity: 1; }
+/* A recovery banner adds its own band under the header, so the paper has
+   to start below that instead of behind it. */
+.chatWorkspace.hasBanner .paperSheet {
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0, rgba(0, 0, 0, 0.5) 118px, #000 176px,
+    #000 calc(100% - 244px), rgba(0, 0, 0, 0.42) calc(100% - 138px), transparent calc(100% - 34px));
+  mask-image: linear-gradient(to bottom,
+    transparent 0, rgba(0, 0, 0, 0.5) 118px, #000 176px,
+    #000 calc(100% - 244px), rgba(0, 0, 0, 0.42) calc(100% - 138px), transparent calc(100% - 34px));
+}
+/* The field itself settles a little once it is a backdrop rather than the
+   subject, so the metal never competes with a paragraph. */
+.chatWorkspace:not(.isEmpty) .atmos { opacity: 0.82; }
+/* Both layers animate only after the first paint — see morphReady. */
+.chatWorkspace.morphReady .paperSheet,
+.chatWorkspace.morphReady .atmos { transition: opacity 700ms var(--m-ease); }
+@media (prefers-reduced-motion: reduce) {
+  .chatWorkspace.morphReady .paperSheet,
+  .chatWorkspace.morphReady .atmos { transition: none; }
+}
+
+.messageViewport { position: relative; z-index: 2; }
+/* Content scrolls past the ends of the paper, so it has to dissolve there
+   the same way the paper does. Without this a bubble slides under the
+   header and stops on a hard horizontal cut against the colour. */
+.chatWorkspace:not(.isEmpty) .messageViewport {
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0, #000 48px, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom,
+    transparent 0, #000 48px, #000 calc(100% - 28px), transparent 100%);
+}
+.composerDock { position: relative; z-index: 3; }
+/* The header holds the model-control popover, which must clear the recovery
+   banner (z-index 4 in globals). */
+.chatHeader { position: relative; z-index: 6; }
+
+/* ── Header chrome: on colour in EVERY state ────────────────────────────
+   These were scoped to .isEmpty, which is why sending one message swapped
+   the whole bar to white-on-white and made the top of the app look like a
+   different product. The header sits on the field now, so it is always the
+   on-colour treatment — and the frosted band that produced the visible
+   seam under the bar is switched off here. */
+.chatHeader {
+  background: transparent;
+  border-bottom: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  color: #fff;
+}
+.chatTitle strong { color: #fff; }
+.localStatus {
+  background: rgba(38, 22, 48, 0.34);
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.92);
+}
+.localStatus i { background: #8ff0b4; }
+/* Ink-tinted glass rather than white-tinted: the chrome forms surface at
+   near-white in places, and a white pill on white metal is unreadable no
+   matter how the label is weighted. Darkening the glass instead means the
+   pills hold on both the pale and the deep passages of the field. */
+.timelineToggle,
+.modelControlTrigger {
+  background: rgba(38, 22, 48, 0.34);
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+  color: #fff;
+}
+.timelineToggle:hover:not(:disabled),
+.modelControlTrigger:hover {
+  background: rgba(38, 22, 48, 0.46);
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  color: #fff;
+}
+.timelineToggle b { background: rgba(255, 255, 255, 0.26); color: #fff; }
+.modelControlTrigger > b { color: rgba(255, 255, 255, 0.72); }
+/* The new-chat button inverts on colour, as their hero CTA does. */
+.headerNewChat { color: var(--m-ink-btn); }
+.headerNewChat > span { background: #fbf8f2; }
+
+/* A scrim under the header. The field is bright where the chrome forms
+   surface, and white-on-glass pills disappeared over those patches — this
+   gives the bar one consistent ground to sit on wherever the metal lands,
+   and softens the head of the paper sheet at the same time. */
+.chatHeader::before {
+  content: "";
+  position: absolute;
+  inset: -2px 0 -30px;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(to bottom,
+    rgba(52, 28, 66, 0.42) 0%, rgba(52, 28, 66, 0.28) 58%, rgba(52, 28, 66, 0) 100%);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE THREAD.
+
+   Everything below used to be styled only by globals.css, which is why
+   sending one message put you back in the previous generation of the app:
+   coral-tinted bubbles, accent-tinted avatars, 7px chips, a navy code
+   block. The conversation is the surface the product is actually used on,
+   so it gets the language rather than inheriting the leftovers.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.messageList { max-width: 860px; }
+/* Nothing should rest inside the mask ramp at the head of the sheet. */
+.chatWorkspace:not(.isEmpty) .messageList { padding-top: 52px; }
+
+.messageAuthor strong {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--m-ink-3);
+}
+
+/* What you said reads as something set down on the page; what Metis said
+   reads as the page itself. Only one of the two needs a container. */
+.chatMessage.message-user:not(.message-failed) .messageBody {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 16px;
+  box-shadow: none;
+}
+.chatMessage.message-assistant .messageBody {
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+.messageContent { color: var(--m-ink); font-size: 14.5px; line-height: 1.66; }
+.messageContent a { color: var(--m-ink); text-decoration-color: var(--m-ink-3); }
+.messageContent pre,
+.artifactTextPreview,
+.evidenceBody pre {
+  background: #1d1b19;
+  border: 1px solid #302c28;
+  border-radius: 12px;
+}
+
+.messageAvatar { background: var(--m-surface); box-shadow: inset 0 0 0 1px var(--m-line); }
+.messageAvatar.metisAvatar { background: var(--m-paper-lift); }
+.message-user .messageAvatar,
+.messageAvatar.userAvatar { background: #ece4f5; color: var(--m-ink); box-shadow: inset 0 0 0 1px #ddd0ea; }
+
+/* The run chip: a quiet pill that reports, rather than a status badge that
+   announces. Its four beads carry the only colour it needs. */
+.compactRunActivity {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  box-shadow: none;
+  color: var(--m-ink);
+  transition: border-color 0.2s var(--m-ease), background-color 0.2s var(--m-ease);
+}
+.compactRunActivity:hover { background: var(--m-surface); border-color: #c6b8d6; }
+.compactRunActivity .compactActivityCopy strong { font-size: 12px; font-weight: 500; }
+.compactRunActivity .compactActivityCopy small {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--m-ink-3);
+}
+
+/* Feedback and the inline actions under an answer. */
+.feedbackControls { border-top: 1px solid var(--m-line); }
+.feedbackPrompt > span {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--m-ink-3);
+}
+.feedbackPrompt button {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  color: var(--m-ink);
+  font-size: 11px;
+  font-weight: 400;
+  min-height: 29px;
+  padding: 0 13px;
+  transition: background-color 0.22s var(--m-ease), color 0.22s var(--m-ease);
+}
+.feedbackPrompt button:hover {
+  background: var(--m-ink-btn);
+  border-color: transparent;
+  color: #fbf8f2;
+}
+.feedbackRecorded { color: var(--m-ink-2); font-weight: 400; }
+
+.inlineAttachments > span {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  color: var(--m-ink-2);
+}
+/* The one offer under an answer deserves to look like an offer. */
+.toolBuildButton {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  color: var(--m-ink);
+  font-size: 12px;
+  font-weight: 400;
+  min-height: 32px;
+  padding: 0 15px;
+  transition: background-color 0.22s var(--m-ease), color 0.22s var(--m-ease);
+}
+.toolBuildButton:hover:not(:disabled) {
+  background: var(--m-ink-btn);
+  border-color: transparent;
+  color: #fbf8f2;
+}
+.workingText { color: var(--m-ink-2); }
+.thinkingPulse i,
+.messageLoading span,
+.previewLoading span { background: var(--m-ink-3); }
+
+/* The activity drawer is part of the thread, not a system panel. Its own
+   head takes the field too, so the colour band runs unbroken across the
+   full width of the app instead of stopping at the drawer's left edge. */
+.runDrawer { background: var(--m-paper-lift); border-left: 1px solid var(--m-line); }
+.timelineHeader {
+  min-height: 72px;
+  background: linear-gradient(to bottom, rgba(52, 28, 66, 0.42), rgba(52, 28, 66, 0.28)), var(--m-purple);
+  border-bottom: 0;
+  color: #fff;
+}
+.timelineHeader h2,
+.timelineHeader strong { color: #fff; }
+.timelineHeader .eyebrow,
+.timelineHeader small,
+.timelineHeader span { color: rgba(255, 255, 255, 0.82); }
+.runDrawerClose { color: rgba(255, 255, 255, 0.9); }
+.runDrawerClose:hover { color: #fff; }
+
+.companionDockLabel { color: var(--m-ink-2); }
+
+/* ── Welcome state — sized to sit in one screen, no scroll ─────────────── */
+.welcomeState {
+  max-width: 780px;
+  padding: 14px 30px 12px;
+  gap: 0;
+}
+.welcomeState .companion { width: 78px; height: 78px; margin: 0; }
+.welcomeState .eyebrow {
+  margin: 18px 0 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.86);
+}
+.welcomeState .eyebrow::before { display: none; }
+.welcomeState h1 { margin: 10px 0 0; font-size: 42px; line-height: 0.98; letter-spacing: -0.034em; }
+.welcomeState h1 .metisWordmark {
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  -webkit-text-fill-color: #fff;
+  color: #fff;
+  font-weight: 400;
+}
+.welcomeState > p {
+  margin: 11px 0 0;
+  max-width: 44ch;
+  font-size: 16px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.9);
+}
+.trustLine { margin-top: 14px; gap: 20px; }
+.trustLine > span {
+  padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.82);
+}
+.trustLine i,
+.trustLine span:nth-child(2) i,
+.trustLine span:nth-child(3) i { background: var(--m-chrome); background-size: 100% 400%; }
+
+/* ── Customer intelligence: a quiet band, not a second hero ─────────────
+   It sits under the wordmark on the front door, so it has to report without
+   competing. One eyebrow row, one line of figures, one row of accounts. */
+.customerSnippet {
+  display: block;
+  margin-top: 20px;
+  padding: 15px 20px 16px;
+  background: rgba(252, 250, 246, 0.9);
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 18px 40px -24px rgba(60, 30, 80, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  transition: transform 0.3s var(--m-ease), box-shadow 0.3s var(--m-ease);
+}
+.customerSnippet:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 24px 48px -24px rgba(60, 30, 80, 0.6);
+}
+.customerSnippet > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.customerSnippet .eyebrow { margin: 0; font-size: 10px; color: var(--m-ink-3); }
+.customerSnippet > header a {
+  color: var(--m-ink);
+  font-size: 12.5px;
+  font-weight: 400;
+  white-space: nowrap;
+  text-decoration: none;
+  opacity: 0.8;
+  transition: opacity 0.2s var(--m-ease);
+}
+.customerSnippet > header a:hover { opacity: 1; }
+
+.customerSnippetMetrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  margin-top: 9px;
+  padding: 0;
+  border: 0;
+}
+.customerSnippetMetrics > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 15px;
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--m-line);
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--m-ink-2);
+  font-size: 13px;
+}
+.customerSnippetMetrics > span:first-child { padding-left: 0; border-left: 0; }
+.customerSnippetMetrics b {
+  color: var(--m-ink);
+  font-size: 21px;
+  font-weight: 400;
+  letter-spacing: -0.022em;
+  font-variant-numeric: tabular-nums;
+}
+.customerSnippetMetrics .attention b { color: #c0492f; }
+
+/* The accounts you touched last, as chips rather than a list. */
+.customerSnippetRecent {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid var(--m-line);
+}
+.customerSnippetRecent a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 210px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--m-surface);
+  color: var(--m-ink-2);
+  font-size: 11.5px;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color 0.22s var(--m-ease), color 0.22s var(--m-ease);
+}
+.customerSnippetRecent a:hover { background: var(--m-ink-btn); color: #fbf8f2; }
+.customerSnippetRecent b {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  font-weight: 400;
+  opacity: 0.75;
+}
+.customerSnippet > p { margin: 11px 0 0; color: var(--m-ink-2); font-size: 12.5px; }
+
+/* globals hides the recent accounts, the empty-state line and the trust row
+   below 760px of height, to keep the front door on one screen. The compact
+   card is roughly half the height the old one was, so that budget is no
+   longer spent — they come back, and the escape hatch moves to the heights
+   where it is actually needed. */
+@media (max-height: 760px) and (min-width: 681px) {
+  .chatWorkspace.isEmpty .customerSnippetRecent,
+  .chatWorkspace.isEmpty .trustLine { display: flex; }
+  .chatWorkspace.isEmpty .customerSnippet > p { display: block; }
+}
+@media (max-height: 618px) and (min-width: 681px) {
+  .chatWorkspace.isEmpty .customerSnippetRecent,
+  .chatWorkspace.isEmpty .customerSnippet > p,
+  .chatWorkspace.isEmpty .trustLine { display: none; }
+}
+
+/* ── Composer ───────────────────────────────────────────────────────────── */
+.composerDock { background: none; }
+.composer {
+  background: var(--m-paper-lift);
+  border: 0;
+  border-radius: 24px;
+  box-shadow: 0 20px 44px -22px rgba(60, 30, 80, 0.62), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  backdrop-filter: none;
+}
+.composer:focus-within {
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.3), 0 20px 44px -22px rgba(60, 30, 80, 0.62);
+}
+/* The composer floats on the wash in every state — it used to flatten to a
+   hairline outline the moment a thread started, which is what made the foot
+   of the app change character mid-conversation. */
+.composerHint,
+.composerDisclaimer { color: rgba(255, 255, 255, 0.78); }
+
+/* The send button is the chrome itself — no text to fight it. A 44px disc
+   cannot hold the full 18-stop gradient, so it gets a 7-stop version. */
+.sendButton {
+  background: linear-gradient(142deg, #fffcf2 0%, #c9c1aa 18%, #2a2724 42%,
+    #12100f 54%, #e4dcc7 74%, #6e6757 88%, #1b1a19 100%);
+  background-size: 170% 170%;
+  background-position: 44% 14%;
+  color: #fffdf6;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5), 0 6px 16px -6px rgba(50, 40, 30, 0.55);
+  transition: background-position 0.7s var(--m-ease), transform 0.3s var(--m-ease);
+}
+.sendButton:hover:not(:disabled) { background-position: 14% 64%; transform: translateY(-1px); }
+
+/* ── The companion ──────────────────────────────────────────────────────
+   Two bodies are kept. The original "orb" is untouched and still styled by
+   globals.css via .companionBody / .companionField / .companionCore — none
+   of those class names appear below, so nothing here can reach it.
+   The pearl uses its own names and its own rules. */
+.companion { position: relative; }
+
+.pearlBody {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* The film blends with `multiply`; without isolation its blend group is the
+     page, so it mixed with the purple field behind the bead instead of with
+     the bead's own body. */
+  isolation: isolate;
+  border-radius: 56% 44% 48% 52% / 47% 52% 48% 53%;
+  background: radial-gradient(112% 112% at 32% 24%, #fffdfe 0%, #f2eaf0 58%, #d6c8de 100%);
+  box-shadow:
+    inset -9px -11px 24px rgba(90, 58, 90, 0.3),
+    inset 7px 9px 20px rgba(255, 255, 255, 0.95),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+    0 20px 38px -16px rgba(50, 20, 70, 0.6);
+  animation: mPearlMorph 8s ease-in-out infinite;
+}
+/* The oil film turns inside the body, so the surface shifts hue as it
+   moves rather than showing gradient spokes. */
+.pearlFilm {
+  position: absolute;
+  inset: -24%;
+  border-radius: 50%;
+  mix-blend-mode: multiply;
+  opacity: 0.68;
+  filter: url(#metisWarp) blur(6px) saturate(1.35);
+  /* The film carries its own containment rather than trusting the body's
+     rounded overflow. A child that creates a stacking context through
+     `filter` gets clipped to the parent's BORDER BOX in this compositing
+     path, not to its border-radius — which is why the oil film appeared as
+     a square of colour sitting around a round bead. The film is 148% of the
+     body, so fading it out by ~54% of its own half-size keeps every pixel
+     of colour inside the silhouette no matter how the parent clips. */
+  -webkit-mask-image: radial-gradient(closest-side, #000 0 52%, rgba(0, 0, 0, 0.55) 66%, transparent 76%);
+  mask-image: radial-gradient(closest-side, #000 0 52%, rgba(0, 0, 0, 0.55) 66%, transparent 76%);
+  background:
+    radial-gradient(38% 34% at 68% 24%, #ff7f5c 0%, rgba(255, 127, 92, 0) 66%),
+    radial-gradient(40% 36% at 78% 62%, #c77bee 0%, rgba(199, 123, 238, 0) 66%),
+    radial-gradient(42% 38% at 34% 72%, #4fd3e4 0%, rgba(79, 211, 228, 0) 66%),
+    radial-gradient(34% 32% at 26% 30%, #ffd25a 0%, rgba(255, 210, 90, 0) 66%),
+    radial-gradient(30% 28% at 52% 50%, #ff8fb4 0%, rgba(255, 143, 180, 0) 68%);
+  animation: mPearlSpin 19s linear infinite;
+  transform: translate(calc(var(--mx, 0) * -9px), calc(var(--my, 0) * -7px));
+  transition: transform 0.6s var(--m-ease);
+}
+.pearlSpec {
+  position: absolute;
+  left: 20%;
+  top: 12%;
+  width: 30%;
+  height: 17%;
+  border-radius: 50%;
+  background: #fff;
+  filter: blur(5px);
+  opacity: 0.92;
+  transform: translate(calc(var(--mx, 0) * 20px), calc(var(--my, 0) * 15px));
+  transition: transform 0.35s var(--m-ease);
+}
+.pearlShadow {
+  position: absolute;
+  left: 50%;
+  bottom: -14px;
+  transform: translateX(-50%);
+  width: 56%;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(50, 20, 70, 0.34);
+  filter: blur(9px);
+  animation: mPearlContact 8s ease-in-out infinite;
+}
+@keyframes mPearlMorph {
+  0%, 100% { border-radius: 56% 44% 48% 52% / 47% 52% 48% 53%; transform: translateY(0) rotate(0deg); }
+  33% { border-radius: 44% 56% 60% 40% / 57% 42% 58% 43%; transform: translateY(-6px) rotate(2.5deg); }
+  66% { border-radius: 52% 48% 40% 60% / 41% 58% 42% 59%; transform: translateY(-2px) rotate(-2.5deg); }
+}
+@keyframes mPearlSpin { to { transform: rotate(360deg); } }
+@keyframes mPearlContact {
+  0%, 100% { opacity: 0.34; width: 56%; }
+  50% { opacity: 0.2; width: 44%; }
+}
+/* Moods, as the component already drives them. */
+.companion[data-mood="listening"] .pearlBody { animation-duration: 5s; }
+.companion[data-mood="thinking"] .pearlBody { animation-duration: 2s; }
+.companion[data-mood="thinking"] .pearlFilm { animation-duration: 5s; opacity: 0.8; }
+.companion[data-mood="done"] .pearlFilm { filter: url(#metisWarp) blur(6px) saturate(1.05) hue-rotate(82deg); opacity: 0.52; }
+.companion[data-mood="trouble"] .pearlBody { animation: mPearlSlump 7s ease-in-out infinite; }
+@keyframes mPearlSlump {
+  0%, 100% { border-radius: 48% 52% 40% 60% / 34% 36% 64% 66%; transform: translateY(5px) scale(1.08, 0.84); }
+  50% { border-radius: 50% 50% 42% 58% / 36% 34% 66% 64%; transform: translateY(6px) scale(1.1, 0.82); }
+}
+.companion[data-mood="trouble"] .pearlFilm { filter: blur(11px) saturate(0.1); opacity: 0.42; }
+/* Below 28px the morph reads as a wobble, so small beads sit still. */
+.companion.isSmall .pearlBody { animation: none; border-radius: 50%; }
+.companion.isSmall .pearlSpec { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pearlBody,
+  .pearlFilm,
+  .pearlShadow { animation: none !important; }
+  .pearlFilm,
+  .pearlSpec { transition: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   The rest of the workspace — Customers, Assets, Tools, Knowledge,
+   Memory, Sizing, Settings.
+
+   These pages are read and operated rather than admired, so they take the
+   quiet half of the language: warm paper, greige panels, hairline rules,
+   mono eyebrows, weight-400 headings. The purple field and the chrome stay
+   on the chat welcome, which is the one surface that is a front door.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.workspacePage { background: transparent; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE PAGE HEAD — the same room, one door further in.
+
+   Colour was the only thing these pages had taken from the front door, and
+   colour alone reads as a palette swap rather than as one product. So the
+   title of every workspace page now sits on the actual material: purple,
+   with the chrome surfacing behind it and the app grain over the top. The
+   working surface below stays paper, because that is what it is for.
+   ═══════════════════════════════════════════════════════════════════════ */
+.pageHeader,
+.customerWorkbenchHeader {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  align-items: center;   /* flex-end dropped the actions to the band's floor */
+  /* Knowledge lays its page out as a column flex container, so the header
+     was a shrinkable flex ITEM: its content box collapsed to zero and the
+     title simply overflowed, invisibly, until this band started clipping. */
+  flex: 0 0 auto;
+  margin-bottom: 30px;
+  padding: 27px 30px 29px;
+  border-radius: 20px;
+  background: var(--m-purple);
+  color: #fff;
+  box-shadow: 0 22px 48px -30px rgba(60, 30, 80, 0.55);
+}
+/* The metal, surfacing at the right shoulder the way cf2 does on the home
+   field — one form, because a header band is a tenth of that canvas. */
+.pageHeader::before,
+.customerWorkbenchHeader::before {
+  content: "";
+  position: absolute;
+  z-index: -2;
+  top: -62%;
+  right: -6%;
+  width: 480px;
+  height: 340px;
+  transform: rotate(19deg);
+  border-radius: 54% 46% 38% 62% / 48% 56% 44% 52%;
+  /* The fringe screened over the metal is what makes it read as chrome
+     picking up the room rather than as a grey smudge — the home field gets
+     the same treatment from a separate layer inside .chromeForm. */
+  background: var(--m-fringe), var(--m-chrome);
+  background-blend-mode: screen, normal;
+  filter: blur(3px);
+  opacity: 0.72;
+  -webkit-mask-image: radial-gradient(closest-side, #000 38%, rgba(0, 0, 0, 0.55) 72%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 38%, rgba(0, 0, 0, 0.55) 72%, transparent 100%);
+}
+/* Purple poured back over the metal, densest under the type. */
+.pageHeader::after,
+.customerWorkbenchHeader::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(64% 132% at 20% 46%, rgba(194, 156, 224, 0.95) 0%,
+      rgba(194, 156, 224, 0.72) 52%, rgba(194, 156, 224, 0.22) 100%),
+    linear-gradient(196deg, rgba(163, 121, 206, 0.34), rgba(255, 119, 89, 0.12));
+}
+.pageHeader > *,
+.customerWorkbenchHeader > * { position: relative; z-index: 1; }
+
+/* One rhythm for every band. The pages each carried their own heading
+   margins, which is why Sizing's two-line description sat on the title's
+   descenders while Memory's had room to breathe. */
+.appMain .pageHeader h1,
+.appMain .customerWorkbenchHeader h1 {
+  margin: 7px 0 0;
+  color: #fff;
+  line-height: 1.04;
+}
+.pageHeader .eyebrow,
+.customerWorkbenchHeader .eyebrow { color: rgba(255, 255, 255, 0.82); }
+.pageHeader p,
+.customerWorkbenchHeader p {
+  margin: 11px 0 0;
+  max-width: 68ch;
+  color: rgba(255, 255, 255, 0.88);
+}
+.assetsHeader .assetCatalogSummary,
+.assetsHeader .assetCatalogSummary strong { color: #fff; }
+
+/* Header actions invert onto the field, as the composer's do on home. */
+.pageHeader .secondaryButton,
+.pageHeader .ghostButton,
+.pageHeader .iconButton,
+.customerWorkbenchHeader .secondaryButton,
+.customerWorkbenchHeader .ghostButton {
+  background: rgba(38, 22, 48, 0.3);
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+  color: #fff;
+}
+.pageHeader .secondaryButton:hover:not(:disabled),
+.pageHeader .ghostButton:hover:not(:disabled),
+.pageHeader .iconButton:hover:not(:disabled),
+.customerWorkbenchHeader .secondaryButton:hover:not(:disabled),
+.customerWorkbenchHeader .ghostButton:hover:not(:disabled) {
+  background: rgba(38, 22, 48, 0.44);
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  color: #fff;
+}
+.pageHeader .secondaryButton kbd,
+.customerWorkbenchHeader .secondaryButton kbd {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: transparent;
+  color: rgba(255, 255, 255, 0.9);
+}
+/* The primary action stays the ink pill — it is the one thing on the band
+   that should read as heavier than the field, not lighter. */
+.pageHeader .primaryButton,
+.customerWorkbenchHeader .primaryButton { background: var(--m-ink-btn); color: #fbf8f2; }
+
+/* Headings: size and tightness carry them, not weight. Most page titles
+   are bare <h1> with no class, so this reaches for the element. */
+.appMain h1,
+.appMain h2,
+.appMain h3,
+.sectionTitle {
+  font-weight: 400;
+  color: var(--m-ink);
+}
+.appMain h1 { letter-spacing: -0.034em; }
+.appMain h2 { letter-spacing: -0.022em; }
+.appMain h3,
+.sectionTitle { letter-spacing: -0.016em; }
+.pageHeader p,
+.sectionLede { color: var(--m-ink-2); }
+
+/* The eyebrow is the single most Cohere thing on a page: mono, uppercase,
+   +0.02em, and a lavender-tinted grey rather than a neutral one. */
+.eyebrow,
+.mutedMeta {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--m-ink-3);
+}
+.eyebrow::before { display: none; }   /* the old gradient tick */
+
+/* Panels: greige, hairline, flat. The glass blur is retired here — it was
+   costing legibility on dense pages and buying atmosphere they don't need. */
+.toolCard,
+.memoryCard,
+.settingsSection,
+.improvementCard,
+.artifactCard,
+.knowledgeSection,
+.emptyPanel,
+.modalCard,
+.notice,
+.sourceForm,
+.customerInlineForm {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.modalCard { background: var(--m-paper-lift); box-shadow: 0 30px 70px -30px rgba(60, 30, 80, 0.5); }
+.modalBackdrop { background: rgba(40, 28, 46, 0.42); backdrop-filter: blur(3px); }
+
+/* Buttons carry the language without every page needing new markup: the
+   dark pill, and the lilac→coral bloom held tight behind it on hover. */
+.primaryButton {
+  position: relative;
+  z-index: 0;
+  background: var(--m-ink-btn);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  color: #fbf8f2;
+  box-shadow: none;
+  transition: background-color 0.3s, color 0.3s;
+}
+.primaryButton::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--m-bloom);
+  filter: blur(8px);
+  opacity: 0;
+  transform: scale(0.94);
+  transition: transform 0.34s var(--m-ease), opacity 0.34s var(--m-ease);
+}
+.primaryButton:hover:not(:disabled) {
+  background: var(--m-ink-btn);
+  border-color: transparent;
+  transform: none;
+}
+.primaryButton:hover:not(:disabled)::before { opacity: 0.85; transform: scale(1); }
+
+.secondaryButton,
+.ghostButton,
+.iconButton {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  color: var(--m-ink);
+  box-shadow: none;
+  transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+}
+.secondaryButton:hover:not(:disabled),
+.ghostButton:hover:not(:disabled),
+.iconButton:hover:not(:disabled) {
+  background: var(--m-ink-btn);
+  border-color: transparent;
+  color: #fbf8f2;
+}
+.textButton { color: var(--m-ink); }
+.dangerButton,
+.isDanger { border-radius: 999px; }
+
+/* Inputs sit one step above the page rather than in a well. */
+input[type="text"],
+input[type="search"],
+input[type="number"],
+textarea,
+select,
+.knowledgeInput,
+.sourcePathInput {
+  background: var(--m-paper-lift);
+  border-color: var(--m-line);
+  color: var(--m-ink);
+}
+
+/* The green marketing slabs read as a different product; they take the
+   same ink as every other heavy surface — and everything inside them has
+   to invert with the ground, or the figures vanish into it. */
+.statStrip,
+.healthHero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 18px;
+  background: linear-gradient(140deg, #24211d 0%, #1a1815 100%);
+  color: rgba(255, 255, 255, 0.72);
+}
+/* The same metal that surfaces in the page band, catching the far corner of
+   the dark slab — enough that the two read as one material system rather
+   than as a coloured header sitting above an unrelated black box. */
+.statStrip::before,
+.healthHero::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -84%;
+  right: -4%;
+  width: 380px;
+  height: 300px;
+  transform: rotate(22deg);
+  border-radius: 52% 48% 40% 60% / 46% 58% 42% 54%;
+  background: var(--m-fringe), var(--m-chrome);
+  background-blend-mode: screen, normal;
+  filter: blur(6px);
+  opacity: 0.3;
+  -webkit-mask-image: radial-gradient(closest-side, #000 34%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 34%, transparent 100%);
+}
+.statStrip strong,
+.statStrip b,
+.statStrip h2,
+.statStrip h3,
+.healthHero strong,
+.healthHero b,
+.healthHero h2,
+.healthHero h3 { color: #fff; }
+.statStrip small,
+.statStrip span,
+.statStrip p,
+.healthHero small,
+.healthHero span,
+.healthHero p { color: rgba(255, 255, 255, 0.72); }
+
+.filterTabs button,
+.tierTag,
+.sectionBadge {
+  border-radius: 999px;
+  border-color: var(--m-line);
+}
+.filterTabs button[aria-pressed="true"],
+.filterTabs button.active {
+  background: var(--m-ink-btn);
+  border-color: transparent;
+  color: #fbf8f2;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Revision pass — the leftover generations retired.
+
+   globals.css carries several eras of ornament (gradient location dots,
+   glass sheens, green accents, amber banners). Each block below exists to
+   silence one of them; delete a block only together with its source.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Sidebar: one clear pill, nothing else moving ─────────────────────── */
+.primaryNav a,
+.primaryNav a.active {
+  gap: 11px;
+  padding-left: 12px;
+  padding-right: 12px;   /* the 36px was clearance for the retired dot */
+}
+/* Both generations of the animated location dot. */
+.primaryNav a::before { display: none; }
+.primaryNav .navSignal { display: none; }
+.primaryNav a {
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--m-ink-2);
+  font-size: 12px;
+  transition: background-color 0.18s var(--m-ease), color 0.18s var(--m-ease);
+}
+.primaryNav a:hover {
+  background: rgba(33, 31, 29, 0.05);
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--m-ink);
+}
+.primaryNav a.active {
+  background: var(--m-surface);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--m-line);
+  color: var(--m-ink);
+}
+/* The hover tilt read as jitter next to a static pill. */
+.primaryNav a:hover .navGlyph,
+.primaryNav a.active .navGlyph { transform: none; }
+.primaryNav a.active .navGlyph { color: var(--m-ink); }
+@media (min-width: 901px) {
+  .isCollapsed .primaryNav a,
+  .isCollapsed .primaryNav a.active { padding: 0; }
+}
+
+/* ── Header new chat: one continuous pill, same ink as primaryButton ──── */
+.headerNewChat { gap: 0; }
+.headerNewChat:hover:not(:disabled) { gap: 0; }
+.headerNewChat .segEnd { display: none; }
+.headerNewChat .segMain {
+  border-radius: 999px;
+  clip-path: none;
+  gap: 7px;
+  padding: 0 16px;
+}
+.headerNewChat::before { border-radius: 999px; }
+
+/* ── Recovery banner: paper and ink, not amber ────────────────────────── */
+.recoveryBanner {
+  background: var(--m-paper-lift);
+  border-bottom: 1px solid var(--m-line);
+}
+.recoveryIcon { background: var(--m-surface); color: var(--m-ink-2); }
+.recoverySummary strong { color: var(--m-ink); }
+.recoverySummary small { color: var(--m-ink-2); font-size: 10px; }
+.recoveryActions { scrollbar-width: thin; }
+.recoveryActions button {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  color: var(--m-ink);
+  font-size: 10px;
+  font-weight: 500;
+}
+.recoveryActions button:hover:not(:disabled) {
+  background: var(--m-ink-btn);
+  border-color: transparent;
+  color: #fbf8f2;
+}
+.recoveryActions button.selected { background: var(--m-surface); border-color: var(--m-line); }
+.recoveryActions button > span { background: var(--m-ink-btn); border-radius: 999px; color: #fbf8f2; }
+
+/* ── Model control: greige panel, ink selection, no green tint ──────────
+   The TRIGGER is deliberately not restyled here: it lives in the chat
+   header, which sits on the purple field in every state, and it takes the
+   on-colour glass treatment from the header block above. Giving it paper
+   here is what made its white label vanish into a white pill. */
+.modelControlTrigger { border-radius: 999px; }
+.modelControlPanel {
+  background: var(--m-paper-lift);
+  backdrop-filter: none;
+  border: 1px solid var(--m-line);
+  border-radius: 16px;
+  box-shadow: 0 30px 70px -30px rgba(60, 30, 80, 0.4);
+}
+.modelControlChoice > button {
+  background: var(--m-paper);
+  border: 1px solid var(--m-line);
+  border-radius: 12px;
+}
+.modelControlChoice > button:hover:not(:disabled) { border-color: #c6b8d6; }
+.modelControlChoice > button.selected {
+  background: var(--m-surface);
+  border-color: var(--m-ink-2);
+}
+.modelControlChoice > button.selected > strong { color: var(--m-ink); }
+.modelControlSession select,
+.modelControlSession label > span { color: var(--m-ink); }
+.modelControlSession select {
+  background: var(--m-paper-lift);
+  border-color: var(--m-line);
+  border-radius: 10px;
+}
+.modelControlAdvice { background: var(--m-surface); color: var(--m-ink-2); border-radius: 10px; }
+.modelControlLaunch {
+  background: var(--m-ink-btn);
+  border: 0;
+  border-radius: 999px;
+  color: #fbf8f2;
+}
+.modelControlHosted {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--m-surface);
+  color: var(--m-ink-2);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+/* ── The custom select-menu takes the same paper ──────────────────────── */
+.selectTrigger {
+  background: var(--m-paper-lift);
+  border-color: var(--m-line);
+  border-radius: 12px;
+  box-shadow: none;
+  color: var(--m-ink);
+}
+.selectPopup {
+  background: var(--m-paper-lift);
+  backdrop-filter: none;
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px -28px rgba(60, 30, 80, 0.45);
+}
+.selectLabel { color: var(--m-ink-3); }
+
+/* ── Assets: cards on greige, the green accent family retired ─────────── */
+.assetCard,
+.assetDrawer {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.assetCard:hover { border-color: #c6b8d6; box-shadow: none; transform: none; }
+.assetCatalogSummary { background: none; border: 0; box-shadow: none; }
+.assetTags > span,
+.assetDrawerTags > span {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  color: var(--m-ink-2);
+}
+.assetMonogram {
+  background: var(--m-ink-btn);
+  border: 0;
+  border-radius: 12px;
+  box-shadow: none;
+  color: #fbf8f2;
+}
+.assetCardFooter > span,
+.assetCardFooter > span:last-child { color: var(--m-ink); font-weight: 500; }
+.assetStatus.isReady { background: var(--m-paper-lift); color: var(--m-ink-2); }
+/* The drawer kept a green dot-field head and indigo section labels — the
+   last two accents from the generation before this one. */
+.assetDrawerHeader {
+  background: var(--m-surface);
+  border-bottom: 1px solid var(--m-line);
+}
+.assetDrawerKicker,
+.assetSectionLabel {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace);
+  letter-spacing: 0.02em;
+  color: var(--m-ink-3);
+}
+.assetDrawer .textButton { color: var(--m-ink); }
+
+/* ── Knowledge: inner cells join the greige system ────────────────────── */
+.knowledgeDashboardBar .knowledgeTabs,
+.knowledgeOverview {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: none;
+}
+.knowledgeTab.isActive .knowledgeTabGlyph { background: var(--m-ink-btn); }
+.knowledgeTab.isActive {
+  background: var(--m-paper-lift);
+  border-color: var(--m-line);
+  box-shadow: none;
+}
+.knowledgeTab.isActive .knowledgeTabLabel { color: var(--m-ink); }
+.knowledgeOverview .isHealthy strong { color: var(--m-ink); }
+/* The Notion panel drops its lavender field and corner bloom. */
+.knowledgeSection.notionSection { background: var(--m-surface); }
+.notionSection::after { display: none; }
+.notionWorkspace .notionStats > div,
+.notionStats > div {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  box-shadow: none;
+}
+.notionConnectionState.connected { background: var(--m-paper-lift); border: 1px solid var(--m-line); color: var(--m-ink); }
+
+/* ── Memory: the tinted explainer bars take the greige too ────────────── */
+.memoryComposer,
+.memoryPrinciple {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.principleMark { background: var(--m-bloom); color: #fff; box-shadow: none; }
+
+/* ── Sizing: every section card takes the greige ──────────────────────── */
+.dacPage section {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: none;
+}
+.dacNote { border-left-color: var(--m-ink-2); }
+.dacCandidate {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  box-shadow: none;
+}
+
+/* ── Settings: selection reads as ink, not accent blue ────────────────── */
+.providerChoice {
+  background: var(--m-paper);
+  border: 1px solid var(--m-line);
+  border-radius: 12px;
+  box-shadow: none;
+}
+.providerChoice:not(:disabled):hover { border-color: #c6b8d6; transform: none; }
+.providerChoice.selected {
+  background: var(--m-surface);
+  border-color: var(--m-ink-2);
+  box-shadow: none;
+}
+.providerChoice > span { color: var(--m-ink-3); }
+.nativeToolChoices label {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+}
+.nativeToolChoices input { accent-color: var(--m-ink-btn); }
+.sectionBadge { background: var(--m-surface); color: var(--m-ink-2); }
+
+/* ── Tool Workshop: banner and sections join the paper system ─────────── */
+.improvementSection,
+.registrySection {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.toolTrustBanner {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: none;
+}
+.toolTrustBanner strong { color: var(--m-ink); }
+.toolTrustBanner p { color: var(--m-ink-2); }
+.toolTrustMark { background: var(--m-ink-btn); border-radius: 12px; }
+.capabilityPanel { background: var(--m-paper-lift); border: 1px solid var(--m-line); }
+
+/* ── Customers: give the header its room back ─────────────────────────── */
+.customerWorkbenchHeader { padding-right: 0; }
+.customerWorkbenchActions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+.customerWorkbenchBody {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  box-shadow: none;
+}
+.customerAccounts { background: var(--m-paper); }
+.customerAccounts nav > button.active { background: var(--m-paper-lift); box-shadow: inset 0 0 0 1px var(--m-line); }
+.customerAccountFilters button {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: var(--m-ink-2);
+}
+.customerAccountFilters button.active {
+  background: var(--m-ink-btn);
+  border-color: transparent;
+  color: #fbf8f2;
+}
+/* The win-category chips were the last of the green tints on this page. */
+.customerSummaryChips > b {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  color: var(--m-ink-2);
+  font-weight: 400;
+}
+.customerSummaryChips > b > i {
+  background: var(--m-surface);
+  border-radius: 999px;
+  color: var(--m-ink);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-style: normal;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CONTROL SHAPE + HIGHLIGHT
+
+   Three generations of button geometry were still live at once: 999px
+   pills, an asymmetric `14px 14px 14px 7px` from the glass pass, and a
+   plain 10px. Worse, the highlight layers carried their OWN radius, so a
+   bloom could be a rounded rectangle sitting behind a pill and a sheen
+   could be a hard rectangle inside one.
+
+   The rule from here: a control declares its shape once, and every layer
+   that lights it up inherits that shape rather than restating it.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --m-r-pill: 999px;
+  --m-r-field: 12px;
+}
+
+/* Text controls are pills. */
+.headerNewChat,
+.headerNewChat .segMain,
+.newChatButton,
+.timelineToggle,
+.attachButton,
+.retryResponse,
+.clearFailedResponse,
+.errorFreshStart,
+.modelControlTrigger,
+.localStatus,
+.primaryButton,
+.secondaryButton,
+.ghostButton,
+.dangerButton,
+.assetRefreshButton,
+.modelControlLaunch,
+.modelControlStop,
+.feedbackPrompt button,
+.toolBuildButton,
+.compactRunActivity,
+.recoveryActions button,
+.filterTabs button,
+.customerAccountFilters button,
+.composerAddContext { border-radius: var(--m-r-pill); }
+
+/* Icon-only controls are circles — a pill and a circle are the same shape
+   at a 1:1 aspect, so this stays consistent rather than becoming a third
+   language. */
+.collapseToggle,
+.searchClear,
+.runDrawerClose,
+.conversationDeleteButton,
+.sendButton { border-radius: 50%; }
+
+/* Fields keep the softer rectangle; a text input shaped like a pill fights
+   the caret and wastes its first and last character of room. */
+.selectTrigger,
+.sidebarSearch,
+input[type="text"],
+input[type="search"],
+input[type="number"],
+textarea,
+select { border-radius: var(--m-r-field); }
+
+/* Every highlight layer takes its host's shape. This is the rule that was
+   missing; the specific radii above only matter because of it. */
+.headerNewChat::before,
+.headerNewChat::after,
+.headerNewChat .segMain::after,
+.newChatButton::before,
+.newChatButton::after,
+.primaryButton::before,
+.primaryButton::after,
+.secondaryButton::before,
+.secondaryButton::after,
+.timelineToggle::before,
+.timelineToggle::after,
+.compactRunActivity::before,
+.compactRunActivity::after,
+.filterTabs button::before,
+.filterTabs button::after,
+.primaryNav a::before,
+.primaryNav a::after { border-radius: inherit; }
+
+/* One motion for the whole family, so no two controls answer the pointer
+   at a different speed. */
+.headerNewChat,
+.newChatButton,
+.timelineToggle,
+.attachButton,
+.modelControlTrigger,
+.primaryButton,
+.secondaryButton,
+.ghostButton,
+.dangerButton,
+.iconButton,
+.feedbackPrompt button,
+.toolBuildButton,
+.compactRunActivity,
+.recoveryActions button,
+.filterTabs button,
+.customerAccountFilters button,
+.collapseToggle {
+  transition:
+    background-color 0.22s var(--m-ease),
+    border-color 0.22s var(--m-ease),
+    color 0.22s var(--m-ease),
+    box-shadow 0.22s var(--m-ease);
+}
+
+/* The sidebar's sheen sweep is clipped to the pill by overflow, but it was
+   declared as a bare rectangle; giving it the host shape means it still
+   reads correctly if that clip is ever removed. */
+.newChatButton::after,
+.headerNewChat .segMain::after { border-radius: inherit; }
+
+/* A focus ring that follows the shape, on every control, in one place.
+   `outline` tracks border-radius in every browser this app targets, so the
+   ring is a pill on a pill and a circle on a circle without restating it. */
+.headerNewChat:focus-visible,
+.newChatButton:focus-visible,
+.timelineToggle:focus-visible,
+.attachButton:focus-visible,
+.modelControlTrigger:focus-visible,
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible,
+.ghostButton:focus-visible,
+.dangerButton:focus-visible,
+.iconButton:focus-visible,
+.feedbackPrompt button:focus-visible,
+.toolBuildButton:focus-visible,
+.compactRunActivity:focus-visible,
+.collapseToggle:focus-visible,
+.sendButton:focus-visible,
+.primaryNav a:focus-visible {
+  outline: 2px solid var(--m-purple);
+  outline-offset: 2px;
+}
+/* On the field the ring has to be light, or it disappears into the purple. */
+.chatHeader :focus-visible,
+.pageHeader :focus-visible,
+.customerWorkbenchHeader :focus-visible {
+  outline-color: rgba(255, 255, 255, 0.9);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .headerNewChat::before,
+  .primaryButton::before,
+  .newChatButton::after,
+  .headerNewChat .segMain::after { transition: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE ACTIVITY DRAWER
+
+   This panel was built at the type scale of a debug console: 10px titles,
+   9px summaries, 8px timestamps, and a `min-width: 350px` inside a drawer
+   whose minimum was 300 — so at its own floor the panel overflowed its
+   container and every title wrapped mid-phrase.
+
+   It is a reading surface. It gets a reading scale, a real rail, and room.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Never wider than what holds it; the drawer decides the width. */
+.timelinePanel { min-width: 0; }
+
+.timelineHeader { flex: 0 0 auto; padding: 0 20px; }
+.timelineHeader h2 { font-size: 19px; font-weight: 400; letter-spacing: -0.018em; }
+.timelineHeader .eyebrow { font-size: 10px; margin-bottom: 2px; }
+/* The connection state, on the header's colour. */
+.streamState {
+  background: rgba(255, 255, 255, 0.16);
+  border: 0;
+  border-radius: var(--m-r-pill);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.92);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  padding: 4px 10px;
+}
+.streamState i { background: currentColor; }
+.stream-live { background: rgba(255, 255, 255, 0.2); color: #eafff2; }
+.stream-live i { background: #8ff0b4; }
+.stream-error i { background: #ffb3a6; }
+
+.streamWarning {
+  background: var(--m-surface);
+  border-bottom: 1px solid var(--m-line);
+  color: var(--m-ink-2);
+  font-size: 11.5px;
+  padding: 10px 20px;
+}
+
+.timelineList { padding: 22px 20px 30px 22px; }
+
+/* One rail, drawn continuously behind the nodes rather than as a stub per
+   row, so the run reads as a single thread of work. */
+.timelineEvent {
+  grid-template-columns: 11px minmax(0, 1fr);
+  gap: 14px;
+  padding-bottom: 19px;
+}
+.timelineEvent::before {
+  background: var(--m-line);
+  left: 5px;
+  top: 12px;
+  height: calc(100% - 4px);
+}
+.timelineNode {
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  background: var(--m-ink-3);
+  border: 2px solid var(--m-paper-lift);
+  box-shadow: 0 0 0 1px var(--m-line);
+}
+/* Tones in the warm palette, so a failure is not the only red in the app. */
+.tone-success .timelineNode { background: #4f8f6b; box-shadow: 0 0 0 1px #4f8f6b; }
+.tone-attention .timelineNode { background: #c08a3e; box-shadow: 0 0 0 1px #c08a3e; }
+.tone-danger .timelineNode { background: #c0492f; box-shadow: 0 0 0 1px #c0492f; }
+.tone-model .timelineNode { background: #8a6fb0; box-shadow: 0 0 0 1px #8a6fb0; }
+
+.timelineEventTitle { gap: 12px; }
+.timelineEventTitle strong {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--m-ink);
+  letter-spacing: -0.006em;
+}
+.timelineEventTitle time {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--m-ink-3);
+}
+.timelineEventBody > p {
+  margin: 4px 0 0;
+  color: var(--m-ink-2);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.timelineEmpty { max-width: 220px; gap: 12px; }
+.timelineEmpty span {
+  width: 44px;
+  height: 44px;
+  background: var(--m-surface);
+  color: var(--m-ink-3);
+  font-size: 18px;
+}
+.timelineEmpty p { font-size: 12px; line-height: 1.6; color: var(--m-ink-2); }
+
+.timelineFooter {
+  border-top: 1px solid var(--m-line);
+  background: var(--m-surface);
+  color: var(--m-ink-3);
+  font-size: 10.5px;
+  line-height: 1.5;
+  padding: 12px 20px 14px;
+}
+
+/* An approval is the one thing in the panel you are asked to act on, so it
+   is the one thing that gets a card. */
+.approvalCard {
+  margin-top: 11px;
+  padding: 13px 14px;
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+}
+.approvalTitle { gap: 8px; align-items: center; }
+.approvalTitle > span {
+  background: var(--m-ink-btn);
+  border-radius: var(--m-r-pill);
+  color: #fbf8f2;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  padding: 2px 7px;
+}
+.approvalTitle strong { font-size: 12.5px; font-weight: 500; }
+.approvalCard > p { margin: 7px 0 0; color: var(--m-ink-2); font-size: 11.5px; line-height: 1.55; }
+.approvalCard > code {
+  display: inline-block;
+  margin-top: 9px;
+  padding: 3px 8px;
+  background: var(--m-paper-lift);
+  border-radius: var(--m-r-pill);
+  color: var(--m-ink-3);
+  font-size: 10px;
+}
+.permissionList > span {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r-pill);
+  color: var(--m-ink-2);
+  font-size: 10px;
+}
+.approvalActions { gap: 8px; margin-top: 11px; }
+.decisionRecorded { color: var(--m-ink-2); font-size: 11.5px; margin-top: 9px; }
+.approvalBlocked > p { color: var(--m-ink-2); font-size: 11.5px; line-height: 1.55; }
+
+/* The toggle's pressed state was still the indigo from the accent era, which
+   on the purple field read as a third colour. It stays the same glass as its
+   neighbours and simply gets brighter. */
+.timelineToggle.active,
+.timelineToggle.isLive {
+  /* Pressed reads DEEPER than resting, not paler: a lighter glass on a pale
+     passage of the field left the white label with nothing to sit on. */
+  background: rgba(34, 19, 44, 0.56);
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  color: #fff;
+}
+.timelineToggle.active b,
+.timelineToggle.isLive b { background: rgba(255, 255, 255, 0.26); color: #fff; }
+
+/* The rail was a hairline at the panel's own paper value — invisible against
+   it. It carries the eye down the run, so it needs to be seen. */
+.timelineEvent::before { background: #d6cfc2; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LAYOUT REPAIRS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* `.selectMenu` sat at the browser default `min-width: auto`, so inside a
+   grid track it refused to shrink below its longest option and spilled into
+   the next column — which is why the Sizing model field ran under the unit
+   shape beside it. The trigger already ellipsises once it is allowed to. */
+.selectMenu {
+  min-width: 0;
+  max-width: 100%;
+}
+.selectTrigger { min-width: 0; }
+.selectValue { min-width: 0; }
+
+/* The last two badges still wearing the accent era's colours. */
+.tierTag {
+  background: var(--m-surface);
+  border: 1px solid var(--m-line);
+  color: var(--m-ink-2);
+}
+.toolTrustTag {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  color: var(--m-ink-2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   COLOUR — the bead's own palette, put to work.
+
+   The oil film on the companion runs coral → gold → teal → lavender, and
+   those four hues were doing nothing outside it. The asset library already
+   hashes every tag to one of five tones (`data-tone`), so the hook existed;
+   it was just pointing at the previous palette's greens. Tags now carry the
+   film's colours, and a monogram is a small piece of the film itself.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --m-mint: #7be3d8;
+  --m-coral: #ff7759;
+  --m-violet: #d18ee2;
+  --m-blue: #9cb8ec;
+  --m-gold: #ffe08a;
+}
+
+/* Tags: a wash of the hue with ink dark enough to read on it. */
+.assetTags > span[data-tone="mint"],
+.assetDrawerTags > span[data-tone="mint"] { background: #ddf3ee; border-color: #bfe5dc; color: #1d6b5c; }
+.assetTags > span[data-tone="coral"],
+.assetDrawerTags > span[data-tone="coral"] { background: #ffe7de; border-color: #f7cdbe; color: #ab472a; }
+.assetTags > span[data-tone="violet"],
+.assetDrawerTags > span[data-tone="violet"] { background: #f2e4f8; border-color: #e2ccec; color: #773d92; }
+.assetTags > span[data-tone="blue"],
+.assetDrawerTags > span[data-tone="blue"] { background: #e2eafa; border-color: #c9d8f1; color: #33578c; }
+.assetTags > span[data-tone="gold"],
+.assetDrawerTags > span[data-tone="gold"] { background: #fdf1d4; border-color: #f0dcae; color: #83601a; }
+
+/* Monograms: a slice of the film, not a flat swatch. */
+.assetMonogram { color: #fff; border: 0; box-shadow: none; }
+.assetMonogram[data-tone="mint"] { background: linear-gradient(142deg, #8ae9df 0%, #3fa997 100%); }
+.assetMonogram[data-tone="coral"] { background: linear-gradient(142deg, #ffb094 0%, #ef6a46 100%); }
+.assetMonogram[data-tone="violet"] { background: linear-gradient(142deg, #e4b3f4 0%, #ac6ed2 100%); }
+.assetMonogram[data-tone="blue"] { background: linear-gradient(142deg, #b3c9f2 0%, #6285c9 100%); }
+.assetMonogram[data-tone="gold"] { background: linear-gradient(142deg, #ffe6a0 0%, #dfa73c 100%); }
+
+/* The card lifts toward the hue it carries rather than to a generic grey. */
+.assetCard:hover { border-color: #cdbcd9; box-shadow: 0 14px 30px -20px rgba(70, 40, 90, 0.45); }
+
+/* A few places elsewhere that were carrying weight in grey and can afford
+   the palette: the knowledge counters, the registry icons, the tier badge. */
+.knowledgeOverview > div:nth-child(1) strong { color: #33578c; }
+.knowledgeOverview > div:nth-child(2) strong { color: #1d6b5c; }
+.knowledgeOverview > div:nth-child(3) strong { color: #773d92; }
+.knowledgeOverview > div:nth-child(4) strong { color: #ab472a; }
+.toolIcon {
+  background: linear-gradient(142deg, #e4b3f4 0%, #ac6ed2 100%);
+  color: #fff;
+  border: 0;
+}
+.tierTag { background: #f2e4f8; border-color: #e2ccec; color: #773d92; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE MARK
+
+   It is the companion's bead now, so it animates the way the bead does:
+   the film turns inside a still body rather than the whole logo pulsing.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.metisMark { display: block; overflow: visible; }
+.metisMark .metisBeadFilm { transform-origin: 50% 50%; }
+/* The root breathe from the previous mark is retired — a logo that shrinks
+   and fades to 55% every 2.4s reads as a loading state, not as life. */
+.metisMarkAnimated { animation: none; }
+.metisMarkAnimated .metisBeadFilm { animation: metisBeadTurn 7s linear infinite; }
+@keyframes metisBeadTurn { to { transform: rotate(360deg); } }
+
+/* The brand cluster used to be four separate shapes needing their own box;
+   one bead just fills the space it is given. */
+.brandMark { display: grid; place-items: center; }
+.brandMark svg { width: 100%; height: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .metisMarkAnimated .metisBeadFilm { animation: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   REFINEMENT PASS — measured off cohere.com, second sitting.
+
+   The first pass took the purple hero and the sliced button. This one takes
+   the rest of their palette, which turns out to be where the restraint
+   lives: two ink tones, one deep green, one coral, and two pale surfaces
+   that do all the "this is selected" work without a saturated fill.
+
+   Read out of their own stylesheet and off the painted page:
+     --volcanic  #212121   ink
+     --marble    #fafafa   paper
+     --green     #39594d   deep, desaturated — their signature
+     --coral     #ff7759   the one warm accent
+     #f0dff3               pale lavender surface
+     #e5f4ef               pale mint surface
+     #75758a               lavender-grey, for secondary type
+     #00754e               green ink, for text on mint
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --m-volcanic: #212121;
+  --m-forest: #39594d;
+  --m-coral: #ff7759;
+  --m-coral-soft: #ffad9b;
+  --m-quartz: #75758a;
+  --m-lav-surface: #f0dff3;
+  --m-lav-edge: #e0c8ea;
+  --m-mint-surface: #e5f4ef;
+  --m-mint-edge: #c6e3d6;
+  --m-green-ink: #00754e;
+  /* The field, once it is a backdrop rather than the subject. Same hue,
+     pulled toward the paper so a header band stops competing with a
+     paragraph. The hero keeps the full-strength --m-purple. */
+  --m-purple-quiet: #cdb6df;
+}
+
+/* ── 1 · The colour stops at the top ─────────────────────────────────────
+   The sheet used to dissolve at BOTH ends, which put a purple wash under
+   the composer — the brightest thing on screen sitting under the thing you
+   are typing into. It now runs solid to the foot, so colour survives only
+   as the band behind the header. */
+.chatWorkspace:not(.isEmpty) .paperSheet {
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0, rgba(0, 0, 0, 0.5) 62px, #000 116px, #000 100%);
+  mask-image: linear-gradient(to bottom,
+    transparent 0, rgba(0, 0, 0, 0.5) 62px, #000 116px, #000 100%);
+}
+.chatWorkspace.hasBanner:not(.isEmpty) .paperSheet {
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0, rgba(0, 0, 0, 0.5) 118px, #000 176px, #000 100%);
+  mask-image: linear-gradient(to bottom,
+    transparent 0, rgba(0, 0, 0, 0.5) 118px, #000 176px, #000 100%);
+}
+/* And what is left of it is quieter. The welcome screen is untouched — the
+   full-strength field is the front door, and only the reading surface had
+   the problem. */
+.chatWorkspace:not(.isEmpty) .conversationPane { background: var(--m-purple-quiet); }
+.chatWorkspace:not(.isEmpty) .atmos { opacity: 0.5; }
+.chatWorkspace:not(.isEmpty) .atmos::after {
+  background:
+    radial-gradient(46% 40% at 42% 30%, rgba(205, 182, 223, 0.9) 0%,
+      rgba(205, 182, 223, 0.6) 46%, rgba(205, 182, 223, 0) 100%),
+    linear-gradient(200deg, rgba(163, 121, 206, 0.2), rgba(205, 182, 223, 0.08) 60%,
+      rgba(255, 119, 89, 0.05));
+}
+.chatWorkspace:not(.isEmpty) .chatHeader::before {
+  background: linear-gradient(to bottom,
+    rgba(52, 28, 66, 0.3) 0%, rgba(52, 28, 66, 0.17) 58%, rgba(52, 28, 66, 0) 100%);
+}
+/* The foot is paper now, so everything standing on it takes ink. These were
+   white for a wash that is no longer there. */
+.chatWorkspace:not(.isEmpty) .composerHint,
+.chatWorkspace:not(.isEmpty) .composerDisclaimer { color: var(--m-ink-3); }
+.chatWorkspace:not(.isEmpty) .composer {
+  box-shadow: 0 1px 2px rgba(33, 31, 29, 0.04), 0 14px 34px -20px rgba(33, 31, 29, 0.3),
+    inset 0 0 0 1px var(--m-line);
+}
+.chatWorkspace:not(.isEmpty) .composer:focus-within {
+  box-shadow: 0 0 0 3px rgba(194, 156, 224, 0.26), 0 14px 34px -20px rgba(33, 31, 29, 0.32),
+    inset 0 0 0 1px var(--m-lav-edge);
+}
+/* Content no longer has to dissolve into colour at the foot, only clear the
+   composer. A shorter ramp means less of the last line is faded while you
+   are reading it. */
+.chatWorkspace:not(.isEmpty) .messageViewport {
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0, #000 48px, #000 calc(100% - 12px), transparent 100%);
+  mask-image: linear-gradient(to bottom,
+    transparent 0, #000 48px, #000 calc(100% - 12px), transparent 100%);
+}
+
+/* ── 2 · The companion sits in the corner of the composer ────────────────
+   It was above the composer, where the context chips pushed it down the page
+   and it read as a decoration on the input rather than as the thing you are
+   talking to. Now it is inside the box you type into, top right.
+
+   The textarea reserves the width rather than the bead floating over it —
+   text sliding under a translucent bead is the one failure mode an absolute
+   corner element has, and it only shows up on a long first line. */
+.composer { position: relative; }
+.companionPerch {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  position: absolute;
+  right: 13px;
+  top: 11px;
+  z-index: 1;
+}
+.companionPerch .companion { flex: 0 0 28px; height: 28px; margin: 0; width: 28px; }
+.composer textarea { padding-right: 44px; }
+/* At rest the bead is quiet; while something is happening it earns its
+   contrast. Colour and tempo already come from the mood — this is only the
+   halo that separates it from the paper behind it. */
+.companionPerch::before {
+  border-radius: 50%;
+  content: "";
+  inset: -5px;
+  position: absolute;
+  transition: background 420ms var(--m-ease), box-shadow 420ms var(--m-ease);
+}
+.companionPerch[data-mood="thinking"]::before {
+  background: rgba(194, 156, 224, 0.16);
+  box-shadow: 0 0 0 1px rgba(194, 156, 224, 0.24);
+}
+.companionPerch[data-mood="listening"]::before { background: rgba(194, 156, 224, 0.1); }
+.companionPerch[data-mood="trouble"]::before {
+  background: rgba(255, 119, 89, 0.16);
+  box-shadow: 0 0 0 1px rgba(255, 119, 89, 0.3);
+}
+
+/* ── 3 · No avatar on your own messages ──────────────────────────────────
+   Yours were the only messages with an avatar that told you nothing, and it
+   cost a 29px gutter on every one of them. Metis keeps its mark: that one
+   is the thing that animates while an answer streams. */
+.chatMessage.message-user { grid-template-columns: minmax(0, 1fr); }
+.chatMessage.message-user .compactRunActivity { grid-column: 1; }
+
+/* ── 4 · What you can do to a message ────────────────────────────────────
+   Copy on everything, Edit on yours, Retry on Metis's. Hidden until the
+   message is hovered or something inside it has focus, so a long thread
+   does not read as a wall of buttons. */
+.messageActions {
+  display: flex;
+  gap: 2px;
+  margin-top: 7px;
+  opacity: 0;
+  transition: opacity 140ms var(--m-ease);
+}
+.chatMessage:hover .messageActions,
+.messageActions:focus-within { opacity: 1; }
+.messageActions button {
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  color: var(--m-ink-3);
+  cursor: pointer;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  padding: 4px 8px;
+  text-transform: uppercase;
+  transition: background 140ms ease, color 140ms ease;
+}
+.messageActions button:hover:not(:disabled) { background: var(--m-surface); color: var(--m-ink); }
+.messageActions button:disabled { cursor: default; opacity: 0.4; }
+/* Touch has no hover, so on a coarse pointer they are simply always there. */
+@media (hover: none) {
+  .messageActions { opacity: 1; }
+}
+
+.messageEditor { margin-top: 6px; }
+.messageEditor textarea {
+  background: var(--m-paper-lift);
+  border: 0;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px var(--m-lav-edge), 0 0 0 3px rgba(194, 156, 224, 0.2);
+  color: var(--m-ink);
+  display: block;
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.66;
+  min-height: 86px;
+  padding: 12px 14px;
+  resize: vertical;
+  width: 100%;
+}
+.messageEditor textarea:focus { outline: none; }
+.messageEditorActions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.messageEditorActions small {
+  color: var(--m-ink-3);
+  flex: 1;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.chatMessage.isEditing .messageBody { background: none; box-shadow: none; padding: 0; }
+
+/* ── 5 · The step indicator, unboxed ─────────────────────────────────────
+   It was a bordered glass card with its own shadow, floating over a page
+   that already had four. Now it is type on the page with one living shape
+   beside it: no border, no fill until you hover it, and the blob is a real
+   morphing body rather than four dots taking turns. */
+.compactRunActivity {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: none;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: none;
+  gap: 11px;
+  min-height: 40px;
+  min-width: 0;
+  padding: 4px 12px 4px 4px;
+  transition: background 200ms var(--m-ease);
+}
+.compactRunActivity:hover {
+  background: rgba(33, 31, 29, 0.045);
+  border: 0;
+  box-shadow: none;
+  transform: none;
+}
+.compactActivityCore {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  flex: 0 0 30px;
+  height: 30px;
+  isolation: isolate;
+  position: relative;
+}
+/* Three of the four dots become the blob's body, its film and its halo; the
+   fourth is retired by the layout rather than by deleting it from the DOM,
+   so nothing here depends on the markup keeping exactly four.
+
+   Every edge is named rather than set with `inset`, and width/height are
+   explicitly released: the previous rules gave each dot a fixed 10px box and
+   pinned it to one corner, and a shorthand cannot undo a longhand it does
+   not mention — the result was four 7px fragments scattered in a 30px box. */
+.compactActivityCore i,
+.compactActivityCore i:nth-child(1),
+.compactActivityCore i:nth-child(2),
+.compactActivityCore i:nth-child(3) {
+  animation: none;
+  border-radius: 50%;
+  bottom: 4px;
+  height: auto;
+  left: 4px;
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: auto;
+}
+.compactActivityCore i:nth-child(1) {
+  background: linear-gradient(150deg, #efe6f6, #d9c4e8 52%, #bfa0d8);
+  border-radius: 58% 42% 46% 54% / 50% 56% 44% 50%;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.85);
+  animation: mBlobBreathe 5.5s var(--m-ease) infinite;
+}
+.compactActivityCore i:nth-child(2) {
+  background: conic-gradient(from 200deg, var(--m-coral), #7be3d8, #d18ee2, #ffe08a, var(--m-coral));
+  /* Not `inherit` — these are the blob's siblings, not its children, so
+     inheriting reaches the square core box rather than the morphing body. */
+  border-radius: 50%;
+  filter: blur(5px);
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+  animation: mBlobTurn 9s linear infinite;
+}
+.compactActivityCore i:nth-child(3) {
+  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.95), transparent 58%);
+  border-radius: 50%;
+}
+.compactActivityCore i:nth-child(4) { display: none; }
+@keyframes mBlobBreathe {
+  0%, 100% { border-radius: 58% 42% 46% 54% / 50% 56% 44% 50%; transform: scale(1); }
+  50% { border-radius: 44% 56% 58% 42% / 58% 44% 56% 42%; transform: scale(1.07); }
+}
+@keyframes mBlobTurn { to { transform: rotate(360deg); } }
+/* Live is the same body moving with intent, not a different component. */
+.compactRunActivity.isLive .compactActivityCore i:nth-child(1) { animation-duration: 2.3s; }
+.compactRunActivity.isLive .compactActivityCore i:nth-child(2) { animation-duration: 4s; opacity: 0.72; }
+.compactRunActivity.isLive .compactActivityCore i:nth-child(3),
+.compactRunActivity.isLive .compactActivityCore i:nth-child(4) { animation: none; }
+.compactRunActivity.tone-danger .compactActivityCore i:nth-child(2) { filter: blur(5px) saturate(0.15); }
+/* Two lines, not one row: the label is the sentence and the count is the
+   footnote under it. And in ink — these were white, for a dark glass card
+   that no longer exists. */
+.compactActivityCopy {
+  align-items: flex-start;
+  display: grid;
+  gap: 1px;
+}
+.compactActivityCopy strong {
+  animation: none;
+  color: var(--m-ink);
+  font-size: 12px;
+  font-weight: 500;
+}
+.compactActivityCopy small {
+  color: var(--m-ink-3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.compactActivityChevron { color: var(--m-ink-3); }
+
+/* The pre-answer line gets the same treatment: it is a sentence on the
+   page, breathing, rather than a grey label sitting still. */
+.workingText {
+  animation: mWorkingBreathe 2.6s ease-in-out infinite;
+  color: var(--m-ink-3);
+  font-size: 14px;
+}
+@keyframes mWorkingBreathe { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+
+/* ── 6 · Following, or not ───────────────────────────────────────────────
+   The pill only exists while you are away from the foot, so it never
+   overlaps a thread you are already at the bottom of. */
+.jumpToLatest {
+  align-items: center;
+  align-self: center;
+  animation: mJumpIn 220ms var(--m-ease);
+  background: var(--m-ink-btn);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: 0 8px 22px -10px rgba(33, 31, 29, 0.6);
+  color: #fbf8f2;
+  cursor: pointer;
+  display: inline-flex;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  gap: 6px;
+  letter-spacing: 0.02em;
+  margin: 0 auto 8px;
+  padding: 7px 14px;
+  text-transform: uppercase;
+}
+.jumpToLatest:hover { background: var(--m-volcanic); }
+@keyframes mJumpIn { from { opacity: 0; transform: translateY(6px); } }
+
+.queuedMessage {
+  align-items: center;
+  background: var(--m-lav-surface);
+  border-radius: 12px;
+  display: flex;
+  gap: 9px;
+  margin-bottom: 8px;
+  padding: 8px 10px 8px 12px;
+}
+.queuedMessage p {
+  color: var(--m-ink-2);
+  display: flex;
+  flex: 1;
+  font-size: 12px;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+}
+.queuedMessage p strong {
+  color: var(--m-quartz);
+  flex: 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.queuedMessage p { overflow: hidden; }
+.queuedMessage p::after { content: ""; }
+.queuedMessage button {
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  color: var(--m-ink-2);
+  cursor: pointer;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+.queuedMessage button:hover { background: rgba(33, 31, 29, 0.07); color: var(--m-ink); }
+.queuedPulse {
+  animation: mQueuePulse 1.9s ease-in-out infinite;
+  background: var(--m-purple);
+  border-radius: 50%;
+  flex: 0 0 7px;
+  height: 7px;
+}
+@keyframes mQueuePulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+/* ── 7 · The mic ─────────────────────────────────────────────────────────
+   The ring is the live input level, so the control proves it is hearing you
+   before you commit to a sentence. --mic-level is written by the hook. */
+.micButton {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  color: var(--m-ink-2);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px 0 8px;
+  position: relative;
+  transition: background 160ms ease, color 160ms ease;
+}
+.micButton svg { height: 15px; width: 15px; fill: currentColor; }
+.micButton:hover:not(:disabled) { background: var(--m-surface); color: var(--m-ink); }
+.micButton:disabled { cursor: default; opacity: 0.55; }
+.micRing {
+  border-radius: 999px;
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+.micButton.state-recording { background: rgba(255, 119, 89, 0.14); color: #b8341a; }
+.micButton.state-recording .micRing {
+  box-shadow: 0 0 0 calc(1px + var(--mic-level, 0) * 7px) rgba(255, 119, 89, 0.3);
+  transition: box-shadow 90ms linear;
+}
+.micButton.state-transcribing { background: var(--m-lav-surface); color: #6b4b86; }
+.micButton.state-transcribing .micRing {
+  animation: mMicWait 1.4s ease-in-out infinite;
+  box-shadow: 0 0 0 2px rgba(194, 156, 224, 0.45);
+}
+@keyframes mMicWait { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+.sendButton.isQueueing {
+  background: var(--m-surface);
+  box-shadow: inset 0 0 0 1px var(--m-line);
+  color: var(--m-ink-2);
+}
+.sendButton.isQueueing:hover:not(:disabled) { background: var(--m-lav-surface); color: var(--m-ink); }
+
+/* ── 8 · Selected things are lavender and mint, not blue ─────────────────
+   The blue was #4c6ee6, which IS one of their colours — it appears four
+   times on their whole front page, none of them a selected state. What
+   they actually use to say "this one" is a pale surface with dark type,
+   and it sits beside the purple field instead of arguing with it. */
+.contextChip {
+  background: var(--m-lav-surface);
+  border: 1px solid var(--m-lav-edge);
+  border-radius: 999px;
+  color: #4e4b66;
+  font-weight: 500;
+}
+.contextChip[data-kind="project"] {
+  background: var(--m-mint-surface);
+  border-color: var(--m-mint-edge);
+  color: var(--m-green-ink);
+}
+.contextChip > button:hover:not(:disabled) { background: rgba(33, 31, 29, 0.08); }
+
+/* Everywhere else the accent blue was standing in for "chosen". */
+.modelControlChoice button.selected,
+.pickerOption[aria-selected="true"],
+.knowledgeScopeSwitch button.selected {
+  background: var(--m-lav-surface);
+  border-color: var(--m-lav-edge);
+  color: var(--m-ink);
+}
+.knowledgeScopeSwitch button.notionSelected {
+  background: var(--m-mint-surface);
+  border-color: var(--m-mint-edge);
+  color: var(--m-green-ink);
+}
+.primaryButton {
+  background: var(--m-forest);
+  border-color: var(--m-forest);
+  color: #f4f7f5;
+}
+.primaryButton:hover:not(:disabled) { background: #2f4a40; border-color: #2f4a40; }
+
+/* ── 9 · The activity drawer, unboxed ────────────────────────────────────
+   It read as a system console bolted to the side of a reading app: a hard
+   header band, a card per event, a rule under everything. It is a margin
+   note now — one hairline rail, quiet mono labels, and nothing boxed except
+   the approvals, which are the only things you are asked to act on. */
+.runDrawer { background: var(--m-paper); border-left: 1px solid var(--m-line); }
+.timelineHeader {
+  align-items: baseline;
+  background: none;
+  border-bottom: 0;
+  color: var(--m-ink);
+  min-height: 0;
+  padding: 22px 20px 12px 24px;
+}
+.timelineHeader h2 {
+  color: var(--m-ink);
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+.timelineHeader strong { color: var(--m-ink); }
+.timelineHeader .eyebrow,
+.timelineHeader small {
+  color: var(--m-ink-3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.timelineHeader .eyebrow::before { display: none; }
+.timelineHeader span { color: var(--m-ink-3); }
+.runDrawerClose { color: var(--m-ink-3); }
+.runDrawerClose:hover { color: var(--m-ink); }
+.streamState {
+  background: none;
+  border: 0;
+  color: var(--m-ink-3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  padding: 0;
+}
+.streamState.stream-live { background: none; border: 0; color: var(--m-green-ink); }
+.streamState i { height: 6px; width: 6px; }
+
+.timelineList { padding: 6px 20px 24px 24px; }
+.timelineEvent { gap: 11px; grid-template-columns: 9px 1fr; padding-bottom: 17px; }
+/* One continuous hairline behind every node, rather than a segment drawn
+   per event that stops and restarts at each gap. */
+.timelineEvent::before { background: var(--m-line); left: 4px; top: 9px; width: 1px; }
+.timelineNode {
+  background: var(--m-paper);
+  border: 0;
+  box-shadow: inset 0 0 0 1.5px #c3bcae;
+  height: 9px;
+  margin-top: 4px;
+  width: 9px;
+}
+.tone-success .timelineNode { box-shadow: inset 0 0 0 1.5px var(--m-green-ink); }
+.tone-model .timelineNode { box-shadow: inset 0 0 0 1.5px #b48ad0; }
+.tone-attention .timelineNode { background: var(--m-coral-soft); box-shadow: inset 0 0 0 1.5px var(--m-coral); }
+.tone-danger .timelineNode { background: #c0492f; box-shadow: inset 0 0 0 1.5px #c0492f; }
+.timelineEventTitle strong {
+  color: var(--m-ink);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.timelineEventTitle time {
+  color: var(--m-ink-3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+}
+.timelineEventBody > p {
+  color: var(--m-ink-2);
+  font-size: 11.5px;
+  line-height: 1.55;
+  margin: 2px 0 0;
+}
+.timelineEmpty { color: var(--m-ink-3); max-width: 210px; }
+.timelineEmpty span {
+  background: var(--m-surface);
+  color: var(--m-ink-3);
+  font-size: 15px;
+  height: 34px;
+  width: 34px;
+}
+.timelineEmpty p { font-size: 11.5px; line-height: 1.6; }
+.timelineFooter {
+  border-top: 1px solid var(--m-line);
+  color: var(--m-ink-3);
+  font-size: 10px;
+  line-height: 1.55;
+  padding: 11px 20px 12px 24px;
+}
+/* The approvals stay a card. They are the one thing in this panel that is
+   a question rather than a record, and they should not read as prose. */
+.approvalCard {
+  background: var(--m-paper-lift);
+  border: 0;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--m-coral-soft), 0 6px 18px -12px rgba(33, 31, 29, 0.4);
+  margin-top: 9px;
+}
+.approvalTitle span {
+  background: var(--m-coral);
+  border-radius: 5px;
+  color: #fff;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+}
+.recoveryBanner {
+  background: var(--m-lav-surface);
+  border-bottom: 1px solid var(--m-lav-edge);
+}
+
+/* ── 10 · Sidebar ────────────────────────────────────────────────────────
+   It was the last surface still wearing the previous generation: a glass
+   slab with two coloured blooms bleeding through it. Flat paper, one
+   hairline, and the only colour is the coral tick on the open conversation
+   — the same move their site makes, where one warm mark does all the
+   "you are here" work in an otherwise achromatic column. */
+.sidebar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--m-paper);
+  border-right: 1px solid var(--m-line);
+  box-shadow: none;
+  padding: 18px 12px 12px;
+}
+.brandRow { margin-bottom: 16px; }
+.newChatButton {
+  background: var(--m-ink-btn);
+  border: 0;
+  color: #fbf8f2;
+  font-size: 12px;
+  min-height: 38px;
+}
+.newChatButton:hover { background: var(--m-volcanic); border: 0; }
+.newChatButton kbd {
+  background: rgba(255, 255, 255, 0.15);
+  border: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+}
+.newChatButton::after {
+  background: linear-gradient(76deg, transparent 34%, rgba(255, 255, 255, 0.16) 50%, transparent 66%);
+}
+.primaryNav { gap: 1px; }
+.primaryNav a {
+  border: 0;
+  border-radius: 9px;
+  color: var(--m-ink-2);
+  font-size: 12.5px;
+  font-weight: 400;
+  min-height: 34px;
+}
+.primaryNav a:hover { background: var(--m-surface); color: var(--m-ink); }
+.primaryNav a.active { background: var(--m-surface); color: var(--m-ink); font-weight: 500; }
+.primaryNav a.active .navGlyph { color: var(--m-forest); }
+.navGlyph { color: var(--m-ink-3); }
+.navSignal::before { background: var(--m-coral); }
+.sidebarDivider { background: var(--m-line); margin: 14px 2px; }
+.historyHeader { padding: 0 4px 6px; }
+.historyHeader > span:last-child {
+  color: var(--m-ink-3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+}
+.sidebarSearch {
+  background: var(--m-surface);
+  border: 0;
+  border-radius: 9px;
+  box-shadow: none;
+  min-height: 32px;
+}
+.sidebarSearch:focus-within { box-shadow: inset 0 0 0 1px var(--m-lav-edge); }
+.sidebarSearch input { color: var(--m-ink); font-size: 12px; }
+.sidebarSearch > span,
+.sidebarSearch input::placeholder { color: var(--m-ink-3); }
+.sidebarSearch kbd {
+  background: none;
+  border: 0;
+  color: var(--m-ink-3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+}
+.conversationHistory a {
+  border-radius: 8px;
+  color: var(--m-ink-2);
+  font-size: 12.5px;
+  min-height: 30px;
+}
+.conversationHistory a:hover { background: var(--m-surface); color: var(--m-ink); }
+.conversationHistory a.active {
+  background: var(--m-surface);
+  box-shadow: inset 2px 0 0 var(--m-coral);
+  color: var(--m-ink);
+}
+.conversationDeleteButton:hover { background: rgba(192, 73, 47, 0.1); color: #c0492f; }
+.historyEmpty { color: var(--m-ink-3); font-size: 11.5px; }
+.privacyBadge {
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--m-line);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 12px 4px 4px;
+}
+.privacyBadge strong { color: var(--m-ink-2); font-size: 11px; font-weight: 500; }
+.privacyBadge small {
+  color: var(--m-ink-3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.privacyPulse { background: var(--m-forest); box-shadow: 0 0 0 4px rgba(57, 89, 77, 0.14); }
+.connectionDot.connected { background: var(--m-forest); }
+
+@media (prefers-reduced-motion: reduce) {
+  .compactActivityCore i,
+  .workingText,
+  .queuedPulse,
+  .micButton.state-transcribing .micRing,
+  .jumpToLatest { animation: none; }
+}

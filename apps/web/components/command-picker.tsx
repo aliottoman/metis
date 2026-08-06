@@ -47,7 +47,14 @@ type CommandPickerProps = {
   header?: ReactNode;
   footer?: ReactNode;
   busy?: boolean;
+  /** When set, a typed name that matches no option's label exactly grows a
+   *  final "Create …" row; choosing it calls back with the trimmed query.
+   *  The picker's search box is the name field — no second input to manage. */
+  onCreate?: (name: string) => void;
+  createMeta?: string;
 };
+
+const CREATE_ROW_ID = "__commandPickerCreate__";
 
 /** Ranks a match so an exact prefix beats a word start, which beats a mention
  *  buried mid-string. Returns -1 when the option does not match at all. */
@@ -80,6 +87,8 @@ export function CommandPicker({
   header,
   footer,
   busy = false,
+  onCreate,
+  createMeta,
 }: CommandPickerProps) {
   const id = useId();
   const [query, setQuery] = useState("");
@@ -94,14 +103,30 @@ export function CommandPicker({
     const rows: PickerOption[] = clearOption
       ? [{ id: clearOption.id, label: clearOption.label, meta: clearOption.meta }, ...options]
       : options;
-    if (!needle) return rows;
-    return rows
-      .map((option, index) => ({ option, index, rank: score(option, needle) }))
-      .filter((item) => item.rank >= 0)
-      // Stable: equal ranks keep the order the caller chose (usually recency).
-      .sort((a, b) => b.rank - a.rank || a.index - b.index)
-      .map((item) => item.option);
-  }, [clearOption, needle, options]);
+    const ranked = !needle
+      ? rows
+      : rows
+          .map((option, index) => ({ option, index, rank: score(option, needle) }))
+          .filter((item) => item.rank >= 0)
+          // Stable: equal ranks keep the order the caller chose (usually recency).
+          .sort((a, b) => b.rank - a.rank || a.index - b.index)
+          .map((item) => item.option);
+    // The create row rides last, after every real match: a typo one letter
+    // away from an existing record should surface the record first, not a
+    // near-duplicate folder. An exact label match removes it entirely.
+    const name = query.trim();
+    if (
+      onCreate &&
+      name &&
+      !options.some((option) => option.label.toLowerCase() === name.toLowerCase())
+    ) {
+      return [
+        ...ranked,
+        { id: CREATE_ROW_ID, label: `Create “${name}”`, meta: createMeta, glyph: "＋" },
+      ];
+    }
+    return ranked;
+  }, [clearOption, createMeta, needle, onCreate, options, query]);
 
   // Sections only make sense on the unfiltered list; once results are ranked by
   // relevance, grouping them would fight the ranking.
@@ -186,7 +211,7 @@ export function CommandPicker({
       case "Enter": {
         event.preventDefault();
         const option = visible[activeIndex];
-        if (option && !option.disabled) onSelect(option.id);
+        if (option && !option.disabled) choose(option);
         break;
       }
       case "Escape":
@@ -196,6 +221,14 @@ export function CommandPicker({
       default:
         break;
     }
+  }
+
+  function choose(option: PickerOption) {
+    if (option.id === CREATE_ROW_ID) {
+      if (onCreate) onCreate(query.trim());
+      return;
+    }
+    onSelect(option.id);
   }
 
   let flatIndex = -1;
@@ -241,7 +274,7 @@ export function CommandPicker({
                     option.disabled ? "isDisabled" : "",
                   ].filter(Boolean).join(" ")}
                   onPointerEnter={() => !option.disabled && setActiveIndex(index)}
-                  onClick={() => !option.disabled && !busy && onSelect(option.id)}
+                  onClick={() => !option.disabled && !busy && choose(option)}
                 >
                   {option.glyph ? <i className="commandPickerGlyph" aria-hidden="true">{option.glyph}</i> : null}
                   <span>
