@@ -170,9 +170,14 @@ class Settings(BaseSettings):
     oci_responses_base_url: str = (
         "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/openai/v1"
     )
-    oci_responses_max_output_tokens: int = Field(default=16_384, ge=256, le=131_072)
-    oci_recent_history_chars: int = Field(default=64_000, ge=12_000, le=400_000)
-    oci_memory_context_chars: int = Field(default=24_000, ge=8_000, le=100_000)
+    # Grok 4.3 carries a very large context, and these defaults were set for a
+    # smaller one: they bound what Metis is willing to SEND and generate, not
+    # what the model can hold, so a conservative value simply wastes the
+    # window. Raised to use it — long documents, long threads, whole-file
+    # answers — while staying inside the validated ceilings.
+    oci_responses_max_output_tokens: int = Field(default=65_536, ge=256, le=131_072)
+    oci_recent_history_chars: int = Field(default=240_000, ge=12_000, le=400_000)
+    oci_memory_context_chars: int = Field(default=80_000, ge=8_000, le=100_000)
 
     # Bounds the project act→observe→decide loop. Writes are staged into an
     # overlay as the loop runs and reach disk only through the single

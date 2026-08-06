@@ -2334,3 +2334,44 @@ class DocumentOutlineV1(Contract):
     subtitle: str = Field(default="", max_length=240)
     sections: list[DocumentSectionV1] = Field(default_factory=list, max_length=16)
     sources: list[str] = Field(default_factory=list, max_length=12)
+
+
+class AttentionItemV1(Contract):
+    """One thing waiting on the user, from whichever workbench holds it."""
+
+    key: str
+    kind: Literal[
+        "run_approval", "customer_action", "customer_note",
+        "tool_proposal", "memory", "asset_trust", "stale_source",
+    ]
+    kind_label: str = ""
+    title: str
+    detail: str = ""
+    href: str = ""
+    account_id: str | None = None
+    due_at: datetime | None = None
+    created_at: datetime | None = None
+    overdue: bool = False
+    # Consequence, not recency: what it costs to leave this until tomorrow.
+    priority: float = 0.0
+    deferred_until: datetime | None = None
+
+
+class AttentionFeedV1(Contract):
+    generated_at: datetime
+    items: list[AttentionItemV1] = Field(default_factory=list)
+    # The headline. If it says three things need you, these are the three.
+    top: list[AttentionItemV1] = Field(default_factory=list)
+    # Snoozed items travel separately so `items` always means "live work",
+    # and a deferred thing can still be brought back without a second call.
+    deferred_items: list[AttentionItemV1] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)
+    total: int = 0
+    deferred: int = 0
+
+
+class AttentionDeferV1(Contract):
+    key: str = Field(min_length=1, max_length=200)
+    kind: str = Field(min_length=1, max_length=40)
+    days: int = Field(default=7, ge=1, le=365)
+    reason: str = Field(default="", max_length=400)

@@ -1,4 +1,5 @@
 import type {
+  AttentionFeed,
   AssetEnvVar,
   AssetLogsV1,
   AssetV1,
@@ -1843,4 +1844,30 @@ export async function recommendDac(body: DacRecommendRequest): Promise<DacRecomm
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+/** Everything waiting on the user, ranked by consequence.
+ *
+ * One endpoint by design: the Today view, a morning brief, and any
+ * notification must agree about what is outstanding. */
+export async function getAttention(top = 3): Promise<AttentionFeed> {
+  return request<AttentionFeed>(`${API_PREFIX}/attention?top=${top}`);
+}
+
+export async function deferAttention(
+  key: string,
+  kind: string,
+  days: number,
+): Promise<AttentionFeed> {
+  return request<AttentionFeed>(`${API_PREFIX}/attention/defer`, {
+    method: "POST",
+    body: JSON.stringify({ key, kind, days }),
+  });
+}
+
+export async function undeferAttention(key: string): Promise<AttentionFeed> {
+  return request<AttentionFeed>(
+    `${API_PREFIX}/attention/defer/${encodeURIComponent(key)}`,
+    { method: "DELETE" },
+  );
 }

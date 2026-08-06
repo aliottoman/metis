@@ -1050,3 +1050,32 @@ export interface DacRecommendation {
   model_backed: boolean;
   notes: string[];
 }
+
+export type AttentionKind =
+  | "run_approval" | "customer_action" | "customer_note"
+  | "tool_proposal" | "memory" | "asset_trust" | "stale_source";
+
+export interface AttentionItem {
+  key: string;
+  kind: AttentionKind;
+  kind_label: string;
+  title: string;
+  detail: string;
+  href: string;
+  account_id: string | null;
+  due_at: string | null;
+  created_at: string | null;
+  overdue: boolean;
+  priority: number;
+  deferred_until: string | null;
+}
+
+export interface AttentionFeed {
+  generated_at: string;
+  items: AttentionItem[];
+  top: AttentionItem[];
+  deferred_items: AttentionItem[];
+  counts: Partial<Record<AttentionKind, number>>;
+  total: number;
+  deferred: number;
+}

@@ -23,9 +23,13 @@ type NavIconName =
   | "knowledge"
   | "memory"
   | "sizing"
+  | "today"
   | "settings";
 
 const navigation: Array<{ href: string; label: string; icon: NavIconName }> = [
+  // Today is the front door: one ranked queue of everything waiting, so work
+  // stops hiding behind eight equal destinations.
+  { href: "/today", label: "Today", icon: "today" },
   { href: "/", label: "Chat", icon: "chat" },
   { href: "/customers", label: "Customers", icon: "customers" },
   { href: "/assets", label: "Assets", icon: "assets" },
@@ -52,6 +56,10 @@ function NavIcon({ name }: { name: NavIconName }) {
     strokeLinejoin: "round" as const,
     strokeWidth: 1.55,
   };
+  if (name === "today") {
+    // A checklist: the page is a queue of decisions, not a destination.
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4.2 5.6 5.4 6.8l2.2-2.4M4.2 10.4l1.2 1.2 2.2-2.4M4.2 15.2l1.2 1.2 2.2-2.4M10.6 5.3h5.2M10.6 10.1h5.2M10.6 14.9h5.2" /></svg>;
+  }
   if (name === "chat") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4 4.7h12v8.1H9l-3.7 2.8v-2.8H4z" /></svg>;
   }

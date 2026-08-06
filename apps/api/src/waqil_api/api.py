@@ -57,6 +57,8 @@ from .contracts import (
     CustomerActionStatusV1,
     CustomerActionV1,
     CustomerCaptureV1,
+    AttentionDeferV1,
+    AttentionFeedV1,
     CustomerDashboardV1,
     CustomerFactCreateV1,
     CustomerFactEditV1,
@@ -286,6 +288,33 @@ def _utc_isoformat(value: datetime | None) -> str | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC).isoformat()
     return value.astimezone(UTC).isoformat()
+
+
+@router.get("/attention", response_model=AttentionFeedV1)
+async def attention_feed(request: Request, top: int = 3) -> AttentionFeedV1:
+    """Everything waiting on the user, ranked by consequence.
+
+    One endpoint on purpose: the Today view, a morning brief, and any
+    notification must agree about what is outstanding."""
+    return await runtime(request).attention.feed(top=max(1, min(top, 10)))
+
+
+@router.post("/attention/defer", response_model=AttentionFeedV1)
+async def defer_attention(
+    body: AttentionDeferV1, request: Request
+) -> AttentionFeedV1:
+    """Snooze an item. Deferring is a decision, not a dismissal — the item
+    returns on its own date instead of being silently dropped."""
+    app = runtime(request)
+    await app.attention.defer(body.key, body.kind, body.days, body.reason)
+    return await app.attention.feed()
+
+
+@router.delete("/attention/defer/{item_key:path}", response_model=AttentionFeedV1)
+async def undefer_attention(item_key: str, request: Request) -> AttentionFeedV1:
+    app = runtime(request)
+    await app.attention.undefer(item_key)
+    return await app.attention.feed()
 
 
 @router.get("/customers/dashboard", response_model=CustomerDashboardV1)

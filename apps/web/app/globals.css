@@ -9995,3 +9995,69 @@ body {
   .modelControlTrigger.state-loading > i,
   .modelControlTrigger.state-busy > i { animation: none; }
 }
+
+/* ── Today: the attention queue ───────────────────────────────────────────
+   The front door. Its job is to answer one question — what needs me now —
+   so the top three are cards and everything else is a quiet list beneath
+   them, ordered by consequence rather than by which page produced it. */
+.todayTop {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.todayTopCard {
+  align-items: center;
+  background: var(--glass-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 14px;
+  grid-template-columns: auto 1fr auto;
+  padding: 14px 16px;
+}
+.todayTopCard.isOverdue { border-color: rgba(194, 92, 59, 0.45); }
+.todayRank {
+  align-items: center;
+  background: var(--canvas-deep);
+  border-radius: 50%;
+  color: var(--muted);
+  display: flex;
+  flex: 0 0 26px;
+  font-size: 11px;
+  font-weight: 700;
+  height: 26px;
+  justify-content: center;
+}
+.todayTopCard > div:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.todayKind {
+  color: var(--muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.todayTopCard strong { font-size: 14px; line-height: 1.4; }
+.todayTopCard small { color: var(--muted); font-size: 11.5px; }
+.todayTopActions { align-items: center; display: flex; gap: 8px; }
+
+.todayList { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.todayList li {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 11px 2px;
+}
+.todayList li:first-child { border-top: 0; }
+.todayList li.isOverdue .todayItemBody strong { color: var(--terracotta); }
+.todayItemBody { display: grid; gap: 2px; min-width: 0; }
+.todayItemBody strong { font-size: 13px; font-weight: 550; line-height: 1.4; }
+.todayItemBody small { color: var(--muted); font-size: 11px; }
+.todayItemActions { align-items: center; display: flex; flex: none; gap: 8px; }
+
+@media (max-width: 760px) {
+  .todayTopCard { grid-template-columns: auto 1fr; }
+  .todayTopActions { grid-column: 2; justify-content: flex-start; }
+  .todayList li { align-items: flex-start; flex-direction: column; gap: 8px; }
+}

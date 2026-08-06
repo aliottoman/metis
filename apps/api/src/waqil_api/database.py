@@ -839,6 +839,29 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation_live
     ON messages(conversation_id, created_at) WHERE superseded_at IS NULL;
 """
 
+SCHEMA_V19 = """
+-- Deferral for the attention queue.
+--
+-- A queue that can only approve or reject becomes a guilt list: 51 assets that
+-- have needed setup for months are not "today's work", but nothing could say
+-- so, and they crowded out what was. Deferring records a decision — "not now,
+-- ask me again after this date" — so the queue can stay honest about what
+-- genuinely needs attention.
+--
+-- Keyed by the item's stable identity rather than a foreign key, because the
+-- queue spans seven different record types and a snooze must survive the item
+-- being rebuilt on the next aggregation.
+CREATE TABLE IF NOT EXISTS attention_deferrals (
+    item_key TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    deferred_until TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attention_deferrals_until
+    ON attention_deferrals(deferred_until);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -858,6 +881,7 @@ MIGRATIONS: dict[int, str] = {
     16: SCHEMA_V16,
     17: SCHEMA_V17,
     18: SCHEMA_V18,
+    19: SCHEMA_V19,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -5038,6 +5062,130 @@ class Database:
                 ).fetchall()
 
         return {str(row["win_id"]): dict(row) for row in await self._call(operation)}
+
+    async def attention_data(self) -> dict[str, Any]:
+        """Everything waiting on the user, in one pass.
+
+        One query set rather than one per workbench: the Today view, any brief,
+        and any future notification must agree about what is outstanding, and
+        three separate implementations would drift apart the first time a
+        status value changed."""
+
+        def operation() -> dict[str, Any]:
+            with self._lock:
+                conn = self._connection()
+                now = _now()
+                pending_memories = [
+                    dict(row) for row in conn.execute(
+                        """SELECT id, kind, content, confidence, created_at, source_run_id
+                        FROM memory_proposals WHERE status = 'pending'
+                        ORDER BY created_at DESC LIMIT 50"""
+                    ).fetchall()
+                ]
+                waiting_notes = [
+                    dict(row) for row in conn.execute(
+                        """SELECT s.id, s.title, s.account_id, s.created_at,
+                                  a.name AS account_name
+                        FROM customer_sources s
+                        JOIN customer_accounts a ON a.id = s.account_id
+                        WHERE s.status = 'waiting'
+                        ORDER BY s.created_at LIMIT 50"""
+                    ).fetchall()
+                ]
+                open_actions = [
+                    dict(row) for row in conn.execute(
+                        """SELECT c.id, c.description, c.owner, c.due_at, c.created_at,
+                                  c.account_id, a.name AS account_name
+                        FROM customer_actions c
+                        JOIN customer_accounts a ON a.id = c.account_id
+                        WHERE c.status = 'open'
+                        ORDER BY CASE
+                            WHEN c.due_at IS NOT NULL AND c.due_at < ? THEN 0
+                            WHEN c.due_at IS NOT NULL THEN 1 ELSE 2 END,
+                            c.due_at, c.created_at
+                        LIMIT 50""",
+                        (now,),
+                    ).fetchall()
+                ]
+                waiting_runs = [
+                    dict(row) for row in conn.execute(
+                        """SELECT r.id, r.conversation_id, r.created_at,
+                                  m.content AS prompt
+                        FROM runs r
+                        LEFT JOIN messages m ON m.id = r.user_message_id
+                        WHERE r.status = 'awaiting_approval'
+                        ORDER BY r.created_at DESC LIMIT 25"""
+                    ).fetchall()
+                ]
+                tool_proposals = [
+                    dict(row) for row in conn.execute(
+                        """SELECT id, summary, risk_level, created_at
+                        FROM tool_definition_proposals
+                        WHERE status = 'pending' ORDER BY created_at DESC LIMIT 25"""
+                    ).fetchall()
+                ] if self._has_table(conn, "tool_definition_proposals") else []
+                stale_sources = [
+                    dict(row) for row in conn.execute(
+                        """SELECT id, label, status, consent FROM corpus_sources
+                        WHERE status IN ('pending','error') LIMIT 25"""
+                    ).fetchall()
+                ] if self._has_table(conn, "corpus_sources") else []
+                deferrals = {
+                    str(row["item_key"]): str(row["deferred_until"])
+                    for row in conn.execute(
+                        "SELECT item_key, deferred_until FROM attention_deferrals "
+                        "WHERE deferred_until > ?",
+                        (now,),
+                    ).fetchall()
+                }
+                return {
+                    "pending_memories": pending_memories,
+                    "waiting_notes": waiting_notes,
+                    "open_actions": open_actions,
+                    "waiting_runs": waiting_runs,
+                    "tool_proposals": tool_proposals,
+                    "stale_sources": stale_sources,
+                    "deferrals": deferrals,
+                    "now": now,
+                }
+
+        return await self._call(operation)
+
+    @staticmethod
+    def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+        """Whether a table exists. The queue spans optional subsystems, and a
+        missing one should narrow the queue, never fail the request."""
+        return bool(
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (name,)
+            ).fetchone()
+        )
+
+    async def defer_attention_item(
+        self, item_key: str, kind: str, deferred_until: str, reason: str = ""
+    ) -> None:
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO attention_deferrals
+                       (item_key, kind, deferred_until, reason, created_at)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(item_key) DO UPDATE SET
+                         deferred_until = excluded.deferred_until,
+                         reason = excluded.reason""",
+                    (item_key, kind, deferred_until, reason, _now()),
+                )
+
+        await self._call(operation)
+
+    async def clear_attention_deferral(self, item_key: str) -> None:
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "DELETE FROM attention_deferrals WHERE item_key = ?", (item_key,)
+                )
+
+        await self._call(operation)
 
     async def customer_dashboard_data(self) -> dict[str, Any]:
         def operation() -> dict[str, Any]:
