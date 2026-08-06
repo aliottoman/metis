@@ -25,6 +25,7 @@ from .contracts import (
     PlanEnvelopeV1,
     PlanStepV1,
     PlanningRequestV1,
+    AssetRecipeV1,
     ProjectAgentStepV1,
     ProjectBuildPlanV1,
     ProjectAgentStepWireV1,
@@ -896,6 +897,42 @@ Represent every boundary with one Cluster and every relationship exactly once.
 Use only literal Blank, Cluster, Diagram, and Edge calls and the >> operator.
 Never add other imports, functions, control flow, paths, shell access, networking,
 comments containing instructions, or executable request text."""
+
+
+ASSET_RECIPE_SYSTEM = """You write the launch recipe for one locally discovered
+project folder, from a bounded read-only description of it. Return only
+AssetRecipeV1.
+
+launch_command is an argv list — plain tokens, executed directly with no
+shell, so pipes, &&, redirects, and quoting have no meaning and must not
+appear. At most 32 tokens. Placeholders the host substitutes at launch:
+  {uv}      a pinned uv binary — the preferred runner for Python projects
+  {python}  the host's python3
+  {host}    the loopback address the app must bind
+  {port}    the port the app must serve on
+
+A web app MUST bind {host} and {port} through its own flags. Two real
+recipes, verbatim, as taste:
+
+Streamlit app with requirements.txt:
+  ["{uv}", "run", "--isolated", "--no-project", "--no-env-file",
+   "--python", "3.11", "--with-requirements", "requirements.txt",
+   "--with", "streamlit", "--", "python", "-m", "streamlit", "run",
+   "app.py", "--server.address", "{host}", "--server.port", "{port}",
+   "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+
+FastAPI app with a pyproject:
+  ["{uv}", "run", "--isolated", "--no-env-file", "--with-requirements",
+   "requirements.txt", "--with", "uvicorn", "--", "python", "-m",
+   "uvicorn", "app:app", "--host", "{host}", "--port", "{port}"]
+
+Prefer {uv} with --isolated for Python so the launch never depends on a
+pre-made virtualenv. Name only dependencies evidenced by the input files.
+entrypoint is the main source file if one is evident. launch_path is the
+URL path to open ("" for the root). env_keys are configuration NAMES the
+project reads (never values, never secrets themselves).
+If the folder is a static site with an index.html and no server code, use
+["{python}", "-m", "http.server", "{port}", "--bind", "{host}"]."""
 
 
 PROJECT_BOOTSTRAP_SYSTEM = """You are creating the first durable working map for a
@@ -2753,6 +2790,20 @@ class CohereModelProvider:
         if not isinstance(text, str):
             raise ModelProviderError("Cohere Transcribe returned no transcript")
         return text.strip()
+
+    async def draft_asset_recipe(self, context: dict[str, Any]) -> AssetRecipeV1:
+        """One launch recipe for a discovered project folder.
+
+        The judge of the result is the asset scanner's own parser, applied by
+        the caller before anything is written — this method only has to get a
+        plausible argv out of the model.
+        """
+        return await self._structured(
+            AssetRecipeV1,
+            system_prompt=ASSET_RECIPE_SYSTEM,
+            user_prompt=json.dumps(context, ensure_ascii=False),
+            max_output_tokens=min(2048, self.settings.cohere_max_output_tokens),
+        )
 
     async def _structured(
         self,

@@ -262,7 +262,18 @@ def _manifest(project: Path) -> _ManifestMetadata:
         return metadata
     if not isinstance(body, dict):
         return metadata
+    return manifest_metadata_from_body(body)
 
+
+def manifest_metadata_from_body(body: dict) -> _ManifestMetadata:
+    """Parse one asset.json body with the exact rules the scanner applies.
+
+    Public seam, deliberately: recipe generation validates a model-drafted
+    manifest through THIS function before writing it, so "the generator
+    accepted it" and "the scanner will accept it" can never be two different
+    judgements. A candidate whose command comes back None here is unusable.
+    """
+    metadata = _ManifestMetadata()
     metadata.name = _single_line(body.get("name"), 120)
     metadata.summary = _single_line(
         body.get("summary", body.get("description")), 240

@@ -1763,6 +1763,20 @@ export async function approveAsset(assetId: string): Promise<AssetV1> {
   return normalizeAsset(unwrap(response));
 }
 
+/**
+ * Draft .metis/asset.json with Command A+ for an asset that has none.
+ *
+ * Generation is not trust: the result lands as launch_configured and NOT
+ * launch_approved, so the fingerprint review still gates the first start.
+ */
+export async function generateAssetRecipe(assetId: string): Promise<AssetV1> {
+  const response = await request<unknown>(
+    `${API_PREFIX}/assets/${encodeURIComponent(assetId)}/manifest/generate`,
+    { method: "POST" },
+  );
+  return normalizeAsset(unwrap(response));
+}
+
 export async function revokeAssetApproval(assetId: string): Promise<AssetV1> {
   const response = await request<unknown>(
     `${API_PREFIX}/assets/${encodeURIComponent(assetId)}/approval`,

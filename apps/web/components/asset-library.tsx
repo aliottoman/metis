@@ -13,6 +13,7 @@ import {
 
 import {
   approveAsset,
+  generateAssetRecipe,
   getAssetLogs,
   listAssets,
   revokeAssetApproval,
@@ -31,7 +32,7 @@ const MAX_ASSET_DRAWER_WIDTH = 880;
 const TAG_TONES = ["mint", "coral", "violet", "blue", "gold"] as const;
 
 type LifecycleFilter = "all" | "running" | "ready" | "review" | "setup";
-type AssetAction = "start" | "stop" | "approve" | "revoke";
+type AssetAction = "start" | "stop" | "approve" | "revoke" | "recipe";
 type PendingAssetAction = { assetId: string; action: AssetAction } | null;
 
 function messageOf(error: unknown, fallback: string): string {
@@ -412,7 +413,9 @@ export function AssetLibrary() {
           ? await stopAsset(asset.id)
           : action === "approve"
             ? await approveAsset(asset.id)
-            : await revokeAssetApproval(asset.id);
+            : action === "recipe"
+              ? await generateAssetRecipe(asset.id)
+              : await revokeAssetApproval(asset.id);
       setAssets((current) => mergeAsset(current, updated));
       if (action === "start") {
         setPlayerId(updated.id);
@@ -428,7 +431,9 @@ export function AssetLibrary() {
           ? "This asset could not be started."
           : action === "stop"
             ? "This asset could not be stopped."
-            : "The launch trust decision could not be saved.",
+            : action === "recipe"
+              ? "A launch recipe could not be generated."
+              : "The launch trust decision could not be saved.",
       ));
     } finally {
       setBusyAction(null);
@@ -780,9 +785,21 @@ export function AssetLibrary() {
                     <div>
                       <h3 id="asset-recipe-title">A reviewed launch recipe is required</h3>
                       <p>
-                        Metis discovered this project, but will not guess how to run it. Add and
-                        review <code>.metis/asset.json</code> before launch controls become available.
+                        Metis discovered this project, but will not guess how to run it.
+                        Command A+ can draft <code>.metis/asset.json</code> from the project&rsquo;s
+                        own files — the drafted command still needs your review before anything runs.
                       </p>
+                      <button
+                        className="primaryButton"
+                        type="button"
+                        disabled={busyAction != null}
+                        onClick={() => void runAction(selected, "recipe")}
+                        title="Reads the project's file list, README and config heads; writes .metis/asset.json for your review"
+                      >
+                        {selectedBusyAction === "recipe"
+                          ? "Command A+ is drafting…"
+                          : "Generate recipe with Command A+"}
+                      </button>
                     </div>
                   </section>
                 ) : null}

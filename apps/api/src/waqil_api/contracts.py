@@ -279,6 +279,20 @@ class AssetV1(Contract):
     url: str | None = None
 
 
+class AssetRecipeV1(Contract):
+    """A model-drafted launch recipe for one asset, flat by design.
+
+    This is the wire shape Command A+ fills through one function call —
+    nested `launch.command` objects decode less reliably than flat fields,
+    so the endpoint assembles the real .metis/asset.json body from these.
+    """
+
+    entrypoint: str | None = Field(default=None, max_length=240)
+    launch_command: list[str] = Field(min_length=1, max_length=32)
+    launch_path: str = Field(default="", max_length=240)
+    env_keys: list[str] = Field(default_factory=list, max_length=64)
+
+
 class AssetCreateV1(Contract):
     """A request to start a brand-new, empty project folder from the picker.
 

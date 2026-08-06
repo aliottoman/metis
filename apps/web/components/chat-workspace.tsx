@@ -38,6 +38,7 @@ import {
   uploadFile,
 } from "@/lib/api";
 import { rememberConversation } from "@/lib/recent-conversations";
+import { freshToken } from "@/lib/token";
 import { mergeAssistantReasoning, mergeAssistantRunEvent, messageBelongsToRun } from "@/lib/run-history";
 import { attachmentBadge, CHAT_ATTACHMENT_ACCEPT } from "@/lib/attachments";
 import {
@@ -209,6 +210,10 @@ export function ChatWorkspace() {
   const [projects, setProjects] = useState<ProjectWorkspace[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectMode, setProjectMode] = useState<ProjectMode>("grok_bootstrap_local");
+  // Whether the user has picked a project mode themselves this session. The
+  // Command A+ default below must never fight an explicit choice or a mode
+  // restored from a stored conversation.
+  const userChoseProjectModeRef = useRef(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [projectOpening, setProjectOpening] = useState(false);
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>("auto");
@@ -479,8 +484,18 @@ export function ChatWorkspace() {
     }
   }
 
+  // Command A+ leads projects by default when its key is configured — the
+  // measured result behind this: on the same build spec it wrote better code
+  // than the hosted Ollama lane and needs no OCI subscription. Grok stays the
+  // default only where there is no Cohere key to use.
+  useEffect(() => {
+    if (userChoseProjectModeRef.current || selectedProjectId) return;
+    if (modelPreference?.cohere_available) setProjectMode("cohere_continuous");
+  }, [modelPreference?.cohere_available, selectedProjectId]);
+
   async function chooseProjectMode(mode: ProjectMode) {
     if (projectOpening || runActive || projectMode === mode) return;
+    userChoseProjectModeRef.current = true;
     const blocked = projectModeBlocked(mode, modelPreference);
     if (blocked) {
       setError(blocked);
@@ -933,7 +948,7 @@ export function ChatWorkspace() {
 
     const submittedContent = content || "Please review the attached file or files.";
     const userMessage: ChatMessage = {
-      id: `optimistic-${crypto.randomUUID()}`,
+      id: `optimistic-${freshToken()}`,
       role: "user",
       content: submittedContent,
       attachments: outgoingAttachments,
@@ -1207,7 +1222,7 @@ export function ChatWorkspace() {
   }
 
   function startFreshConversation() {
-    const token = crypto.randomUUID();
+    const token = freshToken();
     handledNewRequestRef.current = token;
     resetConversationState();
     router.push(`/?new=${token}`);

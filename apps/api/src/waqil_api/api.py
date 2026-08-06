@@ -12,6 +12,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, 
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from .asset_library import AssetLibraryError
+from .asset_recipe import RecipeError, gather_recipe_context, write_recipe
 from .audio_transcode import TranscodeError, needs_transcoding, to_wav
 from .attachment_text import (
     AttachmentExtractionError,
@@ -851,6 +852,50 @@ async def create_asset(body: AssetCreateV1, request: Request) -> AssetV1:
         return await runtime(request).assets.create(body.name)
     except AssetLibraryError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/assets/{asset_id}/manifest/generate", response_model=AssetV1)
+async def generate_asset_manifest(asset_id: str, request: Request) -> AssetV1:
+    """Draft .metis/asset.json with Command A+ for an asset that has none.
+
+    Generation is not trust: the written recipe arrives launch_configured but
+    NOT launch_approved, so the existing fingerprint review — the command
+    shown in full, approved by a human — still stands between this draft and
+    anything executing. Cohere sees a bounded, read-only description of the
+    folder; no .env content, no symlink traversal.
+    """
+    app = runtime(request)
+    provider = getattr(app.model, "cohere", None)
+    if provider is None or not provider.available:
+        raise HTTPException(
+            status_code=503,
+            detail="Recipe generation uses Cohere Command A+ and requires WAQIL_COHERE_API_KEY",
+        )
+    try:
+        project = await app.assets.project_path(asset_id)
+    except AssetLibraryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if (project / ".metis" / "asset.json").exists():
+        raise HTTPException(
+            status_code=409,
+            detail="this asset already has .metis/asset.json — delete it first to regenerate",
+        )
+    try:
+        context = await asyncio.to_thread(gather_recipe_context, project)
+    except RecipeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        recipe = await provider.draft_asset_recipe(context)
+    except ModelProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    try:
+        await asyncio.to_thread(write_recipe, project, recipe)
+    except RecipeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    for asset in await app.assets.scan():
+        if asset.id == asset_id:
+            return asset
+    raise not_found("asset")
 
 
 @router.post("/assets/{asset_id}/start", response_model=AssetV1)

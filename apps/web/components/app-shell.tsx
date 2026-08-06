@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { MetisMark, MetisWordmark } from "@/components/metis-mark";
 import { deleteConversation, listConversations } from "@/lib/api";
+import { freshToken } from "@/lib/token";
 import {
   CONVERSATIONS_CHANGED_EVENT,
   forgetConversation,
@@ -213,7 +214,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         window.setTimeout(() => searchRef.current?.focus(), 0);
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        router.push(`/?new=${crypto.randomUUID()}`);
+        router.push(`/?new=${freshToken()}`);
       } else if (event.key === "Escape") {
         resizingRef.current = false;
         setResizing(false);
@@ -323,7 +324,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        <button className="newChatButton" type="button" onClick={() => router.push(`/?new=${crypto.randomUUID()}`)} title="New conversation">
+        <button className="newChatButton" type="button" onClick={() => router.push(`/?new=${freshToken()}`)} title="New conversation">
           <span aria-hidden="true">＋</span>
           <span className="navLabel">New conversation</span>
           <kbd>⌘ N</kbd>

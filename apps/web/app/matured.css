@@ -2728,3 +2728,17 @@ select { border-radius: var(--m-r-field); }
   .chatWorkspace.isEmpty .cf4,
   .chatWorkspace.isEmpty .atmos::after { animation: none; }
 }
+
+/* ── Fixes after the sidebar went to paper ───────────────────────────────
+   The glass pass in globals styles the whole button family with
+   `.newChatButton:hover:not(:disabled)` — a white gradient whose extra
+   :not() outweighs any plain `.newChatButton:hover` regardless of file
+   order. On the old light button that read as a sheen; on today's ink
+   button it flashed COMPLETELY white. Matched specificity, later in the
+   cascade, ink stays ink. */
+.newChatButton:hover:not(:disabled) {
+  background: var(--m-volcanic);
+  border: 0;
+  box-shadow: none;
+  color: #fbf8f2;
+}
