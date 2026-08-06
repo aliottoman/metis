@@ -6,7 +6,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict, cast
 from urllib.parse import urlparse
 
 from langgraph.graph import END, START, StateGraph
@@ -21,6 +21,7 @@ from .contracts import (
     ArchitectureSpecV1,
     ArtifactRefV1,
     Decision,
+    DocumentOutlineV1,
     EvalReportV1,
     EvalResultV1,
     ModelRequestV1,
@@ -43,6 +44,7 @@ from . import (
     tool_contracts,
 )
 from .database import Database
+from . import document_factory
 from .web_research import is_explicit_web_request
 from .diagram_source import (
     canonical_architecture_spec,
@@ -824,6 +826,7 @@ class ControlPlane:
             "project_prepare_build_approval", self._project_prepare_build_approval
         )
         graph.add_node("plan", self._plan)
+        graph.add_node("document_render", self._document_render)
         # The answer path is a specialized generate -> verify sub-graph.
         graph.add_node("synthesize", self._synthesize)
         graph.add_node("ground_review", self._ground_review)
@@ -866,6 +869,7 @@ class ControlPlane:
             self._route_plan,
             {
                 "direct": "synthesize",
+                "document": "document_render",
                 "architecture_existing": "reference_prepare",
                 "architecture_factory": "deep_worker_proposal",
                 "declarative_existing": "declarative_execute",
@@ -876,6 +880,7 @@ class ControlPlane:
             },
         )
         # Generate then verify. The revision count lives in state, so the loop terminates.
+        graph.add_edge("document_render", "publish")
         graph.add_edge("synthesize", "ground_review")
         graph.add_conditional_edges(
             "ground_review",
@@ -2896,6 +2901,8 @@ class ControlPlane:
     def _route_kind(self, plan: PlanEnvelopeV1, catalog: RoutingCatalog) -> str:
         if plan.route == "direct":
             return "direct"
+        if plan.route == "document":
+            return "document"
         if plan.route == "tool_definition":
             return "tool_definition"
         arch = catalog.architecture_tool
@@ -3029,6 +3036,126 @@ class ControlPlane:
         if state.get("trusted_build_slug") and not state.get("tool_build"):
             return "trusted_build"
         return "approval_interrupt" if state.get("approval_request") else "publish"
+
+    async def _document_render(self, state: AgentState) -> dict[str, Any]:
+        """Author a document's content, then render it to a real file.
+
+        The model writes only a ``DocumentOutlineV1``; the renderer is
+        first-party code, so nothing model-written is ever executed and the
+        sandbox that exists to contain authored code is not needed here. The
+        same evidence the answer path uses (knowledge, web, attachments) is
+        offered as the source material, so "research X and build me a brief"
+        is one request rather than two.
+        """
+        await self._guard(state)
+        document_format = document_factory.requested_format(state["prompt"])
+        await self._stage(
+            state,
+            "authoring",
+            "Writing the deck…" if document_format == "pptx" else "Writing the document…",
+        )
+        policy = await self._policy_gate(
+            state,
+            PolicyRequest(
+                action="conversation.respond",
+                declared_risk=RiskLevel.R0,
+                permissions=frozenset({PolicyPermission.CONVERSATION_RESPONSE}),
+            ),
+        )
+        policy.enforce()
+
+        knowledge = state.get("knowledge_snippets", [])
+        evidence = _format_knowledge(knowledge) if knowledge else ""
+        attachment_text = state.get("attachment_text", "")
+        recent = "\n".join(
+            f"{item['role']}: {item['content']}"
+            for item in state.get("recent_messages", [])
+        )
+        shape = (
+            "a slide deck: each section is one slide, so keep headings short "
+            "and prefer 3-5 bullets over paragraphs"
+            if document_format == "pptx"
+            else "a written document: each section is a block, so a short body "
+            "paragraph plus bullets where they earn their place"
+        )
+        outline = await cast(Any, self.model)._structured(
+            DocumentOutlineV1,
+            system_prompt=(
+                "You write the CONTENT of a document for Metis. You never write "
+                "code, styling, or layout — a renderer owns all of that. Produce "
+                f"{shape}. Write real, specific prose from the material you are "
+                "given; never invent facts, and never emit placeholder text like "
+                "'TBD' or 'Lorem ipsum'. Where content is genuinely tabular, put "
+                "a GitHub-style markdown table in that section's `body` — pipe "
+                "characters with a |---|---| rule under the header row. Use "
+                "`notes` for what a presenter would say aloud. If the material "
+                "carries sources, list them in `sources`."
+            ),
+            user_prompt=(
+                f"Request:\n{state['prompt']}\n\n"
+                + (f"Conversation so far:\n{recent}\n\n" if recent else "")
+                + (f"Evidence to use:\n{evidence}\n\n" if evidence else "")
+                + (f"Attached material:\n{attachment_text[:20_000]}\n\n" if attachment_text else "")
+            ),
+            role="planner",
+            model_aliases=state.get("model_aliases", {}),
+            max_output_tokens=8192,
+        )
+
+        await self._stage(state, "rendering", "Rendering the file…")
+        try:
+            content = await asyncio.to_thread(
+                document_factory.render, outline, document_format
+            )
+        except document_factory.DocumentRenderError as error:
+            return {
+                "response_text": (
+                    f"I wrote the content but could not render the file: {error}"
+                ),
+                "artifacts": [],
+            }
+        filename = document_factory.filename_for(outline.title, document_format)
+        blob = await self.blobs.put_bytes(
+            content, max_bytes=self.settings.max_upload_bytes
+        )
+        record = await self.database.create_artifact(
+            state["run_id"],
+            blob.sha256,
+            filename,
+            document_factory.PPTX_MEDIA_TYPE
+            if document_format == "pptx"
+            else document_factory.PDF_MEDIA_TYPE,
+            blob.size,
+            str(blob.path),
+        )
+        reference = ArtifactRefV1(
+            id=record["id"],
+            filename=record["filename"],
+            media_type=record["media_type"],
+            size=record["size"],
+            sha256=record["sha256"],
+            download_url=f"/api/v1/artifacts/{record['id']}",
+        )
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "artifact.created",
+            reference.model_dump(mode="json"),
+        )
+        unit = "slide" if document_format == "pptx" else "section"
+        count = len(outline.sections) + (1 if document_format == "pptx" else 0)
+        return {
+            "artifacts": [reference.model_dump(mode="json")],
+            "response_text": (
+                f"**{outline.title or filename}** — {count} "
+                f"{unit}{'s' if count != 1 else ''}, ready to download.\n\n"
+                + "\n".join(
+                    f"{index}. {section.heading}"
+                    for index, section in enumerate(outline.sections, start=1)
+                    if section.heading
+                )
+            ),
+        }
 
     async def _synthesize(self, state: AgentState) -> dict[str, Any]:
         """Generator seat of the answer sub-graph: produce a grounded, cited reply.

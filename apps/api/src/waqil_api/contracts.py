@@ -422,7 +422,9 @@ class PlanStepV1(Contract):
 class PlanEnvelopeV1(Contract):
     schema_version: Literal["1"] = "1"
     summary: str
-    route: Literal["direct", "existing_tool", "tool_factory", "tool_definition"]
+    route: Literal[
+        "direct", "existing_tool", "tool_factory", "tool_definition", "document"
+    ]
     tool_slug: str | None = None
     risk_level: RiskLevel = RiskLevel.R0
     steps: list[PlanStepV1] = Field(default_factory=list)
@@ -2299,3 +2301,36 @@ class DacRecommendationV1(Contract):
     model_used: str | None = None
     model_backed: bool = False
     notes: list[str] = Field(default_factory=list)
+
+
+class DocumentSectionV1(Contract):
+    """One section of a document: a slide in a deck, a block on a page.
+
+    Deliberately flat. Every field is a plain string or a list of strings, so
+    the smallest model in the lineup can fill it without nesting mistakes —
+    the renderer, not the model, decides what any of it looks like.
+    """
+
+    heading: str = Field(default="", max_length=140)
+    # Prose, and any table, as GitHub-style markdown. Tables deliberately have
+    # no typed fields of their own: asking a model to fill parallel column/row
+    # arrays makes Command A+ produce tool arguments its own platform then
+    # rejects, while every model writes a markdown table fluently. The
+    # renderer parses them out, so the fragile half stays in tested host code.
+    body: str = Field(default="", max_length=2_000)
+    bullets: list[str] = Field(default_factory=list, max_length=8)
+    notes: str = Field(default="", max_length=1_000)
+
+
+class DocumentOutlineV1(Contract):
+    """The model's entire contribution to a generated document: its content.
+
+    No styling, no layout, no code — those belong to the renderer, which is
+    first-party and tested. This split is what lets file generation work on
+    every provider rather than only the strongest one.
+    """
+
+    title: str = Field(default="", max_length=160)
+    subtitle: str = Field(default="", max_length=240)
+    sections: list[DocumentSectionV1] = Field(default_factory=list, max_length=16)
+    sources: list[str] = Field(default_factory=list, max_length=12)

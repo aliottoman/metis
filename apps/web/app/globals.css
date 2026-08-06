@@ -1714,6 +1714,10 @@ code {
 .file-img { background: var(--sage-light); color: var(--sage); }
 .file-py { background: #e8e3f0; color: #675681; }
 .file-json { background: var(--terracotta-light); color: var(--terracotta); }
+/* Generated documents wear their format's own colour, so a deck and a PDF
+   are told apart at a glance in a list of artifacts. */
+.file-pdf { background: #f6ded9; color: #a5442f; }
+.file-pptx { background: #f7e6d4; color: #9a5a20; }
 .artifactCard > button > span:last-child {
   min-width: 0;
 }

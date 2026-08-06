@@ -1758,7 +1758,7 @@ async def test_a_repeated_read_returns_the_answer_and_counts_toward_the_breaker(
     the no-progress breaker was consulted, so a repeated read could never trip
     it and the only ceiling was the step budget. The turn ended with nothing
     staged."""
-    from waqil_api.control_plane import _MAX_TARGET_REFUSALS, ControlPlane
+    from waqil_api.control_plane import _MAX_TARGET_REFUSALS
 
     read = {"name": "read_file", "arguments": {"path": "app/jobs.py"}}
     ControlPlane, plane, state = _execute_plane(None, project_pending_call=read)
@@ -1855,8 +1855,6 @@ async def test_a_refused_write_target_carries_the_files_still_owed() -> None:
     """The refusal is semantic, so it must not narrow to the same tool — but it
     is the one semantic refusal with a mechanical answer, and the host knows the
     manifest. The next step is pinned to the owed files plus the refused path."""
-    from waqil_api.control_plane import ControlPlane
-
     ControlPlane, plane, state = _execute_plane(
         ProjectWorkspaceError("refuses to overwrite", wrong_target=True),
         project_planned_files=["a.py", "b.py", "c.py"],
@@ -1880,8 +1878,6 @@ async def test_a_refused_write_target_carries_the_files_still_owed() -> None:
 async def test_a_successful_call_clears_the_write_pin() -> None:
     """A narrowing that outlives the refusal that justified it would restrict
     the model's write targets for the rest of the turn."""
-    from waqil_api.control_plane import ControlPlane
-
     ControlPlane, plane, state = _execute_plane(
         None,
         project_planned_files=["a.py", "b.py"],

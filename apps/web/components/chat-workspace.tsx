@@ -23,6 +23,7 @@ import {
   getConversationProject,
   getModelPreference,
   getLocalModelSession,
+  getRunResult,
   listCustomers,
   rewindConversation,
   listCorpusSources,
@@ -1272,6 +1273,32 @@ export function ChatWorkspace() {
 
   const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === "assistant"), [messages]);
   const latestUser = useMemo(() => [...messages].reverse().find((message) => message.role === "user"), [messages]);
+
+  // Artifacts reach the UI as live run events, so a conversation reopened
+  // later showed none — exactly when someone comes back for the file they
+  // asked for. Restore them from whichever run is in view, merging rather
+  // than replacing so a live run's own events are never clobbered.
+  useEffect(() => {
+    // A reopened conversation has no active run — its record carries no
+    // latest_run_id — so fall back to the run the last answer came from.
+    const runId = activeRunId ?? latestAssistant?.run_id;
+    if (!runId) return;
+    let mounted = true;
+    void getRunResult(runId)
+      .then((result) => {
+        const restored = artifactsFrom(result);
+        if (!mounted || !restored.length) return;
+        setArtifacts((current) => {
+          const ids = new Set(current.map((item) => item.id));
+          return [...current, ...restored.filter((item) => !ids.has(item.id))];
+        });
+      })
+      .catch(() => {
+        // Advisory only: the thread still reads without its artifacts.
+      });
+    return () => { mounted = false; };
+  }, [activeRunId, latestAssistant?.run_id]);
+
   const latestRunEvent = useMemo(
     () => events.reduce<RunEventV1 | null>(
       (latest, event) => !latest || event.sequence > latest.sequence ? event : latest,

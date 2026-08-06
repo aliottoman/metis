@@ -19,6 +19,10 @@ function artifactKind(artifact: ArtifactRef): string {
   if (artifact.media_type?.startsWith("image/") || /\.(png|jpe?g|webp)$/.test(name)) return "IMG";
   if (artifact.media_type?.includes("json") || name.endsWith(".json")) return "JSON";
   if (name.endsWith(".py")) return "PY";
+  // Generated documents. PDF previews natively in a frame; a deck cannot be
+  // rendered in the browser, so its card leads with download instead.
+  if (artifact.media_type?.includes("pdf") || name.endsWith(".pdf")) return "PDF";
+  if (name.endsWith(".pptx")) return "PPTX";
   return "FILE";
 }
 
@@ -51,7 +55,7 @@ export function ArtifactViewer({ artifacts }: { artifacts: ArtifactRef[] }) {
     void fetch(artifactUrl(selected.id, selected.download_url), { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Preview unavailable (${response.status})`);
-        if (artifactKind(selected) === "IMG") {
+        if (artifactKind(selected) === "IMG" || artifactKind(selected) === "PDF") {
           return { kind: "blob" as const, value: await response.blob() };
         }
         return { kind: "text" as const, value: await response.text() };
@@ -86,7 +90,7 @@ export function ArtifactViewer({ artifacts }: { artifacts: ArtifactRef[] }) {
         <div className="artifactGrid">
           {artifacts.map((artifact) => {
             const url = artifactUrl(artifact.id, artifact.download_url);
-            const previewable = ["SVG", "IMG", "JSON", "PY"].includes(artifactKind(artifact));
+            const previewable = ["SVG", "IMG", "JSON", "PY", "PDF"].includes(artifactKind(artifact));
             return (
               <article className="artifactCard" key={artifact.id}>
                 <button type="button" onClick={() => previewable && setSelected(artifact)} disabled={!previewable} aria-label={`Preview ${artifact.name}`}>
@@ -111,10 +115,12 @@ export function ArtifactViewer({ artifacts }: { artifacts: ArtifactRef[] }) {
               </div>
             </header>
             <div className="artifactPreview">
-              {previewError ? <div className="previewUnavailable"><strong>Preview unavailable</strong><span>{previewError}</span></div> : artifactKind(selected) === "IMG" && !previewUrl ? (
+              {previewError ? <div className="previewUnavailable"><strong>Preview unavailable</strong><span>{previewError}</span></div> : ["IMG", "PDF"].includes(artifactKind(selected)) && !previewUrl ? (
                 <div className="previewLoading"><span /><span /><span /></div>
-              ) : artifactKind(selected) !== "IMG" && previewText == null ? (
+              ) : !["IMG", "PDF"].includes(artifactKind(selected)) && previewText == null ? (
                 <div className="previewLoading"><span /><span /><span /></div>
+              ) : artifactKind(selected) === "PDF" ? (
+                <iframe title={`Preview of ${selected.name}`} src={previewUrl ?? ""} />
               ) : artifactKind(selected) === "IMG" ? (
                 // Generated images come from the local artifact endpoint; SVG uses a sandboxed frame below.
                 // eslint-disable-next-line @next/next/no-img-element

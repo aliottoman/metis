@@ -305,3 +305,20 @@ def test_explicit_web_request_bypasses_networkless_tools() -> None:
         catalog,
     )
     assert plan.route == "existing_tool"
+
+
+def test_document_request_routes_to_the_factory_not_a_tool() -> None:
+    """A "make me a deck" is rendered host-side from an authored outline, so
+    it must outrank every tool route — drafting one would answer a file
+    request with an approval gate."""
+    catalog = _catalog(_declarative("readme-summary", runnable=True))
+    plan = normalize_plan_semantics(
+        _proposed("existing_tool", "readme-summary"),
+        _request("make me a 4-slide deck from this", attach=True),
+        catalog,
+    )
+    assert plan.route == "document"
+    assert plan.tool_slug is None
+    assert plan.risk_level == RiskLevel.R0
+    # And the validator accepts what the normalizer produced.
+    validate_plan_semantics(plan, _request("make me a 4-slide deck from this"), catalog)

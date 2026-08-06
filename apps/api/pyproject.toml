@@ -22,6 +22,11 @@ dependencies = [
   "pydantic==2.11.7",
   "pydantic-settings==2.10.1",
   "python-multipart==0.0.20",
+  # The document factory renders decks and PDFs from a model-authored outline.
+  # First-party, tested rendering code — not model-authored, so it needs no
+  # sandbox; the model only ever supplies content.
+  "python-pptx==1.0.2",
+  "reportlab==4.2.5",
   # The static rung of the build gate. Runtime dependencies, not dev tools: the
   # build loop shells out to both on every staged changeset, and a type checker
   # resolving against the really-installed packages is what catches an invented

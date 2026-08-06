@@ -301,3 +301,55 @@ def test_the_preference_gates_cohere_on_the_key(tmp_path) -> None:
         encoding="utf-8",
     )
     assert unkeyed.load().provider == "local"
+
+
+def test_citation_markup_never_reaches_content() -> None:
+    """Command A+ emits its own grounded-generation markup inside structured
+    output. Left in, `<co>…</co: 0:[0]>` prints verbatim on a rendered slide."""
+    from waqil_api.model_provider import _cohere_message_text
+
+    message = {"content": [{"type": "text", "text": "<co>hello</co: 1:[2]> there"}]}
+    assert _cohere_message_text(message) == "hello there"
+
+
+def test_citation_markup_is_cleaned_after_json_decoding() -> None:
+    """Cohere escapes the markup on the wire (\\u003cco\\u003e), so a strip that
+    runs on the raw arguments matches nothing — it has to run on the decoded
+    payload, or the markup prints verbatim in a generated document."""
+    import json
+
+    from waqil_api.model_provider import _clean_cohere_payload, _strip_cohere_citations
+
+    wire = '{"body": "gives \\u003cco\\u003efull isolation\\u003c/co: 0:[0]\\u003e today"}'
+    assert "<co>" not in wire  # escaped, so a pre-parse strip cannot see it
+    assert _strip_cohere_citations(wire) == wire
+    cleaned = _clean_cohere_payload(json.loads(wire))
+    assert cleaned == {"body": "gives full isolation today"}
+
+
+def test_payload_cleaning_reaches_nested_lists_and_dicts() -> None:
+    from waqil_api.model_provider import _clean_cohere_payload
+
+    payload = {
+        "sections": [{"bullets": ["<co>one</co: 0:[0]>", "two"], "n": 3}],
+        "keep": None,
+    }
+    assert _clean_cohere_payload(payload) == {
+        "sections": [{"bullets": ["one", "two"], "n": 3}],
+        "keep": None,
+    }
+
+
+def test_thinking_blocks_are_separated_from_the_answer() -> None:
+    """Command A+ thinks by default and bills the tokens either way; the
+    reasoning belongs on its own channel, never concatenated into the answer."""
+    from waqil_api.model_provider import _cohere_message_text, _cohere_thinking_text
+
+    message = {
+        "content": [
+            {"type": "thinking", "thinking": "let me compute 17*23"},
+            {"type": "text", "text": "391"},
+        ]
+    }
+    assert _cohere_message_text(message) == "391"
+    assert _cohere_thinking_text(message) == "let me compute 17*23"

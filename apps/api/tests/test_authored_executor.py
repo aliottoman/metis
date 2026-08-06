@@ -17,7 +17,7 @@ from waqil_api.authored_code import (
 
 
 def _run(body: str) -> str:
-    return "def run(inputs, model):\n" + "\n".join("    " + l for l in body.splitlines())
+    return "def run(inputs, model):\n" + "\n".join("    " + line for line in body.splitlines())
 
 
 @pytest.mark.asyncio

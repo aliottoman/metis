@@ -54,7 +54,11 @@ class BlobStore:
                     if size > max_bytes:
                         raise BlobTooLargeError(f"upload exceeds {max_bytes} bytes")
                     digest.update(chunk)
-                await asyncio.to_thread(handle.write, chunk)
+                    # Inside the loop: every chunk is written, not just the last
+                    # one the name happened to hold when the loop ended. Uploads
+                    # arrive in 64 KB chunks, so a dedented write silently stored
+                    # the tail of any larger file under a digest of the whole.
+                    await asyncio.to_thread(handle.write, chunk)
                 await asyncio.to_thread(handle.flush)
                 await asyncio.to_thread(os.fsync, handle.fileno())
             if validate_staged is not None:

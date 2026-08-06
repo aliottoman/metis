@@ -42,6 +42,7 @@ from .contracts import (
     project_write_schema,
 )
 from .diagram_source import validate_diagram_source
+from .document_factory import is_explicit_document_request
 from .model_preference import is_cloud_model
 from .web_research import is_explicit_web_request
 from .project_tools import (
@@ -435,6 +436,13 @@ def validate_plan_semantics(
         if arch is not None:
             raise ValueError("architecture requests require the reference architecture tool")
         return
+    if plan.route == "document":
+        # Rendering a file the user asked for. The host owns the renderer, so
+        # there is no tool to register and no capability to grant: the model
+        # only writes the content that goes into it.
+        if plan.tool_slug is not None or plan.risk_level != RiskLevel.R0:
+            raise ValueError("document plans must have no tool and local risk R0")
+        return
     if plan.route == "tool_definition":
         # Drafting a NEW tool. It carries no slug (the tool does not exist yet) and
         # is always R3 — Gate-1 approves the *capabilities* before anything is built.
@@ -582,6 +590,21 @@ def normalize_plan_semantics(
                 "assumptions": assumptions,
             }
         )
+    # A request to produce a document outranks every tool route: the factory
+    # renders it host-side from an authored outline, so no tool can serve it
+    # and drafting one would answer a "make me a deck" with an approval gate.
+    if is_explicit_document_request(request.prompt):
+        return plan.model_copy(
+            update={
+                "summary": "Write the content, then render the requested document.",
+                "route": "document",
+                "tool_slug": None,
+                "risk_level": RiskLevel.R0,
+                "steps": [],
+                "assumptions": assumptions,
+            }
+        )
+
     # Routing priority: an existing tool always beats drafting a new one.
     definition_ready = catalog.factory_enabled and catalog.definition_enabled
     build_intent = is_explicit_build_request(request.prompt)
@@ -747,7 +770,9 @@ def normalize_plan_payload(
         if isinstance(raw_assumptions, list)
         else []
     )
-    valid_routes = {"direct", "existing_tool", "tool_factory", "tool_definition"}
+    valid_routes = {
+        "direct", "existing_tool", "tool_factory", "tool_definition", "document"
+    }
     raw_route = payload.get("route")
     raw_slug = payload.get("tool_slug")
     slug_hint = raw_slug if isinstance(raw_slug, str) and raw_slug.strip() else None
@@ -2640,10 +2665,55 @@ def _cohere_message_text(message: dict[str, Any]) -> str:
         return content
     if not isinstance(content, list):
         return ""
+    return _strip_cohere_citations(
+        "".join(
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    )
+
+
+# Cohere's inline citation markup, e.g. `<co>text</co: 0:[0]>`. It is meant
+# for its own grounded-generation UI and carries no JSON-special characters,
+# so it can be stripped from raw arguments before parsing. Left in, it reaches
+# a rendered document verbatim — the markup, printed on the slide.
+_COHERE_CITATION = re.compile(r"<co>|</co:[^>]*>")
+
+
+def _strip_cohere_citations(text: str) -> str:
+    return _COHERE_CITATION.sub("", text)
+
+
+def _clean_cohere_payload(value: Any) -> Any:
+    """Strip citation markup from every string in a decoded tool payload.
+
+    It must run *after* JSON parsing, not before: Cohere escapes the markup in
+    the wire format (`\\u003cco\\u003e`), so a pattern looking for `<co>` in the
+    raw arguments matches nothing and the markup lands in the document."""
+    if isinstance(value, str):
+        return _strip_cohere_citations(value)
+    if isinstance(value, list):
+        return [_clean_cohere_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clean_cohere_payload(item) for key, item in value.items()}
+    return value
+
+
+def _cohere_thinking_text(message: dict[str, Any]) -> str:
+    """The reasoning Command A produced on its way to the answer.
+
+    Command A thinks by default — every reply bills `reasoning_tokens` whether
+    or not anyone reads them. Kept strictly apart from the answer text so it
+    can travel on the reasoning channel the UI already has, rather than being
+    paid for and discarded."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return ""
     return "".join(
-        str(block.get("text", ""))
+        str(block.get("thinking", "") or block.get("text", ""))
         for block in content
-        if isinstance(block, dict) and block.get("type") == "text"
+        if isinstance(block, dict) and block.get("type") == "thinking"
     )
 
 
@@ -2883,7 +2953,7 @@ class CohereModelProvider:
                     if isinstance(arguments, str):
                         arguments = json.loads(arguments)
                     if isinstance(arguments, dict):
-                        candidate = arguments
+                        candidate = _clean_cohere_payload(arguments)
                         break
                 if candidate is None:
                     candidate = _parse_json_object(_cohere_message_text(message))
@@ -2929,7 +2999,14 @@ class CohereModelProvider:
                 "max_tokens": self.settings.cohere_max_output_tokens,
             }
         )
-        content = _cohere_message_text(reply.get("message") or {})
+        message = reply.get("message") or {}
+        content = _cohere_message_text(message)
+        # Reasoning first, so the panel fills before the answer lands — the
+        # same order the streaming local lane produces it in.
+        if on_reasoning is not None:
+            thinking = _cohere_thinking_text(message)
+            if thinking:
+                await on_reasoning(thinking)
         if on_token is not None and content:
             await on_token(content)
         return ModelResultV1(

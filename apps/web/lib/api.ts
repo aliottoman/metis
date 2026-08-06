@@ -467,6 +467,18 @@ export async function cancelRun(runId: string): Promise<void> {
   await request(`${API_PREFIX}/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
 }
 
+/** A finished run's own record, including whatever it produced.
+ *
+ * Artifacts otherwise reach the UI only as live events, so a generated file
+ * disappeared the moment the conversation was reopened — which is exactly
+ * when someone comes back for the deck they asked for. */
+export async function getRunResult(runId: string): Promise<Record<string, unknown>> {
+  const run = await request<{ result?: Record<string, unknown> | null }>(
+    `${API_PREFIX}/runs/${encodeURIComponent(runId)}`,
+  );
+  return run.result ?? {};
+}
+
 function normalizeApproval(value: unknown): RecoverableRun["approval"] {
   if (!value || typeof value !== "object") return null;
   const item = asRecord(value);
