@@ -926,6 +926,11 @@ FastAPI app with a pyproject:
    "requirements.txt", "--with", "uvicorn", "--", "python", "-m",
    "uvicorn", "app:app", "--host", "{host}", "--port", "{port}"]
 
+uvicorn/gunicorn targets are DOTTED Python module paths, never file
+paths: the app object in src/api.py is "src.api:app", not "src/api:app"
+— the slash form fails at startup with "Could not import module". The
+same applies to any `python -m package.module` token.
+
 Prefer {uv} with --isolated for Python so the launch never depends on a
 pre-made virtualenv. Name only dependencies evidenced by the input files.
 entrypoint is the main source file if one is evident. launch_path is the
