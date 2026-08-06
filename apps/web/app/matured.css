@@ -2606,3 +2606,105 @@ select { border-radius: var(--m-r-field); }
   .micButton.state-transcribing .micRing,
   .jumpToLatest { animation: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE FRONT DOOR BREATHES — and the sidebar gets its texture back.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── The empty state's field drifts ──────────────────────────────────────
+   Same spirit as the Codex hero (a slow organic loop under a grain layer),
+   arrived at differently: they run a full-bleed mp4, this morphs the chrome
+   forms that were already there. No asset to ship, which matters for an
+   app that has to work with the network off.
+
+   Scoped hard to `.isEmpty`. Motion behind a paragraph you are trying to
+   read is the tacky version of this — the welcome screen is the one place
+   with nothing to read, and the one place where "is this thing alive?" is
+   a real question. The moment a thread starts, it all stops.
+
+   Durations are 40-75s and mutually prime-ish, so the four never fall into
+   a visible common cycle. Each keyframe carries its own base rotation,
+   because `transform` here would otherwise drop the static one. */
+@keyframes mDriftOne {
+  0%, 100% { transform: rotate(-14deg) translate3d(0, 0, 0) scale(1); border-radius: 64% 36% 42% 58% / 44% 62% 38% 56%; }
+  33% { transform: rotate(-9deg) translate3d(26px, 18px, 0) scale(1.06); border-radius: 52% 48% 56% 44% / 58% 42% 58% 42%; }
+  66% { transform: rotate(-19deg) translate3d(-14px, 30px, 0) scale(0.97); border-radius: 44% 56% 38% 62% / 50% 56% 44% 50%; }
+}
+@keyframes mDriftTwo {
+  0%, 100% { transform: rotate(24deg) translate3d(0, 0, 0) scale(1); border-radius: 38% 62% 66% 34% / 62% 38% 62% 38%; }
+  40% { transform: rotate(18deg) translate3d(-30px, 24px, 0) scale(1.08); border-radius: 56% 44% 42% 58% / 44% 60% 40% 56%; }
+  70% { transform: rotate(29deg) translate3d(12px, -16px, 0) scale(0.96); border-radius: 46% 54% 60% 40% / 56% 44% 56% 44%; }
+}
+@keyframes mDriftThree {
+  0%, 100% { transform: rotate(-10deg) translate3d(0, 0, 0) scale(1); border-radius: 56% 44% 34% 66% / 38% 64% 36% 62%; }
+  45% { transform: rotate(-4deg) translate3d(-22px, -26px, 0) scale(1.05); border-radius: 42% 58% 54% 46% / 56% 40% 60% 44%; }
+  75% { transform: rotate(-15deg) translate3d(18px, -10px, 0) scale(0.98); border-radius: 60% 40% 44% 56% / 44% 58% 42% 56%; }
+}
+@keyframes mDriftFour {
+  0%, 100% { transform: rotate(16deg) translate3d(0, 0, 0) scale(1); border-radius: 48% 52% 60% 40% / 56% 42% 58% 44%; }
+  38% { transform: rotate(23deg) translate3d(34px, -20px, 0) scale(1.1); border-radius: 60% 40% 46% 54% / 42% 58% 42% 58%; }
+  72% { transform: rotate(11deg) translate3d(-16px, -32px, 0) scale(0.94); border-radius: 44% 56% 58% 42% / 60% 40% 60% 40%; }
+}
+.chatWorkspace.isEmpty .cf1 { animation: mDriftOne 47s ease-in-out infinite; }
+.chatWorkspace.isEmpty .cf2 { animation: mDriftTwo 61s ease-in-out infinite; }
+.chatWorkspace.isEmpty .cf3 { animation: mDriftThree 53s ease-in-out infinite; }
+.chatWorkspace.isEmpty .cf4 { animation: mDriftFour 73s ease-in-out infinite; }
+/* The purple pour breathes with them, or the blobs read as objects sliding
+   under a fixed gel rather than as one moving field. */
+@keyframes mFieldBreathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.88; transform: scale(1.04); }
+}
+.chatWorkspace.isEmpty .atmos::after { animation: mFieldBreathe 39s ease-in-out infinite; }
+
+/* ── The sidebar is paper, not a fill ────────────────────────────────────
+   It was the one surface with no texture at all: a flat `--m-paper` slab
+   next to a chat pane carrying metal, colour and grain. The app-wide
+   `.grain` does cover it, but over an unmodulated fill a uniform noise
+   field reads as regular dots rather than as tooth.
+
+   Two layers fix that. A very faint wash gives the noise something to sit
+   on so it stops being uniform, and a second grain at a different scale
+   and rotation breaks up the repeat of the shared 220px tile. Both are
+   ::before/::after on the sidebar itself, under the content. */
+.sidebar { isolation: isolate; position: relative; }
+.sidebar::before {
+  background:
+    radial-gradient(120% 62% at 0% 0%, rgba(194, 156, 224, 0.09), transparent 62%),
+    radial-gradient(90% 46% at 100% 100%, rgba(255, 119, 89, 0.045), transparent 66%),
+    linear-gradient(180deg, rgba(255, 253, 249, 0.85), rgba(237, 233, 225, 0.5));
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: -2;
+}
+.sidebar::after {
+  /* 140px tile against the global 220px one: the two never line up, so the
+     repeat stops being findable. Multiply rather than overlay, because the
+     sidebar is light throughout and overlay would only lift it. */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='s'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='140' height='140' filter='url(%23s)' opacity='0.55'/></svg>");
+  background-size: 140px 140px;
+  content: "";
+  inset: 0;
+  mix-blend-mode: multiply;
+  opacity: 0.09;
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
+}
+/* The nav's own surfaces sit ON that texture, so they need to be opaque
+   enough to read as raised rather than as a hole cut in the noise. */
+.primaryNav a:hover,
+.primaryNav a.active,
+.conversationHistory a:hover,
+.conversationHistory a.active { background: rgba(237, 233, 225, 0.92); }
+.sidebarSearch { background: rgba(237, 233, 225, 0.86); }
+
+@media (prefers-reduced-motion: reduce) {
+  .chatWorkspace.isEmpty .cf1,
+  .chatWorkspace.isEmpty .cf2,
+  .chatWorkspace.isEmpty .cf3,
+  .chatWorkspace.isEmpty .cf4,
+  .chatWorkspace.isEmpty .atmos::after { animation: none; }
+}

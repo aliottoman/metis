@@ -29,6 +29,7 @@ graph TD
     PODMAN["Rootless Podman<br/>read-only root, no network, non-root UID,<br/>bounded CPU, memory, and time"]
     OLLAMA["Ollama on loopback<br/>planner, coder, quality"]
     OCI["OCI Generative AI, opt-in<br/>Cohere embed and rerank, Command A, Grok"]
+    COHERE["Cohere API, opt-in<br/>Command A+ chat and agents, Transcribe"]
     DB[("SQLite<br/>domain plus checkpoints")]
     BLOB[("Content-addressed blobs<br/>uploads and artifacts")]
 
@@ -42,6 +43,7 @@ graph TD
     PODMAN -->|read-only in, artifacts out| BLOB
     BROKER --> OLLAMA
     GRAPH -.->|explicit opt-in| OCI
+    GRAPH -.->|explicit opt-in| COHERE
     CORPUS -.->|consented sources only| OCI
 
     classDef trusted fill:#e8effc,stroke:#5669df,color:#16213e
@@ -51,7 +53,7 @@ graph TD
     class API,GRAPH,POLICY,REG,BROKER trusted
     class SUBPROC,PODMAN sandbox
     class DB,BLOB,PROFILE,CORPUS data
-    class WEB,OLLAMA,OCI outside
+    class WEB,OLLAMA,OCI,COHERE outside
 ```
 
 The invariants the diagram encodes:
@@ -174,7 +176,52 @@ SQLite store (`customer_wins`, cascade-deleted with the account) and are managed
 through `POST /api/v1/customers/{id}/wins`, `PUT /api/v1/customers/wins/{id}`,
 and `DELETE /api/v1/customers/wins/{id}`.
 
-## Chat and attachments
+## Choosing what answers
+
+The control at the top right of the chat picks the route for the next message.
+**Local** runs on-device weights and nothing leaves the machine. **Ollama Cloud**
+runs a hosted model on your Ollama subscription. **Cloud · Grok** uses Grok 4.3
+through OCI Responses for the largest context. **Cloud · Command A+** uses Cohere
+Command A+ through `WAQIL_COHERE_API_KEY`. Every cloud route is opt-in: without
+its credential the option is visibly present but unselectable, never a silent
+fallback.
+
+A hosted model that has been measured to ignore tool calling is refused at
+selection time rather than at step five of a build, because hosted decode rides
+entirely on tool calling and such a model cannot return one readable step.
+
+## Chat
+
+Editing a message you already sent **rewinds** the thread to that point: the
+turns that followed leave the model's view, which is the only thing that makes
+it an edit rather than a second question. Nothing is deleted — superseded
+messages stay on disk and out of context, so the run history remains auditable.
+**Retry** on an answer is the same mechanism rewound to the question, so the
+model is not asked it twice.
+
+Typing while a run is still going queues the message and sends it the moment the
+run ends. Copy and Retry sit on every settled message, and a streaming answer
+only follows the scroll when you are already at the foot of the thread, so
+scrolling up to re-read is never undone by the next token.
+
+The activity drawer is opened by you and stays closed otherwise; a run started
+from the composer does not open it, while a link into a run awaiting approval
+does.
+
+### Dictation
+
+The microphone in the composer records one clip, posts it to Cohere Transcribe,
+and puts the text in your draft, appended to whatever you had already typed.
+Nothing is stored on either side and it never sends by itself — what comes back
+is a draft you still edit. It needs `WAQIL_COHERE_API_KEY`; the button hides
+itself entirely on a browser without `MediaRecorder`.
+
+Two permissions gate it, and only the second is obvious: macOS must allow your
+browser to use the microphone at all (System Settings → Privacy & Security →
+Microphone), and the browser must allow this origin. `localhost` counts as a
+secure origin, so no certificate is needed.
+
+## Attachments
 
 Chat accepts UTF-8 text and source files; PDF, DOCX, PPTX, and XLSX documents; and PNG, JPEG, WebP, and GIF images. Raw uploads are limited to 10 MB by default, and extracted text is limited to 64 KB per message context. Raster images are signature-checked, stored locally, and described to the current text-only model by filename, media type, and dimensions; the model does not yet inspect their pixels. Archives, SVG, HEIC, TIFF, environment files, corrupt packages, and documents without extractable text all fail closed. Successful files from a multi-file selection stay attached even when another file in the same selection is rejected.
 
@@ -217,7 +264,7 @@ The chat header can open any project already present in the manually refreshed A
 - `.metis/project-context.json`, a deterministic bounded file and language map plus an initial architectural summary.
 - `.metis/METIS.md`, durable project conventions, important paths, verification guidance, risks, learnings, and a work log that evolves as Metis completes work.
 
-Two run-pinned modes are available. **Grok to Local** spends the cloud call on the initial map and then uses the configured local model for the bounded project loop. **Keep Grok** continues using Grok and OCI Responses function calling. Both modes expose the same host-owned tools: bounded file listing, exact-text search, ranged reads, exact-block replacement, new-file creation, installed-library introspection, and reviewed verification checks. Reads run immediately. Secret files, `.git`, `.metis`, `appkit`, symlinks, paths outside the selected project, arbitrary shell commands, and host networking are never exposed.
+Three run-pinned modes are available. **Grok to Local** spends the cloud call on the initial map and then uses the configured local model for the bounded project loop. **Keep Grok** continues using Grok and OCI Responses function calling. **Command A+** hands every bounded step to Cohere instead, which needs `WAQIL_COHERE_API_KEY` and no OCI subscription — if OCI is not configured at all, Cohere also writes the initial map. All three expose the same host-owned tools: bounded file listing, exact-text search, ranged reads, exact-block replacement, new-file creation, installed-library introspection, and reviewed verification checks. Reads run immediately. Secret files, `.git`, `.metis`, `appkit`, symlinks, paths outside the selected project, arbitrary shell commands, and host networking are never exposed.
 
 ### Building a whole application
 
