@@ -161,7 +161,11 @@ class AppRuntime:
             run_history=self.run_history,
             registry=self.registry,
             reviewer=self.retrieval,
-            tool_model=self.local_model,
+            # Brokered tool calls follow the same provider the run uses: a
+            # Command A+ conversation should not demand a local model launch
+            # to run a tool. Budgets and pinned templates still apply, and a
+            # local preference keeps every call on device as before.
+            tool_model=self.model,
             projects=self.projects,
             customers=self.customers,
             model_session=self.model_session,

@@ -133,7 +133,7 @@ export function SettingsPanel() {
           <label><input type="checkbox" checked={ociTools.includes("code_interpreter")} onChange={() => void toggleOciTool("code_interpreter")} disabled={savingPreference || !preference?.oci_available} /><span><strong>Code Interpreter</strong><small>Temporary OCI-managed Python container (Grok runs only)</small></span></label>
           <label><input type="checkbox" checked={ociTools.includes("x_search")} onChange={() => void toggleOciTool("x_search")} disabled={savingPreference || !preference?.oci_available} /><span><strong>X Search</strong><small>Native X search — the Web scope in chat is the general one</small></span></label>
         </div>
-        <p className="sectionLede">Metis tools remain available through the governed local planner. Any model call made while one of those tools executes is forced through local Ollama, even in a cloud-authored run. Cloud service-side memory remains off.</p>
+        <p className="sectionLede">Metis tools remain available through the governed planner. Model calls made while a tool executes follow the same provider as the run, under each tool&apos;s per-run call budget and pinned prompts. Cloud service-side memory remains off.</p>
       </section>
 
       <section className="settingsSection">
@@ -198,7 +198,7 @@ export function SettingsPanel() {
           <div className="sectionTitle"><div><h2>Privacy boundary</h2><p>Cloud use is explicit and run-pinned.</p></div></div>
           <ul className="checkList">
             <li><span>✓</span><div><strong>Loopback only</strong><small>API bound to this device</small></div></li>
-            <li><span>✓</span><div><strong>Local tool broker</strong><small>Executing tools use on-device models</small></div></li>
+            <li><span>✓</span><div><strong>Governed tool broker</strong><small>Tool model calls follow your provider, budgeted per run</small></div></li>
             <li><span>✓</span><div><strong>Approval required</strong><small>Persistent learning is proposal-first</small></div></li>
             <li><span>✓</span><div><strong>Web is per-message</strong><small>Search runs only when a message selects the Web scope</small></div></li>
           </ul>

@@ -43,6 +43,7 @@ from .contracts import (
 )
 from .diagram_source import validate_diagram_source
 from .model_preference import is_cloud_model
+from .web_research import is_explicit_web_request
 from .project_tools import (
     FINISH_TOOL_NAME,
     chat_tool_format,
@@ -585,16 +586,22 @@ def normalize_plan_semantics(
     definition_ready = catalog.factory_enabled and catalog.definition_enabled
     build_intent = is_explicit_build_request(request.prompt)
     toolify_intent = is_explicit_toolify_request(request.prompt)
+    # Every registered tool runs sandboxed with network:none, so a prompt that
+    # explicitly asks for the web cannot be honored by any of them — routing
+    # it to one turns "research online" into confident recall.
+    web_intent = is_explicit_web_request(request.prompt)
     named = _find_catalog_tool(catalog, plan.tool_slug)
 
     # 1. Run a runnable tool the planner named — but not when the user explicitly
-    #    wants to build/update (that should build), and only if its input is ready.
+    #    wants to build/update (that should build) or wants the live web, and
+    #    only if its input is ready.
     if (
         named is not None
         and not named.disabled
         and named.runnable
         and not build_intent
         and not toolify_intent
+        and not web_intent
         and _input_ready(named, request)
     ):
         return _declarative_plan(plan, "existing_tool", named, assumptions)
@@ -605,9 +612,7 @@ def normalize_plan_semantics(
         if named is not None and named.buildable and not named.disabled:
             return _declarative_plan(plan, "tool_factory", named, assumptions)
         buildable = [t for t in catalog.tools if t.buildable and not t.disabled]
-        if len(buildable) == 1 and (
-            build_intent or toolify_intent or plan.route in ("tool_factory", "tool_definition")
-        ):
+        if len(buildable) == 1 and (build_intent or toolify_intent):
             return _declarative_plan(plan, "tool_factory", buildable[0], assumptions)
 
     # 3. Nothing buildable, but the named tool is runnable — run it (e.g. a "build
@@ -617,13 +622,16 @@ def normalize_plan_semantics(
         and not named.disabled
         and named.runnable
         and not toolify_intent
+        and not web_intent
         and _input_ready(named, request)
     ):
         return _declarative_plan(plan, "existing_tool", named, assumptions)
 
-    # 4. Draft a NEW tool — only when nothing existing matched: an explicit toolify
-    #    request, or a planner-proposed new tool.
-    if definition_ready and (toolify_intent or plan.route == "tool_definition"):
+    # 4. Draft a NEW tool — only on the user's explicit words. The planner
+    #    proposing "tool_definition" on its own is a model inference, and
+    #    honoring it is how "research X for me" once detoured into a tool
+    #    factory with two approval gates instead of just answering.
+    if definition_ready and toolify_intent:
         return _tool_definition_plan(plan, assumptions)
 
     # 5. Rescue: the planner proposed no tool, but the user named a runnable one

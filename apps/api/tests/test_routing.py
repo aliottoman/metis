@@ -123,10 +123,20 @@ def test_explicit_toolify_opens_definition_route() -> None:
     validate_plan_semantics(plan, _request("turn this into a tool"), catalog)
 
 
-def test_planner_proposed_definition_is_honored() -> None:
+def test_planner_proposed_definition_needs_explicit_words() -> None:
+    """The planner inferring "tool_definition" is a model guess, not consent.
+    Without toolify words in the prompt it answers directly — the guess once
+    turned "research X for me" into a two-gate tool-factory detour."""
     catalog = _catalog()
     plan = normalize_plan_semantics(
         _proposed("tool_definition", None), _request("draft me a widget summarizer"), catalog
+    )
+    assert plan.route == "direct"
+    # The same planner proposal WITH the user's own toolify words drafts.
+    plan = normalize_plan_semantics(
+        _proposed("tool_definition", None),
+        _request("make this into a reusable tool for widget summaries"),
+        catalog,
     )
     assert plan.route == "tool_definition"
 
@@ -276,3 +286,22 @@ def test_authored_tool_runs_without_an_attachment() -> None:
     )
     assert plan.route == "existing_tool"
     assert plan.tool_slug == "break-even-calculator"
+
+
+def test_explicit_web_request_bypasses_networkless_tools() -> None:
+    """"Research online…" cannot be honored by a network:none tool — routing
+    it to one turns a research request into confident recall."""
+    catalog = _catalog(_declarative("model-benchmark-researcher", runnable=True))
+    plan = normalize_plan_semantics(
+        _proposed("existing_tool", "model-benchmark-researcher"),
+        _request("Research online and give me a short brief on model X", attach=True),
+        catalog,
+    )
+    assert plan.route == "direct"
+    # Without the web ask, the same tool still runs.
+    plan = normalize_plan_semantics(
+        _proposed("existing_tool", "model-benchmark-researcher"),
+        _request("give me a short brief on model X", attach=True),
+        catalog,
+    )
+    assert plan.route == "existing_tool"

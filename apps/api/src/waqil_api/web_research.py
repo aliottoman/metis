@@ -55,6 +55,27 @@ _DROP_BLOCKS = re.compile(
 _TAG = re.compile(r"<[^>]+>")
 _PROMPT_URL = re.compile(r"https?://[^\s<>\"')\]]+")
 
+# Explicit in-prompt web intent. A host signal in the same spirit as toolify
+# detection: conservative wording only, so an ordinary question never trips
+# it — but "research online" is the user asking for the web in their own
+# words, and answering it from model recall would ignore what they said.
+_EXPLICIT_WEB = (
+    re.compile(
+        r"\b(?:search|research|look\s+(?:it|this|that|them|these)?\s*up|check|find|browse)\b"
+        r"[^.?!\n]{0,50}\b(?:online|on\s+the\s+(?:web|internet)|the\s+web|the\s+internet)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:search|scan|check)\s+the\s+(?:web|internet)\b", re.IGNORECASE),
+    re.compile(r"\b(?:web|internet)\s+search\b", re.IGNORECASE),
+    re.compile(r"\b(?:google|research\s+online|search\s+online|look\s+online)\b", re.IGNORECASE),
+)
+
+
+def is_explicit_web_request(prompt: str) -> bool:
+    """True when the prompt itself asks for the web — consent in the user's
+    own words, which the Auto scope honors without a scope switch."""
+    return any(pattern.search(prompt) for pattern in _EXPLICIT_WEB)
+
 
 def _strip_html(fragment: str) -> str:
     """Collapse an HTML fragment to readable text. Boring on purpose: a real

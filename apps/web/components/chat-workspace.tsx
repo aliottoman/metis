@@ -1737,7 +1737,13 @@ export function ChatWorkspace() {
                       aria-expanded={timelineOpen}
                       aria-label={`${compactActivity.label}. ${compactActivity.detail}. ${timelineOpen ? "Close" : "Open"} full activity.`}
                     >
-                      <span className="compactActivityCore" aria-hidden="true"><i /><i /><i /><i /></span>
+                      {/* The pearl itself, not a lookalike blob: one creature
+                          across the app, and its film is contained by design. */}
+                      <MetisCompanion
+                        className="compactActivityPearl"
+                        size={32}
+                        mood={compactActivity.live ? "thinking" : compactActivity.tone === "danger" ? "trouble" : compactActivity.tone === "attention" ? "listening" : "done"}
+                      />
                       <span className="compactActivityCopy"><strong key={compactActivity.label}>{compactActivity.label}</strong><small>{compactActivity.detail}</small></span>
                       <span className="compactActivityChevron" aria-hidden="true">⌄</span>
                     </button>

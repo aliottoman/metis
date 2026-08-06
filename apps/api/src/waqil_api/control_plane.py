@@ -43,6 +43,7 @@ from . import (
     tool_contracts,
 )
 from .database import Database
+from .web_research import is_explicit_web_request
 from .diagram_source import (
     canonical_architecture_spec,
     canonical_diagram_source_for,
@@ -421,6 +422,32 @@ def _number_attachment_headers(
             _attachment_header(name), _attachment_header(name, offset + index), 1
         )
     return numbered
+
+
+# Bare follow-ups: intent without content. Conservative, like the toolify
+# patterns — a prompt with real words in it must never match.
+_RETRY_PROMPT = re.compile(
+    r"^\s*(?:please\s+)?(?:try\s+again|retry|again|re-?run(?:\s+it)?|"
+    r"run\s+it(?:\s+again)?|build\s+it|do\s+it|go(?:\s+ahead)?|yes|"
+    r"ok(?:ay)?|sure|continue)\s*[.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _substantive_prompt(state: AgentState) -> str:
+    """The prompt a tool should treat as its input.
+
+    A bare follow-up ("try again", "build it") carries intent but no content —
+    fed to a tool as its input it once produced benchmark briefs for models
+    named 'Try' and 'again'. Walk back to the user's last message that
+    actually says something."""
+    prompt = state.get("prompt", "")
+    if not _RETRY_PROMPT.match(prompt):
+        return prompt
+    for item in reversed(state.get("recent_messages", [])):
+        if item.get("role") == "user" and not _RETRY_PROMPT.match(item.get("content", "")):
+            return item.get("content", "")
+    return prompt
 
 
 def _document_sources(filenames: list[str]) -> list[dict[str, Any]]:
@@ -1287,11 +1314,16 @@ class ControlPlane:
         model_aliases = state.get("model_aliases", {})
         knowledge_scope = model_aliases.get("_knowledge_scope", "auto")
         has_attachments = bool(state.get("attachment_text", "").strip())
+        # The Web scope is one form of consent; asking for the web inside the
+        # prompt ("research online…") is the other, honored from Auto.
+        wants_web = knowledge_scope == "web" or (
+            knowledge_scope == "auto" and is_explicit_web_request(state["prompt"])
+        )
         await self._stage(
             state,
             "retrieving",
             "Searching the web…"
-            if knowledge_scope == "web"
+            if wants_web
             else "Searching Notion…"
             if knowledge_scope == "notion"
             else (
@@ -1364,11 +1396,11 @@ class ControlPlane:
             recent_messages = []
             summary = ""
             personal_profile = ""
-        if knowledge_scope == "web":
-            # The Web scope swaps the corpus lane for live search — in customer
-            # mode too, where fresh public facts about the account are the whole
-            # point. The boundary above still holds: web evidence is
-            # per-message and nothing from it is persisted into any record.
+        if wants_web:
+            # The web lane replaces the corpus lane — in customer mode too,
+            # where fresh public facts about the account are the whole point.
+            # The boundary above still holds: web evidence is per-message and
+            # nothing from it is persisted into any record.
             if self.web is not None and self.web.available():
                 try:
                     retrieved_web = await self.web.retrieve(state["prompt"])
@@ -4106,7 +4138,10 @@ class ControlPlane:
     def _prepare_authored_inputs(
         self, definition: ToolDefinitionV1, state: AgentState
     ) -> dict[str, Any]:
-        return {"text": state.get("attachment_text", ""), "prompt": state.get("prompt", "")}
+        return {
+            "text": state.get("attachment_text", ""),
+            "prompt": _substantive_prompt(state),
+        }
 
     def _authored_bridge(
         self, state: AgentState, definition: ToolDefinitionV1, broker: ModelBroker
@@ -5353,7 +5388,7 @@ def _describe_capabilities(definition: ToolDefinitionV1) -> str:
     if access.enabled:
         roles = "/".join(access.roles) or "model"
         parts.append(
-            f"may call the local {roles} model ≤{access.max_calls_per_run}×/run using pinned prompts"
+            f"may call the selected {roles} model ≤{access.max_calls_per_run}×/run using pinned prompts"
         )
     else:
         parts.append("no model access")

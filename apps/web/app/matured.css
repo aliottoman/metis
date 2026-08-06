@@ -735,10 +735,8 @@ body { background: var(--m-paper); color: var(--m-ink); }
 .sendButton:hover:not(:disabled) { background-position: 14% 64%; transform: translateY(-1px); }
 
 /* ── The companion ──────────────────────────────────────────────────────
-   Two bodies are kept. The original "orb" is untouched and still styled by
-   globals.css via .companionBody / .companionField / .companionCore — none
-   of those class names appear below, so nothing here can reach it.
-   The pearl uses its own names and its own rules. */
+   The pearl. It uses its own class names and its own rules; the original
+   "orb" and its globals.css styles are long gone. */
 .companion { position: relative; }
 
 .pearlBody {
@@ -2140,78 +2138,16 @@ select { border-radius: var(--m-r-field); }
   text-decoration-color: var(--m-ink-3);
   text-underline-offset: 3px;
 }
-.compactActivityCore {
-  background: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  flex: 0 0 36px;
-  height: 36px;
-  isolation: isolate;
-  position: relative;
+/* The pearl replaces the hand-rolled blob: one creature everywhere in the
+   app, and its film is contained by its own mask — no halo spilling past
+   the silhouette, no colour wheel reading as a flash. The pearl is the only
+   living part of this row; nothing here may animate a background. */
+.compactActivityPearl {
+  align-self: center;
+  flex: 0 0 auto;
+  margin: 0 2px 3px 0;
 }
-/* Three of the four dots become the blob's body, its film and its halo; the
-   fourth is retired by the layout rather than by deleting it from the DOM,
-   so nothing here depends on the markup keeping exactly four.
-
-   Every edge is named rather than set with `inset`, and width/height are
-   explicitly released: the previous rules gave each dot a fixed 10px box and
-   pinned it to one corner, and a shorthand cannot undo a longhand it does
-   not mention — the result was four 7px fragments scattered in a 30px box. */
-.compactActivityCore i,
-.compactActivityCore i:nth-child(1),
-.compactActivityCore i:nth-child(2),
-.compactActivityCore i:nth-child(3) {
-  animation: none;
-  border-radius: 50%;
-  bottom: 4px;
-  height: auto;
-  left: 4px;
-  position: absolute;
-  right: 4px;
-  top: 4px;
-  width: auto;
-}
-.compactActivityCore i:nth-child(1) {
-  background: linear-gradient(150deg, #efe6f6, #d9c4e8 52%, #bfa0d8);
-  border-radius: 58% 42% 46% 54% / 50% 56% 44% 50%;
-  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.85);
-  animation: mBlobBreathe 5.5s var(--m-ease) infinite;
-}
-.compactActivityCore i:nth-child(2) {
-  background: conic-gradient(from 200deg, var(--m-coral), #7be3d8, #d18ee2, #ffe08a, var(--m-coral));
-  /* Not `inherit` — these are the blob's siblings, not its children, so
-     inheriting reaches the square core box rather than the morphing body. */
-  border-radius: 50%;
-  filter: blur(5px);
-  mix-blend-mode: multiply;
-  opacity: 0.5;
-  animation: mBlobTurn 9s linear infinite;
-}
-.compactActivityCore i:nth-child(3) {
-  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.95), transparent 58%);
-  border-radius: 50%;
-}
-.compactActivityCore i:nth-child(4) { display: none; }
-@keyframes mBlobBreathe {
-  0%, 100% { border-radius: 58% 42% 46% 54% / 50% 56% 44% 50%; transform: scale(1); }
-  50% { border-radius: 44% 56% 58% 42% / 58% 44% 56% 42%; transform: scale(1.07); }
-}
-@keyframes mBlobTurn { to { transform: rotate(360deg); } }
-/* Live is the same body moving with intent, not a different component —
-   deeper breath, faster film, and a slow wander around its resting point
-   so it reads as working rather than merely switched on. */
-@keyframes mBlobWork {
-  0%, 100% { border-radius: 58% 42% 46% 54% / 50% 56% 44% 50%; transform: translate(0, 0) scale(1); }
-  30% { border-radius: 42% 58% 54% 46% / 60% 42% 58% 40%; transform: translate(1.5px, -2px) scale(1.12); }
-  55% { border-radius: 52% 48% 40% 60% / 42% 60% 40% 58%; transform: translate(-2px, 1px) scale(0.95); }
-  80% { border-radius: 46% 54% 60% 40% / 56% 44% 58% 42%; transform: translate(1px, 2px) scale(1.08); }
-}
-.compactRunActivity.isLive .compactActivityCore i:nth-child(1) { animation: mBlobWork 3.2s ease-in-out infinite; }
-.compactRunActivity.isLive .compactActivityCore i:nth-child(2) { animation-duration: 4s; opacity: 0.72; }
-.compactRunActivity.isLive .compactActivityCore i:nth-child(3),
-.compactRunActivity.isLive .compactActivityCore i:nth-child(4) { animation: none; }
-.compactRunActivity.tone-danger .compactActivityCore i:nth-child(2) { filter: blur(5px) saturate(0.15); }
+.compactActivityPearl .pearlShadow { bottom: -7px; height: 8px; }
 /* Two lines, not one row: the label is the sentence and the count is the
    footnote under it. And in ink — these were white, for a dark glass card
    that no longer exists. */
@@ -2223,8 +2159,13 @@ select { border-radius: var(--m-r-field); }
 .compactActivityCopy strong {
   animation: none;
   color: var(--m-ink);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
+  line-height: 1.4;
+  /* The stage line is the row's point — it wraps, it never ellipsizes. */
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 .compactActivityCopy small {
   color: var(--m-ink-3);
