@@ -1473,12 +1473,13 @@ class ControlPlane:
                 "project_pending_call": {},
                 "project_refused_streak": 0,
             }
+        # One name for every provider. Naming the model here ("North is
+        # working…") was wrong two ways: North is not always the one running,
+        # and the user is talking to Metis, not to its plumbing.
         await self._stage(
             state,
             "project_reasoning",
-            "Grok is planning in the project…"
-            if state.get("model_aliases", {}).get("_provider") == "oci"
-            else "North is working in the project…",
+            "Metis is working in the project…",
         )
         project_context = state.get("project_context") or await self.projects.context(
             project_id

@@ -12,6 +12,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, 
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from .asset_library import AssetLibraryError
+from .audio_transcode import TranscodeError, needs_transcoding, to_wav
 from .attachment_text import (
     AttachmentExtractionError,
     AttachmentTextTooLargeError,
@@ -1490,10 +1491,25 @@ async def transcribe_audio(
         await file.close()
     if len(audio) > app.settings.cohere_transcribe_max_bytes:
         raise HTTPException(status_code=413, detail="recording is too long to transcribe")
+    filename = Path(file.filename or "dictation.webm").name
+    if needs_transcoding(filename, media_type):
+        # The browser chose this container, not the user: Safari and the
+        # native app record MP4, Chrome records WebM, and Cohere takes
+        # neither. Converted here on the host — the raw clip never leaves
+        # the machine in a form the transcriber would refuse.
+        try:
+            audio = await to_wav(audio, filename, media_type)
+        except TranscodeError as exc:
+            raise HTTPException(status_code=415, detail=str(exc)) from exc
+        filename, media_type = "dictation.wav", "audio/wav"
+        if len(audio) > app.settings.cohere_transcribe_max_bytes:
+            # Decoding a long compressed clip can overshoot the ceiling the
+            # compressed upload passed. Same limit, honestly applied.
+            raise HTTPException(
+                status_code=413, detail="recording is too long to transcribe"
+            )
     try:
-        text = await provider.transcribe(
-            audio, Path(file.filename or "dictation.webm").name, media_type
-        )
+        text = await provider.transcribe(audio, filename, media_type)
     except ModelProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return TranscriptV1(text=text)

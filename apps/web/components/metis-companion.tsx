@@ -57,7 +57,14 @@ export function MetisCompanion({
       aria-hidden="true"
     >
       <div className="pearlBody">
-        <span className="pearlFilm" />
+        {/* Two elements, deliberately: the OUTER span carries only the mask
+            (and the blend), the INNER carries the filter, the colours, and
+            the spin. An element whose own `filter` promotes it to a layer is
+            not reliably clipped by any ancestor's border-radius — Chrome
+            clips it to the border BOX, WebKit has its own moods — but a
+            mask on an unfiltered parent clips its composited children in
+            both. This is what keeps the oil on the pearl. */}
+        <span className="pearlFilm"><i className="pearlFilmInk" /></span>
         <span className="pearlSpec" />
       </div>
       <span className="pearlShadow" />

@@ -1278,7 +1278,7 @@ export function ChatWorkspace() {
     }
     if (runActive) {
       return {
-        label: stageLabel ?? "Working on your request",
+        label: stageLabel ?? "Metis is working on it",
         detail: events.length ? `${countLabel} · live` : "Starting securely",
         tone: "live",
         live: true,
@@ -1788,15 +1788,13 @@ export function ChatWorkspace() {
             </div>
           ) : null}
           <form className="composer" onSubmit={(event) => void submit(event)}>
-            {/* The companion sits in the corner of the box you type into —
-                the thing you are talking to, where you are talking to it.
-                Bead only: it already carries its state in colour and tempo,
-                and a label here would cost the first line of every message
-                the width it needs. */}
-            <div className="companionPerch" data-mood={companionMood} title={companionLabel} aria-hidden="true">
-              {/* 28, not less: the component goes still below that, and a
-                  bead that never breathes is just a dot. */}
-              <MetisCompanion mood={companionMood} size={28} />
+            {/* The companion perches on the composer's top-right corner —
+                astride the edge of the box you type into, not filed inside
+                it. Bead only: it carries its state in colour and tempo, and
+                a label would cost the first line of every message its width.
+                Keyed by mood so the settle-bob replays on each change. */}
+            <div className="companionPerch" data-mood={companionMood} title={companionLabel} aria-hidden="true" key={companionMood}>
+              <MetisCompanion mood={companionMood} size={38} />
             </div>
             <textarea
               ref={textareaRef}

@@ -760,31 +760,39 @@ body { background: var(--m-paper); color: var(--m-ink); }
 }
 /* The oil film turns inside the body, so the surface shifts hue as it
    moves rather than showing gradient spokes. */
+/* The film is split in two — see the markup comment in metis-companion.tsx.
+   The outer half owns the mask and the blend; its mask fades out by 62% of
+   its own half-size, and at 148% of the body that is ~0.92 of the body's
+   radius: every pixel of colour dies inside the silhouette, with margin for
+   the morph animation pinching the boundary. The INNER half owns the warp
+   filter, the colours, and the spin, so nothing that promotes itself to a
+   compositor layer is ever the thing responsible for its own containment. */
 .pearlFilm {
   position: absolute;
   inset: -24%;
   border-radius: 50%;
+  display: block;
   mix-blend-mode: multiply;
   opacity: 0.68;
+  overflow: hidden;
+  -webkit-mask-image: radial-gradient(closest-side, #000 0 46%, rgba(0, 0, 0, 0.5) 56%, transparent 62%);
+  mask-image: radial-gradient(closest-side, #000 0 46%, rgba(0, 0, 0, 0.5) 56%, transparent 62%);
+  transform: translate(calc(var(--mx, 0) * -9px), calc(var(--my, 0) * -7px));
+  transition: transform 0.6s var(--m-ease);
+}
+.pearlFilmInk {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  display: block;
   filter: url(#metisWarp) blur(6px) saturate(1.35);
-  /* The film carries its own containment rather than trusting the body's
-     rounded overflow. A child that creates a stacking context through
-     `filter` gets clipped to the parent's BORDER BOX in this compositing
-     path, not to its border-radius — which is why the oil film appeared as
-     a square of colour sitting around a round bead. The film is 148% of the
-     body, so fading it out by ~54% of its own half-size keeps every pixel
-     of colour inside the silhouette no matter how the parent clips. */
-  -webkit-mask-image: radial-gradient(closest-side, #000 0 52%, rgba(0, 0, 0, 0.55) 66%, transparent 76%);
-  mask-image: radial-gradient(closest-side, #000 0 52%, rgba(0, 0, 0, 0.55) 66%, transparent 76%);
   background:
     radial-gradient(38% 34% at 68% 24%, #ff7f5c 0%, rgba(255, 127, 92, 0) 66%),
     radial-gradient(40% 36% at 78% 62%, #c77bee 0%, rgba(199, 123, 238, 0) 66%),
     radial-gradient(42% 38% at 34% 72%, #4fd3e4 0%, rgba(79, 211, 228, 0) 66%),
     radial-gradient(34% 32% at 26% 30%, #ffd25a 0%, rgba(255, 210, 90, 0) 66%),
     radial-gradient(30% 28% at 52% 50%, #ff8fb4 0%, rgba(255, 143, 180, 0) 68%);
-  animation: mPearlSpin 19s linear infinite;
-  transform: translate(calc(var(--mx, 0) * -9px), calc(var(--my, 0) * -7px));
-  transition: transform 0.6s var(--m-ease);
+  animation: mPearlSpin 14s linear infinite;
 }
 .pearlSpec {
   position: absolute;
@@ -824,14 +832,17 @@ body { background: var(--m-paper); color: var(--m-ink); }
 /* Moods, as the component already drives them. */
 .companion[data-mood="listening"] .pearlBody { animation-duration: 5s; }
 .companion[data-mood="thinking"] .pearlBody { animation-duration: 2s; }
-.companion[data-mood="thinking"] .pearlFilm { animation-duration: 5s; opacity: 0.8; }
-.companion[data-mood="done"] .pearlFilm { filter: url(#metisWarp) blur(6px) saturate(1.05) hue-rotate(82deg); opacity: 0.52; }
+.companion[data-mood="thinking"] .pearlFilmInk { animation-duration: 5s; }
+.companion[data-mood="thinking"] .pearlFilm { opacity: 0.8; }
+.companion[data-mood="done"] .pearlFilmInk { filter: url(#metisWarp) blur(6px) saturate(1.05) hue-rotate(82deg); }
+.companion[data-mood="done"] .pearlFilm { opacity: 0.52; }
 .companion[data-mood="trouble"] .pearlBody { animation: mPearlSlump 7s ease-in-out infinite; }
 @keyframes mPearlSlump {
   0%, 100% { border-radius: 48% 52% 40% 60% / 34% 36% 64% 66%; transform: translateY(5px) scale(1.08, 0.84); }
   50% { border-radius: 50% 50% 42% 58% / 36% 34% 66% 64%; transform: translateY(6px) scale(1.1, 0.82); }
 }
-.companion[data-mood="trouble"] .pearlFilm { filter: blur(11px) saturate(0.1); opacity: 0.42; }
+.companion[data-mood="trouble"] .pearlFilmInk { filter: blur(11px) saturate(0.1); }
+.companion[data-mood="trouble"] .pearlFilm { opacity: 0.42; }
 /* Below 28px the morph reads as a wobble, so small beads sit still. */
 .companion.isSmall .pearlBody { animation: none; border-radius: 50%; }
 .companion.isSmall .pearlSpec { display: none; }
@@ -839,6 +850,7 @@ body { background: var(--m-paper); color: var(--m-ink); }
 @media (prefers-reduced-motion: reduce) {
   .pearlBody,
   .pearlFilm,
+  .pearlFilmInk,
   .pearlShadow { animation: none !important; }
   .pearlFilm,
   .pearlSpec { transition: none !important; }
@@ -1984,14 +1996,12 @@ select { border-radius: var(--m-r-field); }
     transparent 0, #000 48px, #000 calc(100% - 12px), transparent 100%);
 }
 
-/* ── 2 · The companion sits in the corner of the composer ────────────────
-   It was above the composer, where the context chips pushed it down the page
-   and it read as a decoration on the input rather than as the thing you are
-   talking to. Now it is inside the box you type into, top right.
-
-   The textarea reserves the width rather than the bead floating over it —
-   text sliding under a translucent bead is the one failure mode an absolute
-   corner element has, and it only shows up on a long first line. */
+/* ── 2 · The companion perches ON the composer's corner ──────────────────
+   Not inside the box and not beside it: astride the top-right corner, half
+   in and half out, the way a creature sits on the edge of the desk you are
+   writing at. No halo, no plate, no background — the bead's own body and
+   shadow are the whole rendering, and the mood shows in its colour and
+   tempo, which is the point of having a creature instead of an icon. */
 .composer { position: relative; }
 .companionPerch {
   align-items: center;
@@ -1999,30 +2009,23 @@ select { border-radius: var(--m-r-field); }
   justify-content: center;
   pointer-events: none;
   position: absolute;
-  right: 13px;
-  top: 11px;
-  z-index: 1;
+  right: -12px;
+  top: -16px;
+  z-index: 4;
 }
-.companionPerch .companion { flex: 0 0 28px; height: 28px; margin: 0; width: 28px; }
-.composer textarea { padding-right: 44px; }
-/* At rest the bead is quiet; while something is happening it earns its
-   contrast. Colour and tempo already come from the mood — this is only the
-   halo that separates it from the paper behind it. */
-.companionPerch::before {
-  border-radius: 50%;
-  content: "";
-  inset: -5px;
-  position: absolute;
-  transition: background 420ms var(--m-ease), box-shadow 420ms var(--m-ease);
-}
-.companionPerch[data-mood="thinking"]::before {
-  background: rgba(194, 156, 224, 0.16);
-  box-shadow: 0 0 0 1px rgba(194, 156, 224, 0.24);
-}
-.companionPerch[data-mood="listening"]::before { background: rgba(194, 156, 224, 0.1); }
-.companionPerch[data-mood="trouble"]::before {
-  background: rgba(255, 119, 89, 0.16);
-  box-shadow: 0 0 0 1px rgba(255, 119, 89, 0.3);
+.companionPerch .companion { flex: 0 0 38px; height: 38px; margin: 0; width: 38px; }
+/* Only the inner half of the bead hangs over the paper, so the text needs
+   far less clearance than a bead parked fully inside did. */
+.composer textarea { padding-right: 26px; }
+/* Perched, it can afford to be livelier than the hero bead: a faster
+   breath, a faster film, and a settle-bob when its mood changes. */
+.companionPerch .pearlBody { animation-duration: 5.5s; }
+.companionPerch .pearlFilmInk { animation-duration: 9s; }
+.companionPerch .companion { animation: mPerchSettle 480ms var(--m-ease); }
+@keyframes mPerchSettle {
+  0% { transform: translateY(-4px) scale(0.94); }
+  60% { transform: translateY(1px) scale(1.03); }
+  100% { transform: translateY(0) scale(1); }
 }
 
 /* ── 3 · No avatar on your own messages ──────────────────────────────────
@@ -2104,29 +2107,38 @@ select { border-radius: var(--m-r-field); }
 .compactRunActivity {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
+  animation: none;
   background: none;
   border: 0;
-  border-radius: 14px;
+  border-radius: 0;
   box-shadow: none;
-  gap: 11px;
+  gap: 12px;
   min-height: 40px;
   min-width: 0;
-  padding: 4px 12px 4px 4px;
-  transition: background 200ms var(--m-ease);
+  padding: 2px 0;
+  transition: none;
 }
+/* Never a box: not at rest, not on hover, not while live. The blob is the
+   living part; the words are ink on the page like every other sentence.
+   Hover affordance is the label underlining, the way links earn a click. */
 .compactRunActivity:hover {
-  background: rgba(33, 31, 29, 0.045);
+  background: none;
   border: 0;
   box-shadow: none;
   transform: none;
+}
+.compactRunActivity:hover .compactActivityCopy strong {
+  text-decoration: underline;
+  text-decoration-color: var(--m-ink-3);
+  text-underline-offset: 3px;
 }
 .compactActivityCore {
   background: none;
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  flex: 0 0 30px;
-  height: 30px;
+  flex: 0 0 36px;
+  height: 36px;
   isolation: isolate;
   position: relative;
 }
@@ -2178,8 +2190,16 @@ select { border-radius: var(--m-r-field); }
   50% { border-radius: 44% 56% 58% 42% / 58% 44% 56% 42%; transform: scale(1.07); }
 }
 @keyframes mBlobTurn { to { transform: rotate(360deg); } }
-/* Live is the same body moving with intent, not a different component. */
-.compactRunActivity.isLive .compactActivityCore i:nth-child(1) { animation-duration: 2.3s; }
+/* Live is the same body moving with intent, not a different component —
+   deeper breath, faster film, and a slow wander around its resting point
+   so it reads as working rather than merely switched on. */
+@keyframes mBlobWork {
+  0%, 100% { border-radius: 58% 42% 46% 54% / 50% 56% 44% 50%; transform: translate(0, 0) scale(1); }
+  30% { border-radius: 42% 58% 54% 46% / 60% 42% 58% 40%; transform: translate(1.5px, -2px) scale(1.12); }
+  55% { border-radius: 52% 48% 40% 60% / 42% 60% 40% 58%; transform: translate(-2px, 1px) scale(0.95); }
+  80% { border-radius: 46% 54% 60% 40% / 56% 44% 58% 42%; transform: translate(1px, 2px) scale(1.08); }
+}
+.compactRunActivity.isLive .compactActivityCore i:nth-child(1) { animation: mBlobWork 3.2s ease-in-out infinite; }
 .compactRunActivity.isLive .compactActivityCore i:nth-child(2) { animation-duration: 4s; opacity: 0.72; }
 .compactRunActivity.isLive .compactActivityCore i:nth-child(3),
 .compactRunActivity.isLive .compactActivityCore i:nth-child(4) { animation: none; }
