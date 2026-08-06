@@ -2390,6 +2390,11 @@ select { border-radius: var(--m-r-field); }
   border-color: var(--m-mint-edge);
   color: var(--m-green-ink);
 }
+.knowledgeScopeSwitch button.webSelected {
+  background: var(--m-lav-surface);
+  border-color: var(--m-lav-edge);
+  color: var(--m-ink);
+}
 .primaryButton {
   background: var(--m-forest);
   border-color: var(--m-forest);

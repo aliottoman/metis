@@ -329,7 +329,7 @@ export interface ConversationDetail extends ConversationSummary {
 }
 
 export type CorpusKind = "code" | "docs" | "notes" | "mixed";
-export type KnowledgeScope = "auto" | "notion";
+export type KnowledgeScope = "auto" | "notion" | "web";
 export type CorpusStatus =
   | "pending"
   | "indexing"

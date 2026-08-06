@@ -354,7 +354,7 @@ class MessageCreateV1(Contract):
     attachment_ids: list[str] = Field(default_factory=list, max_length=20)
     project_id: str | None = Field(default=None, pattern=r"^asset_[a-f0-9]{20}$")
     project_mode: ProjectModeV1 | None = None
-    knowledge_scope: Literal["auto", "notion"] = "auto"
+    knowledge_scope: Literal["auto", "notion", "web"] = "auto"
     customer_id: str | None = Field(default=None, pattern=r"^cust_[a-f0-9]{20}$")
 
 
@@ -1337,7 +1337,7 @@ class KnowledgeSnippetV1(Contract):
     """One retrieved passage of the user's own knowledge, with its provenance."""
 
     source_label: str
-    provider: Literal["local", "notion"] = "local"
+    provider: Literal["local", "notion", "web"] = "local"
     rel_path: str
     symbol: str | None = None
     start_line: int | None = None

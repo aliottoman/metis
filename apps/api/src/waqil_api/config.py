@@ -262,6 +262,16 @@ class Settings(BaseSettings):
     # top vector hits so multi-hop code questions find related definitions.
     corpus_graph_enabled: bool = True
     corpus_graph_expand: bool = True
+
+    # Web research: search + page reading for messages sent with the Web
+    # scope. Never runs in Auto — reaching the open internet is a per-message
+    # user choice, the same consent posture cloud embedding takes.
+    web_research_enabled: bool = True
+    web_search_max_results: int = Field(default=4, ge=1, le=8)
+    web_fetch_timeout_seconds: float = Field(default=8.0, ge=2.0, le=30.0)
+    # Per-page prompt budget. Four pages at this cap stay well inside every
+    # provider's context while leaving room for history and memory.
+    web_page_max_chars: int = Field(default=3_500, ge=500, le=20_000)
     corpus_graph_expand_seeds: int = Field(default=6, ge=0, le=50)
     corpus_graph_expand_k: int = Field(default=12, ge=0, le=100)
 

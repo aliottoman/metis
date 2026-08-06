@@ -6667,6 +6667,10 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
   background: #655091;
   color: white;
 }
+.knowledgeScopeSwitch button.webSelected {
+  background: #1f6f8b;
+  color: white;
+}
 
 @media (max-width: 760px) {
 .notionForm { grid-template-columns: 1fr; }

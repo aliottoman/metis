@@ -26,6 +26,7 @@ from .local_model_session import LocalModelSessionManager
 from .model_preference import ModelPreferenceStore
 from .model_provider import RoutedModelProvider, build_model_provider
 from .notion import NotionService
+from .web_research import WebResearch
 from .profile import ProfileStore
 from .project_sandbox import ProjectSandboxService
 from .project_verification import ProjectVerificationService
@@ -161,6 +162,7 @@ class AppRuntime:
             projects=self.projects,
             customers=self.customers,
             model_session=self.model_session,
+            web=WebResearch(self.settings),
         )
         await self.control_plane.reconcile_startup()
         self.spawn(self._release_idle_model(), name="model-idle-release")

@@ -13,6 +13,9 @@ dependencies = [
   "aiosqlite==0.21.0",
   "deepagents==0.6.12",
   "fastapi==0.116.1",
+  # Web-scope research (search + page reads). Async, stdlib-light, and already
+  # in the tree transitively — pinned here because retrieval imports it.
+  "httpx==0.28.1",
   "langchain-ollama==0.3.10",
   "langgraph==1.2.9",
   "langgraph-checkpoint-sqlite==3.1.0",

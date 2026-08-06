@@ -361,7 +361,7 @@ export function ChatWorkspace() {
 
   useEffect(() => {
     const stored = window.localStorage.getItem("metis.knowledgeScope");
-    if (stored === "auto" || stored === "notion") setKnowledgeScope(stored);
+    if (stored === "auto" || stored === "notion" || stored === "web") setKnowledgeScope(stored);
   }, []);
 
   useEffect(() => {
@@ -1826,7 +1826,9 @@ export function ChatWorkspace() {
                       ? "Type the next message — it sends when this run finishes"
                       : knowledgeScope === "notion"
                         ? "Ask only from your synced Notion…"
-                        : "Message Metis…"
+                        : knowledgeScope === "web"
+                          ? "Ask the web — or paste a link to read…"
+                          : "Message Metis…"
               }
               aria-label="Message Metis"
               disabled={sending}
@@ -1950,6 +1952,14 @@ export function ChatWorkspace() {
                     onClick={() => chooseKnowledgeScope("notion")}
                     title="Answer only from synced Notion pages; refuse when there is no support"
                   >Notion</button>
+                  <button
+                    type="button"
+                    className={knowledgeScope === "web" ? "selected webSelected" : ""}
+                    aria-pressed={knowledgeScope === "web"}
+                    disabled={runActive}
+                    onClick={() => chooseKnowledgeScope("web")}
+                    title="Search the web for this message and answer with cited, clickable sources"
+                  >Web</button>
                 </div>
                 <span className="composerHint">
                   {runActive ? "Enter queues this for when the run finishes" : "Enter to send · Shift Enter for a new line"}
