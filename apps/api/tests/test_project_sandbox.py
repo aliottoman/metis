@@ -324,7 +324,7 @@ def _image_available() -> bool:
     if shutil.which("podman") is None:
         return False
     probe = subprocess.run(
-        ["podman", "image", "exists", "localhost/metis/project-verify:0.2.0"],
+        ["podman", "image", "exists", "localhost/metis/project-verify:0.3.0"],
         capture_output=True,
         check=False,
     )

@@ -537,3 +537,40 @@ def test_starting_asset_remains_visible_and_stoppable_after_project_moves(
         assert len(stopped_snapshot) == 1
         assert stopped_snapshot[0]["status"] == "stopped"
         assert stopped_snapshot[0]["url"] is None
+
+
+def test_create_project_lands_in_the_root_and_enters_the_catalog(
+    settings: Settings, tmp_path: Path
+) -> None:
+    """The picker's "new project" is just a folder plus the ordinary scan —
+    same identity hash, same grant checks, no side channel into the catalog."""
+    root = tmp_path / "projects"
+    root.mkdir()
+    with _client(settings, root) as client:
+        created = client.post("/api/v1/assets/create", json={"name": "Invoice Lab"})
+        assert created.status_code == 200, created.text
+        asset = created.json()
+        assert asset["name"] == "Invoice Lab"
+        assert (root / "Invoice Lab").is_dir()
+        # The created project is a first-class catalog entry: listed, and
+        # openable through the same saved-grant path as a discovered one.
+        listed = {item["id"] for item in client.get("/api/v1/assets").json()}
+        assert asset["id"] in listed
+
+        duplicate = client.post("/api/v1/assets/create", json={"name": "invoice lab"})
+        assert duplicate.status_code == 409
+        assert "already exists" in duplicate.json()["detail"]
+
+
+def test_create_project_cannot_express_a_path(
+    settings: Settings, tmp_path: Path
+) -> None:
+    """The name is held to a shape that cannot traverse: separators, leading
+    dots, and over-long names are refused before anything touches the disk."""
+    root = tmp_path / "projects"
+    root.mkdir()
+    with _client(settings, root) as client:
+        for name in ("../escape", "a/b", "a\\b", ".hidden", "x" * 65, "   "):
+            response = client.post("/api/v1/assets/create", json={"name": name})
+            assert response.status_code in (409, 422), name
+        assert list(root.iterdir()) == []

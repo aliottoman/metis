@@ -60,31 +60,62 @@ class Settings(BaseSettings):
     max_text_attachment_bytes: int = Field(
         default=64 * 1024, ge=1024, le=512 * 1024
     )
-    # Routes project builds to a hosted Ollama model. OFF until the provider
-    # learns to drive one.
+    # Routes project builds to a hosted Ollama model, over tool-calling
+    # decode: Ollama Cloud ignores `format` grammars (measured on three model
+    # families — a live Ledger build died on three unreadable replies proving
+    # it) but enforces tool calling, so hosted models get the same function
+    # schemas the OCI provider sends, and local models keep their grammar.
     #
-    # The speed case is real — a build step costs about a minute locally and
-    # seconds hosted — but the local build loop is grammar-constrained decode,
-    # and Ollama Cloud does not enforce a schema. Measured on the real build
-    # step: with `format` set to the step contract, and again with the
-    # OpenAI-compatible strict `json_schema`, the model returned well-formed
-    # JSON of its own invention ({"action","path","content"}) instead of the
-    # contract's shape. A live Ledger build died after five steps on three
-    # unreadable replies. Locally the same schema becomes a GBNF grammar the
-    # model cannot violate, which is why this never surfaced before.
-    #
-    # Tool calling IS enforced there, so the path forward is the protocol the
-    # OCI provider already uses — real function schemas rather than a
-    # constrained grammar. Turning this on before then breaks project builds.
+    # Still OFF by default: sending a build to someone's Ollama Cloud account
+    # is an opt-in spend/privacy decision, not a routing default. The speed
+    # case for opting in is real — a build step costs about a minute locally
+    # and seconds hosted. Models measured to ignore tool calling
+    # (HOSTED_MODEL_TOOL_CALLING in model_preference.py) are refused at
+    # selection time.
     project_cloud_coder: bool = False
     project_cloud_coder_model: str = "gpt-oss:120b-cloud"
+
+    # Compiles a loose whole-application request into a prescriptive spec
+    # before the build plan is taken. Measured on the same model, same day,
+    # same pipeline: the conversational prompt produced 38 blocking findings,
+    # its prescriptive rewrite 11. Deliberately NOT a per-message switch: a
+    # request at or past the length below — or one already carrying spec
+    # structure — passes through untouched, so real specs are never rewritten
+    # and loose asks always are. The rewrite is emitted as a run event and
+    # its assumptions are named in the build's final response.
+    project_spec_rewrite: bool = True
+    project_spec_rewrite_max_chars: int = Field(default=1800, ge=200, le=20_000)
 
     reference_runner_mode: str = "podman"
     reference_runner_image: str = "localhost/metis/reference-architecture-tool:0.3.0"
     # The inner sandbox stops at 120s; the rest is Podman startup and cleanup.
     reference_runner_timeout_seconds: int = Field(default=150, ge=135, le=600)
     allow_test_backends: bool = False
-    cors_origins: list[str] = ["http://127.0.0.1:3000", "http://localhost:3000"]
+    # 3000 is the packaged app; 3001 is the UI dev server (see docs on the dev loop).
+    cors_origins: list[str] = [
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "http://127.0.0.1:3001",
+        "http://localhost:3001",
+    ]
+
+    # Cohere's own API (Command A family), opt-in like every cloud provider:
+    # absent key means the provider simply is not offered. Distinct from the
+    # OCI-hosted Cohere retrieval models below — this is chat/agents, keyed
+    # directly against api.cohere.com.
+    cohere_api_key: str = ""
+    cohere_model: str = "command-a-plus-05-2026"
+    cohere_max_output_tokens: int = Field(default=8192, ge=256, le=32768)
+
+    # Speech to text, on the same key. Dictation is the one place a cloud call
+    # is hard to argue with even in a local-first app: the audio is a few
+    # seconds of the user's own voice, not the conversation, and the local
+    # alternative would hold a second model resident for the whole session.
+    # The 25 MB ceiling is Cohere's, restated here so an oversized clip is
+    # refused before it is read into memory rather than after a round trip.
+    cohere_transcribe_model: str = "cohere-transcribe-03-2026"
+    cohere_transcribe_language: str = "en"
+    cohere_transcribe_max_bytes: int = Field(default=25 * 1024 * 1024, ge=1024, le=25 * 1024 * 1024)
 
     # Cloud retrieval (OCI Cohere embed, rerank, Command A). Opt-in; any unmet
     # precondition falls back to local keyword search. Vectors are stored locally.
@@ -199,7 +230,7 @@ class Settings(BaseSettings):
     project_typecheck_timeout_seconds: int = Field(default=60, ge=5, le=600)
     project_wiring_gate_enabled: bool = True
     project_sandbox_enabled: bool = True
-    project_sandbox_image: str = "localhost/metis/project-verify:0.2.0"
+    project_sandbox_image: str = "localhost/metis/project-verify:0.3.0"
     project_sandbox_timeout_seconds: int = Field(default=150, ge=30, le=600)
     project_sandbox_max_modules: int = Field(default=40, ge=1, le=200)
     # Booting the Podman VM costs about ten seconds, once per laptop boot. A

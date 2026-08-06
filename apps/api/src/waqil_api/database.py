@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, TypeVar
 
 from .contracts import (
+    PROJECT_MODES,
     ApprovalRequestV1,
     ConversationProjectV1,
     ConversationV1,
@@ -805,6 +806,39 @@ CREATE INDEX IF NOT EXISTS idx_customer_notes_account
     ON customer_notes(account_id, pinned DESC, updated_at DESC);
 """
 
+SCHEMA_V17 = """
+-- Command A+ joins the project modes. The mode column is guarded by a CHECK,
+-- and SQLite cannot alter one in place, so the table is rebuilt around the
+-- widened constraint. Rows carry over untouched: both existing modes remain
+-- legal, so no stored session changes meaning.
+CREATE TABLE conversation_projects_v17 (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    mode TEXT NOT NULL
+        CHECK(mode IN ('grok_bootstrap_local','grok_continuous','cohere_continuous')),
+    updated_at TEXT NOT NULL
+);
+INSERT INTO conversation_projects_v17 (conversation_id, project_id, mode, updated_at)
+    SELECT conversation_id, project_id, mode, updated_at FROM conversation_projects;
+DROP TABLE conversation_projects;
+ALTER TABLE conversation_projects_v17 RENAME TO conversation_projects;
+"""
+
+SCHEMA_V18 = """
+-- Rewinding a thread: editing a message you already sent has to remove what
+-- followed it from the model's view, or the edit changes nothing.
+--
+-- Marked, never deleted. Runs point at their originating message, and memory
+-- proposals, tool proposals and artifacts point at those runs WITHOUT a
+-- cascade — so a hard delete either fails on a foreign key or takes governed
+-- records with it. A superseded message stays on disk and out of context,
+-- which is also the honest answer for an app whose whole posture is that
+-- history is auditable.
+ALTER TABLE messages ADD COLUMN superseded_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_live
+    ON messages(conversation_id, created_at) WHERE superseded_at IS NULL;
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -822,6 +856,8 @@ MIGRATIONS: dict[int, str] = {
     14: SCHEMA_V14,
     15: SCHEMA_V15,
     16: SCHEMA_V16,
+    17: SCHEMA_V17,
+    18: SCHEMA_V18,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -967,7 +1003,7 @@ class Database:
     async def set_conversation_project(
         self, conversation_id: str, project_id: str, mode: str
     ) -> ConversationProjectV1:
-        if mode not in {"grok_bootstrap_local", "grok_continuous"}:
+        if mode not in PROJECT_MODES:
             raise ValueError("unsupported project mode")
         timestamp = _now()
 
@@ -1095,6 +1131,7 @@ class Database:
 
         data, created = await self._call(operation)
         data["attachment_ids"] = _loads(data.pop("attachments_json"), [])
+        data.pop("superseded_at", None)  # see list_messages
         return MessageV1.model_validate(data), created
 
     async def list_messages(self, conversation_id: str) -> list[MessageV1]:
@@ -1103,7 +1140,9 @@ class Database:
                 return list(
                     self._connection()
                     .execute(
-                        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid",
+                        """SELECT * FROM messages
+                        WHERE conversation_id = ? AND superseded_at IS NULL
+                        ORDER BY created_at, rowid""",
                         (conversation_id,),
                     )
                     .fetchall()
@@ -1113,8 +1152,52 @@ class Database:
         for row in await self._call(operation):
             data = dict(row)
             data["attachment_ids"] = _loads(data.pop("attachments_json"), [])
+            # Rewind bookkeeping, not part of the wire contract: every row
+            # this returns is live by construction, so the column would only
+            # ever carry NULL to a client that has no use for it.
+            data.pop("superseded_at", None)
             result.append(MessageV1.model_validate(data))
         return result
+
+    async def supersede_messages_from(
+        self, conversation_id: str, message_id: str
+    ) -> int:
+        """Retire a message and everything after it. Returns how many were retired.
+
+        The ordering is `created_at, rowid` — the same pair `list_messages`
+        reads by — because two messages written in the same clock tick are
+        ordered only by rowid, and a rewind that used the timestamp alone
+        would leave one of a pair behind.
+
+        Already-superseded messages are counted out, so rewinding twice to the
+        same point is a no-op rather than a growing number.
+        """
+        timestamp = _now()
+
+        def operation() -> int:
+            with self._transaction() as conn:
+                anchor = conn.execute(
+                    "SELECT created_at, rowid FROM messages WHERE id = ? AND conversation_id = ?",
+                    (message_id, conversation_id),
+                ).fetchone()
+                if anchor is None:
+                    raise LookupError("message not found in this conversation")
+                cursor = conn.execute(
+                    """UPDATE messages SET superseded_at = ?
+                    WHERE conversation_id = ? AND superseded_at IS NULL
+                      AND (created_at, rowid) >= (?, ?)""",
+                    (timestamp, conversation_id, anchor["created_at"], anchor["rowid"]),
+                )
+                # The rolling summary was written over text that is no longer
+                # in the thread, so it would smuggle the rewound turns back
+                # into context. It is derived state and rebuilds itself.
+                conn.execute(
+                    "DELETE FROM conversation_summaries WHERE conversation_id = ?",
+                    (conversation_id,),
+                )
+                return int(cursor.rowcount)
+
+        return await self._call(operation)
 
     async def recent_messages(
         self, conversation_id: str, *, limit: int = 20, max_characters: int = 12_000
@@ -1139,6 +1222,7 @@ class Database:
                         self._connection().execute(
                             """SELECT role, content FROM messages
                             WHERE conversation_id = ? AND id != ?
+                              AND superseded_at IS NULL
                             ORDER BY created_at DESC, rowid DESC LIMIT ?""",
                             (conversation_id, exclude_message_id, limit + 1),
                         )
@@ -1146,7 +1230,8 @@ class Database:
                 return list(
                     self._connection().execute(
                         """SELECT role, content FROM messages
-                        WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC
+                        WHERE conversation_id = ? AND superseded_at IS NULL
+                        ORDER BY created_at DESC, rowid DESC
                         LIMIT ?""",
                         (conversation_id, limit + 1),
                     )

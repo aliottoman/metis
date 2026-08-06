@@ -106,6 +106,12 @@ async def test_every_roster_tool_dispatches_in_the_workspace(tmp_path: Path) -> 
             "original": "VALUE = 1",
             "replacement": "VALUE = 2",
         },
+        "replace_lines": {
+            "path": "main.py",
+            "start_line": 1,
+            "end_line": 1,
+            "replacement": "VALUE = 3\n",
+        },
     }
     staged: dict[str, dict[str, object]] = {}
     for name, arguments in calls.items():

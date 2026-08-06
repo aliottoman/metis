@@ -219,6 +219,58 @@ def _read_window(
     }
 
 
+def _splice_lines(text: str, arguments: dict[str, Any]) -> str:
+    """The file text with one 1-indexed inclusive line range replaced.
+
+    The forgiving edit primitive. apply_patch requires a byte-exact quote of
+    the current text, and that is precisely what weak models cannot produce:
+    across the measured repair turns, 0 of 8 attempted fixes landed, every
+    miss on whitespace. Line coordinates come from read_file's own
+    ``start_line``/``end_line`` — nothing here depends on quoting — and the
+    optional ``expect`` guard turns a mis-aimed range into a refusal that
+    shows the model what the range actually holds, instead of a silent wrong
+    edit the verifier has to catch later.
+    """
+    try:
+        start = int(arguments.get("start_line", 0))
+        end = int(arguments.get("end_line", 0))
+    except (TypeError, ValueError):
+        raise ProjectWorkspaceError(
+            "replace_lines needs integer start_line and end_line",
+            argument_shape=True,
+        ) from None
+    lines = text.splitlines(keepends=True)
+    total = len(lines)
+    if start < 1 or end < start:
+        raise ProjectWorkspaceError(
+            f"replace_lines needs 1 <= start_line <= end_line; you sent "
+            f"{start}..{end}",
+            argument_shape=True,
+        )
+    if start > total:
+        raise ProjectWorkspaceError(
+            f"replace_lines range {start}..{end} starts past the end of the "
+            f"file, which has {total} line(s); read_file the target first",
+            argument_shape=True,
+        )
+    end = min(end, total)
+    doomed = "".join(lines[start - 1 : end])
+    expect = str(arguments.get("expect", "") or "")
+    if expect and expect not in doomed:
+        raise ProjectWorkspaceError(
+            f"replace_lines refused: lines {start}..{end} do not contain the "
+            f"expected text {expect[:120]!r}. That range currently holds:\n"
+            f"{doomed[:400]}\nAim start_line/end_line at the block you meant.",
+            argument_shape=True,
+        )
+    replacement = str(arguments.get("replacement", ""))
+    # A replacement that stops mid-line would glue itself onto the next line
+    # and manufacture a syntax error the model never wrote.
+    if replacement and not replacement.endswith("\n") and end < total:
+        replacement += "\n"
+    return "".join(lines[: start - 1]) + replacement + "".join(lines[end:])
+
+
 # Every spelling a model reaches for when it means "the project root". Left
 # unrecognized, each one filters the listing down to nothing and the project
 # reads as empty — which is what sends an agent into a re-listing loop.
@@ -386,13 +438,28 @@ class ProjectWorkspaceService:
                 if isinstance(bootstrap_raw, dict)
                 else None
             )
+            # Which provider will actually write the map, so the manifest can
+            # record it truthfully rather than always claiming Grok.
+            bootstrapper = "oci-grok"
+            bootstrap_model_name = self.settings.oci_grok_model
             if bootstrap is None:
                 available = getattr(self.bootstrap_model, "available", None)
                 if available is None and hasattr(self.bootstrap_model, "oci"):
-                    available = getattr(self.bootstrap_model.oci, "available", False)
+                    # The router bootstraps on Grok, or on Cohere when OCI is
+                    # absent, so either configured key is enough to make a map.
+                    cohere = getattr(self.bootstrap_model, "cohere", None)
+                    oci_ready = bool(getattr(self.bootstrap_model.oci, "available", False))
+                    cohere_ready = bool(
+                        cohere is not None and getattr(cohere, "available", False)
+                    )
+                    available = oci_ready or cohere_ready
+                    if not oci_ready and cohere_ready:
+                        bootstrapper = "cohere"
+                        bootstrap_model_name = self.settings.cohere_model
                 if available is False:
                     raise ProjectWorkspaceError(
-                        "Grok project bootstrap requires OCI Responses to be configured"
+                        "A project map needs a cloud provider: configure OCI Responses "
+                        "or a Cohere API key"
                     )
                 bootstrap = await self.bootstrap_model.bootstrap_project(
                     {
@@ -415,8 +482,12 @@ class ProjectWorkspaceService:
                 "revision": revision,
                 "created_at": prior.get("created_at", timestamp) if prior else timestamp,
                 "updated_at": timestamp,
-                "bootstrap_provider": "oci-grok",
-                "bootstrap_model": self.settings.oci_grok_model,
+                "bootstrap_provider": prior.get("bootstrap_provider", bootstrapper)
+                if prior
+                else bootstrapper,
+                "bootstrap_model": prior.get("bootstrap_model", bootstrap_model_name)
+                if prior
+                else bootstrap_model_name,
                 **snapshot,
                 "bootstrap": bootstrap.model_dump(mode="json"),
             }
@@ -480,7 +551,7 @@ class ProjectWorkspaceService:
 
     async def preview(self, asset_id: str, call: ProjectToolCallV1) -> dict[str, str]:
         root = await self.assets.project_path(asset_id)
-        if call.name not in {"apply_patch", "create_file"}:
+        if call.name not in {"apply_patch", "replace_lines", "create_file"}:
             raise ProjectWorkspaceError("that project tool does not mutate files")
         relative = _bounded_line(call.arguments.get("path"), 1_000)
         target = self._safe_target(root, relative, write=True)
@@ -490,6 +561,13 @@ class ProjectWorkspaceService:
             detail = (
                 f"Replace {len(original)} characters with {len(replacement)} characters "
                 f"in {relative}."
+            )
+        elif call.name == "replace_lines":
+            replacement = str(call.arguments.get("replacement", ""))
+            detail = (
+                f"Replace lines {call.arguments.get('start_line')}–"
+                f"{call.arguments.get('end_line')} of {relative} with "
+                f"{len(replacement)} characters."
             )
         else:
             content = str(call.arguments.get("content", ""))
@@ -510,6 +588,11 @@ class ProjectWorkspaceService:
         if call.name == "apply_patch":
             async with self._lock:
                 result = await asyncio.to_thread(self._apply_patch, root, call.arguments)
+                await asyncio.to_thread(self._record_mutation, root, call, result)
+                return result
+        if call.name == "replace_lines":
+            async with self._lock:
+                result = await asyncio.to_thread(self._replace_lines, root, call.arguments)
                 await asyncio.to_thread(self._record_mutation, root, call, result)
                 return result
         if call.name == "create_file":
@@ -569,7 +652,7 @@ class ProjectWorkspaceService:
             )
         if call.name == "inspect_api":
             return await self._inspect_api(call), None
-        if call.name in {"apply_patch", "create_file"}:
+        if call.name in {"apply_patch", "replace_lines", "create_file"}:
             return await asyncio.to_thread(
                 self._stage_write, root, call, dict(staged), tuple(next_paths)
             )
@@ -752,6 +835,29 @@ class ProjectWorkspaceService:
                 "base_sha256": "",
                 "bytes": len(content.encode("utf-8")),
             }
+        elif call.name == "replace_lines":
+            replacement = str(call.arguments.get("replacement", ""))
+            if len(replacement.encode("utf-8")) > self.settings.project_max_write_bytes:
+                raise ProjectWorkspaceError("project replacement exceeds the write limit")
+            if existing is not None:
+                text = str(existing["content"])
+                origin = str(existing["origin"])
+                base = str(existing["base_sha256"])
+            elif target.is_file() and _is_text_file(target):
+                text = target.read_text(encoding="utf-8")
+                origin = "patch"
+                base = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            else:
+                raise ProjectWorkspaceError(
+                    "replace_lines target must be an existing or staged text file"
+                )
+            updated = _splice_lines(text, call.arguments)
+            entry = {
+                "content": updated,
+                "origin": origin,
+                "base_sha256": base,
+                "bytes": len(updated.encode("utf-8")),
+            }
         else:
             original = str(call.arguments.get("original", ""))
             replacement = str(call.arguments.get("replacement", ""))
@@ -759,7 +865,8 @@ class ProjectWorkspaceService:
                 raise ProjectWorkspaceError(
                     "apply_patch requires a non-empty exact original block. It takes "
                     '{"path","original","replacement"} and is not a diff; you sent '
-                    f"{sorted(call.arguments)}.",
+                    f"{sorted(call.arguments)}. If quoting the block exactly keeps "
+                    "failing, use replace_lines with the line range instead.",
                     argument_shape=True,
                 )
             if len(replacement.encode("utf-8")) > self.settings.project_max_write_bytes:
@@ -1138,7 +1245,11 @@ class ProjectWorkspaceService:
         )
 
     async def verify_staged_runtime(
-        self, asset_id: str, staged: dict[str, dict[str, Any]]
+        self,
+        asset_id: str,
+        staged: dict[str, dict[str, Any]],
+        *,
+        scenarios: list[dict[str, Any]] | None = None,
     ) -> SandboxOutcome:
         """Import the staged changeset inside the reviewed container.
 
@@ -1155,7 +1266,11 @@ class ProjectWorkspaceService:
             return SandboxOutcome(available=False, reason=str(exc))
         paths, _, requirements = await self._static_context(asset_id, staged, with_sources=False)
         return await self.sandbox.verify(
-            root=root, staged=staged, project_paths=paths, requirements=requirements
+            root=root,
+            staged=staged,
+            project_paths=paths,
+            requirements=requirements,
+            scenarios=scenarios,
         )
 
     async def _static_context(
@@ -1635,6 +1750,28 @@ class ProjectWorkspaceService:
                     if len(matches) >= limit:
                         return {"matches": matches, "truncated": True}
         return {"matches": matches, "truncated": False}
+
+    def _replace_lines(self, root: Path, arguments: dict[str, Any]) -> dict[str, Any]:
+        relative = _bounded_line(arguments.get("path"), 1_000)
+        path = self._safe_target(root, relative, write=True)
+        if not path.is_file() or not _is_text_file(path):
+            raise ProjectWorkspaceError("replace_lines target must be an existing text file")
+        if (
+            len(str(arguments.get("replacement", "")).encode("utf-8"))
+            > self.settings.project_max_write_bytes
+        ):
+            raise ProjectWorkspaceError("project replacement exceeds the write limit")
+        text = path.read_text(encoding="utf-8")
+        updated = _splice_lines(text, arguments)
+        if len(updated.encode("utf-8")) > self.settings.project_max_write_bytes:
+            raise ProjectWorkspaceError("updated project file exceeds the write limit")
+        path.write_text(updated, encoding="utf-8")
+        return {
+            "path": relative,
+            "changed": True,
+            "before_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "after_sha256": hashlib.sha256(updated.encode("utf-8")).hexdigest(),
+        }
 
     def _apply_patch(self, root: Path, arguments: dict[str, Any]) -> dict[str, Any]:
         relative = _bounded_line(arguments.get("path"), 1_000)

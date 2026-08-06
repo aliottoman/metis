@@ -18,8 +18,9 @@ from waqil_api.model_preference import ModelPreferenceStore, is_cloud_model
 
 
 def _service(tmp_path: Path, **overrides: object) -> ModelPreferenceStore:
-    # The shipped default is off (Ollama Cloud does not enforce the step
-    # grammar); these tests are about the routing rule, so they opt in.
+    # The shipped default is off (routing a build to someone's Ollama Cloud
+    # account is an opt-in decision); these tests are about the routing rule,
+    # so they opt in.
     overrides.setdefault("project_cloud_coder", True)
     settings = Settings(_env_file=None, data_dir=tmp_path, **overrides)  # type: ignore[arg-type]
     return ModelPreferenceStore(settings)
@@ -55,9 +56,9 @@ def test_the_setting_turns_it_off_entirely(tmp_path: Path) -> None:
 
 
 def test_the_shipped_default_is_off(tmp_path: Path) -> None:
-    """Ollama Cloud ignores the step grammar, so a hosted coder cannot drive
-    the build loop yet; a live build died after five steps on unreadable
-    replies. The routing stays built and stays off."""
+    """The provider can drive a hosted coder now — over tool calling, since
+    Ollama Cloud ignores the step grammar — but routing a build to someone's
+    cloud account stays an explicit opt-in, not a shipped default."""
     settings = Settings(_env_file=None, data_dir=tmp_path)
     assert settings.project_cloud_coder is False
     assert ModelPreferenceStore(settings).project_coder() == ""
@@ -89,6 +90,39 @@ def test_a_corrupt_preference_file_does_not_break_the_default(tmp_path: Path) ->
         json.dumps({"mode": "pinned", "model": "kimi-k2.7-code:cloud"}), encoding="utf-8"
     )
     assert service.project_coder() == ""
+
+
+def test_an_unusable_hosted_coder_is_refused_at_selection_time(tmp_path: Path) -> None:
+    """M6: minimax-m3 ignores tool calls on the same endpoint where gemma4
+    honours them, so routing a build to it can only end in malformed replies
+    at step five. The refusal happens where the route is chosen, and it names
+    the configuration mistake instead of blaming the model."""
+    service = _service(tmp_path, project_cloud_coder_model="minimax-m3:cloud")
+    with pytest.raises(ValueError, match="does not honour tool calling"):
+        service.project_coder()
+
+
+def test_a_hosted_model_not_yet_measured_gets_the_benefit_of_the_doubt(
+    tmp_path: Path,
+) -> None:
+    """The record holds measurements, not guesses: a subscription model nobody
+    has tested routes normally, and the malformed-streak breaker bounds a
+    wrong guess. Only a model measured to fail is refused."""
+    service = _service(tmp_path, project_cloud_coder_model="kimi-k2.7-code:cloud")
+    assert service.project_coder() == "kimi-k2.7-code:cloud"
+
+
+def test_pinning_an_unusable_hosted_model_is_refused_where_it_is_saved(
+    tmp_path: Path,
+) -> None:
+    """A pinned model drives every role, so an unusable one would break the
+    planner too. The save is the selection moment, so the save refuses."""
+    service = _service(tmp_path)
+    with pytest.raises(ValueError, match="does not honour tool calling"):
+        service.save("pinned", "minimax-m3:cloud")
+    # And the usable hosted models still pin exactly as before.
+    service.save("pinned", "gpt-oss:120b-cloud")
+    assert service.load().model == "gpt-oss:120b-cloud"
 
 
 def test_both_cloud_tag_shapes_are_recognized() -> None:

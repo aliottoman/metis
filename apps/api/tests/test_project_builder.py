@@ -2054,25 +2054,25 @@ async def test_the_manifest_is_taken_once_and_costs_no_step(tmp_path: Path) -> N
         "conversation_id": "conv_x",
     }
 
-    planned = await ControlPlane._project_manifest(plane, state, {}, 0, {})
+    planned, scenarios = await ControlPlane._project_manifest(plane, state, {}, 0, {})
     assert planned == ["alpha.txt", "beta.txt"]
+    assert scenarios == []
     assert calls["count"] == 1
 
     # Never re-asked: once on the first step of the turn, then carried in state.
     assert await ControlPlane._project_manifest(
         plane, {**state, "project_planned_files": planned}, {}, 3, {}
-    ) == planned
+    ) == (planned, [])
     assert calls["count"] == 1
     # Not on a later step, not once work is staged, and not for a question —
     # None, meaning "no manifest applies", never [] ("asked, got nothing").
-    assert await ControlPlane._project_manifest(plane, state, {}, 2, {}) is None
-    assert await ControlPlane._project_manifest(plane, state, {}, 0, {"a": {}}) is None
+    assert (await ControlPlane._project_manifest(plane, state, {}, 2, {}))[0] is None
+    assert (await ControlPlane._project_manifest(plane, state, {}, 0, {"a": {}}))[0] is None
     assert (
         await ControlPlane._project_manifest(
             plane, {**state, "prompt": "What does main.py do?"}, {}, 0, {}
         )
-        is None
-    )
+    )[0] is None
     assert calls["count"] == 1
 
 
@@ -2107,6 +2107,10 @@ async def test_planning_the_build_does_not_spend_one_of_the_models_steps() -> No
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48,
         project_staged_max_files=48,
+        # The spec-rewrite stage stands down here; these tests are about the
+        # manifest and the guards, not the rewrite (test_spec_rewrite owns that).
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
         # Reference lookup is part of every build step; point it at nothing so
         # these manifest tests stay about the manifest.
         project_reference_enabled=True,
@@ -2156,6 +2160,10 @@ async def test_the_manifest_survives_an_unreadable_first_reply() -> None:
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48,
         project_staged_max_files=48,
+        # The spec-rewrite stage stands down here; these tests are about the
+        # manifest and the guards, not the rewrite (test_spec_rewrite owns that).
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
         # Reference lookup is part of every build step; point it at nothing so
         # these manifest tests stay about the manifest.
         project_reference_enabled=True,
@@ -2193,7 +2201,7 @@ async def test_a_manifest_the_model_cannot_produce_leaves_the_loop_as_it_was() -
         settings=SimpleNamespace(project_staged_max_files=48),
         events=SimpleNamespace(emit=_noop_emit),
     )
-    planned = await ControlPlane._project_manifest(
+    planned, _scenarios = await ControlPlane._project_manifest(
         plane,
         {
             "prompt": "Build out the whole app from scratch.",

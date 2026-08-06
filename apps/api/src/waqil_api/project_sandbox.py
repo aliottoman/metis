@@ -182,6 +182,7 @@ class ProjectSandboxService:
         staged: dict[str, dict[str, Any]],
         project_paths: list[str] | None = None,
         requirements: str = "",
+        scenarios: list[dict[str, Any]] | None = None,
     ) -> SandboxOutcome:
         """Import the staged project in the sandbox and report what failed."""
         if self.settings.model_backend == "deterministic":
@@ -201,7 +202,8 @@ class ProjectSandboxService:
                 available=True, reason="no Python module in this changeset to import"
             )
         return await asyncio.to_thread(
-            self._run, runner, root, staged, paths, requirements, modules
+            self._run, runner, root, staged, paths, requirements, modules,
+            list(scenarios or []),
         )
 
     def _run(
@@ -212,6 +214,7 @@ class ProjectSandboxService:
         paths: list[str],
         requirements: str,
         modules: list[str],
+        scenarios: list[dict[str, Any]] | None = None,
     ) -> SandboxOutcome:
         """Materialize, invoke the wrapper, and read back its envelope."""
         self._last_used = time.monotonic()
@@ -230,6 +233,7 @@ class ProjectSandboxService:
                     "schema_version": "1",
                     "modules": modules,
                     "app_attribute": "app",
+                    "scenarios": list(scenarios or []),
                 }
             ).encode("utf-8")
             try:
@@ -418,7 +422,20 @@ def classify_envelope(
                 )
             )
             continue
-        if check.get("kind") == "request":
+        if check.get("kind") == "acceptance":
+            # The spec's own claim, replayed. A crash or wrong status class is
+            # a provable defect; a response that merely fails to *mention*
+            # something stays advisory, because the scenario — not the app —
+            # may be the wrong party, and false blocks cost more than they
+            # catch.
+            findings.append(
+                _finding(
+                    path,
+                    f"{name} failed: {detail}{location}",
+                    WARNING if check.get("content_miss") else ERROR,
+                )
+            )
+        elif check.get("kind") == "request":
             findings.append(
                 _finding(path, f"{name} failed when the project ran: {detail}{location}")
             )

@@ -13,7 +13,7 @@ from waqil_api.contracts import (
     ToolManifestV1,
     ToolState,
 )
-from waqil_api.database import Database, SCHEMA_V1
+from waqil_api.database import MIGRATIONS, Database, SCHEMA_V1
 
 
 @pytest.mark.asyncio
@@ -141,7 +141,11 @@ async def test_migrations_upgrade_real_v1_are_idempotent_and_reject_future(tmp_p
         )
     }
     connection.close()
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    # Every declared migration applied, in order, exactly once. Derived rather
+    # than spelled out: a literal ladder fails on the next migration for no
+    # reason other than being a literal, which teaches people to edit the
+    # assertion instead of reading it.
+    assert versions == sorted(MIGRATIONS)
     assert {
         "conversation_summaries",
         "tool_improvement_proposals",

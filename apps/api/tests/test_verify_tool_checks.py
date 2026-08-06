@@ -236,3 +236,102 @@ def test_multipart_rule_stays_quiet_when_declared_or_unused() -> None:
         requirements="fastapi\n",
     )
     assert not [f for f in plain if "python-multipart" in f["error"]]
+
+
+# --- acceptance scenarios ----------------------------------------------------
+
+
+def _assessing_application() -> FastAPI:
+    app = FastAPI()
+
+    @app.post("/assess")
+    async def assess(file: UploadFile = File(...)) -> dict[str, str]:
+        await file.read()
+        return {"risk": "low", "supplier": "extracted"}
+
+    @app.get("/records")
+    async def records() -> dict[str, list[str]]:
+        return {"records": []}
+
+    @app.get("/crashes")
+    async def crashes() -> dict[str, int]:
+        return {"n": None + 1}  # type: ignore[operator] - the defect under test
+
+    return app
+
+
+def test_acceptance_scenarios_pass_fail_and_mark_content_misses() -> None:
+    """The spec's claims, replayed: a matching response passes, a crash fails
+    on status, and a response that merely fails to mention something is marked
+    content_miss so the host keeps it advisory."""
+    tool = _verify_tool()
+    checks = {
+        check["name"]: check
+        for check in tool._scenario_checks(
+            _assessing_application(),
+            [
+                {
+                    "name": "upload is assessed",
+                    "method": "POST",
+                    "path": "/assess",
+                    "body_kind": "image_upload",
+                    "expect_status": "2xx",
+                    "expect_contains": ["risk"],
+                },
+                {
+                    "name": "verdict is spelled out",
+                    "method": "POST",
+                    "path": "/assess",
+                    "body_kind": "image_upload",
+                    "expect_contains": ["high-risk-verdict-string"],
+                },
+                {
+                    "name": "crash is caught",
+                    "method": "GET",
+                    "path": "/crashes",
+                    "expect_status": "2xx",
+                },
+            ],
+        )
+    }
+    assert checks["acceptance: upload is assessed"]["ok"] is True
+    miss = checks["acceptance: verdict is spelled out"]
+    assert miss["ok"] is False and miss.get("content_miss") is True
+    crash = checks["acceptance: crash is caught"]
+    assert crash["ok"] is False and not crash.get("content_miss")
+
+
+def test_acceptance_classification_blocks_crashes_and_advises_misses() -> None:
+    """Host side: a scenario crash is a provable defect (error); a content
+    miss stays a warning — the scenario, not the app, may be the wrong party."""
+    envelope = {
+        "status": "succeeded",
+        "checks": [
+            {
+                "name": "acceptance: crash",
+                "kind": "acceptance",
+                "ok": False,
+                "detail": "GET /crashes returned HTTP 500, expected 2xx",
+            },
+            {
+                "name": "acceptance: wording",
+                "kind": "acceptance",
+                "ok": False,
+                "content_miss": True,
+                "detail": "response never mentions: verdict",
+            },
+        ],
+        "routes": [],
+    }
+    outcome = classify_envelope(envelope, staged={"app/main.py": {}}, project_paths=[])
+    severities = {
+        finding["error"][:20]: finding["severity"] for finding in outcome.findings
+    }
+    assert any(
+        finding["severity"] == "error" and "crash" in finding["error"]
+        for finding in outcome.findings
+    )
+    assert any(
+        finding["severity"] == "warning" and "wording" in finding["error"]
+        for finding in outcome.findings
+    ), severities

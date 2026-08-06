@@ -927,7 +927,11 @@ async def test_local_project_step_forbids_completion_on_a_build_turn() -> None:
     class CapturingProvider(OllamaModelProvider):
         def __init__(self):
             self.captured = None
-            self.settings = SimpleNamespace(max_output_tokens=8192)
+            # coder_model present so the transport fork (hosted vs grammar)
+            # can resolve a model name; a local name keeps the grammar path.
+            self.settings = SimpleNamespace(
+                max_output_tokens=8192, coder_model="qwen3-coder:30b"
+            )
 
         async def _structured(self, schema, **kwargs):
             self.captured = {"schema": schema, **kwargs}
@@ -966,7 +970,11 @@ async def test_a_refused_argument_shape_narrows_the_next_step_to_that_tool() -> 
     class CapturingProvider(OllamaModelProvider):
         def __init__(self):
             self.captured = None
-            self.settings = SimpleNamespace(max_output_tokens=8192)
+            # coder_model present so the transport fork (hosted vs grammar)
+            # can resolve a model name; a local name keeps the grammar path.
+            self.settings = SimpleNamespace(
+                max_output_tokens=8192, coder_model="qwen3-coder:30b"
+            )
 
         async def _structured(self, schema, **kwargs):
             self.captured = {"schema": schema, **kwargs}
@@ -1012,7 +1020,11 @@ async def test_a_refused_write_target_pins_the_next_step_to_the_files_still_owed
     class CapturingProvider(OllamaModelProvider):
         def __init__(self):
             self.captured = None
-            self.settings = SimpleNamespace(max_output_tokens=8192)
+            # coder_model present so the transport fork (hosted vs grammar)
+            # can resolve a model name; a local name keeps the grammar path.
+            self.settings = SimpleNamespace(
+                max_output_tokens=8192, coder_model="qwen3-coder:30b"
+            )
 
         async def _structured(self, schema, **kwargs):
             self.captured = {"schema": schema, **kwargs}
@@ -1032,7 +1044,11 @@ async def test_a_refused_write_target_pins_the_next_step_to_the_files_still_owed
     )
 
     constraint = provider.captured["constraint"]
-    assert constraint["properties"]["tool"]["enum"] == ["create_file", "apply_patch"]
+    assert constraint["properties"]["tool"]["enum"] == [
+            "create_file",
+            "apply_patch",
+            "replace_lines",
+        ]
     assert constraint["properties"]["arguments"]["properties"]["path"]["enum"] == [
         "app/config.py",
         "README.md",
@@ -1072,7 +1088,11 @@ async def test_the_step_prompt_names_the_files_the_build_still_owes() -> None:
     class CapturingProvider(OllamaModelProvider):
         def __init__(self):
             self.captured = None
-            self.settings = SimpleNamespace(max_output_tokens=8192)
+            # coder_model present so the transport fork (hosted vs grammar)
+            # can resolve a model name; a local name keeps the grammar path.
+            self.settings = SimpleNamespace(
+                max_output_tokens=8192, coder_model="qwen3-coder:30b"
+            )
 
         async def _structured(self, schema, **kwargs):
             self.captured = {"schema": schema, **kwargs}
@@ -1105,7 +1125,11 @@ async def test_a_finished_manifest_tells_the_model_it_is_done() -> None:
     class CapturingProvider(OllamaModelProvider):
         def __init__(self):
             self.captured = None
-            self.settings = SimpleNamespace(max_output_tokens=8192)
+            # coder_model present so the transport fork (hosted vs grammar)
+            # can resolve a model name; a local name keeps the grammar path.
+            self.settings = SimpleNamespace(
+                max_output_tokens=8192, coder_model="qwen3-coder:30b"
+            )
 
         async def _structured(self, schema, **kwargs):
             self.captured = {"schema": schema, **kwargs}

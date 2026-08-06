@@ -53,6 +53,7 @@ metis-offline-bundle*.zip
 
 # Design exploration assets (not shipped; the product mark lives in metis-mark.tsx)
 design/
+brand/
 
 # Internal phase-tracking design notes, kept local
 docs/tool-factory-v2-plan.md

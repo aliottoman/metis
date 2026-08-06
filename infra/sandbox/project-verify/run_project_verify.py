@@ -240,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the Metis project verify sandbox")
     parser.add_argument("--project-dir", type=Path, required=True,
                         help="materialized project directory, mounted read-only")
-    parser.add_argument("--image", default="localhost/metis/project-verify:0.2.0",
+    parser.add_argument("--image", default="localhost/metis/project-verify:0.3.0",
                         help="approved local image tag or digest-pinned equivalent")
     arguments = parser.parse_args(argv)
     try:

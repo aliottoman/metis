@@ -39,6 +39,7 @@ MAX_CAPTURED_CHARS = 4_000
 MAX_ROUTES = 64
 MAX_REQUESTS = 12
 MAX_BODY_REQUESTS = 10
+MAX_SCENARIOS = 8
 DEFAULT_IMPORT_SECONDS = 20
 
 # A real 1×1 PNG, so a route that sniffs magic bytes or decodes its upload
@@ -358,6 +359,101 @@ def _body_checks(application: Any, own_paths: set[str]) -> list[dict[str, Any]]:
     return checks
 
 
+def _scenario_checks(application: Any, scenarios: list[Any]) -> list[dict[str, Any]]:
+    """Replay the plan's acceptance scenarios against the app, exactly as written.
+
+    The structural checks above prove the app parses, imports and serves;
+    real builds have passed all of that while being non-functional demoware.
+    A scenario is the specification's own claim made executable — the upload
+    route accepts a real image, the assessment response names a verdict — so
+    a failure here is the first rung that can say "it runs, but it does not
+    do what was asked". Status failures carry the same fields as the other
+    request checks; a content miss is marked so the host can keep it advisory
+    (the scenario, not the app, may be the wrong party).
+    """
+    if not scenarios:
+        return []
+    try:
+        from starlette.testclient import TestClient
+    except Exception:
+        return []
+    checks: list[dict[str, Any]] = []
+    try:
+        client = TestClient(application)
+    except Exception as error:
+        return [
+            {
+                "name": "start test client",
+                "kind": "acceptance",
+                "ok": False,
+                "detail": _bounded("".join(traceback.format_exception_only(error)).strip()),
+                "error_type": type(error).__name__,
+            }
+        ]
+    with client:
+        for raw in scenarios[:MAX_SCENARIOS]:
+            if not isinstance(raw, dict):
+                continue
+            name = _bounded(raw.get("name") or "scenario", 120)
+            method = "POST" if str(raw.get("method", "GET")).upper() == "POST" else "GET"
+            path = str(raw.get("path") or "/")
+            if not path.startswith("/"):
+                path = f"/{path}"
+            body_kind = str(raw.get("body_kind") or "none")
+            kwargs: dict[str, Any] = {}
+            if method == "POST" and body_kind == "json":
+                kwargs["json"] = raw.get("body") if isinstance(raw.get("body"), dict) else {}
+            elif method == "POST" and body_kind == "image_upload":
+                kwargs["files"] = {"file": ("fixture.png", PNG_FIXTURE, "image/png")}
+                data = raw.get("body")
+                if isinstance(data, dict) and data:
+                    kwargs["data"] = {key: str(value) for key, value in data.items()}
+            check: dict[str, Any] = {"name": f"acceptance: {name}", "kind": "acceptance"}
+            try:
+                response = client.request(method, path, **kwargs)
+            except Exception as error:
+                check["ok"] = False
+                check["error_type"] = type(error).__name__
+                check["detail"] = _bounded(
+                    "".join(traceback.format_exception_only(error)).strip()
+                )
+                check["where"] = _frame_in_project(error)
+                checks.append(check)
+                continue
+            status = response.status_code
+            expected = str(raw.get("expect_status") or "2xx_or_4xx")
+            status_ok = {
+                "2xx": 200 <= status < 300,
+                "4xx": 400 <= status < 500,
+            }.get(expected, status < 500)
+            if not status_ok:
+                check["ok"] = False
+                check["detail"] = f"{method} {path} returned HTTP {status}, expected {expected}"
+                checks.append(check)
+                continue
+            try:
+                text = response.text.casefold()
+            except Exception:
+                text = ""
+            missing = [
+                str(needle)
+                for needle in (raw.get("expect_contains") or [])[:8]
+                if str(needle).casefold() not in text
+            ]
+            if missing:
+                check["ok"] = False
+                check["content_miss"] = True
+                check["detail"] = (
+                    f"{method} {path} answered HTTP {status} but the response never "
+                    "mentions: " + ", ".join(_bounded(item, 80) for item in missing)
+                )
+            else:
+                check["ok"] = True
+                check["detail"] = f"HTTP {status}, response matches the scenario"
+            checks.append(check)
+    return checks
+
+
 def verify(request: dict[str, Any]) -> dict[str, Any]:
     """Run every requested check and return the envelope describing them."""
     modules = [str(name) for name in request.get("modules", []) if str(name)]
@@ -406,6 +502,9 @@ def verify(request: dict[str, Any]) -> dict[str, Any]:
             )
             checks.extend(_request_checks(application, routes, own_paths))
             checks.extend(_body_checks(application, own_paths))
+            checks.extend(
+                _scenario_checks(application, list(request.get("scenarios") or []))
+            )
         elif modules:
             checks.append(
                 {

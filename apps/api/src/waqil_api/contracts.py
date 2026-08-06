@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -212,6 +212,19 @@ class RiskLevel(StrEnum):
     R4 = "R4"
 
 
+# Who leads each bounded project step after the initial repository map. The
+# map itself is not a mode: it is one call, made once, by whichever cloud
+# provider is configured. These choose the driver of the loop that follows.
+#   grok_bootstrap_local  North runs project turns on-device.
+#   grok_continuous       Grok leads every step, through OCI.
+#   cohere_continuous     Command A+ leads every step, through the Cohere key.
+# Spelled once here because the same three strings are a request field, an
+# open-project body, a stored session, and a SQLite CHECK constraint, and the
+# four drifted apart the last time a mode was added.
+ProjectModeV1 = Literal["grok_bootstrap_local", "grok_continuous", "cohere_continuous"]
+PROJECT_MODES: frozenset[str] = frozenset(get_args(ProjectModeV1))
+
+
 class ArtifactRefV1(Contract):
     id: str
     filename: str
@@ -228,6 +241,12 @@ class UploadV1(Contract):
     size: int = Field(ge=0)
     sha256: str
     created_at: datetime
+
+
+class TranscriptV1(Contract):
+    """One dictation turned into text. Carries no id: nothing is stored."""
+
+    text: str
 
 
 class AssetEnvVarV1(Contract):
@@ -258,6 +277,17 @@ class AssetV1(Contract):
     launch_command: list[str] = Field(default_factory=list, max_length=32)
     status: AssetStatus
     url: str | None = None
+
+
+class AssetCreateV1(Contract):
+    """A request to start a brand-new, empty project folder from the picker.
+
+    The bound is the folder name only: where it lands is always the first
+    configured projects root, decided by the host — a request can never choose
+    a directory.
+    """
+
+    name: str = Field(min_length=1, max_length=64)
 
 
 class AssetEnvUpdateV1(Contract):
@@ -309,7 +339,7 @@ class MessageCreateV1(Contract):
     content: str = Field(min_length=1, max_length=20_000)
     attachment_ids: list[str] = Field(default_factory=list, max_length=20)
     project_id: str | None = Field(default=None, pattern=r"^asset_[a-f0-9]{20}$")
-    project_mode: Literal["grok_bootstrap_local", "grok_continuous"] | None = None
+    project_mode: ProjectModeV1 | None = None
     knowledge_scope: Literal["auto", "notion"] = "auto"
     customer_id: str | None = Field(default=None, pattern=r"^cust_[a-f0-9]{20}$")
 
@@ -416,13 +446,13 @@ class ProjectWorkspaceV1(Contract):
 
 
 class ProjectOpenV1(Contract):
-    mode: Literal["grok_bootstrap_local", "grok_continuous"]
+    mode: ProjectModeV1
 
 
 class ConversationProjectV1(Contract):
     conversation_id: str
     project_id: str
-    mode: Literal["grok_bootstrap_local", "grok_continuous"]
+    mode: ProjectModeV1
     updated_at: datetime
 
 
@@ -468,6 +498,7 @@ class ProjectToolCallV1(Contract):
         "search_code",
         "read_file",
         "apply_patch",
+        "replace_lines",
         "create_file",
         "run_check",
         "inspect_api",
@@ -578,6 +609,7 @@ PROJECT_TOOL_ARGUMENT_PROPERTIES: dict[str, dict[str, Any]] = {
     "start_line": {"type": "integer"},
     "end_line": {"type": "integer"},
     "limit": {"type": "integer"},
+    "expect": {"type": "string"},
 }
 
 # What each tool actually needs, mirroring the host's own refusals so the
@@ -588,6 +620,7 @@ PROJECT_TOOL_REQUIRED_ARGUMENTS: dict[str, list[str]] = {
     "read_file": ["path"],
     "create_file": ["path", "content"],
     "apply_patch": ["path", "original", "replacement"],
+    "replace_lines": ["path", "start_line", "end_line", "replacement"],
     "run_check": ["name"],
     "inspect_api": ["module"],
 }
@@ -612,6 +645,7 @@ PROJECT_TOOL_OPTIONAL_ARGUMENTS: dict[str, list[str]] = {
     "read_file": ["start_line", "end_line"],
     "create_file": [],
     "apply_patch": [],
+    "replace_lines": ["expect"],
     "run_check": [],
     "inspect_api": ["symbol"],
 }
@@ -632,7 +666,16 @@ _PROJECT_TOOL_NOTES: dict[str, str] = {
     "apply_patch": (
         "Replace one block of an existing or staged file. original must appear "
         "exactly once in the current file text, copied verbatim; replacement is "
-        "what it becomes. This is not a diff — do not send patch text."
+        "what it becomes. This is not a diff — do not send patch text. If your "
+        "original keeps failing to match, switch to replace_lines."
+    ),
+    "replace_lines": (
+        "Replace lines start_line through end_line (1-indexed, inclusive) of an "
+        "existing or staged file with replacement — no exact quoting needed. "
+        "read_file the range first: its start_line/end_line confirm your "
+        "coordinates, and passing a short distinctive substring of the doomed "
+        "block as expect makes a mis-aimed range refuse instead of landing. To "
+        "rewrite a whole file, replace lines 1 through its last line."
     ),
     "run_check": "Run one declared verification check by name.",
     "inspect_api": (
@@ -692,15 +735,18 @@ def project_write_schema(paths: list[str]) -> dict[str, Any]:
     same move that took apply_patch from 0/4 to 4/4 correct calls.
 
     Deliberately not narrowed to create_file alone. The refused path stays in the
-    enum and apply_patch stays legal, so a model that meant to *revise* the file
-    it just wrote can still do exactly that; what becomes unexpressible is only
-    the thing it was measurably getting wrong. Flat, with no `$ref` or `anyOf`,
-    so the MLX grammar-collapse protection holds.
+    enum and both revision tools stay legal, so a model that meant to *revise*
+    the file it just wrote can still do exactly that; what becomes unexpressible
+    is only the thing it was measurably getting wrong. Flat, with no `$ref` or
+    `anyOf`, so the MLX grammar-collapse protection holds.
     """
     schema = grammar_schema(ProjectAgentStepWireV1)
     properties = dict(schema["properties"])
     properties["status"] = {"type": "string", "enum": ["tool"]}
-    properties["tool"] = {"type": "string", "enum": ["create_file", "apply_patch"]}
+    properties["tool"] = {
+        "type": "string",
+        "enum": ["create_file", "apply_patch", "replace_lines"],
+    }
     properties["arguments"] = {
         "type": "object",
         "additionalProperties": False,
@@ -709,10 +755,56 @@ def project_write_schema(paths: list[str]) -> dict[str, Any]:
             "content": {"type": "string"},
             "original": {"type": "string"},
             "replacement": {"type": "string"},
+            "start_line": {"type": "integer"},
+            "end_line": {"type": "integer"},
+            "expect": {"type": "string"},
         },
         "required": ["path"],
     }
     return {**schema, "properties": properties, "required": ["status", "tool", "arguments"]}
+
+
+class ProjectSpecV1(Contract):
+    """A loose build request compiled into the prescriptive spec that builds well.
+
+    Measured on the same model, same day, same pipeline: a conversational
+    build prompt produced 38 blocking findings; its prescriptive rewrite —
+    named files, named routes, explicit stack and rules — produced 11. The
+    spec is derived context, never a replacement for intent: the original
+    request stays the source of truth, and every product decision the user
+    did not state is confessed in ``assumptions`` rather than smuggled in.
+    """
+
+    spec: str = Field(min_length=1, max_length=8_000)
+    assumptions: list[str] = Field(default_factory=list, max_length=8)
+
+
+class AcceptanceScenarioV1(Contract):
+    """One machine-checkable claim about what the built app must do.
+
+    The verification ladder proves *structure* — parses, imports, serves —
+    and real builds have passed every rung while being non-functional
+    demoware. A scenario is the spec's own claim made executable: a method, a
+    path, the smallest body that exercises the claim, and what the response
+    must look like. The sandbox runs them exactly as written; the card
+    reports the ones that failed. Deliberately flat and enum-driven so the
+    local grammar can carry it.
+    """
+
+    name: str = Field(min_length=1, max_length=120)
+    method: Literal["GET", "POST"] = "GET"
+    path: str = Field(min_length=1, max_length=300)
+    # What rides in the request: nothing, the JSON object in `body`, or the
+    # verifier's real PNG fixture as a multipart upload.
+    body_kind: Literal["none", "json", "image_upload"] = "none"
+    body: dict[str, Any] = Field(default_factory=dict)
+    # "2xx_or_4xx" is the resilient default: it proves the route is alive and
+    # validating without guessing which side of validation a minimal body
+    # lands on. Only a 5xx or an unhandled exception fails it.
+    expect_status: Literal["2xx", "4xx", "2xx_or_4xx"] = "2xx_or_4xx"
+    # Substrings the response text must contain, when the claim is about
+    # content — extracted fields present, a verdict named, a total computed.
+    expect_contains: list[str] = Field(default_factory=list, max_length=8)
 
 
 class ProjectBuildPlanV1(Contract):
@@ -728,6 +820,10 @@ class ProjectBuildPlanV1(Contract):
     """
 
     files: list[str] = Field(default_factory=list, max_length=24)
+    # The acceptance scenarios that make "done" checkable against the spec
+    # rather than against the model's summary. Optional: an empty list keeps
+    # the ladder exactly as it was.
+    scenarios: list[AcceptanceScenarioV1] = Field(default_factory=list, max_length=8)
 
     @field_validator("files")
     @classmethod
@@ -776,6 +872,7 @@ class ProjectAgentStepWireV1(Contract):
         "search_code",
         "read_file",
         "apply_patch",
+        "replace_lines",
         "create_file",
         "run_check",
         "inspect_api",
@@ -831,6 +928,7 @@ class ProjectBuildStepWireV1(Contract):
         "search_code",
         "read_file",
         "apply_patch",
+        "replace_lines",
         "create_file",
         "run_check",
         "inspect_api",
@@ -1246,17 +1344,18 @@ class PersonalProfileUpdateV1(Contract):
 class ModelPreferenceV1(Contract):
     mode: Literal["split", "pinned"] = "split"
     model: str | None = None
-    provider: Literal["local", "oci"] = "local"
+    provider: Literal["local", "oci", "cohere"] = "local"
     oci_tools: list[Literal["x_search", "code_interpreter"]] = Field(
         default_factory=lambda: ["code_interpreter"], max_length=2
     )
     oci_available: bool = False
+    cohere_available: bool = False
 
 
 class ModelPreferenceUpdateV1(Contract):
     mode: Literal["split", "pinned"]
     model: str | None = Field(default=None, max_length=200)
-    provider: Literal["local", "oci"] = "local"
+    provider: Literal["local", "oci", "cohere"] = "local"
     oci_tools: list[Literal["x_search", "code_interpreter"]] = Field(
         default_factory=lambda: ["code_interpreter"], max_length=2
     )

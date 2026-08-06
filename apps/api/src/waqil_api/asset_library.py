@@ -21,6 +21,8 @@ _MANIFEST_LIMIT = 32 * 1024
 _METADATA_LIMIT = 64 * 1024
 _LOG_LIMIT = 64 * 1024
 _ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+# A folder name, never a path: no separators, no leading dot, bounded length.
+_PROJECT_FOLDER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$")
 _SAFE_ID = re.compile(r"^asset_[0-9a-f]{20}$")
 _RESERVED_ENV_EXACT = {
     "BASH_ENV",
@@ -871,6 +873,52 @@ class AssetManager:
             if expected_id != asset_id:
                 raise AssetLibraryError("project identity no longer matches its saved grant")
             return project
+
+    async def create(self, name: str) -> AssetV1:
+        """Create one empty project folder and return its catalog entry.
+
+        The folder always lands in the *first* configured root — the same
+        place every other project lives — and then goes through the ordinary
+        scan, so a created project is indistinguishable from a discovered one:
+        same identity hash, same grant checks, no side channel into the
+        catalog. The name is the only input, and it is held to a shape that
+        cannot express a path: no separators, no leading dot, 64 characters.
+        """
+        cleaned = " ".join(str(name or "").split())
+        if not _PROJECT_FOLDER_NAME.match(cleaned):
+            raise AssetLibraryError(
+                "project names use letters, numbers, spaces, dots, dashes and "
+                "underscores, start with a letter or number, and stay under 64 "
+                "characters"
+            )
+        if not self._roots:
+            raise AssetLibraryError("no projects folder is configured")
+        try:
+            root = self._roots[0].expanduser().resolve(strict=True)
+            if not root.is_dir():
+                raise OSError("configured asset root is not a directory")
+            existing = {child.name.casefold() for child in root.iterdir()}
+        except (OSError, PermissionError) as exc:
+            raise AssetLibraryError(
+                "the configured projects folder is unavailable"
+            ) from exc
+        if cleaned.casefold() in existing:
+            raise AssetLibraryError(f'a project named "{cleaned}" already exists')
+        try:
+            (root / cleaned).mkdir()
+        except (OSError, PermissionError) as exc:
+            raise AssetLibraryError("the project folder could not be created") from exc
+        await self.scan()
+        created_id = (
+            f"asset_{hashlib.sha256(str((root / cleaned).resolve()).encode('utf-8')).hexdigest()[:20]}"
+        )
+        async with self._lock:
+            record = self._catalog.get(created_id)
+            if record is None:
+                raise AssetLibraryError(
+                    "the new project folder did not survive a catalog scan"
+                )
+            return self._view(record)
 
     async def scan(self) -> list[AssetV1]:
         records: dict[str, AssetRecord] = {}

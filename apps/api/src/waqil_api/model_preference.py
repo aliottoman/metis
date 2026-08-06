@@ -26,6 +26,41 @@ def is_cloud_model(model: str) -> bool:
     return name.endswith("-cloud") or name.endswith(":cloud")
 
 
+# Whether each hosted model honours tool calling, measured — not assumed —
+# against the real project-step contract through the Ollama daemon on
+# 2026-08-05. Tool calling is a training property, not a platform one:
+# minimax-m3 fails it on the same endpoint where gemma4 succeeds, so a new
+# subscription model belongs here only after it has been tested the same way.
+# A model absent from this table gets the benefit of the doubt — the loop's
+# malformed-streak breaker still bounds a wrong guess — but a model measured
+# to ignore tool calls is refused at selection time, because the alternative
+# is three malformed replies at step five of somebody's build.
+HOSTED_MODEL_TOOL_CALLING: dict[str, bool] = {
+    "gpt-oss:120b-cloud": True,
+    "gpt-oss:20b-cloud": True,
+    "gemma4:31b-cloud": True,
+    "minimax-m3:cloud": False,
+}
+
+
+def hosted_model_capability_error(model: str) -> str:
+    """Why this hosted model cannot drive structured work, or "" when it can.
+
+    Hosted decode rides entirely on tool calling — Ollama Cloud enforces no
+    other structure — so a hosted model that does not honour it cannot produce
+    one readable step. Local names always pass: they are grammar-constrained
+    and never consult this record.
+    """
+    name = model.strip()
+    if not is_cloud_model(name) or HOSTED_MODEL_TOOL_CALLING.get(name, True):
+        return ""
+    return (
+        f"{name} does not honour tool calling on Ollama Cloud, so it cannot "
+        "return a readable structured step. Choose a hosted model that does, "
+        "such as gpt-oss:120b-cloud."
+    )
+
+
 class ModelPreferenceStore:
     """Read/write the local model-routing preference at `Settings.model_preference_path`."""
 
@@ -45,8 +80,14 @@ class ModelPreferenceStore:
         model = raw.get("model") if isinstance(raw.get("model"), str) else None
         if mode == "pinned" and not model:
             mode = "split"
-        provider = raw.get("provider") if raw.get("provider") in ("local", "oci") else "local"
+        provider = (
+            raw.get("provider")
+            if raw.get("provider") in ("local", "oci", "cohere")
+            else "local"
+        )
         if provider == "oci" and not self.oci_available:
+            provider = "local"
+        if provider == "cohere" and not self.cohere_available:
             provider = "local"
         raw_tools = raw.get("oci_tools")
         oci_tools = (
@@ -60,6 +101,7 @@ class ModelPreferenceStore:
             provider=provider,
             oci_tools=list(dict.fromkeys(oci_tools)),
             oci_available=self.oci_available,
+            cohere_available=self.cohere_available,
         )
 
     @property
@@ -68,6 +110,10 @@ class ModelPreferenceStore:
             self._settings.allow_oci_responses
             and self._settings.oci_responses_project_id.strip()
         )
+
+    @property
+    def cohere_available(self) -> bool:
+        return bool(self._settings.cohere_api_key.strip())
 
     def save(
         self,
@@ -81,13 +127,22 @@ class ModelPreferenceStore:
             raise ValueError("mode must be 'split' or 'pinned'")
         if mode == "pinned" and not (model and model.strip()):
             raise ValueError("pinned mode requires a model name")
-        if provider not in ("local", "oci"):
-            raise ValueError("provider must be 'local' or 'oci'")
+        if mode == "pinned" and model:
+            # Refused here, where the choice is made, rather than at step five
+            # of a build: a pinned model drives every role, and a hosted model
+            # that ignores tool calls cannot answer a single structured call.
+            capability_error = hosted_model_capability_error(model)
+            if capability_error:
+                raise ValueError(capability_error)
+        if provider not in ("local", "oci", "cohere"):
+            raise ValueError("provider must be 'local', 'oci' or 'cohere'")
         if provider == "oci" and not self.oci_available:
             raise ValueError(
                 "OCI Responses requires WAQIL_ALLOW_OCI_RESPONSES=true and "
                 "WAQIL_OCI_RESPONSES_PROJECT_ID"
             )
+        if provider == "cohere" and not self.cohere_available:
+            raise ValueError("Cohere requires WAQIL_COHERE_API_KEY")
         selected_tools = list(dict.fromkeys(oci_tools or []))
         if any(item not in ("x_search", "code_interpreter") for item in selected_tools):
             raise ValueError("unsupported OCI native tool")
@@ -131,7 +186,15 @@ class ModelPreferenceStore:
         preference = self.load()
         if preference.mode == "pinned" and is_cloud_model(preference.model or ""):
             return ""
-        return self._settings.project_cloud_coder_model
+        coder = self._settings.project_cloud_coder_model
+        capability_error = hosted_model_capability_error(coder)
+        if capability_error:
+            # A configuration error, surfaced where the route is chosen. The
+            # alternative — routing the build and letting it die on malformed
+            # replies at step five — reports a settings mistake as the model
+            # replying unintelligibly.
+            raise ValueError(capability_error)
+        return coder
 
     def resolve_aliases(self) -> dict[str, str]:
         """The `model_aliases` a new run should use, honoring the preference."""

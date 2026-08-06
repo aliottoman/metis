@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "image": "localhost/metis/project-verify:0.2.0",
+  "image": "localhost/metis/project-verify:0.3.0",
   "pull_policy": "never",
   "network": "none",
   "read_only_root": true,

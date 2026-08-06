@@ -33,6 +33,10 @@ def _plane(model: object) -> ControlPlane:
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48,
         project_staged_max_files=48,
+        # The spec-rewrite stage stands down here; these tests are about the
+        # manifest and the guards, not the rewrite (test_spec_rewrite owns that).
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
     )
     plane._guard = _noop
     plane._stage = _noop

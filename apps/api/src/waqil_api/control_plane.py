@@ -118,7 +118,7 @@ def _write_failed_since(trace: list[dict[str, Any]], start: int, path: str) -> b
     if not path:
         return False
     for entry in trace[start:]:
-        if entry.get("tool") not in {"apply_patch", "create_file"}:
+        if entry.get("tool") not in {"apply_patch", "replace_lines", "create_file"}:
             continue
         if str((entry.get("arguments") or {}).get("path", "")) != path:
             continue
@@ -294,6 +294,22 @@ def _read_reference_files(directory: str, stamp: float) -> tuple[tuple[str, str]
         except (OSError, UnicodeError):
             continue
     return tuple(files)
+
+
+_SPEC_STRUCTURE = re.compile(
+    r"^\s*(STACK|FILES|RULES|ROUTES|SCREENS|STORE|UI|API)\b\s*[:(]?", re.MULTILINE
+)
+
+
+def _looks_prescriptive(prompt: str) -> bool:
+    """Whether a build request already reads as a spec rather than a wish.
+
+    The rewrite must never touch a real spec — rewriting the Ledger benchmark
+    text would replace a measured artifact with a paraphrase of one. Labeled
+    section headers are the tell: conversational asks do not open lines with
+    STACK/FILES/RULES, and every prescriptive spec written here does.
+    """
+    return bool(_SPEC_STRUCTURE.search(prompt))
 
 
 def _reference_notes(
@@ -652,6 +668,14 @@ class AgentState(TypedDict):
     # is demonstrably unfinished, whatever the model's summary says. Empty means
     # no manifest was taken, and the older "did you stage anything" rule applies.
     project_planned_files: list[str]
+    # The acceptance scenarios named alongside the manifest: the spec's own
+    # claims made checkable, replayed by the sandbox rung against the finished
+    # app. Plain dicts (AcceptanceScenarioV1 shape) so checkpoints stay JSON.
+    project_planned_scenarios: list[dict[str, Any]]
+    # The prescriptive spec a loose whole-app request was compiled into, with
+    # the assumptions that compilation confessed. Empty when the request was
+    # already a spec, the rewrite is off, or the provider cannot compile one.
+    project_spec: dict[str, Any]
     # Steps since the staged overlay last changed. The manifest gate takes
     # `complete` out of the grammar, which is right while the model is making
     # progress and a trap when it cannot: an edit turn whose planned file exists
@@ -1053,7 +1077,7 @@ class ControlPlane:
             aliases = record.get("model_aliases", {})
             if (
                 self.model_session is not None
-                and aliases.get("_provider") != "oci"
+                and aliases.get("_provider") not in ("oci", "cohere")
                 and self.settings.model_backend != "deterministic"
             ):
                 try:
@@ -1459,9 +1483,9 @@ class ControlPlane:
         project_context = state.get("project_context") or await self.projects.context(
             project_id
         )
-        using_oci = state.get("model_aliases", {}).get("_provider") == "oci"
+        cloud_context = state.get("model_aliases", {}).get("_provider") in ("oci", "cohere")
         prompt_context = project_context
-        if not using_oci:
+        if not cloud_context:
             prompt_context = dict(project_context)
             prompt_context["metis_md"] = str(project_context.get("metis_md", ""))[:20_000]
             manifest = dict(project_context.get("manifest", {}))
@@ -1469,9 +1493,13 @@ class ControlPlane:
             prompt_context["manifest"] = manifest
         trace = _bounded_project_trace(
             list(state.get("project_trace", [])),
-            max_characters=180_000 if using_oci else 36_000,
+            max_characters=180_000 if cloud_context else 36_000,
         )
-        planned = await self._project_manifest(state, prompt_context, iterations, staged)
+        spec_info = await self._project_spec_rewrite(state, iterations, staged)
+        spec_text = str((spec_info or {}).get("spec") or "")
+        planned, planned_scenarios = await self._project_manifest(
+            state, prompt_context, iterations, staged, spec_text=spec_text
+        )
         if planned == [] and is_new_application_request(state["prompt"]):
             # Asked twice, named nothing — a plan failure, distinct from a
             # manifest that merely could not be requested (None). Scoped to
@@ -1501,6 +1529,12 @@ class ControlPlane:
             if planned and not state.get("project_planned_files")
             else {}
         )
+        if carry and planned_scenarios:
+            # The scenarios ride the manifest's carry rules exactly: taken on
+            # step one, survived on every outcome, or lost with the plan.
+            carry["project_planned_scenarios"] = planned_scenarios
+        if spec_info and not state.get("project_spec"):
+            carry["project_spec"] = spec_info
         # A whole-application build starts from verified infrastructure, not a
         # blank tree: the host stages appkit (and .env.example) before the
         # model's first step. Seeded entries ride the same overlay as model
@@ -1526,7 +1560,8 @@ class ControlPlane:
         try:
             step = await self.model.project_step(
                 self._project_step_request(
-                    state, prompt_context, trace, staged, iterations, planned
+                    state, prompt_context, trace, staged, iterations, planned,
+                    spec_text=spec_text
                 ),
                 model_aliases=state.get("model_aliases", {}),
             )
@@ -1557,14 +1592,101 @@ class ControlPlane:
         )
         return {**carry, **step_result}
 
+    async def _project_spec_rewrite(
+        self,
+        state: AgentState,
+        iterations: int,
+        staged: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """The prescriptive spec this build runs against, compiled once.
+
+        Deliberately not a per-message switch. A loose conversational request
+        always benefits — measured on the same model and pipeline, 38 blocking
+        findings raw against 11 rewritten — and a real spec never should be
+        touched, so the choice is made by the request itself: anything at or
+        past the length threshold, or already carrying spec structure, passes
+        through untouched. Losing the rewrite (provider without the method,
+        a failed call, the setting off) only loses sharpening; the build then
+        behaves exactly as it did before this stage existed.
+
+        The compiled spec is derived context, never a replacement for intent:
+        detection and the finish guard keep keying off the user's own words,
+        the rewrite is emitted as a run event, and every assumption it made is
+        confessed in the final response rather than smuggled into the app.
+        """
+        existing = dict(state.get("project_spec") or {})
+        if existing:
+            return existing
+        prompt = state["prompt"]
+        if (
+            iterations
+            or staged
+            or not self.settings.project_spec_rewrite
+            or not is_new_application_request(prompt)
+            or len(prompt) >= self.settings.project_spec_rewrite_max_chars
+            or _looks_prescriptive(prompt)
+        ):
+            return None
+        rewriter = getattr(self.model, "project_spec", None)
+        if rewriter is None:
+            return None
+        cloud_context = state.get("model_aliases", {}).get("_provider") in ("oci", "cohere")
+        try:
+            compiled = await rewriter(
+                {
+                    "user_request": prompt,
+                    # The verified API facts, in front of the REWRITER too:
+                    # without them the compiled spec names the right library
+                    # and then invents its own usage — the first live run kept
+                    # langchain-oci but added Tailwind and a Tesseract
+                    # fallback the request never asked for.
+                    "reference_notes": _reference_notes(
+                        prompt,
+                        self.settings.project_reference_dir,
+                        max_characters=(
+                            self.settings.project_reference_max_chars
+                            if cloud_context
+                            else self.settings.project_reference_max_chars_local
+                        )
+                        if self.settings.project_reference_enabled
+                        else 0,
+                    ),
+                },
+                model_aliases=state.get("model_aliases", {}),
+            )
+        except Exception:  # noqa: BLE001 - a lost rewrite only loses sharpening
+            return None
+        spec = str(getattr(compiled, "spec", "") or "").strip()
+        if not spec or spec == prompt.strip():
+            return None
+        info = {
+            "spec": spec,
+            "assumptions": [
+                str(item)[:300] for item in list(getattr(compiled, "assumptions", []))[:8]
+            ],
+        }
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.spec_rewritten",
+            {
+                "chars": len(spec),
+                "original_chars": len(prompt),
+                "assumptions": info["assumptions"],
+            },
+        )
+        return info
+
     async def _project_manifest(
         self,
         state: AgentState,
         prompt_context: dict[str, Any],
         iterations: int,
         staged: dict[str, Any],
-    ) -> list[str] | None:
-        """The file list this build turn is accountable to, taken once.
+        spec_text: str = "",
+    ) -> tuple[list[str] | None, list[dict[str, Any]]]:
+        """The file list this build turn is accountable to, taken once —
+        together with the acceptance scenarios that make "done" checkable.
 
         Asked on the first step of a build turn only, and inside this node
         rather than as a graph node of its own — a new node would change the
@@ -1585,21 +1707,29 @@ class ControlPlane:
         """
         existing = list(state.get("project_planned_files") or [])
         if existing:
-            return existing
+            return existing, list(state.get("project_planned_scenarios") or [])
+        # (the spec rewrite, when one applies, has already run — see
+        # _project_spec_rewrite, which this method's request text comes from)
         if iterations or staged or not is_project_build_instruction(state["prompt"]):
-            return None
+            return None, []
         request = {
-            "user_request": state["prompt"],
+            "user_request": spec_text or state["prompt"],
             "project_context": prompt_context,
             "conversation_summary": state.get("conversation_summary", ""),
         }
         for _ in range(2):
             try:
-                planned = await self.model.project_plan_files(
+                plan = await self.model.project_plan_files(
                     request, model_aliases=state.get("model_aliases", {})
                 )
             except Exception:  # noqa: BLE001 - a missing manifest only loses the gate
-                return None
+                return None, []
+            # Scripted fakes still return a bare list; the real providers now
+            # return the whole plan, scenarios included.
+            planned = getattr(plan, "files", plan)
+            scenarios = [
+                item.model_dump(mode="json") for item in getattr(plan, "scenarios", [])
+            ][:8]
             # Bounded by the contract as well; this keeps the manifest inside
             # the same changeset budget the overlay itself enforces.
             files = [str(path) for path in planned][: self.settings.project_staged_max_files]
@@ -1608,10 +1738,13 @@ class ControlPlane:
                     state["run_id"],
                     state["conversation_id"],
                     "project.build_planned",
-                    {"files": files},
+                    {
+                        "files": files,
+                        "scenarios": [str(item.get("name", "")) for item in scenarios],
+                    },
                 )
-                return files
-        return []
+                return files, scenarios
+        return [], []
 
     def _project_step_request(
         self,
@@ -1621,6 +1754,7 @@ class ControlPlane:
         staged: dict[str, Any],
         iterations: int,
         planned: list[str] | None = None,
+        spec_text: str = "",
     ) -> dict[str, Any]:
         remaining = [path for path in (planned or []) if path not in staged]
         # A gate the model cannot pass is worse than no gate. Once the overlay
@@ -1628,20 +1762,25 @@ class ControlPlane:
         # `complete`, so a stuck turn ends with an honest account of what it
         # could not do rather than grinding to the step budget with nothing.
         stalled = int(state.get("project_stall_steps", 0)) >= _MAX_STALL_STEPS
-        using_oci = state.get("model_aliases", {}).get("_provider") == "oci"
+        cloud_context = state.get("model_aliases", {}).get("_provider") in ("oci", "cohere")
         return {
-            "user_request": state["prompt"],
+            # The compiled spec, when one was taken, is what the build works
+            # from; the user's own words stay beside it as the source of
+            # intent. Detection (build_turn, the finish guard) keys off the
+            # original on purpose — the spec sharpens the work, never the rules.
+            "user_request": spec_text or state["prompt"],
+            **({"original_request": state["prompt"]} if spec_text else {}),
             "project_context": prompt_context,
             # Verified API facts, read from reference/ and always sent — not
             # retrieved. Retrieval was tried and measured: the reference never
             # surfaced once, and both Grok and the local model independently
             # invented the same three details it documents.
             "reference_notes": _reference_notes(
-                state["prompt"],
+                state["prompt"] + "\n" + spec_text,
                 self.settings.project_reference_dir,
                 max_characters=(
                     self.settings.project_reference_max_chars
-                    if using_oci
+                    if cloud_context
                     else self.settings.project_reference_max_chars_local
                 )
                 if self.settings.project_reference_enabled
@@ -1880,7 +2019,8 @@ class ControlPlane:
                     "ok": False,
                     "error": (
                         f"{len(errors)} problem(s) in the staged changeset would stop "
-                        f"this project working: {detail}. Fix each with apply_patch — "
+                        f"this project working: {detail}. Fix each with apply_patch, "
+                        "or replace_lines when an exact quote will not match — "
                         "read_file shows the current staged text — then finish. Do not "
                         "finish while a staged file is broken."
                     ),
@@ -1924,6 +2064,7 @@ class ControlPlane:
         *,
         full: bool = False,
         planned: list[str] | None = None,
+        scenarios: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Verify a staged changeset and report each distinct defect once.
 
@@ -1932,7 +2073,7 @@ class ControlPlane:
         early returns.
         """
         result = await self._verify_staged_rungs(
-            project_id, staged, full=full, planned=planned
+            project_id, staged, full=full, planned=planned, scenarios=scenarios
         )
         result["errors"] = _distinct_findings(result["errors"])
         result["warnings"] = _distinct_findings(result["warnings"])
@@ -1945,6 +2086,7 @@ class ControlPlane:
         *,
         full: bool = False,
         planned: list[str] | None = None,
+        scenarios: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Check a staged changeset: every file parses, the files fit together,
         the project actually runs.
@@ -2022,7 +2164,9 @@ class ControlPlane:
                 "the project was not run: it has files that do not parse"
             )
             return result
-        outcome = await self.projects.verify_staged_runtime(project_id, staged)
+        outcome = await self.projects.verify_staged_runtime(
+            project_id, staged, scenarios=scenarios
+        )
         if not outcome.available:
             if outcome.reason:
                 result["notes"].append(f"the project was not run: {outcome.reason}")
@@ -2110,6 +2254,7 @@ class ControlPlane:
                 project_id,
                 staged_now,
                 planned=planned or state.get("project_planned_files") or [],
+                scenarios=state.get("project_planned_scenarios") or [],
             )
             if staged_now:
                 await self._emit_staged_verification(state, verification)
@@ -2126,6 +2271,21 @@ class ControlPlane:
                 )
             await self.projects.record_learnings(project_id, state["run_id"], step.learnings)
             response = step.response
+            spec_assumptions = list(
+                (state.get("project_spec") or {}).get("assumptions") or []
+            )
+            if staged_now and spec_assumptions:
+                # The compiled spec chose defaults where the request was
+                # silent; they are decisions about the user's product, so they
+                # go in front of the user, not just in a run event.
+                listed = "\n".join(f"- {item}" for item in spec_assumptions)
+                response = (
+                    f"{response}\n\n---\n"
+                    "*I compiled your request into a fuller spec before "
+                    "building. Where your message was silent I assumed:*\n"
+                    f"{listed}\n"
+                    "*Say the word and a follow-up turn changes any of these.*"
+                )
             if not staged_now:
                 # The host states what the turn actually did, because the model's
                 # own summary is only a claim: a run once "completed" a 15-file
@@ -2323,6 +2483,7 @@ class ControlPlane:
             if call.name == "read_file":
                 path = str(call.arguments.get("path", ""))
                 blocked.pop(f"apply_patch:{path}", None)
+                blocked.pop(f"replace_lines:{path}", None)
                 blocked.pop(f"create_file:{path}", None)
         except VerificationNotApprovedError as exc:
             # Reachable only if approval was revoked mid-turn; the gate before
@@ -2495,6 +2656,7 @@ class ControlPlane:
             staged,
             full=True,
             planned=state.get("project_planned_files") or [],
+            scenarios=state.get("project_planned_scenarios") or [],
         )
         summary = _annotate_summary(summary, verification)
         # A changeset the host has proven cannot work does not get an Approve
@@ -4691,6 +4853,8 @@ def initial_state(
         project_write_pin=[],
         project_blocked_targets={},
         project_planned_files=[],
+        project_planned_scenarios=[],
+        project_spec={},
         project_stall_steps=0,
         project_refused_streak=0,
         project_prior_blocking=0,
@@ -4957,6 +5121,21 @@ def _sandbox_verdict(checks: list[dict[str, Any]]) -> str:
             f"⚠ Could not confirm this project runs. The static checks pass, but the "
             f"sandbox could not import {names} (see below), so the application was "
             "never started here. Review before applying."
+        )
+    acceptance = [c for c in checks if c.get("kind") == "acceptance"]
+    acceptance_failed = [c for c in acceptance if not c.get("ok")]
+    if served and acceptance and not acceptance_failed:
+        return (
+            f"✅ Every file parses, the project served its routes, and all "
+            f"{len(acceptance)} acceptance scenario(s) from the build plan passed "
+            f"in the sandbox ({count} checks) — the app answers the way the plan "
+            "said it must."
+        )
+    if served and acceptance_failed:
+        return (
+            f"⚠ The project runs, but {len(acceptance_failed)} of {len(acceptance)} "
+            "acceptance scenario(s) from the build plan did not hold (see below). "
+            "It serves routes without doing what the plan claimed."
         )
     if served:
         return (

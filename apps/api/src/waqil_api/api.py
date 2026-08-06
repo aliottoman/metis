@@ -24,6 +24,7 @@ from .contracts import (
     ApprovalDecisionV1,
     AssetEnvUpdateV1,
     AssetLogsV1,
+    AssetCreateV1,
     AssetStartV1,
     AssetV1,
     CodeGraphLookupV1,
@@ -122,12 +123,14 @@ from .contracts import (
     ToolVersionV1,
     ToolVersionEvidenceV1,
     ToolVersionActivationV1,
+    TranscriptV1,
     UploadV1,
 )
 from .control_plane import GRAPH_SCHEMA_VERSION, initial_state
 from .dac_sizing import SizingError
 from .embeddings import CohereUnavailable
 from .local_model_session import LocalModelSessionError
+from .model_provider import ModelProviderError
 from .notion import NotionError
 from .reference_architecture import ReferenceRunnerError
 from .project_verification import ProjectVerificationError
@@ -148,6 +151,34 @@ def runtime(request: Request) -> AppRuntime:
 
 def not_found(kind: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{kind} not found")
+
+
+# Which provider each continuous project mode rides on. A mode absent from
+# this map runs the bounded loop on-device and needs no cloud check.
+PROJECT_MODE_PROVIDER: dict[str, str] = {
+    "grok_continuous": "oci",
+    "cohere_continuous": "cohere",
+}
+
+
+def _require_project_mode_available(app: AppRuntime, mode: str) -> None:
+    """Refuse a continuous project mode whose provider is not configured.
+
+    Checked where the mode is chosen AND again where a stored session is
+    replayed: a key can be withdrawn between the two, and a run that starts
+    and then cannot make its first call reports a settings gap as a model
+    failure.
+    """
+    if app.settings.model_backend == "deterministic":
+        return
+    provider = PROJECT_MODE_PROVIDER.get(mode)
+    if provider == "oci" and not app.model_preference.oci_available:
+        raise HTTPException(status_code=409, detail="continuous Grok mode is unavailable")
+    if provider == "cohere" and not app.model_preference.cohere_available:
+        raise HTTPException(
+            status_code=409,
+            detail="continuous Command A+ mode requires WAQIL_COHERE_API_KEY",
+        )
 
 
 def _extract_upload_record(record: dict, max_bytes: int) -> str:
@@ -812,6 +843,15 @@ async def scan_assets(request: Request) -> list[AssetV1]:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
+@router.post("/assets/create", response_model=AssetV1)
+async def create_asset(body: AssetCreateV1, request: Request) -> AssetV1:
+    """Create an empty project folder in the configured projects root."""
+    try:
+        return await runtime(request).assets.create(body.name)
+    except AssetLibraryError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
 @router.post("/assets/{asset_id}/start", response_model=AssetV1)
 async def start_asset(
     asset_id: str, request: Request, body: AssetStartV1 | None = None
@@ -999,6 +1039,33 @@ async def delete_conversation(conversation_id: str, request: Request) -> Respons
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/rewind",
+    response_model=ConversationV1,
+)
+async def rewind_conversation(
+    conversation_id: str, message_id: str, request: Request
+) -> ConversationV1:
+    """Retire a message and everything after it, then return the thread.
+
+    What makes an edited message an edit rather than a second question: the
+    turns that followed the original have to leave the model's view. They are
+    marked, not deleted — runs, approvals and memory proposals still point at
+    them, and this app's whole claim is that its history is auditable.
+    """
+    app = runtime(request)
+    if await app.database.get_conversation(conversation_id) is None:
+        raise not_found("conversation")
+    try:
+        await app.database.supersede_messages_from(conversation_id, message_id)
+    except LookupError as exc:
+        raise not_found("message") from exc
+    value = await app.database.get_conversation(conversation_id)
+    if value is None:
+        raise not_found("conversation")
+    return value
+
+
 @router.get(
     "/conversations/{conversation_id}/project",
     response_model=ConversationProjectV1 | None,
@@ -1078,12 +1145,7 @@ async def create_message(
     if project_fields_supplied and body.project_id and body.project_mode:
         if app.projects is None:
             raise HTTPException(status_code=503, detail="project workspaces are unavailable")
-        if (
-            body.project_mode == "grok_continuous"
-            and not app.model_preference.oci_available
-            and app.settings.model_backend != "deterministic"
-        ):
-            raise HTTPException(status_code=409, detail="continuous Grok mode is unavailable")
+        _require_project_mode_available(app, body.project_mode)
         try:
             await app.projects.context(body.project_id)
         except (AssetLibraryError, ProjectWorkspaceError) as exc:
@@ -1096,31 +1158,37 @@ async def create_message(
     else:
         project_session = await app.database.get_conversation_project(conversation_id)
     if project_session is not None:
-        if (
-            project_session.mode == "grok_continuous"
-            and not app.model_preference.oci_available
-            and app.settings.model_backend != "deterministic"
-        ):
-            raise HTTPException(status_code=409, detail="continuous Grok mode is unavailable")
+        _require_project_mode_available(app, project_session.mode)
         model_aliases.update(
             {
                 "_project_id": project_session.project_id,
                 "_project_mode": project_session.mode,
-                "_provider": "oci"
-                if project_session.mode == "grok_continuous"
-                else "local",
+                # A continuous mode pins its own provider by definition. Any
+                # other mode runs on whatever the preference chose, except
+                # that a leftover "oci" preference outside its own mode still
+                # collapses to local — the behaviour this line has always had.
+                "_provider": PROJECT_MODE_PROVIDER.get(project_session.mode)
+                or ("cohere" if model_aliases.get("_provider") == "cohere" else "local"),
             }
         )
         # Opening a project shifts the coder to the hosted model by default.
         # Only the coder: the planner stays wherever the preference put it,
         # since routing is not the step that struggles. Grok's own mode is
-        # left alone, and a pinned preference already suppressed this.
-        if model_aliases["_provider"] != "oci":
-            cloud_coder = app.model_preference.project_coder()
+        # left alone, and a pinned preference already suppressed this. The
+        # shift only means something on the local provider — the OCI and
+        # Cohere transports name their own models.
+        if model_aliases["_provider"] == "local":
+            try:
+                cloud_coder = app.model_preference.project_coder()
+            except ValueError as error:
+                # A hosted coder that cannot honour tool calling is a
+                # configuration mistake; refusing the message names it now,
+                # instead of a build dying on malformed replies at step five.
+                raise HTTPException(status_code=409, detail=str(error)) from error
             if cloud_coder:
                 model_aliases["coder"] = cloud_coder
     if (
-        model_aliases.get("_provider") != "oci"
+        model_aliases.get("_provider") not in ("oci", "cohere")
         and app.settings.model_backend != "deterministic"
     ):
         try:
@@ -1247,7 +1315,7 @@ async def decide_run(
         record = await app.database.get_run_execution_record(run_id)
         aliases = record.get("model_aliases", {}) if record else {}
         if (
-            aliases.get("_provider") != "oci"
+            aliases.get("_provider") not in ("oci", "cohere")
             and app.settings.model_backend != "deterministic"
         ):
             pinned_model = str(aliases.get("planner") or "")
@@ -1391,6 +1459,44 @@ async def upload_file(
         blob.size,
         str(blob.path),
     )
+
+
+@router.post("/transcribe", response_model=TranscriptV1)
+async def transcribe_audio(
+    request: Request, file: Annotated[UploadFile, File(...)]
+) -> TranscriptV1:
+    """Dictated audio to composer text, through Cohere Transcribe.
+
+    Nothing is stored. The clip is read, sent, and dropped — it never becomes
+    an upload record, never reaches the blob store, and is not written to the
+    conversation. What the user gets back is draft text they can still edit
+    before sending, which is why this is not treated as an attachment.
+    """
+    app = runtime(request)
+    provider = getattr(app.model, "cohere", None)
+    if provider is None or not provider.available:
+        raise HTTPException(
+            status_code=503,
+            detail="Dictation requires WAQIL_COHERE_API_KEY",
+        )
+    media_type = (file.content_type or "audio/webm").split(";", 1)[0].lower()
+    if not media_type.startswith("audio/") and not media_type.startswith("video/"):
+        # A browser records webm/ogg containers and labels some of them
+        # video/*, so the family check is deliberately wider than "audio".
+        raise HTTPException(status_code=415, detail="only audio recordings are accepted")
+    try:
+        audio = await file.read(app.settings.cohere_transcribe_max_bytes + 1)
+    finally:
+        await file.close()
+    if len(audio) > app.settings.cohere_transcribe_max_bytes:
+        raise HTTPException(status_code=413, detail="recording is too long to transcribe")
+    try:
+        text = await provider.transcribe(
+            audio, Path(file.filename or "dictation.webm").name, media_type
+        )
+    except ModelProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return TranscriptV1(text=text)
 
 
 @router.get("/artifacts/{artifact_id}")
