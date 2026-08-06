@@ -1,0 +1,82 @@
+#!/bin/zsh
+# Build and install the native Metis.app.
+#
+# SwiftPM only — no Xcode project. The bundle is assembled by hand because
+# there is nothing in it a build system needs to invent: one binary, one
+# Info.plist, one icon. The repo's absolute path is stamped into the plist,
+# which is the one thing that ties the installed app to this checkout; move
+# the repo and this script is the whole "migration".
+#
+#   ./scripts/build-app            build and install to ~/Applications
+#   ./scripts/build-app --no-install   build dist/Metis.app only
+set -euo pipefail
+
+ROOT="${0:A:h:h}"
+DIST="$ROOT/dist"
+APP="$DIST/Metis.app"
+INSTALL_DIR="$HOME/Applications"
+
+say() { print -r -- "[build-app] $1"; }
+
+# ── 1 · Compile ──────────────────────────────────────────────────────────
+say "compiling (swift build, release)…"
+swift build --package-path "$ROOT/apps/mac" -c release
+BINARY="$ROOT/apps/mac/.build/release/Metis"
+[[ -x $BINARY ]] || { say "no binary at $BINARY"; exit 1; }
+
+# ── 2 · Assemble ─────────────────────────────────────────────────────────
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$BINARY" "$APP/Contents/MacOS/Metis"
+[[ -f "$ROOT/apps/mac/Resources/ApplicationIcon.icns" ]] \
+	&& cp "$ROOT/apps/mac/Resources/ApplicationIcon.icns" "$APP/Contents/Resources/"
+
+# MetisRepoRoot is why the plist is generated rather than committed.
+cat >"$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key><string>en</string>
+	<key>CFBundleExecutable</key><string>Metis</string>
+	<key>CFBundleIconFile</key><string>ApplicationIcon</string>
+	<key>CFBundleIdentifier</key><string>dev.metis.app</string>
+	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleName</key><string>Metis</string>
+	<key>CFBundleDisplayName</key><string>Metis</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>1.0.0</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>LSMinimumSystemVersion</key><string>13.0</string>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>NSPrincipalClass</key><string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Metis uses the microphone for dictation. Recordings are transcribed and immediately discarded — nothing is stored.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict><key>NSAllowsLocalNetworking</key><true/></dict>
+	<key>MetisRepoRoot</key><string>$ROOT</string>
+</dict>
+</plist>
+PLIST
+
+# Ad-hoc signature: enough for a locally built app (no quarantine, no
+# Gatekeeper dance) and it gives TCC a stable identity for the mic grant.
+codesign --force --sign - "$APP" >/dev/null 2>&1
+say "built $APP"
+
+[[ ${1:-} == "--no-install" ]] && exit 0
+
+# ── 3 · Install ──────────────────────────────────────────────────────────
+mkdir -p "$INSTALL_DIR"
+EXISTING="$INSTALL_DIR/Metis.app"
+if [[ -d $EXISTING && ! -e "$EXISTING/Contents/MacOS/Metis" ]]; then
+	# The Safari "Add to Dock" stub this app replaces. Renamed without the
+	# .app suffix so Launchpad stops offering two things called Metis; kept
+	# on disk because deleting someone's app is not this script's call.
+	say "retiring the Safari web-app stub -> Metis-safari-stub.backup"
+	mv "$EXISTING" "$INSTALL_DIR/Metis-safari-stub.backup"
+fi
+rm -rf "$EXISTING"
+ditto "$APP" "$EXISTING"
+say "installed $EXISTING"
+say "first launch: the mic prompt appears the first time you use Speak."

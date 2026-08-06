@@ -57,3 +57,7 @@ brand/
 
 # Internal phase-tracking design notes, kept local
 docs/tool-factory-v2-plan.md
+
+# Native app build products
+apps/mac/.build/
+dist/

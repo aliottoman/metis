@@ -93,6 +93,7 @@ graph LR
 | --- | --- |
 | `apps/api` | FastAPI service, versioned contracts, LangGraph orchestration, SQLite stores, model broker, policy gates, tool registry |
 | `apps/web` | Next.js client with streamed run events, approvals, artifacts, tool versions, memory proposals, and model health |
+| `apps/mac` | Native macOS window (SwiftPM, no Xcode): starts the servers on open, stops them and releases the model on quit |
 | `apps/api/src/waqil_api/scaffold` | The `appkit` runtime Metis vendors into the applications it builds |
 | `skills` | Immutable AgentSkills-compatible capability bundles |
 | `infra/sandbox` | Rootless Podman images, execution policies, and host runners |
@@ -130,6 +131,24 @@ make web
 ```
 
 Open <http://127.0.0.1:3000>. API documentation is at <http://127.0.0.1:8000/docs>.
+
+### The Mac app
+
+```bash
+make app
+```
+
+builds `~/Applications/Metis.app` with the Command Line Tools' SwiftPM — no
+Xcode. Opening the app starts the API and the web server (or attaches to ones
+already running); quitting with ⌘Q runs the full stop, including releasing
+whatever model Metis loaded into Ollama. Closing the window only hides it —
+reopening from the Dock is instant and interrupts nothing.
+
+The window is a WKWebView with the browser behaviours the app relies on wired
+up: `window.confirm`, microphone capture for dictation (macOS prompts once, the
+first time you use Speak), file downloads into `~/Downloads`, and external
+links opening in your default browser. The repo's path is stamped into the app
+at build time, so moving the repo means running `make app` again.
 
 Configuration keys use the `WAQIL_` prefix, retained from the project's earlier name so existing environments keep working. See `.env.example` for the annotated set.
 

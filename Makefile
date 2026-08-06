@@ -1,6 +1,6 @@
 SHELL := /bin/zsh
 
-.PHONY: setup dev api web start run stop refresh install-agent uninstall-agent test verify-lock build sandbox-image acceptance \
+.PHONY: setup dev api web start run stop refresh app install-agent uninstall-agent test verify-lock build sandbox-image acceptance \
 	verify-ollama verify-schemas verify-podman verify-live offline-bundle \
 	verify-restart verify-build \
 	offline-bundle-prerequisites offline-verify offline-verify-release \
@@ -66,6 +66,12 @@ verify-lock:
 
 build:
 	pnpm --dir apps/web build
+
+# The native macOS app: builds with the Command Line Tools' SwiftPM (no
+# Xcode) and installs to ~/Applications. Opening it starts the servers,
+# quitting it stops them and releases the model.
+app:
+	./scripts/build-app
 
 sandbox-image:
 	./infra/sandbox/build_reference_architecture_image.sh
