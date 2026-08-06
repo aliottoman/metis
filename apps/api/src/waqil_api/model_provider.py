@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -3179,6 +3179,25 @@ class RoutedModelProvider:
         return await self._selected(model_aliases).plan(
             request, model_aliases=model_aliases, catalog=catalog
         )
+
+    async def _structured(
+        self,
+        schema: type[SchemaT],
+        *,
+        role: str = "planner",
+        model_aliases: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> SchemaT:
+        # The cloud providers are single-model, so their _structured takes no
+        # role or aliases; only the local lane needs them to pick its model.
+        # Cast because _structured is a per-provider capability, not part of
+        # the ModelProvider protocol — signatures legitimately differ by lane.
+        selected = self._selected(model_aliases)
+        if selected is self.local:
+            return await cast(Any, self.local)._structured(
+                schema, role=role, model_aliases=model_aliases, **kwargs
+            )
+        return await cast(Any, selected)._structured(schema, **kwargs)
 
     async def draft_tool_definition(self, request, *, model_aliases=None):
         return await self._selected(model_aliases).draft_tool_definition(

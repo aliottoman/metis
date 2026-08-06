@@ -117,7 +117,10 @@ class AppRuntime:
             self.model.local if isinstance(self.model, RoutedModelProvider) else self.model
         )
         self.customers = CustomerIntelligenceService(
-            self.database, self.local_model, self.model_session
+            self.database,
+            self.model,
+            self.model_session,
+            preference=self.model_preference,
         )
         self.deep_worker_factory = build_deep_worker_factory(self.local_model)
         self.dac = DacService(

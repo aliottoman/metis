@@ -371,7 +371,7 @@ export interface CorpusReindexResult {
 
 export interface KnowledgeSnippet {
   source_label: string;
-  provider: "local" | "notion";
+  provider: "local" | "notion" | "web";
   rel_path: string;
   symbol?: string | null;
   start_line?: number | null;

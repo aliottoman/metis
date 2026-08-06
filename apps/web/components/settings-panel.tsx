@@ -5,11 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { API_BASE, getHealth, getModelPreference, setModelPreference } from "@/lib/api";
 import type { HealthSnapshot, ModelPreference } from "@/lib/types";
 
-const configuredModels = [
-  { id: "qwen3.6:35b-mlx", label: "Qwen3.6 35B", role: "Planning · review · vision", context: "32K working context" },
-  { id: "north-mini-code-1.0:mlx-nvfp4", label: "North Mini Code", role: "Default code generation", context: "Fast profile" },
-  { id: "north-mini-code-1.0:mlx-mxfp8", label: "North Mini Code Max", role: "Quality and repair", context: "Quality profile" },
-];
+type Provider = ModelPreference["provider"];
 
 export function SettingsPanel() {
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
@@ -17,10 +13,14 @@ export function SettingsPanel() {
   const [error, setError] = useState<string | null>(null);
 
   const [preference, setPreference] = useState<ModelPreference | null>(null);
-  const [pinnedChoice, setPinnedChoice] = useState<string>(configuredModels[0].id);
+  const [pinnedChoice, setPinnedChoice] = useState<string>("");
   const [savingPreference, setSavingPreference] = useState(false);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [ociTools, setOciTools] = useState<Array<"x_search" | "code_interpreter">>(["code_interpreter"]);
+
+  // The installed local lineup, straight from the runtime — a hardcoded list
+  // here went stale the first time the lineup changed, and stayed stale.
+  const localModels = health?.models ?? [];
 
   const loadPreference = useCallback(async () => {
     try {
@@ -34,70 +34,41 @@ export function SettingsPanel() {
     }
   }, []);
 
-  async function choosePerTask() {
+  async function save(
+    mode: "split" | "pinned",
+    model: string | null,
+    provider: Provider,
+    tools: Array<"x_search" | "code_interpreter">,
+    failure: string,
+  ) {
     setSavingPreference(true);
     setPreferenceError(null);
     try {
-      setPreference(await setModelPreference("split", null, preference?.provider ?? "local", ociTools));
+      setPreference(await setModelPreference(mode, model, provider, tools));
     } catch (saveError) {
-      setPreferenceError(saveError instanceof Error ? saveError.message : "Could not update model routing.");
+      setPreferenceError(saveError instanceof Error ? saveError.message : failure);
     } finally {
       setSavingPreference(false);
     }
   }
 
-  async function choosePinned(model: string) {
+  const chooseProvider = (provider: Provider) =>
+    save(preference?.mode ?? "split", preference?.model ?? null, provider, ociTools, "Could not update the model provider.");
+
+  const choosePerTask = () =>
+    save("split", null, preference?.provider ?? "local", ociTools, "Could not update model routing.");
+
+  const choosePinned = (model: string) => {
     setPinnedChoice(model);
-    setSavingPreference(true);
-    setPreferenceError(null);
-    try {
-      setPreference(await setModelPreference("pinned", model, preference?.provider ?? "local", ociTools));
-    } catch (saveError) {
-      setPreferenceError(saveError instanceof Error ? saveError.message : "Could not update model routing.");
-    } finally {
-      setSavingPreference(false);
-    }
-  }
-
-  const isPinned = preference?.mode === "pinned";
-
-  async function chooseProvider(provider: "local" | "oci") {
-    setSavingPreference(true);
-    setPreferenceError(null);
-    try {
-      setPreference(await setModelPreference(
-        preference?.mode ?? "split",
-        preference?.model ?? null,
-        provider,
-        ociTools,
-      ));
-    } catch (saveError) {
-      setPreferenceError(saveError instanceof Error ? saveError.message : "Could not update the model provider.");
-    } finally {
-      setSavingPreference(false);
-    }
-  }
+    return save("pinned", model, preference?.provider ?? "local", ociTools, "Could not update model routing.");
+  };
 
   async function toggleOciTool(tool: "x_search" | "code_interpreter") {
     const selected = ociTools.includes(tool)
       ? ociTools.filter((item) => item !== tool)
       : [...ociTools, tool];
     setOciTools(selected);
-    setSavingPreference(true);
-    setPreferenceError(null);
-    try {
-      setPreference(await setModelPreference(
-        preference?.mode ?? "split",
-        preference?.model ?? null,
-        preference?.provider ?? "local",
-        selected,
-      ));
-    } catch (saveError) {
-      setOciTools(ociTools);
-      setPreferenceError(saveError instanceof Error ? saveError.message : "Could not update OCI tools.");
-    } finally {
-      setSavingPreference(false);
-    }
+    await save(preference?.mode ?? "split", preference?.model ?? null, preference?.provider ?? "local", selected, "Could not update OCI tools.");
   }
 
   const refresh = useCallback(async () => {
@@ -120,6 +91,11 @@ export function SettingsPanel() {
     return () => window.clearInterval(timer);
   }, [refresh, loadPreference]);
 
+  const isPinned = preference?.mode === "pinned";
+  const provider = preference?.provider ?? "local";
+  const providerBadge =
+    provider === "oci" ? "Cloud · Grok" : provider === "cohere" ? "Cloud · Command A+" : "Local";
+
   return (
     <div className="workspacePage settingsPage">
       <header className="pageHeader">
@@ -141,41 +117,45 @@ export function SettingsPanel() {
       </section>
 
       <section className="settingsSection">
-        <div className="sectionTitle"><div><h2>Reasoning provider</h2><p>The selected provider is pinned into every new run for reliable replay.</p></div><span className="sectionBadge">{preference?.provider === "oci" ? "Cloud" : "Local"}</span></div>
+        <div className="sectionTitle"><div><h2>Reasoning provider</h2><p>The selected provider is pinned into every new run for reliable replay. Notes, sizing, and analysis follow this choice too.</p></div><span className="sectionBadge">{providerBadge}</span></div>
         <div className="providerChoiceGrid">
-          <button type="button" className={`providerChoice ${preference?.provider !== "oci" ? "selected" : ""}`} onClick={() => void chooseProvider("local")} disabled={savingPreference}>
-            <span>On device</span><strong>Local Ollama</strong><small>Private, offline reasoning with Qwen and North.</small>
+          <button type="button" className={`providerChoice ${provider === "local" ? "selected" : ""}`} onClick={() => void chooseProvider("local")} disabled={savingPreference}>
+            <span>On device</span><strong>Local Ollama</strong><small>Private, offline reasoning with the models installed below.</small>
           </button>
-          <button type="button" className={`providerChoice ${preference?.provider === "oci" ? "selected" : ""}`} onClick={() => void chooseProvider("oci")} disabled={savingPreference || !preference?.oci_available}>
-            <span>OCI Responses</span><strong>Grok 4.3</strong><small>{preference?.oci_available ? "Large-context cloud reasoning with governed native tools." : "Configure the OCI Responses project OCID to enable."}</small>
+          <button type="button" className={`providerChoice ${provider === "oci" ? "selected" : ""}`} onClick={() => void chooseProvider("oci")} disabled={savingPreference || !preference?.oci_available}>
+            <span>OCI Responses</span><strong>Grok</strong><small>{preference?.oci_available ? "Large-context cloud reasoning with governed native tools." : "Configure the OCI Responses project OCID to enable."}</small>
+          </button>
+          <button type="button" className={`providerChoice ${provider === "cohere" ? "selected" : ""}`} onClick={() => void chooseProvider("cohere")} disabled={savingPreference || !preference?.cohere_available}>
+            <span>Cohere</span><strong>Command A+</strong><small>{preference?.cohere_available ? "Strong tool use and structured output; also powers dictation." : "Configure Cohere on OCI Generative AI to enable."}</small>
           </button>
         </div>
         <div className="nativeToolChoices" aria-label="OCI native tools">
-          <label><input type="checkbox" checked={ociTools.includes("code_interpreter")} onChange={() => void toggleOciTool("code_interpreter")} disabled={savingPreference || !preference?.oci_available} /><span><strong>Code Interpreter</strong><small>Temporary OCI-managed Python container</small></span></label>
-          <label><input type="checkbox" checked={ociTools.includes("x_search")} onChange={() => void toggleOciTool("x_search")} disabled={savingPreference || !preference?.oci_available} /><span><strong>X Search</strong><small>Native X search—not general web search</small></span></label>
+          <label><input type="checkbox" checked={ociTools.includes("code_interpreter")} onChange={() => void toggleOciTool("code_interpreter")} disabled={savingPreference || !preference?.oci_available} /><span><strong>Code Interpreter</strong><small>Temporary OCI-managed Python container (Grok runs only)</small></span></label>
+          <label><input type="checkbox" checked={ociTools.includes("x_search")} onChange={() => void toggleOciTool("x_search")} disabled={savingPreference || !preference?.oci_available} /><span><strong>X Search</strong><small>Native X search — the Web scope in chat is the general one</small></span></label>
         </div>
-        <p className="sectionLede">Metis tools remain available through the governed local planner. Any model call made while one of those tools executes is forced through local Ollama, even in a Grok-authored run. OCI service-side memory remains off.</p>
+        <p className="sectionLede">Metis tools remain available through the governed local planner. Any model call made while one of those tools executes is forced through local Ollama, even in a cloud-authored run. Cloud service-side memory remains off.</p>
       </section>
 
       <section className="settingsSection">
-        <div className="sectionTitle"><div><h2>Model routing</h2><p>One heavyweight model runs at a time to respect unified memory.</p></div><span className="sectionBadge">Ollama</span></div>
-        <div className="modelList">
-          {configuredModels.map((configured, index) => {
-            const runtime = health?.models?.find((model) => model.id === configured.id || model.label === configured.id);
-            const state = runtime?.status ?? (health?.ollama?.status === "ok" ? "unknown" : "offline");
-            return (
-              <article key={configured.id}>
-                <span className="modelOrdinal">0{index + 1}</span>
-                <div className="modelDescription"><strong>{configured.label}</strong><span>{configured.id}</span><p>{configured.role}</p></div>
-                <div className="modelContext"><strong>{runtime?.context_window ? `${Math.round(runtime.context_window / 1024)}K context` : configured.context}</strong><span>{runtime?.loaded ? "Loaded now" : "Loaded on demand"}</span></div>
-                <span className={`healthStatus health-${state}`}><i />{state}</span>
+        <div className="sectionTitle"><div><h2>Local models</h2><p>One heavyweight model runs at a time to respect unified memory.</p></div><span className="sectionBadge">Ollama</span></div>
+        {localModels.length ? (
+          <div className="modelList">
+            {localModels.map((model, index) => (
+              <article key={model.id}>
+                <span className="modelOrdinal">{String(index + 1).padStart(2, "0")}</span>
+                <div className="modelDescription"><strong>{model.label || model.id}</strong><span>{model.id}</span>{model.role ? <p>{model.role}</p> : null}</div>
+                <div className="modelContext"><strong>{model.context_window ? `${Math.round(model.context_window / 1024)}K context` : "Context on load"}</strong><span>{model.loaded ? "Loaded now" : "Loaded on demand"}</span></div>
+                <span className={`healthStatus health-${model.status}`}><i />{model.status}</span>
               </article>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <p className="sectionLede">{health?.ollama?.status === "ok" ? "No local models reported yet — launch one from the chat header." : "Ollama is not reachable, so the local lineup is unknown."}</p>
+        )}
         <p className="sectionLede">
-          By default Metis picks a different model per task (planning vs. code generation), and
-          every switch costs a reload in unified memory. Pin one model to stop the back-and-forth.
+          In the local lane Metis picks a different model per task (planning vs. code generation) by
+          default, and every switch costs a reload in unified memory. Pin one model to stop the
+          back-and-forth. Cloud lanes are single-model, so pinning applies locally.
         </p>
         <div className="cardActions">
           <button
@@ -189,24 +169,25 @@ export function SettingsPanel() {
           <select
             value={pinnedChoice}
             onChange={(event) => setPinnedChoice(event.target.value)}
-            disabled={savingPreference}
+            disabled={savingPreference || !localModels.length}
           >
-            {configuredModels.map((model) => (
-              <option key={model.id} value={model.id}>{model.label}</option>
+            {!localModels.length ? <option value="">No local models</option> : null}
+            {localModels.map((model) => (
+              <option key={model.id} value={model.id}>{model.label || model.id}</option>
             ))}
           </select>
           <button
             type="button"
             className={isPinned ? "primaryButton" : "secondaryButton"}
             onClick={() => void choosePinned(pinnedChoice)}
-            disabled={savingPreference}
+            disabled={savingPreference || !pinnedChoice}
           >
             {savingPreference ? "Saving…" : "Always use this model"}
           </button>
         </div>
         {isPinned && preference?.model ? (
           <span className="mutedMeta">
-            Pinned to {configuredModels.find((model) => model.id === preference.model)?.label ?? preference.model} for every request — new conversations only.
+            Pinned to {localModels.find((model) => model.id === preference.model)?.label ?? preference.model} for every request — new conversations only.
           </span>
         ) : null}
         {preferenceError ? <span className="mutedMeta" role="alert">{preferenceError}</span> : null}
@@ -219,6 +200,7 @@ export function SettingsPanel() {
             <li><span>✓</span><div><strong>Loopback only</strong><small>API bound to this device</small></div></li>
             <li><span>✓</span><div><strong>Local tool broker</strong><small>Executing tools use on-device models</small></div></li>
             <li><span>✓</span><div><strong>Approval required</strong><small>Persistent learning is proposal-first</small></div></li>
+            <li><span>✓</span><div><strong>Web is per-message</strong><small>Search runs only when a message selects the Web scope</small></div></li>
           </ul>
         </section>
         <section className="settingsSection compactSection">

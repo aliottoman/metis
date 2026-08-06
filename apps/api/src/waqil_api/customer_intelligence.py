@@ -99,12 +99,16 @@ class CustomerIntelligenceService:
     def __init__(
         self,
         database: Database,
-        local_model: Any,
+        model: Any,
         model_session: LocalModelSessionManager,
+        preference: Any | None = None,
     ) -> None:
         self.database = database
-        self.local_model = local_model
+        # The routed provider, not the local one: note analysis follows the
+        # same model choice the chat header shows, cloud or local.
+        self.model = model
         self.model_session = model_session
+        self.preference = preference
 
     async def accounts(self) -> list[CustomerAccountV1]:
         return [
@@ -209,17 +213,37 @@ class CustomerIntelligenceService:
         source = await self.database.get_customer_source(source_id)
         if source is None:
             raise KeyError("customer source not found")
-        model = self.model_session.selected_model or ""
-        await self.model_session.require_ready(model)
-        if isinstance(self.local_model, DeterministicModelProvider):
+        aliases: dict[str, str] = {}
+        if self.preference is not None:
+            try:
+                aliases = self.preference.resolve_aliases()
+            except Exception:  # noqa: BLE001 - fall back to the local session
+                aliases = {}
+        provider = aliases.get("_provider", "local")
+        if provider == "local":
+            # The local lane keeps its launch-gate: extraction on a model that
+            # is not resident would stall the request for a full load.
+            model = self.model_session.selected_model or ""
+            await self.model_session.require_ready(model)
+            aliases = {
+                **aliases,
+                "planner": model,
+                "coder": model,
+                "quality": model,
+                "_provider": "local",
+            }
+        else:
+            # Cloud analysis needs no local weights resident at all.
+            model = f"{provider}:{aliases.get('planner', '')}"
+        if isinstance(self.model, DeterministicModelProvider):
             extraction = self._deterministic_extraction(source)
             model = "deterministic"
-        elif hasattr(self.local_model, "_structured"):
+        elif hasattr(self.model, "_structured"):
             lines = "\n".join(
                 f"{number}: {line}"
                 for number, line in enumerate(source["content"].splitlines(), start=1)
             )
-            extraction = await self.local_model._structured(
+            extraction = await self.model._structured(
                 CustomerExtractionV1,
                 system_prompt=(
                     "You extract customer intelligence from one account-scoped note. "
@@ -233,14 +257,11 @@ class CustomerIntelligenceService:
                     f"Source id: {source['id']}\n\nNumbered note:\n{lines}"
                 ),
                 role="planner",
-                model_aliases={
-                    "planner": model, "coder": model, "quality": model,
-                    "_provider": "local",
-                },
+                model_aliases=aliases,
                 max_output_tokens=4096,
             )
         else:
-            raise RuntimeError("the selected local provider cannot extract customer notes")
+            raise RuntimeError("the selected provider cannot extract customer notes")
         enriched = extraction.model_copy(deep=True)
         for collection in (enriched.people, enriched.facts, enriched.actions):
             for item in collection:

@@ -775,9 +775,14 @@ body { background: var(--m-paper); color: var(--m-ink); }
   mix-blend-mode: multiply;
   opacity: 0.68;
   overflow: hidden;
-  -webkit-mask-image: radial-gradient(closest-side, #000 0 46%, rgba(0, 0, 0, 0.5) 56%, transparent 62%);
-  mask-image: radial-gradient(closest-side, #000 0 46%, rgba(0, 0, 0, 0.5) 56%, transparent 62%);
-  transform: translate(calc(var(--mx, 0) * -9px), calc(var(--my, 0) * -7px));
+  /* Fades out by 56% of the film's half-size (~41% of the body): tight enough
+     that the parallax shift below can never carry colour past the morph's
+     most pinched corner. */
+  -webkit-mask-image: radial-gradient(closest-side, #000 0 42%, rgba(0, 0, 0, 0.5) 50%, transparent 56%);
+  mask-image: radial-gradient(closest-side, #000 0 42%, rgba(0, 0, 0, 0.5) 50%, transparent 56%);
+  /* Percentages, not pixels: a fixed 9px was a third of the 34px dock bead,
+     which walked the whole film — mask and all — out of the silhouette. */
+  transform: translate(calc(var(--mx, 0) * -2.5%), calc(var(--my, 0) * -2%));
   transition: transform 0.6s var(--m-ease);
 }
 .pearlFilmInk {
@@ -804,7 +809,10 @@ body { background: var(--m-paper); color: var(--m-ink); }
   background: #fff;
   filter: blur(5px);
   opacity: 0.92;
-  transform: translate(calc(var(--mx, 0) * 20px), calc(var(--my, 0) * 15px));
+  /* Of the spec's own box (30% × 17% of the body), so the highlight travels
+     ~9% of the body at every size instead of 20px — which on the dock bead
+     was a white smear parked outside the blob. */
+  transform: translate(calc(var(--mx, 0) * 30%), calc(var(--my, 0) * 40%));
   transition: transform 0.35s var(--m-ease);
 }
 .pearlShadow {
@@ -2746,4 +2754,39 @@ select { border-radius: var(--m-r-field); }
   border: 0;
   box-shadow: none;
   color: #fbf8f2;
+}
+
+/* ── The Cohere cut ──────────────────────────────────────────────────────
+   The signature sliced corner, back on the app's actionable chrome: pills
+   flatten to soft rectangles with one pointed edge. This section closes the
+   file deliberately — the cut must win over the pill radii above it.
+   Effects that sat proud of an edge (bloom, float shadows) become
+   drop-shadow filters, which follow the clipped shape instead of being
+   sliced off by it. */
+.primaryButton,
+.secondaryButton,
+.newChatButton,
+.headerNewChat .segMain,
+.sendButton,
+.stopButton,
+.primaryNav a {
+  border-radius: 9px;
+  clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 0 100%);
+}
+.headerNewChat::before { border-radius: 9px; }
+.primaryButton:hover:not(:disabled) {
+  filter: drop-shadow(0 6px 14px rgba(122, 84, 168, 0.4));
+}
+.sendButton {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  filter: drop-shadow(0 6px 10px rgba(50, 40, 30, 0.4));
+}
+.composer {
+  border-radius: 18px;
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  filter: drop-shadow(0 16px 20px rgba(60, 30, 80, 0.42));
+}
+.composer:focus-within {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.78);
 }
