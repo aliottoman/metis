@@ -1339,7 +1339,7 @@ class KnowledgeSnippetV1(Contract):
     """One retrieved passage of the user's own knowledge, with its provenance."""
 
     source_label: str
-    provider: Literal["local", "notion", "web"] = "local"
+    provider: Literal["local", "notion", "web", "customer"] = "local"
     rel_path: str
     symbol: str | None = None
     start_line: int | None = None

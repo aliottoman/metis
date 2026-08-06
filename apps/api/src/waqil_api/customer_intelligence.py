@@ -23,6 +23,7 @@ from .contracts import (
     CustomerSourceV1,
     CustomerUpdateProposalV1,
     CustomerWinV1,
+    KnowledgeSnippetV1,
 )
 from .database import Database
 from .local_model_session import LocalModelSessionManager
@@ -330,6 +331,109 @@ class CustomerIntelligenceService:
             f"Saved customer facts:\n{facts}\nOpen actions:\n{actions}"
             + (f"\nPinned account notes:\n{pinned}" if pinned else "")
         )[:16_000]
+
+    async def evidence(self, account_id: str) -> list[KnowledgeSnippetV1]:
+        """The account's reviewed record as individually citable sources.
+
+        `context()` returns the same material as one prose block, which is what
+        let an answer about this account state a figure no record contained:
+        with nothing numbered, nothing could be cited, and the grounding gate —
+        which measures citations against retrieved evidence — had no evidence to
+        measure against and never ran.
+
+        Every returned snippet is one record the user themselves reviewed, so
+        each carries the record's own identifier and a score of 1.0. They are
+        not fuzzy retrieval hits; they are the account's ledger.
+        """
+        detail = await self.account(account_id)
+        if detail is None:
+            raise KeyError("customer account not found")
+        name = detail.account.name
+        snippets: list[KnowledgeSnippetV1] = []
+
+        def add(label: str, symbol: str, text: str, record_id: str) -> None:
+            snippets.append(
+                KnowledgeSnippetV1(
+                    source_label=label,
+                    provider="customer",
+                    rel_path=f"{name}#{record_id}",
+                    symbol=symbol[:120],
+                    text=text.strip()[:2_000],
+                    score=1.0,
+                )
+            )
+
+        for win in detail.wins:
+            parts = [f"Win: {win.title}"]
+            if win.yearly_arr is not None:
+                parts.append(f"Yearly ARR: ${win.yearly_arr:,.0f}")
+            if win.dac_shape:
+                parts.append(f"Shape: {win.dac_shape}")
+            if win.services:
+                parts.append(f"Services: {', '.join(win.services)}")
+            if win.won_at:
+                parts.append(f"Won: {win.won_at.date().isoformat()}")
+            if win.brief:
+                parts.append(win.brief)
+            add("Recorded win", win.title, ". ".join(parts), win.id)
+
+        for fact in detail.facts:
+            if fact.status not in {"active", "disputed"}:
+                continue
+            label = "Disputed fact" if fact.status == "disputed" else "Reviewed fact"
+            add(label, f"{fact.kind}", f"[{fact.kind}] {fact.content}", fact.id)
+
+        for action in detail.actions:
+            if action.status != "open":
+                continue
+            owner = action.owner or "unassigned"
+            due = f", due {action.due_at.date().isoformat()}" if action.due_at else ""
+            add(
+                "Open action",
+                action.description[:60],
+                f"Open action: {action.description} (owner: {owner}{due})",
+                action.id,
+            )
+
+        for person in detail.people:
+            descriptor = ", ".join(
+                part for part in (person.role, person.organization) if part
+            )
+            add(
+                "Known contact",
+                person.name,
+                f"{person.name}{f' — {descriptor}' if descriptor else ''}",
+                person.id,
+            )
+
+        for note in detail.notes:
+            if not note.pinned:
+                continue
+            add(
+                "Pinned note",
+                note.title or "Note",
+                f"{note.title or 'Note'}: {' '.join(note.body.split())}",
+                note.id,
+            )
+
+        # Newest first, bounded: an account with a long history must not crowd
+        # the prompt with old interactions at the expense of its own ledger.
+        for interaction in detail.interactions[:8]:
+            when = (
+                interaction.occurred_at.date().isoformat()
+                if interaction.occurred_at
+                else "undated"
+            )
+            summary = interaction.summary or interaction.title
+            if not summary:
+                continue
+            add(
+                "Logged interaction",
+                f"{interaction.title or 'Interaction'} ({when})",
+                f"{when} — {summary}",
+                interaction.id,
+            )
+        return snippets
 
     async def output(
         self, account_id: str, kind: str, interaction_id: str | None
