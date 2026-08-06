@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Metis — The Tessera</title>
+  <desc id="desc">A single folded tessera: several capabilities resolving into one intelligent object.</desc>
+  <defs>
+    <path id="figure" d="M465 236c35-12 73-3 99 22l180 173c30 29 38 74 20 112L660 762c-23 49-81 68-128 43L303 683c-44-23-64-76-48-124l82-242c17-49 71-78 128-81Z"/>
+
+    <linearGradient id="upper" x1="316" y1="274" x2="633" y2="536" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE08A"/>
+      <stop offset=".48" stop-color="#FF7759"/>
+      <stop offset="1" stop-color="#C29CE0"/>
+    </linearGradient>
+    <linearGradient id="left" x1="267" y1="490" x2="544" y2="785" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF7759"/>
+      <stop offset=".58" stop-color="#C29CE0"/>
+      <stop offset="1" stop-color="#9D91D2"/>
+    </linearGradient>
+    <linearGradient id="right" x1="530" y1="490" x2="719" y2="755" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C29CE0"/>
+      <stop offset="1" stop-color="#7BE3D8"/>
+    </linearGradient>
+    <radialGradient id="air" cx="0" cy="0" r="1" gradientTransform="translate(585 354) rotate(135) scale(260 215)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F7F4EF" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#F7F4EF" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="paper" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency=".82" numOctaves="4" seed="13"/><feColorMatrix type="saturate" values="0"/></filter>
+    <filter id="grain" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency=".7" numOctaves="5" seed="191"/><feColorMatrix type="matrix" values=".58 0 0 0 .04 0 .58 0 0 .035 0 0 .58 0 .04 0 0 0 .68 0"/></filter>
+
+    <clipPath id="tile"><rect x="64" y="64" width="896" height="896" rx="224"/></clipPath>
+    <clipPath id="figureClip"><use href="#figure"/></clipPath>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="224" fill="#F7F4EF"/>
+  <rect x="64" y="64" width="896" height="896" filter="url(#paper)" opacity=".025" clip-path="url(#tile)"/>
+
+  <g clip-path="url(#figureClip)">
+    <path d="M225 205h590v187c-101 38-180 72-270 111-115-11-205-46-320-95V205Z" fill="url(#upper)"/>
+    <path d="M225 408c115 49 205 84 320 95-28 119-30 236-13 352H225V408Z" fill="url(#left)"/>
+    <path d="M545 503c90-39 169-73 270-111v463H532c-17-116-15-233 13-352Z" fill="url(#right)"/>
+    <rect x="225" y="205" width="590" height="650" fill="url(#air)"/>
+    <rect x="225" y="205" width="590" height="650" filter="url(#grain)" opacity=".19" style="mix-blend-mode:multiply"/>
+  </g>
+</svg>

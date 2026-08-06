@@ -1,87 +1,23 @@
 #!/bin/zsh
-# Generate ApplicationIcon.icns from the product mark — the companion's bead
-# on the purple field, inside the macOS squircle.
+# Generate ApplicationIcon.icns from the product icon artwork.
 #
-# The artwork is authored HERE as SVG (same gradients as metis-mark.tsx) and
-# rasterized with rsvg-convert, so the dock icon can never drift from the
-# in-app identity without this file changing. Run it after editing the art;
-# the committed .icns is the build product scripts/build-app packages.
+# The artwork is Ali's chosen mark — "The Tessera" (round 14 of the logo
+# exploration): a single folded shape, several capabilities resolving into
+# one object, on the paper tile. The SVG is committed at
+# apps/mac/Resources/metis-tessera.svg and rasterized here with
+# rsvg-convert, so the dock icon can never drift from that file without a
+# diff showing it. Run this after changing the artwork; scripts/build-app
+# packages the committed .icns.
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
+SVG="$ROOT/apps/mac/Resources/metis-tessera.svg"
 OUT="$ROOT/apps/mac/Resources/ApplicationIcon.icns"
 command -v rsvg-convert >/dev/null || { print "rsvg-convert missing (brew install librsvg)"; exit 1; }
+[[ -f $SVG ]] || { print "icon artwork missing: $SVG"; exit 1; }
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-SVG="$WORK/icon.svg"
-
-# Apple's dock-icon grid: 824×824 artwork centered on a 1024 canvas, corner
-# radius ≈185. The bead reuses the mark's exact gradient stops.
-cat >"$SVG" <<'ART'
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <radialGradient id="field" cx="40%" cy="30%" r="95%">
-      <stop offset="0%" stop-color="#d4bfe6"/>
-      <stop offset="52%" stop-color="#c29ce0"/>
-      <stop offset="100%" stop-color="#9c73c9"/>
-    </radialGradient>
-    <radialGradient id="body" cx="33%" cy="25%" r="82%">
-      <stop offset="0%" stop-color="#fffdfb"/>
-      <stop offset="38%" stop-color="#ffdccb"/>
-      <stop offset="70%" stop-color="#e3bbea"/>
-      <stop offset="100%" stop-color="#a67fc6"/>
-    </radialGradient>
-    <radialGradient id="coral" cx="72%" cy="30%" r="46%">
-      <stop offset="0%" stop-color="#ff7759" stop-opacity="0.8"/>
-      <stop offset="100%" stop-color="#ff7759" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="teal" cx="30%" cy="74%" r="48%">
-      <stop offset="0%" stop-color="#4fd3e4" stop-opacity="0.85"/>
-      <stop offset="100%" stop-color="#4fd3e4" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="gold" cx="24%" cy="33%" r="36%">
-      <stop offset="0%" stop-color="#ffd25a" stop-opacity="0.8"/>
-      <stop offset="100%" stop-color="#ffd25a" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="spec" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.96"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="rim" cx="38%" cy="32%" r="72%">
-      <stop offset="72%" stop-color="#5f3b7a" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#5f3b7a" stop-opacity="0.34"/>
-    </radialGradient>
-    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
-      <feGaussianBlur stdDeviation="46"/>
-    </filter>
-    <filter id="beadShadow" x="-60%" y="-60%" width="220%" height="220%">
-      <feGaussianBlur stdDeviation="26"/>
-    </filter>
-    <clipPath id="squircle">
-      <rect x="100" y="100" width="824" height="824" rx="185"/>
-    </clipPath>
-  </defs>
-
-  <g clip-path="url(#squircle)">
-    <rect x="100" y="100" width="824" height="824" fill="url(#field)"/>
-    <!-- The chrome forms of the front door, out of focus behind the bead. -->
-    <ellipse cx="240" cy="220" rx="270" ry="200" fill="#efe2f6" opacity="0.5" filter="url(#soft)"/>
-    <ellipse cx="850" cy="330" rx="230" ry="190" fill="#8f66b8" opacity="0.42" filter="url(#soft)"/>
-    <ellipse cx="700" cy="900" rx="300" ry="210" fill="#e8d0f2" opacity="0.38" filter="url(#soft)"/>
-    <!-- Contact shadow, then the bead itself at dock scale. -->
-    <ellipse cx="512" cy="800" rx="238" ry="60" fill="#3c1f52" opacity="0.35" filter="url(#beadShadow)"/>
-  </g>
-  <circle cx="512" cy="500" r="252" fill="url(#body)"/>
-  <g>
-    <circle cx="512" cy="500" r="252" fill="url(#coral)"/>
-    <circle cx="512" cy="500" r="252" fill="url(#teal)"/>
-    <circle cx="512" cy="500" r="252" fill="url(#gold)"/>
-  </g>
-  <circle cx="512" cy="500" r="252" fill="url(#rim)"/>
-  <ellipse cx="432" cy="390" rx="88" ry="59" fill="url(#spec)"/>
-</svg>
-ART
 
 ICONSET="$WORK/Metis.iconset"
 mkdir -p "$ICONSET"
@@ -91,4 +27,4 @@ for size in 16 32 128 256 512; do
 	rsvg-convert -w $double -h $double "$SVG" -o "$ICONSET/icon_${size}x${size}@2x.png"
 done
 iconutil -c icns "$ICONSET" -o "$OUT"
-print "[build-icon] wrote $OUT ($(du -h "$OUT" | cut -f1 | tr -d ' '))"
+print "[build-icon] wrote $OUT ($(du -h "$OUT" | cut -f1 | tr -d ' ')) from ${SVG:t}"
