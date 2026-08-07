@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -862,6 +863,71 @@ CREATE INDEX IF NOT EXISTS idx_attention_deferrals_until
     ON attention_deferrals(deferred_until);
 """
 
+SCHEMA_V20 = """
+-- The answer bank: what you have already worked out, kept as knowledge.
+--
+-- Run history was indexed long before this, and it never functioned as an
+-- answer bank, because a chunk is a slice of transcript that happened to sit
+-- near an answer. An atom IS the answer: a canonical question, the wording
+-- that was actually defensible, and the citations that made it so.
+--
+-- Proposal-first like every other durable record here. `status` moves
+-- pending -> active on review, and an atom that a later answer contradicts is
+-- superseded rather than left to argue with its replacement — a bank that only
+-- accumulates returns three contradictory answers by month six.
+CREATE TABLE IF NOT EXISTS answer_atoms (
+    id TEXT PRIMARY KEY,
+    question TEXT NOT NULL,
+    paraphrases_json TEXT NOT NULL DEFAULT '[]',
+    answer TEXT NOT NULL,
+    -- The numbered sources the answer was grounded in, carried forward so a
+    -- banked answer stays as citable as the day it was written.
+    citations_json TEXT NOT NULL DEFAULT '[]',
+    entities_json TEXT NOT NULL DEFAULT '[]',
+    source_run_id TEXT REFERENCES runs(id),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','active','superseded','rejected')),
+    superseded_by TEXT REFERENCES answer_atoms(id),
+    confidence REAL NOT NULL DEFAULT 0 CHECK(confidence >= 0 AND confidence <= 1),
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_answer_atoms_status
+    ON answer_atoms(status, created_at DESC);
+
+-- The lexical half of retrieval. Dense vectors blur exactly the tokens these
+-- answers turn on — 744, H100_X2, A100_80G_X2, model version strings — so the
+-- bank is searched both ways and the two rankings are fused.
+CREATE VIRTUAL TABLE IF NOT EXISTS answer_atoms_fts USING fts5(
+    question, paraphrases, answer, entities,
+    content='answer_atoms',
+    content_rowid='rowid'
+);
+CREATE TRIGGER IF NOT EXISTS answer_atoms_ai AFTER INSERT ON answer_atoms BEGIN
+    INSERT INTO answer_atoms_fts(rowid, question, paraphrases, answer, entities)
+    VALUES (new.rowid, new.question, new.paraphrases_json, new.answer, new.entities_json);
+END;
+CREATE TRIGGER IF NOT EXISTS answer_atoms_ad AFTER DELETE ON answer_atoms BEGIN
+    INSERT INTO answer_atoms_fts(answer_atoms_fts, rowid, question, paraphrases, answer, entities)
+    VALUES('delete', old.rowid, old.question, old.paraphrases_json, old.answer, old.entities_json);
+END;
+CREATE TRIGGER IF NOT EXISTS answer_atoms_au AFTER UPDATE ON answer_atoms BEGIN
+    INSERT INTO answer_atoms_fts(answer_atoms_fts, rowid, question, paraphrases, answer, entities)
+    VALUES('delete', old.rowid, old.question, old.paraphrases_json, old.answer, old.entities_json);
+    INSERT INTO answer_atoms_fts(rowid, question, paraphrases, answer, entities)
+    VALUES (new.rowid, new.question, new.paraphrases_json, new.answer, new.entities_json);
+END;
+
+-- The dense half. Kept beside the atoms rather than in the corpus store: an
+-- atom is re-embedded when its wording is revised, on its own schedule.
+CREATE TABLE IF NOT EXISTS answer_atom_vectors (
+    atom_id TEXT PRIMARY KEY REFERENCES answer_atoms(id) ON DELETE CASCADE,
+    model TEXT NOT NULL,
+    vector BLOB NOT NULL,
+    created_at TEXT NOT NULL
+);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -882,6 +948,7 @@ MIGRATIONS: dict[int, str] = {
     17: SCHEMA_V17,
     18: SCHEMA_V18,
     19: SCHEMA_V19,
+    20: SCHEMA_V20,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -5107,6 +5174,167 @@ class Database:
 
         return await self._call(operation)
 
+    # ── The answer bank ──────────────────────────────────────────────────
+
+    async def create_answer_atom(self, atom: dict[str, Any]) -> dict[str, Any]:
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                atom_id, timestamp = _id("atom"), _now()
+                conn.execute(
+                    """INSERT INTO answer_atoms
+                       (id, question, paraphrases_json, answer, citations_json,
+                        entities_json, source_run_id, status, confidence, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                    (
+                        atom_id,
+                        atom["question"],
+                        _json(atom.get("paraphrases", [])),
+                        atom["answer"],
+                        _json(atom.get("citations", [])),
+                        _json(atom.get("entities", [])),
+                        atom.get("source_run_id"),
+                        float(atom.get("confidence") or 0.0),
+                        timestamp,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM answer_atoms WHERE id = ?", (atom_id,)
+                ).fetchone()
+                return dict(row)
+
+        return await self._call(operation)
+
+    async def list_answer_atoms(
+        self, status: str | None = "active", limit: int = 200
+    ) -> list[dict[str, Any]]:
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                conn = self._connection()
+                if status:
+                    rows = conn.execute(
+                        """SELECT * FROM answer_atoms WHERE status = ?
+                           ORDER BY created_at DESC LIMIT ?""",
+                        (status, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM answer_atoms ORDER BY created_at DESC LIMIT ?",
+                        (limit,),
+                    ).fetchall()
+                return [dict(row) for row in rows]
+
+        return await self._call(operation)
+
+    async def decide_answer_atom(
+        self, atom_id: str, status: str, superseded_by: str | None = None
+    ) -> dict[str, Any] | None:
+        def operation() -> dict[str, Any] | None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """UPDATE answer_atoms
+                       SET status = ?, superseded_by = ?, decided_at = ?
+                       WHERE id = ?""",
+                    (status, superseded_by, _now(), atom_id),
+                )
+                row = conn.execute(
+                    "SELECT * FROM answer_atoms WHERE id = ?", (atom_id,)
+                ).fetchone()
+                return dict(row) if row else None
+
+        return await self._call(operation)
+
+    async def search_answer_atoms_lexical(
+        self, query: str, limit: int = 20
+    ) -> list[tuple[str, float]]:
+        """The lexical half: (atom_id, rank) best-first.
+
+        FTS5 handles the tokens dense retrieval blurs — part numbers, shape
+        names, and the exact figures these answers turn on."""
+        cleaned = " OR ".join(
+            f'"{token}"'
+            for token in re.findall(r"[A-Za-z0-9_.]+", query)
+            if len(token) > 1
+        )
+        if not cleaned:
+            return []
+
+        def operation() -> list[tuple[str, float]]:
+            with self._lock:
+                try:
+                    rows = self._connection().execute(
+                        """SELECT a.id AS id, bm25(answer_atoms_fts) AS rank
+                           FROM answer_atoms_fts
+                           JOIN answer_atoms a ON a.rowid = answer_atoms_fts.rowid
+                           WHERE answer_atoms_fts MATCH ? AND a.status = 'active'
+                           ORDER BY rank LIMIT ?""",
+                        (cleaned, limit),
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    # A malformed FTS expression must narrow retrieval, not
+                    # fail the turn that asked for it.
+                    return []
+                return [(str(row["id"]), float(row["rank"])) for row in rows]
+
+        return await self._call(operation)
+
+    async def answer_atom_vectors(self) -> list[dict[str, Any]]:
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                return [
+                    dict(row) for row in self._connection().execute(
+                        """SELECT v.atom_id, v.vector FROM answer_atom_vectors v
+                           JOIN answer_atoms a ON a.id = v.atom_id
+                           WHERE a.status = 'active'"""
+                    ).fetchall()
+                ]
+
+        return await self._call(operation)
+
+    async def atoms_missing_vectors(self) -> list[dict[str, Any]]:
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                return [
+                    dict(row) for row in self._connection().execute(
+                        """SELECT a.id, a.question, a.paraphrases_json, a.answer
+                           FROM answer_atoms a
+                           LEFT JOIN answer_atom_vectors v ON v.atom_id = a.id
+                           WHERE a.status = 'active' AND v.atom_id IS NULL"""
+                    ).fetchall()
+                ]
+
+        return await self._call(operation)
+
+    async def store_answer_atom_vector(
+        self, atom_id: str, model: str, vector: bytes
+    ) -> None:
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO answer_atom_vectors (atom_id, model, vector, created_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(atom_id) DO UPDATE SET
+                         model = excluded.model, vector = excluded.vector,
+                         created_at = excluded.created_at""",
+                    (atom_id, model, vector, _now()),
+                )
+
+        await self._call(operation)
+
+    async def answer_atoms_by_id(self, ids: list[str]) -> list[dict[str, Any]]:
+        if not ids:
+            return []
+
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                marks = ",".join("?" for _ in ids)
+                return [
+                    dict(row) for row in self._connection().execute(
+                        f"SELECT * FROM answer_atoms WHERE id IN ({marks})", ids
+                    ).fetchall()
+                ]
+
+        return await self._call(operation)
+
     async def attention_data(self) -> dict[str, Any]:
         """Everything waiting on the user, in one pass.
 
@@ -5174,6 +5402,13 @@ class Database:
                         WHERE status IN ('pending','error') LIMIT 25"""
                     ).fetchall()
                 ] if self._has_table(conn, "corpus_sources") else []
+                pending_answers = [
+                    dict(row) for row in conn.execute(
+                        """SELECT id, question, created_at FROM answer_atoms
+                           WHERE status = 'pending'
+                           ORDER BY created_at DESC LIMIT 25"""
+                    ).fetchall()
+                ] if self._has_table(conn, "answer_atoms") else []
                 deferrals = {
                     str(row["item_key"]): str(row["deferred_until"])
                     for row in conn.execute(
@@ -5183,6 +5418,7 @@ class Database:
                     ).fetchall()
                 }
                 return {
+                    "pending_answers": pending_answers,
                     "pending_memories": pending_memories,
                     "waiting_notes": waiting_notes,
                     "open_actions": open_actions,

@@ -320,6 +320,24 @@ async def undefer_attention(item_key: str, request: Request) -> AttentionFeedV1:
     return await app.attention.feed()
 
 
+@router.get("/answers")
+async def list_answers(request: Request, status: str = "active") -> list[dict]:
+    """The bank. `status=pending` is the review queue."""
+    return await runtime(request).database.list_answer_atoms(status or None)
+
+
+@router.post("/answers/{atom_id}/decision")
+async def decide_answer(atom_id: str, body: dict, request: Request) -> dict:
+    """Keep, reject, or retire one atom. Keeping embeds it for semantic recall."""
+    status = str(body.get("status", ""))
+    if status not in {"active", "rejected", "superseded"}:
+        raise HTTPException(status_code=422, detail="unsupported answer status")
+    decided = await runtime(request).answers.decide(atom_id, status)
+    if decided is None:
+        raise not_found("answer atom")
+    return decided
+
+
 @router.get("/attention/brief", response_model=MorningBriefV1)
 async def morning_brief(
     request: Request, hours: int = 24, refresh: bool = False

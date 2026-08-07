@@ -1343,7 +1343,7 @@ class KnowledgeSnippetV1(Contract):
     """One retrieved passage of the user's own knowledge, with its provenance."""
 
     source_label: str
-    provider: Literal["local", "notion", "web", "customer"] = "local"
+    provider: Literal["local", "notion", "web", "customer", "answer"] = "local"
     rel_path: str
     symbol: str | None = None
     start_line: int | None = None
@@ -2346,7 +2346,7 @@ class AttentionItemV1(Contract):
     key: str
     kind: Literal[
         "run_approval", "customer_action", "customer_note",
-        "tool_proposal", "memory", "asset_trust", "stale_source",
+        "tool_proposal", "memory", "answer_atom", "asset_trust", "stale_source",
     ]
     kind_label: str = ""
     title: str
@@ -2448,3 +2448,23 @@ class MorningBriefV1(Contract):
     # and the brief is still complete without it.
     narrative: str = ""
     recommendation: str = ""
+
+
+class AnswerAtomV1(Contract):
+    """One thing you have already worked out, kept as reusable knowledge."""
+
+    question: str = Field(min_length=1, max_length=400)
+    paraphrases: list[str] = Field(default_factory=list, max_length=6)
+    answer: str = Field(min_length=1, max_length=4_000)
+    citations: list[str] = Field(default_factory=list, max_length=12)
+    entities: list[str] = Field(default_factory=list, max_length=12)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class AnswerAtomHarvestV1(Contract):
+    """What a finished run offered the bank.
+
+    Bounded at two on purpose: a bank that proposes five atoms a run becomes
+    two hundred pending reviews in a week, and then it is never opened."""
+
+    atoms: list[AnswerAtomV1] = Field(default_factory=list, max_length=2)

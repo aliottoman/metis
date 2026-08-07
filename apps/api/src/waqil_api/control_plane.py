@@ -22,6 +22,7 @@ from .contracts import (
     ArchitectureSpecV1,
     ArtifactRefV1,
     Decision,
+    AnswerAtomHarvestV1,
     DocumentOutlineV1,
     QueueUpdateV1,
     EvalReportV1,
@@ -867,6 +868,7 @@ class ControlPlane:
         customers: Any | None = None,
         model_session: Any | None = None,
         web: Any | None = None,
+        answers: Any | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
@@ -898,6 +900,9 @@ class ControlPlane:
         # Optional web research. Absent means the Web scope answers without
         # evidence rather than failing the turn.
         self.web = web
+        # Optional answer bank. Absent means answers are never harvested and
+        # never retrieved; everything else is unchanged.
+        self.answers = answers
         self.policy = PolicyEngine()
         self.graph = self._build_graph().compile(checkpointer=checkpointer)
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -1415,6 +1420,7 @@ class ControlPlane:
         model_aliases = state.get("model_aliases", {})
         knowledge_scope = model_aliases.get("_knowledge_scope", "auto")
         has_attachments = bool(state.get("attachment_text", "").strip())
+        notion_scope = knowledge_scope == "notion"
         # The Web scope is one form of consent; asking for the web inside the
         # prompt ("research online…") is the other, honored from Auto.
         wants_web = knowledge_scope == "web" or (
@@ -1591,6 +1597,19 @@ class ControlPlane:
                     "context.knowledge_error",
                     _safe_knowledge_error(error, has_attachments=has_attachments),
                 )
+        # The answer bank sits ahead of the corpus in the prompt for the same
+        # reason the customer ledger does: it is reviewed knowledge, not a
+        # retrieved guess. It supplements every lane rather than replacing one,
+        # because "what did I say about this last time" is a useful question
+        # whatever else the turn is doing.
+        if self.answers is not None and self.answers.enabled() and not notion_scope:
+            try:
+                banked = await self.answers.retrieve(state["prompt"], top_k=3)
+                knowledge_snippets = [
+                    item.model_dump(mode="json") for item in banked
+                ] + knowledge_snippets
+            except Exception:  # noqa: BLE001 - never fail a turn on retrieval
+                pass
         await self.events.emit(
             state["run_id"],
             state["conversation_id"],
@@ -5332,6 +5351,81 @@ class ControlPlane:
         if self.settings.memory_harvest_enabled:
             self._spawn_maintenance(
                 self._harvest_memories(state), name="metis-memory-harvest"
+            )
+        if self.answers is not None and self.answers.enabled():
+            self._spawn_maintenance(
+                self._harvest_answers(state), name="metis-answer-harvest"
+            )
+
+    async def _harvest_answers(self, state: AgentState) -> None:
+        """Offer this run's answer to the bank — if it earned a place.
+
+        Only a grounded, cited answer is considered. An answer with no evidence
+        behind it is exactly the kind that should not become a reusable one,
+        and the check is on the sources the run actually cited rather than on
+        the model's opinion of its own work.
+        """
+        answer = state.get("response_text", "")
+        sources = state.get("knowledge_snippets", [])
+        cited = len(re.findall(r"\[(\d+)\]", answer))
+        if (
+            len(answer) < 200
+            or cited < self.settings.answer_bank_min_citations
+            or not sources
+        ):
+            return
+        harvest = await cast(Any, self.model)._structured(
+            AnswerAtomHarvestV1,
+            system_prompt=(
+                "You decide whether an answer is worth keeping as reusable "
+                "knowledge, and you are strict. Keep it only if it answers a "
+                "question that will plainly be asked again — a durable "
+                "technical fact, a limit, a comparison, a definition. Do NOT "
+                "keep anything specific to one moment: a status update, "
+                "someone's schedule, a one-off instruction, or anything that "
+                "reads as a summary of this conversation. Return an empty list "
+                "when nothing qualifies, which will usually be the case. "
+                "`question` is the canonical form; `paraphrases` are two or "
+                "three ways it will really be asked; `answer` is self-contained "
+                "and stripped of citation markers; `entities` are the products, "
+                "shapes, or models it concerns."
+            ),
+            user_prompt=(
+                f"Question asked:\n{state['prompt'][:2_000]}\n\n"
+                f"Answer given:\n{answer[:6_000]}"
+            ),
+            role="planner",
+            model_aliases=state.get("model_aliases", {}),
+            max_output_tokens=2048,
+        )
+        if not harvest.atoms:
+            return
+        labels = [
+            f"{item.get('source_label', '')} — {item.get('rel_path', '')}"
+            for item in sources[:6]
+        ]
+        created = 0
+        for atom in harvest.atoms:
+            await self.answers.propose(
+                {
+                    "question": atom.question,
+                    "paraphrases": atom.paraphrases,
+                    "answer": atom.answer,
+                    # The evidence that made it defensible travels with it, so
+                    # a banked answer can still say why it is true.
+                    "citations": labels,
+                    "entities": atom.entities,
+                    "source_run_id": state["run_id"],
+                    "confidence": atom.confidence,
+                }
+            )
+            created += 1
+        if created:
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "answer.proposed",
+                {"count": created},
             )
 
     def _spawn_maintenance(self, work: Any, *, name: str) -> None:

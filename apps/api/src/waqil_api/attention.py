@@ -35,6 +35,7 @@ _BASE_WEIGHT = {
     "customer_action": 80,   # a promise to someone outside this machine
     "customer_note": 60,     # captured intelligence not yet in the record
     "tool_proposal": 45,     # a capability waiting to become real
+    "answer_atom": 40,       # reusable knowledge, one review from being real
     "memory": 35,            # improves future answers; nothing breaks meanwhile
     "asset_trust": 25,       # a reviewed recipe waiting to be trusted
     "stale_source": 20,      # knowledge is thinner than it could be
@@ -45,6 +46,7 @@ _KIND_LABEL = {
     "customer_action": "Customer action",
     "customer_note": "Note to analyze",
     "tool_proposal": "Tool proposal",
+    "answer_atom": "Answer to keep",
     "memory": "Memory proposal",
     "asset_trust": "Asset trust",
     "stale_source": "Knowledge source",
@@ -196,6 +198,16 @@ class AttentionService:
                 detail=f"Risk {proposal.get('risk_level', '?')} · awaiting your decision",
                 href="/tools",
                 created_at=proposal.get("created_at"),
+            )
+
+        for atom in data.get("pending_answers", []):
+            add(
+                key=f"answer_atom:{atom['id']}",
+                kind="answer_atom",
+                title=str(atom.get("question") or "A reusable answer"),
+                detail="Worked out in a run — keep it and it answers next time",
+                href="/memory",
+                created_at=atom.get("created_at"),
             )
 
         for memory in data.get("pending_memories", []):

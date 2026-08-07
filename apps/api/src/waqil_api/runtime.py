@@ -9,6 +9,7 @@ from typing import Any
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from .asset_library import AssetManager
+from .answer_bank import AnswerBank
 from .attention import AttentionService, MorningBrief
 from .blob_store import BlobStore
 from .config import Settings
@@ -55,6 +56,7 @@ class AppRuntime:
         self.corpus = CorpusService(settings, self.database, self.retrieval)
         self.notion = NotionService(settings, self.database, self.corpus)
         self.memory_index = MemoryIndex(settings, self.database, self.retrieval)
+        self.answers = AnswerBank(settings, self.database, self.retrieval)
         self.run_history = RunHistoryService(settings, self.database, self.corpus)
         self.profile = ProfileStore(settings)
         self.model_preference = ModelPreferenceStore(settings)
@@ -179,6 +181,7 @@ class AppRuntime:
             customers=self.customers,
             model_session=self.model_session,
             web=WebResearch(self.settings),
+            answers=self.answers,
         )
         await self.control_plane.reconcile_startup()
         self.spawn(self._release_idle_model(), name="model-idle-release")

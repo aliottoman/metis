@@ -147,6 +147,12 @@ class Settings(BaseSettings):
     # sync re-embeds the consented source as part of its own work. 0 disables.
     notion_refresh_hours: int = Field(default=12, ge=0, le=168)
 
+    # The answer bank: reusable answers harvested from finished runs. Every
+    # atom is proposed, never stored silently, and harvesting only considers a
+    # run whose answer was actually grounded and cited.
+    answer_bank_enabled: bool = True
+    answer_bank_min_citations: int = Field(default=1, ge=0, le=10)
+
     # Lets a tool's model author its diagram code; needs the v2 sandbox image.
     tool_model_authoring: bool = False
 
