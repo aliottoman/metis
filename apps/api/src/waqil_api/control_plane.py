@@ -1544,7 +1544,14 @@ class ControlPlane:
                             "error_type": type(error).__name__,
                         },
                     )
-        elif not customer_scoped and self.corpus is not None and self.corpus.available():
+        elif self.corpus is not None and self.corpus.available():
+            # Customer mode reaches the corpus too, and this is a correction.
+            # Scoping an account used to replace the corpus lane outright, so a
+            # question about BAPCO could not see the Notion pages written about
+            # BAPCO — the account's own knowledge, excluded by the boundary
+            # meant to protect it. The ledger is still primary and still first;
+            # these are appended behind it, numbered and cited like everything
+            # else, so the claim gate is unaffected.
 
             async def on_stage(stage: str, label: str) -> None:
                 # Never let a UI-progress emit fail retrieval.
@@ -1558,6 +1565,14 @@ class ControlPlane:
                     retrieved = await self.corpus.retrieve(
                         state["prompt"], on_stage=on_stage, provider="notion"
                     )
+                elif customer_scoped:
+                    # Only the written record — code and run logs are not what
+                    # an account question is asking about.
+                    retrieved = await self.corpus.retrieve(
+                        f"{model_aliases.get('_customer_name', '')} {state['prompt']}".strip(),
+                        on_stage=on_stage,
+                        provider="notion",
+                    )
                 else:
                     retrieved = await self.corpus.retrieve(
                         state["prompt"], on_stage=on_stage
@@ -1566,7 +1581,9 @@ class ControlPlane:
                 threshold = self.settings.corpus_min_relevance
                 relevant = [item for item in retrieved if item.score >= threshold]
                 gated_out = len(retrieved) - len(relevant)
-                knowledge_snippets = [item.model_dump(mode="json") for item in relevant]
+                knowledge_snippets = knowledge_snippets + [
+                    item.model_dump(mode="json") for item in relevant
+                ]
             except Exception as error:  # noqa: BLE001 - never fail a turn on retrieval
                 await self.events.emit(
                     state["run_id"],

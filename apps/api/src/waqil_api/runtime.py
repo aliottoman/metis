@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Coroutine
 from contextlib import AbstractAsyncContextManager
 from typing import Any
@@ -35,6 +36,8 @@ from .project_workspace import ProjectWorkspaceService
 from .run_history import RunHistoryService
 from .tool_registry import ToolRegistry
 from .reference_architecture import ReferenceArchitectureRunner
+
+logger = logging.getLogger("waqil.runtime")
 
 
 class AppRuntime:
@@ -179,6 +182,35 @@ class AppRuntime:
         )
         await self.control_plane.reconcile_startup()
         self.spawn(self._release_idle_model(), name="model-idle-release")
+        self.spawn(self._refresh_notion(), name="notion-refresh")
+
+    async def _refresh_notion(self) -> None:
+        """Keep the Notion mirror, and its embeddings, current on its own.
+
+        Syncing was manual, so the mirror drifted for as long as nobody
+        remembered to click — and a stale mirror is worse than an obvious gap,
+        because retrieval keeps answering confidently from last month's pages.
+        `sync()` re-indexes the consented source as part of its own work, so
+        this keeps meaning fresh, not just text.
+
+        Best-effort throughout: no connection, no consent, or a failed sync
+        leaves the mirror exactly as it was and the app entirely unaffected.
+        """
+        every = self.settings.notion_refresh_hours
+        if every <= 0:
+            return
+        # A first pass shortly after startup, then on the interval. The delay
+        # keeps a cold launch from spending its first seconds on the network.
+        await asyncio.sleep(90)
+        while True:
+            try:
+                status = await self.notion.status()
+                if status.connected:
+                    result = await self.notion.sync()
+                    logger.info("notion refresh: %s", result.message)
+            except Exception as error:  # noqa: BLE001 - retrieval quality only
+                logger.info("notion refresh skipped: %s", str(error)[:200])
+            await asyncio.sleep(every * 3600)
 
     async def _release_idle_model(self) -> None:
         """Give the weights back once every Metis window has gone away.

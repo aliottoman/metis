@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     cloud_retry_base_seconds: float = Field(default=1.0, ge=0.0, le=30.0)
     cloud_retry_max_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
 
+    # How often the Notion mirror re-syncs on its own. Syncing was manual, so
+    # the mirror drifted until someone remembered — and stale pages are worse
+    # than missing ones, because retrieval answers confidently from them. The
+    # sync re-embeds the consented source as part of its own work. 0 disables.
+    notion_refresh_hours: int = Field(default=12, ge=0, le=168)
+
     # Lets a tool's model author its diagram code; needs the v2 sandbox image.
     tool_model_authoring: bool = False
 

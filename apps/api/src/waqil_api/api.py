@@ -1277,6 +1277,9 @@ async def create_message(
         if customer is None:
             raise not_found("customer account")
         model_aliases["_customer_id"] = body.customer_id
+        # The account's name, so retrieval over the written record can find
+        # pages about it — "what did we agree?" alone retrieves nothing.
+        model_aliases["_customer_name"] = str(customer.get("name") or "")
     project_fields_supplied = bool(
         {"project_id", "project_mode"} & body.model_fields_set
     )

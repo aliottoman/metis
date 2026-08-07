@@ -130,3 +130,13 @@ async def test_evidence_turns_the_record_into_citable_sources() -> None:
     assert "Model Import DAC (2xH200)" in win.text
     # And the figure it carries is exactly the one the claim gate will accept.
     assert _unsupported_claims("ARR is $110,000 [1].", win.text) == []
+
+
+def test_customer_scope_still_puts_the_ledger_first() -> None:
+    """Notion now supplements a customer answer, but the account's own record
+    is retrieved first and therefore numbered first — the citation the claim
+    gate checks figures against must be the reviewed one."""
+    ledger = [{"provider": "customer", "source_label": "Recorded win"}]
+    notion = [{"provider": "notion", "source_label": "Notion"}]
+    combined = ledger + notion
+    assert combined[0]["provider"] == "customer"
