@@ -326,13 +326,34 @@ async def list_answers(request: Request, status: str = "active") -> list[dict]:
     return await runtime(request).database.list_answer_atoms(status or None)
 
 
+@router.get("/answers/{atom_id}/conflicts")
+async def answer_conflicts(atom_id: str, request: Request) -> list[dict]:
+    """Active atoms this one might replace, so review can retire them together."""
+    app = runtime(request)
+    found = await app.database.answer_atoms_by_id([atom_id])
+    if not found:
+        raise not_found("answer atom")
+    return await app.answers.conflicts(found[0])
+
+
+@router.get("/answers/entities")
+async def answer_entities(request: Request) -> list[dict]:
+    """What the bank knows about, by entity."""
+    return await runtime(request).database.answer_entity_counts()
+
+
 @router.post("/answers/{atom_id}/decision")
 async def decide_answer(atom_id: str, body: dict, request: Request) -> dict:
-    """Keep, reject, or retire one atom. Keeping embeds it for semantic recall."""
+    """Keep, reject, or retire one atom.
+
+    `supersedes` retires the atoms this one replaces in the same decision, so
+    the bank never holds two active answers that disagree."""
     status = str(body.get("status", ""))
     if status not in {"active", "rejected", "superseded"}:
         raise HTTPException(status_code=422, detail="unsupported answer status")
-    decided = await runtime(request).answers.decide(atom_id, status)
+    raw = body.get("supersedes") or []
+    supersedes = [str(item) for item in raw if isinstance(item, str)][:10]
+    decided = await runtime(request).answers.decide(atom_id, status, supersedes)
     if decided is None:
         raise not_found("answer atom")
     return decided

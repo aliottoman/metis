@@ -928,6 +928,33 @@ CREATE TABLE IF NOT EXISTS answer_atom_vectors (
 );
 """
 
+SCHEMA_V21 = """
+-- Entity links over the bank, and the supersession they make possible.
+--
+-- Two jobs. Retrieval gains a third recall signal beside lexical and dense:
+-- an atom about DAC is a candidate for a question about DAC even when it
+-- shares no distinctive keyword and its phrasing sits elsewhere in vector
+-- space. And review gains a way to find what a new answer might replace,
+-- because "same entities, similar question" is a far better candidate filter
+-- than similarity alone.
+CREATE TABLE IF NOT EXISTS answer_atom_entities (
+    atom_id TEXT NOT NULL REFERENCES answer_atoms(id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    PRIMARY KEY (atom_id, entity)
+);
+CREATE INDEX IF NOT EXISTS idx_answer_atom_entities_entity
+    ON answer_atom_entities(entity);
+"""
+
+SCHEMA_V22 = """
+-- Backfill entity links for atoms banked before the link table existed.
+-- Idempotent, and a no-op on a database that has none.
+INSERT OR IGNORE INTO answer_atom_entities (atom_id, entity)
+SELECT a.id, lower(trim(j.value))
+FROM answer_atoms a, json_each(a.entities_json) j
+WHERE trim(j.value) != '';
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -949,6 +976,8 @@ MIGRATIONS: dict[int, str] = {
     18: SCHEMA_V18,
     19: SCHEMA_V19,
     20: SCHEMA_V20,
+    21: SCHEMA_V21,
+    22: SCHEMA_V22,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -5197,10 +5226,65 @@ class Database:
                         timestamp,
                     ),
                 )
+                for entity in {
+                    str(item).strip().lower()
+                    for item in atom.get("entities", [])
+                    if str(item).strip()
+                }:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO answer_atom_entities (atom_id, entity)
+                           VALUES (?, ?)""",
+                        (atom_id, entity),
+                    )
                 row = conn.execute(
                     "SELECT * FROM answer_atoms WHERE id = ?", (atom_id,)
                 ).fetchone()
                 return dict(row)
+
+        return await self._call(operation)
+
+    async def answer_atoms_by_entities(
+        self, entities: list[str], limit: int = 20, exclude: str = ""
+    ) -> list[dict[str, Any]]:
+        """Active atoms sharing any of these entities, most-overlap first."""
+        wanted = [item.strip().lower() for item in entities if item.strip()]
+        if not wanted:
+            return []
+
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                marks = ",".join("?" for _ in wanted)
+                return [
+                    dict(row) for row in self._connection().execute(
+                        f"""SELECT a.*, COUNT(e.entity) AS overlap
+                            FROM answer_atoms a
+                            JOIN answer_atom_entities e ON e.atom_id = a.id
+                            WHERE e.entity IN ({marks})
+                              AND a.status = 'active' AND a.id != ?
+                            GROUP BY a.id
+                            ORDER BY overlap DESC, a.created_at DESC
+                            LIMIT ?""",
+                        [*wanted, exclude, limit],
+                    ).fetchall()
+                ]
+
+        return await self._call(operation)
+
+    async def answer_entity_counts(self) -> list[dict[str, Any]]:
+        """What the bank knows about, by entity — "everything I know about DAC"
+        as a real query rather than a search that hopes for the best."""
+
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                return [
+                    dict(row) for row in self._connection().execute(
+                        """SELECT e.entity, COUNT(*) AS atoms
+                           FROM answer_atom_entities e
+                           JOIN answer_atoms a ON a.id = e.atom_id
+                           WHERE a.status = 'active'
+                           GROUP BY e.entity ORDER BY atoms DESC, e.entity LIMIT 60"""
+                    ).fetchall()
+                ]
 
         return await self._call(operation)
 

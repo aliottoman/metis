@@ -18,6 +18,7 @@ class _FakeDatabase:
         self.atoms = {atom["id"]: atom for atom in atoms}
         self.lexical = lexical
         self.vectors: list[dict] = []
+        self.entity_counts: list[dict] = []
 
     async def search_answer_atoms_lexical(self, query: str, limit: int = 20):
         return self.lexical
@@ -34,6 +35,30 @@ class _FakeDatabase:
 
     async def store_answer_atom_vector(self, atom_id, model, vector):
         self.vectors.append({"atom_id": atom_id, "vector": vector})
+
+    async def answer_entity_counts(self):
+        return self.entity_counts
+
+    async def answer_atoms_by_entities(self, entities, limit=20, exclude=""):
+        wanted = {item.lower() for item in entities}
+        found = []
+        for atom in self.atoms.values():
+            if atom["id"] == exclude or atom.get("status") != "active":
+                continue
+            owned = {item.lower() for item in json.loads(atom["entities_json"])}
+            overlap = len(owned & wanted)
+            if overlap:
+                found.append({**atom, "overlap": overlap})
+        found.sort(key=lambda row: -row["overlap"])
+        return found[:limit]
+
+    async def decide_answer_atom(self, atom_id, status, superseded_by=None):
+        atom = self.atoms.get(atom_id)
+        if atom is None:
+            return None
+        atom["status"] = status
+        atom["superseded_by"] = superseded_by
+        return atom
 
 
 def _atom(atom_id: str, question: str, answer: str, citations=None) -> dict:
@@ -139,3 +164,49 @@ def test_vectors_round_trip_and_cosine_is_sane() -> None:
     assert _cosine([1.0, 0.0], [1.0, 0.0]) == 1.0
     assert _cosine([1.0, 0.0], [0.0, 1.0]) == 0.0
     assert _cosine([], [1.0]) == 0.0
+
+
+async def test_entity_recall_finds_an_atom_that_shares_no_keyword() -> None:
+    """The third arm's whole job: a customer names the product and phrases
+    everything else differently, so neither BM25 nor the embedding of that
+    exact wording is reliable — but the entity is right there."""
+    atoms = [_atom("a1", "Committed capacity floor", "744 unit-hours.")]
+    database = _FakeDatabase(atoms, [])          # lexical finds nothing
+    database.entity_counts = [{"entity": "dac", "atoms": 1}]
+    bank = AnswerBank(Settings(), database, retrieval=None)  # dense unavailable
+    found = await bank.retrieve("how does DAC billing start", top_k=3)
+    assert len(found) == 1 and found[0].rel_path == "a1"
+
+
+async def test_conflicts_are_found_by_shared_entities() -> None:
+    old = _atom("old", "What is the DAC minimum?", "744 unit-hours.")
+    new = _atom("new", "What is the DAC minimum now?", "One hour.")
+    database = _FakeDatabase([old, new], [])
+    bank = AnswerBank(Settings(), database, retrieval=None)
+    found = await bank.conflicts(new)
+    assert [row["id"] for row in found] == ["old"]
+
+
+async def test_keeping_a_replacement_retires_what_it_replaces() -> None:
+    """Supersession is resolved at review time on purpose. Two active answers
+    that disagree is a bank nobody can trust, and by retrieval time there is
+    no one left who knows which one is current."""
+    old = _atom("old", "What is the DAC minimum?", "744 unit-hours.")
+    new = _atom("new", "What is the DAC minimum now?", "One hour.")
+    new["status"] = "pending"
+    database = _FakeDatabase([old, new], [])
+    bank = AnswerBank(Settings(), database, retrieval=None)
+
+    await bank.decide("new", "active", supersedes=["old"])
+    assert database.atoms["new"]["status"] == "active"
+    assert database.atoms["old"]["status"] == "superseded"
+    assert database.atoms["old"]["superseded_by"] == "new"
+
+
+async def test_an_atom_can_never_supersede_itself() -> None:
+    atom = _atom("a1", "q", "a")
+    atom["status"] = "pending"
+    database = _FakeDatabase([atom], [])
+    bank = AnswerBank(Settings(), database, retrieval=None)
+    await bank.decide("a1", "active", supersedes=["a1"])
+    assert database.atoms["a1"]["status"] == "active"

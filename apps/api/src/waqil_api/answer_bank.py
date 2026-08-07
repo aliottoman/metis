@@ -96,9 +96,26 @@ class AnswerBank:
     async def propose(self, atom: dict[str, Any]) -> dict[str, Any]:
         return await self.database.create_answer_atom(atom)
 
-    async def decide(self, atom_id: str, status: str) -> dict[str, Any] | None:
+    async def decide(
+        self, atom_id: str, status: str, supersedes: list[str] | None = None
+    ) -> dict[str, Any] | None:
+        """Keep, reject, or retire an atom — and retire what it replaces.
+
+        Supersession is resolved here, at review time, rather than at
+        retrieval. That is the whole point: the bank must never hold two
+        active answers that disagree, because by the time retrieval has to
+        choose between them there is no one left who knows which is current.
+        """
         decided = await self.database.decide_answer_atom(atom_id, status)
-        if decided and status == "active":
+        if decided is None:
+            return None
+        if status == "active":
+            for replaced in supersedes or []:
+                if replaced == atom_id:
+                    continue
+                await self.database.decide_answer_atom(
+                    replaced, "superseded", superseded_by=atom_id
+                )
             # Newly active and unembedded is unreachable by meaning; syncing
             # here keeps the dense half current without a scheduled pass.
             await self.sync()
@@ -136,18 +153,22 @@ class AnswerBank:
         if not self.enabled():
             return []
         try:
-            lexical, dense = await asyncio.gather(
+            lexical, dense, by_entity = await asyncio.gather(
                 self.database.search_answer_atoms_lexical(query, limit=20),
                 self._dense_recall(query, limit=20),
+                self._entity_recall(query, limit=20),
             )
         except Exception:  # noqa: BLE001 - retrieval never fails a turn
             return []
 
+        # Three complementary signals, fused by rank. Entity overlap is the
+        # one that finds an atom sharing no distinctive keyword and sitting
+        # elsewhere in vector space — the case where a customer names the
+        # product but phrases everything else differently.
         fused: dict[str, float] = {}
-        for rank, (atom_id, _) in enumerate(lexical):
-            fused[atom_id] = fused.get(atom_id, 0.0) + 1.0 / (_RRF_K + rank + 1)
-        for rank, (atom_id, _) in enumerate(dense):
-            fused[atom_id] = fused.get(atom_id, 0.0) + 1.0 / (_RRF_K + rank + 1)
+        for ranking in (lexical, dense, by_entity):
+            for rank, (atom_id, _) in enumerate(ranking):
+                fused[atom_id] = fused.get(atom_id, 0.0) + 1.0 / (_RRF_K + rank + 1)
         if not fused:
             return []
 
@@ -163,6 +184,44 @@ class AnswerBank:
             return []
         candidates = await self._rerank(query, candidates, top_k)
         return [self._snippet(atom) for atom in candidates[:top_k]]
+
+    async def _entity_recall(self, query: str, limit: int) -> list[tuple[str, float]]:
+        """Atoms whose entities the question names.
+
+        Entities are matched against the question's own words rather than
+        extracted by a model: a recall arm that costs a model call per turn
+        would be paid on every question to help on a few."""
+        known = await self.database.answer_entity_counts()
+        if not known:
+            return []
+        lowered = f" {query.lower()} "
+        named = [
+            str(row["entity"])
+            for row in known
+            if str(row["entity"]) and f" {row['entity']} " in lowered
+        ]
+        if not named:
+            return []
+        rows = await self.database.answer_atoms_by_entities(named, limit=limit)
+        return [(str(row["id"]), float(row.get("overlap") or 1)) for row in rows]
+
+    async def conflicts(self, atom: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+        """Active atoms this one might replace.
+
+        Candidate-finding only, and deliberately cheap: shared entities plus
+        an active status. Whether one actually supersedes another is a
+        judgement the reviewer makes, on a card that shows both."""
+        try:
+            entities = json.loads(atom.get("entities_json") or "[]")
+        except (ValueError, TypeError):
+            entities = []
+        if not entities:
+            return []
+        return await self.database.answer_atoms_by_entities(
+            [str(item) for item in entities],
+            limit=limit,
+            exclude=str(atom.get("id", "")),
+        )
 
     async def _dense_recall(self, query: str, limit: int) -> list[tuple[str, float]]:
         if self.retrieval is None or not getattr(self.retrieval, "available", lambda: False)():
