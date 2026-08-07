@@ -285,3 +285,76 @@ async def test_a_future_due_date_is_kept() -> None:
         today=datetime(2026, 8, 7, tzinfo=UTC),
     )
     assert cleaned.new_actions[0].due_at == due
+
+
+def test_note_capture_and_cleanup_detection() -> None:
+    from waqil_api.queue_update import (
+        is_note_capture_request,
+        is_queue_update_request,
+        wants_cleanup,
+    )
+
+    assert is_note_capture_request("add this to DynaAI's notes")
+    assert is_note_capture_request("capture this for the account")
+    assert is_note_capture_request("note for BAPCO: they want a demo")
+    assert is_queue_update_request("save this to their notes")
+    # A question about notes is not a request to file one.
+    assert not is_note_capture_request("what notes do we have for DynaAI?")
+    assert wants_cleanup("add this to their notes but clean it up first")
+    assert not wants_cleanup("add this to their notes")
+
+
+def test_candidate_accounts_matches_named_and_scoped() -> None:
+    from waqil_api.queue_update import candidate_accounts
+
+    accounts = [
+        {"id": "cust_1", "name": "DynaAI"},
+        {"id": "cust_2", "name": "BAPCO"},
+    ]
+    named = candidate_accounts("please add this to Dyna.AI's notes", accounts)
+    assert [a["id"] for a in named] == ["cust_1"]
+    # A scoped conversation needs no naming — the account is already chosen.
+    scoped = candidate_accounts("just note this", accounts, scoped_id="cust_2")
+    assert [a["id"] for a in scoped] == ["cust_2"]
+    # An account not named is not offered.
+    assert candidate_accounts("note this somewhere", accounts) == []
+
+
+def test_identifier_guard_catches_an_altered_reference() -> None:
+    from waqil_api.queue_update import identifiers_preserved
+
+    original = "SR 4-0003462742 and response chatcmpl-0add1506 for branch 176."
+    # Reformatting is fine — normalised comparison ignores spacing/punctuation.
+    assert identifiers_preserved(
+        "## Case\n- SR4-0003462742\n- chatcmpl-0add1506\n- branch 176", original
+    )
+    # A single changed digit is caught.
+    assert not identifiers_preserved("SR 4-0003462743", original)
+    assert not identifiers_preserved("response chatcmpl-0add1507", original)
+
+
+def test_a_note_is_dropped_when_its_account_was_not_offered() -> None:
+    from waqil_api.contracts import CapturedNoteV1, QueueUpdateV1
+    from waqil_api.queue_update import validate
+
+    offered = [{"id": "cust_1", "name": "DynaAI"}]
+    proposal = QueueUpdateV1(note=CapturedNoteV1(account_id="cust_other", title="X"))
+    cleaned, _ = validate(proposal, [], offered_accounts=offered)
+    assert cleaned.note is None
+    assert any("unknown account" in item for item in cleaned.unmatched)
+
+
+def test_a_valid_note_is_kept_and_a_todo_inherits_its_account() -> None:
+    from waqil_api.contracts import CapturedNoteV1, NewActionV1, QueueUpdateV1
+    from waqil_api.queue_update import has_changes, validate
+
+    offered = [{"id": "cust_1", "name": "DynaAI"}]
+    proposal = QueueUpdateV1(
+        note=CapturedNoteV1(account_id="cust_1", title="Gemma4 issue"),
+        new_actions=[NewActionV1(description="Respond to Jarod's email")],
+    )
+    cleaned, _ = validate(proposal, [], offered_accounts=offered)
+    assert cleaned.note is not None and cleaned.note.account_id == "cust_1"
+    # The todo had no account of its own; it inherits the note's.
+    assert cleaned.new_actions[0].account_id == "cust_1"
+    assert has_changes(cleaned)

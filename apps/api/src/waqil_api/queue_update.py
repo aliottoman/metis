@@ -46,11 +46,98 @@ _NEW_WORK = re.compile(
     r"\b(?:to-?do|todo|task|action|follow[-\s]?up|reminder)\b",
     re.IGNORECASE,
 )
+# Filing a note against an account. "add this to their notes", "note for X",
+# "capture/log this on the account", "record this against ...".
+_NOTE_CAPTURE = re.compile(
+    r"\b(?:add|save|put|append|attach)\b[^.?!\n]{0,40}\bnotes?\b"
+    r"|\bnote\s+(?:for|on|about|against)\b"
+    r"|\b(?:capture|record|log|file|jot)\s+(?:this|that|the\s+following|it)\b",
+    re.IGNORECASE,
+)
+# Only when the user explicitly asks does a note get tidied before storage.
+# Absent this, the note is stored exactly as written — evidence is not
+# rewritten by a model on its way into the record.
+_CLEANUP = re.compile(
+    r"\b(?:clean|tidy|polish|format|neaten|structure|organi[sz]e|make\s+it\s+"
+    r"(?:presentable|readable|nicer))\b",
+    re.IGNORECASE,
+)
+
+
+def is_note_capture_request(prompt: str) -> bool:
+    return bool(_NOTE_CAPTURE.search(prompt))
+
+
+def wants_cleanup(prompt: str) -> bool:
+    return bool(_CLEANUP.search(prompt))
 
 
 def is_queue_update_request(prompt: str) -> bool:
-    """True when a message reports finished work or asks to track new work."""
-    return bool(_COMPLETION.search(prompt) or _NEW_WORK.search(prompt))
+    """True when a message reports finished work, tracks new work, or files a
+    note against an account."""
+    return bool(
+        _COMPLETION.search(prompt)
+        or _NEW_WORK.search(prompt)
+        or _NOTE_CAPTURE.search(prompt)
+    )
+
+
+def _normalize(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+# An identifier-shaped token: has a digit, and enough length to be a real
+# reference rather than a stray number. SR numbers, response ids, branch
+# codes, shapes like 2xH200 all match; a bare "3" in prose does not.
+_ID_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{3,}")
+
+
+def identifiers_preserved(tidied: str, original: str) -> bool:
+    """Whether every identifier in a tidied note survives verbatim in the
+    original message.
+
+    The guard on the opt-in cleanup path: a model may reformat prose, but an
+    SR number or a response id it altered by one character is evidence turned
+    wrong. Comparison is on normalised tokens, so reformatting "SR 4-000..."
+    to "SR4-000..." passes while a changed digit does not."""
+    source = _normalize(original)
+    for token in _ID_TOKEN.findall(tidied):
+        if not any(ch.isdigit() for ch in token):
+            continue
+        if _normalize(token) not in source:
+            return False
+    return True
+
+
+def candidate_accounts(
+    prompt: str, accounts: list[dict], scoped_id: str = ""
+) -> list[dict]:
+    """The accounts a note could be filed against, narrowed to those the
+    message actually names.
+
+    108 accounts cannot all go in the prompt, and should not: the model must
+    choose from the ones the user referred to, not the whole book. A
+    conversation already scoped to an account needs no naming at all."""
+    if scoped_id:
+        scoped = [a for a in accounts if str(a.get("id")) == scoped_id]
+        if scoped:
+            return scoped
+    haystack = _normalize(prompt)
+    named = [
+        account
+        for account in accounts
+        if len(_normalize(str(account.get("name", "")))) >= 3
+        and _normalize(str(account.get("name", ""))) in haystack
+    ]
+    return named[:8]
+
+
+def accounts_block(accounts: list[dict]) -> str:
+    if not accounts:
+        return "(no account named in the message)"
+    return "\n".join(
+        f"- id={account['id']} | {account.get('name', '')}" for account in accounts
+    )
 
 
 def candidates_block(actions: list[dict]) -> str:
@@ -65,7 +152,11 @@ def candidates_block(actions: list[dict]) -> str:
 
 
 def validate(
-    proposal: QueueUpdateV1, actions: list[dict], *, today: datetime | None = None
+    proposal: QueueUpdateV1,
+    actions: list[dict],
+    *,
+    today: datetime | None = None,
+    offered_accounts: list[dict] | None = None,
 ) -> tuple[QueueUpdateV1, list[dict]]:
     """Keep only what the host itself offered.
 
@@ -73,11 +164,25 @@ def validate(
     renders its approval card from validated records rather than from anything
     the model wrote."""
     by_id = {str(action["id"]): action for action in actions}
+    # Accounts a new action or note may touch: those carrying an open action,
+    # plus any the host explicitly offered for a note-capture.
     accounts = {str(action.get("account_id") or "") for action in actions}
+    accounts |= {str(a.get("id") or "") for a in (offered_accounts or [])}
+
+    unmatched = list(proposal.unmatched)
+
+    # The note. Its account must be one the host offered — a model cannot file
+    # a note against an account this message never named.
+    note = proposal.note
+    if note is not None and note.account_id not in accounts:
+        unmatched.append(f"note for unknown account {note.account_id}")
+        note = None
+    # A new action with no account of its own inherits the note's account when
+    # the note is the only account in play (the "add a note and a todo" shape).
+    note_account = note.account_id if note is not None else ""
 
     matched: list[dict] = []
     completed: list[ActionResolutionV1] = []
-    unmatched = list(proposal.unmatched)
     seen: set[str] = set()
     for resolution in proposal.completed:
         action = by_id.get(resolution.action_id)
@@ -97,10 +202,13 @@ def validate(
         account = candidate.account_id.strip()
         if not account:
             # Inherit the account of the work being reported when exactly one
-            # is in play; otherwise it needs saying explicitly.
+            # is in play; otherwise fall back to the note's account, so "add a
+            # note for X and a todo" attaches the todo to X.
             involved = {str(action.get("account_id") or "") for action in matched}
             if len(involved) == 1:
                 account = involved.pop()
+            elif note_account:
+                account = note_account
         if account and account not in accounts:
             unmatched.append(f"new action for unknown account {account}")
             continue
@@ -126,6 +234,7 @@ def validate(
     return (
         proposal.model_copy(
             update={
+                "note": note,
                 "completed": completed,
                 "new_actions": new_actions,
                 "unmatched": unmatched[:10],
@@ -135,10 +244,17 @@ def validate(
     )
 
 
-def describe(proposal: QueueUpdateV1, matched: list[dict]) -> str:
+def describe(
+    proposal: QueueUpdateV1, matched: list[dict], accounts: list[dict] | None = None
+) -> str:
     """The approval card's body: exactly what will change, in plain words."""
     by_id = {str(action["id"]): action for action in matched}
+    account_names = {str(a.get("id")): str(a.get("name", "")) for a in (accounts or [])}
     lines: list[str] = []
+    if proposal.note is not None:
+        where = account_names.get(proposal.note.account_id, proposal.note.account_id)
+        lines.append(f'File a note on {where}: "{proposal.note.title}"')
+        lines.append("  (saved as you wrote it, then queued for analysis)")
     if proposal.completed:
         lines.append("Close these open actions:")
         for resolution in proposal.completed:
@@ -158,3 +274,8 @@ def describe(proposal: QueueUpdateV1, matched: list[dict]) -> str:
         lines.append("Not applied — nothing in the record matched:")
         lines.extend(f"  • {item}" for item in proposal.unmatched)
     return "\n".join(lines) or "Nothing in the record matches this message."
+
+
+def has_changes(proposal: QueueUpdateV1) -> bool:
+    """Whether anything survived validation worth an approval."""
+    return bool(proposal.note or proposal.completed or proposal.new_actions)

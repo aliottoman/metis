@@ -24,6 +24,7 @@ from .contracts import (
     Decision,
     AnswerAtomHarvestV1,
     DocumentOutlineV1,
+    TidiedNoteV1,
     QueueUpdateV1,
     EvalReportV1,
     EvalResultV1,
@@ -827,6 +828,8 @@ class AgentState(TypedDict):
     route_kind: str
     # The validated proposal a queue_update approval will apply.
     queue_update: NotRequired[dict[str, Any]]
+    # The verbatim (or verified-tidied) note body a queue_update will file.
+    queue_note_body: NotRequired[str]
     tool_definition: dict[str, Any]
     tool_build: dict[str, Any]
     tool_output: dict[str, Any]
@@ -3205,8 +3208,9 @@ class ControlPlane:
         only after that card is approved.
         """
         await self._guard(state)
-        await self._stage(state, "planning", "Matching this to your open work…")
-        customer_id = state.get("model_aliases", {}).get("_customer_id", "")
+        await self._stage(state, "planning", "Matching this to your record…")
+        aliases = state.get("model_aliases", {})
+        customer_id = aliases.get("_customer_id", "")
         data = await self.database.attention_data()
         actions = [
             action
@@ -3214,12 +3218,31 @@ class ControlPlane:
             # A conversation scoped to one account may only touch that account.
             if not customer_id or str(action.get("account_id")) == customer_id
         ]
-        if not actions:
+        # Which accounts a note could be filed against — only those the message
+        # actually names (or the one the conversation is scoped to).
+        note_intent = queue_update.is_note_capture_request(state["prompt"])
+        accounts = (
+            queue_update.candidate_accounts(
+                state["prompt"],
+                await self.database.list_customer_accounts(),
+                customer_id,
+            )
+            if note_intent
+            else []
+        )
+        if not actions and not accounts:
+            if note_intent:
+                return {
+                    "response_text": (
+                        "I couldn't tell which account this note is for. Name the "
+                        "account in your message, or open the conversation on it "
+                        "from Customers, and I'll file it."
+                    ),
+                }
             return {
                 "response_text": (
                     "There are no open actions on record for me to close. If you "
-                    "want this tracked, capture it as a customer note first — "
-                    "then the actions it contains become part of the queue."
+                    "want this tracked, tell me which account to note it against."
                 ),
             }
 
@@ -3227,62 +3250,85 @@ class ControlPlane:
             proposed = await cast(Any, self.model)._structured(
                 QueueUpdateV1,
                 system_prompt=(
-                    "You reconcile a short work report against a list of OPEN "
-                    "ACTIONS. For each action the message plainly says is "
-                    "finished, return its exact id in `completed` — ids come "
-                    "only from the supplied list and are never composed. Where "
-                    "the message describes work still owed, add it to "
-                    "`new_actions`. If part of the message matches nothing, put "
-                    "it in `unmatched` rather than forcing a match. Be "
-                    "conservative: closing the wrong commitment is worse than "
-                    "leaving one open, so when a mention is ambiguous, leave it."
+                    "You turn a message into a proposed change to a customer "
+                    "record. Three things it may contain, any combination:\n"
+                    "1. A note to file: when the message asks to add/save/capture "
+                    "a note, set `note` with the `account_id` chosen from the "
+                    "ACCOUNTS list (never composed) and a short descriptive "
+                    "`title` drawn from the content. Do not write the note body — "
+                    "the system stores the user's own words.\n"
+                    "2. Finished commitments: for each OPEN ACTION the message "
+                    "plainly says is done, put its exact id in `completed`. Ids "
+                    "come only from the supplied list.\n"
+                    "3. New follow-ups: work still owed goes in `new_actions`.\n"
+                    "Be conservative: filing against the wrong account or closing "
+                    "the wrong commitment is worse than leaving it. Put anything "
+                    "you cannot place in `unmatched` rather than forcing it."
                 ),
                 user_prompt=(
                     # The model has no clock, and "next week" without one lands
                     # in a previous year.
                     f"Today is {datetime.now(UTC).date().isoformat()}.\n\n"
-                    f"Work report:\n{state['prompt']}\n\n"
-                    f"Open actions:\n{queue_update.candidates_block(actions)}"
+                    f"Message:\n{state['prompt']}\n\n"
+                    f"Open actions:\n{queue_update.candidates_block(actions)}\n\n"
+                    f"Accounts named in the message:\n"
+                    f"{queue_update.accounts_block(accounts)}"
                 ),
                 role="planner",
-                model_aliases=state.get("model_aliases", {}),
+                model_aliases=aliases,
                 max_output_tokens=2048,
             )
         except Exception as error:  # noqa: BLE001 - a failed match must not fail the turn
             return {
                 "response_text": (
-                    "I could not match that against your open actions "
+                    "I could not read that as a record change "
                     f"({type(error).__name__}). Nothing was changed."
                 ),
             }
 
-        proposal, matched = queue_update.validate(proposed, actions)
-        if not proposal.completed and not proposal.new_actions:
+        proposal, matched = queue_update.validate(
+            proposed, actions, offered_accounts=accounts
+        )
+        if not queue_update.has_changes(proposal):
             unmatched = "\n".join(f"- {item}" for item in proposal.unmatched)
             return {
                 "response_text": (
-                    "Nothing in your open actions matched that, so I have not "
-                    "changed anything."
-                    + (f"\n\n{unmatched}" if unmatched else "")
+                    "Nothing in your record matched that, so I have not changed "
+                    "anything." + (f"\n\n{unmatched}" if unmatched else "")
                 ),
             }
 
-        body = queue_update.describe(proposal, matched)
+        # The note body is the user's own words, set here by the host — never
+        # authored by the model. Only an explicit cleanup request lets it be
+        # reformatted, and only after every identifier is confirmed intact.
+        note_body = ""
+        if proposal.note is not None:
+            note_body = state["prompt"]
+            if queue_update.wants_cleanup(state["prompt"]):
+                tidied = await self._tidy_note(state, note_body)
+                if tidied and queue_update.identifiers_preserved(tidied, note_body):
+                    note_body = tidied
+
+        body = queue_update.describe(proposal, matched, accounts)
         payload = proposal.model_dump(mode="json")
         digest = hashlib.sha256(
             json.dumps(payload, sort_keys=True).encode("utf-8")
         ).hexdigest()
         action_id = f"queue-update:{state['run_id']}:{digest[:20]}"
+        bits = []
+        if proposal.note is not None:
+            bits.append("file a note")
+        if proposal.completed:
+            bits.append(f"close {len(proposal.completed)}")
+        if proposal.new_actions:
+            bits.append(f"add {len(proposal.new_actions)}")
         approval = await self.database.create_approval(
             ApprovalRequestV1(
                 id=f"appr_{hashlib.sha256(action_id.encode('utf-8')).hexdigest()[:32]}",
                 run_id=state["run_id"],
                 action_id=action_id,
                 kind="queue_update",
-                title=(
-                    f"Update your record: close {len(proposal.completed)}, "
-                    f"add {len(proposal.new_actions)}?"
-                ),
+                title=f"Update your record: {', '.join(bits)}?",
                 summary=body,
                 risk_level=RiskLevel.R1,
                 input_digest=digest,
@@ -3298,7 +3344,31 @@ class ControlPlane:
         return {
             "approval_request": approval.model_dump(mode="json"),
             "queue_update": payload,
+            # The verbatim (or verified-tidied) body travels to apply-time; the
+            # note contract deliberately never carried it.
+            "queue_note_body": note_body,
         }
+
+    async def _tidy_note(self, state: AgentState, body: str) -> str:
+        """Reformat a note for readability — only when the user asked, and
+        never trusted until the host has checked it altered no identifier."""
+        try:
+            tidied = await cast(Any, self.model)._structured(
+                TidiedNoteV1,
+                system_prompt=(
+                    "Reformat this note for readability with headings and lists. "
+                    "Change nothing factual: reproduce every number, code, id, "
+                    "URL, model name, and quotation exactly as written, and "
+                    "neither add nor drop information. Return only the note."
+                ),
+                user_prompt=body,
+                role="planner",
+                model_aliases=state.get("model_aliases", {}),
+                max_output_tokens=4096,
+            )
+            return tidied.body
+        except Exception:  # noqa: BLE001 - cleanup is a bonus; verbatim always stands
+            return ""
 
     async def _apply_queue_update(
         self,
@@ -3316,6 +3386,19 @@ class ControlPlane:
         proposal = QueueUpdateV1.model_validate(state.get("queue_update", {}))
         data = await self.database.attention_data()
         live = {str(action["id"]) for action in data.get("open_actions", [])}
+        noted = False
+        if proposal.note is not None:
+            body = str(state.get("queue_note_body") or "").strip()
+            if body:
+                await self.database.capture_customer_source(
+                    account_id=proposal.note.account_id,
+                    source_kind="note",
+                    title=proposal.note.title,
+                    content=body,
+                    source_ref="",
+                    occurred_at=None,
+                )
+                noted = True
         closed = 0
         for resolution in proposal.completed:
             if resolution.action_id not in live:
@@ -3342,9 +3425,11 @@ class ControlPlane:
             state["run_id"],
             state["conversation_id"],
             "queue.updated",
-            {"closed": closed, "created": created},
+            {"noted": noted, "closed": closed, "created": created},
         )
         parts = []
+        if noted:
+            parts.append("filed the note (queued for analysis)")
         if closed:
             parts.append(f"closed {closed} action{'s' if closed != 1 else ''}")
         if created:
