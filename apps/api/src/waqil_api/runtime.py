@@ -8,7 +8,7 @@ from typing import Any
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from .asset_library import AssetManager
-from .attention import AttentionService
+from .attention import AttentionService, MorningBrief
 from .blob_store import BlobStore
 from .config import Settings
 from .control_plane import ControlPlane
@@ -118,6 +118,10 @@ class AppRuntime:
             self.model.local if isinstance(self.model, RoutedModelProvider) else self.model
         )
         self.attention = AttentionService(self.database, assets=self.assets)
+        self.brief = MorningBrief(
+            self.attention, self.database, model=self.model,
+            preference=self.model_preference,
+        )
         self.customers = CustomerIntelligenceService(
             self.database,
             self.model,

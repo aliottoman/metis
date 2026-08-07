@@ -60,6 +60,7 @@ from .contracts import (
     AttentionBatchResultV1,
     AttentionBatchV1,
     AttentionDeferV1,
+    MorningBriefV1,
     AttentionFeedV1,
     CustomerDashboardV1,
     CustomerFactCreateV1,
@@ -317,6 +318,25 @@ async def undefer_attention(item_key: str, request: Request) -> AttentionFeedV1:
     app = runtime(request)
     await app.attention.undefer(item_key)
     return await app.attention.feed()
+
+
+@router.get("/attention/brief", response_model=MorningBriefV1)
+async def morning_brief(
+    request: Request, hours: int = 24, refresh: bool = False
+) -> MorningBriefV1:
+    """The day's opening summary: what changed, what matters, what to do first.
+
+    Facts are counted from the records; only the connecting prose is written."""
+    app = runtime(request)
+    composed = await app.brief.compose(hours=max(1, min(hours, 168)), refresh=refresh)
+    if app.brief.last_error:
+        # Diagnostics belong in the log, not in the user's morning.
+        import logging
+
+        logging.getLogger("waqil.brief").warning(
+            "brief prose unavailable: %s", app.brief.last_error
+        )
+    return composed
 
 
 @router.post("/attention/batch", response_model=AttentionBatchResultV1)

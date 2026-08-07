@@ -2428,3 +2428,23 @@ class AttentionBatchResultV1(Contract):
     applied: list[str] = Field(default_factory=list)
     skipped: list[str] = Field(default_factory=list)
     feed: AttentionFeedV1
+
+
+class MorningBriefV1(Contract):
+    """The day's opening summary.
+
+    Every number and name here is counted from the records by the host. The
+    model is given those facts and writes only the connecting sentences, so a
+    brief can read well without ever being able to overstate what happened.
+    """
+
+    generated_at: datetime
+    since: datetime
+    # Host-computed, never model-written.
+    changed: list[str] = Field(default_factory=list)
+    focus: list[AttentionItemV1] = Field(default_factory=list)
+    waiting_total: int = 0
+    # Model-written prose over the facts above; empty when no model is reachable,
+    # and the brief is still complete without it.
+    narrative: str = ""
+    recommendation: str = ""

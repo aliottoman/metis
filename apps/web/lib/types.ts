@@ -1085,3 +1085,13 @@ export interface AttentionBatchResult {
   skipped: string[];
   feed: AttentionFeed;
 }
+
+export interface MorningBrief {
+  generated_at: string;
+  since: string;
+  changed: string[];
+  focus: AttentionItem[];
+  waiting_total: number;
+  narrative: string;
+  recommendation: string;
+}

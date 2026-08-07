@@ -5063,6 +5063,50 @@ class Database:
 
         return {str(row["win_id"]): dict(row) for row in await self._call(operation)}
 
+    async def changes_since(self, since: str) -> dict[str, Any]:
+        """What actually moved since a timestamp.
+
+        Counted from the records themselves rather than described by a model:
+        a brief that overstates what happened is worse than no brief, and the
+        only way to guarantee it cannot is to never let the numbers be
+        generated."""
+
+        def operation() -> dict[str, Any]:
+            with self._lock:
+                conn = self._connection()
+                wins = [
+                    dict(row) for row in conn.execute(
+                        """SELECT w.title, w.yearly_arr, a.name AS account_name
+                        FROM customer_wins w
+                        JOIN customer_accounts a ON a.id = w.account_id
+                        WHERE w.created_at >= ? ORDER BY w.created_at DESC LIMIT 10""",
+                        (since,),
+                    ).fetchall()
+                ]
+                closed = [
+                    dict(row) for row in conn.execute(
+                        """SELECT c.description, a.name AS account_name
+                        FROM customer_actions c
+                        JOIN customer_accounts a ON a.id = c.account_id
+                        WHERE c.status = 'done' AND c.updated_at >= ?
+                        ORDER BY c.updated_at DESC LIMIT 10""",
+                        (since,),
+                    ).fetchall()
+                ]
+                counts = conn.execute(
+                    """SELECT
+                    (SELECT COUNT(*) FROM runs
+                     WHERE status = 'completed' AND updated_at >= ?) runs_completed,
+                    (SELECT COUNT(*) FROM memory_proposals
+                     WHERE status = 'approved' AND decided_at >= ?) memories_kept,
+                    (SELECT COUNT(*) FROM customer_actions
+                     WHERE created_at >= ?) actions_created""",
+                    (since, since, since),
+                ).fetchone()
+                return {"wins": wins, "closed_actions": closed, **dict(counts)}
+
+        return await self._call(operation)
+
     async def attention_data(self) -> dict[str, Any]:
         """Everything waiting on the user, in one pass.
 

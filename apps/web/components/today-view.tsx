@@ -3,8 +3,14 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { batchAttention, deferAttention, getAttention, undeferAttention } from "@/lib/api";
-import type { AttentionFeed, AttentionItem } from "@/lib/types";
+import {
+  batchAttention,
+  deferAttention,
+  getAttention,
+  getMorningBrief,
+  undeferAttention,
+} from "@/lib/api";
+import type { AttentionFeed, AttentionItem, MorningBrief } from "@/lib/types";
 
 /** Order the groups appear in. Matches the queue's own weighting, so the page
  *  and the ranking can never tell different stories about what matters. */
@@ -63,6 +69,7 @@ export function TodayView() {
   const [showDeferred, setShowDeferred] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [batchNote, setBatchNote] = useState<string | null>(null);
+  const [brief, setBrief] = useState<MorningBrief | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -78,6 +85,9 @@ export function TodayView() {
 
   useEffect(() => {
     void refresh();
+    // The brief is a second, slower read: the queue must render immediately
+    // even when a model is cold or unreachable.
+    void getMorningBrief().then(setBrief).catch(() => setBrief(null));
   }, [refresh]);
 
   async function defer(item: AttentionItem, days: number) {
@@ -202,6 +212,27 @@ export function TodayView() {
         </div>
       ) : null}
       {batchNote ? <p className="mutedMeta" role="status">{batchNote}</p> : null}
+
+      {/* What changed since yesterday, and what to do first. Every figure
+          here was counted from the records; only the sentences are written. */}
+      {brief && (brief.narrative || brief.changed.length) ? (
+        <section className="todayBrief" aria-label="Morning brief">
+          {brief.narrative ? <p className="todayNarrative">{brief.narrative}</p> : null}
+          {brief.recommendation ? (
+            <p className="todayRecommendation">{brief.recommendation}</p>
+          ) : null}
+          {brief.changed.length ? (
+            <>
+              <span className="todayKind">Since yesterday</span>
+              <ul>
+                {brief.changed.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* The headline three. If the page says three things need you, these are
           them — ranked by consequence, so a promise due today outranks a

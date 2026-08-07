@@ -10094,3 +10094,27 @@ body {
 }
 .todayCheckSpacer { visibility: hidden; }
 .todayList li { align-items: center; }
+
+/* The brief opens the day: prose over facts the host counted, never over
+   figures a model produced. */
+.todayBrief {
+  background: var(--glass-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+}
+.todayNarrative { font-size: 14.5px; line-height: 1.6; margin: 0; }
+.todayRecommendation {
+  border-left: 2px solid var(--terracotta, #c25c3b);
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 550;
+  line-height: 1.55;
+  margin: 2px 0 0;
+  padding-left: 10px;
+}
+.todayBrief ul { display: grid; gap: 3px; list-style: none; margin: 0; padding: 0; }
+.todayBrief li { color: var(--muted); font-size: 12px; }
+.todayBrief li::before { content: "· "; }

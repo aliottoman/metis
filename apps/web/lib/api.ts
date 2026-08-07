@@ -1,5 +1,6 @@
 import type {
   AttentionBatchResult,
+  MorningBrief,
   AttentionFeed,
   AssetEnvVar,
   AssetLogsV1,
@@ -1884,4 +1885,9 @@ export async function batchAttention(
     method: "POST",
     body: JSON.stringify({ keys, decision, days }),
   });
+}
+
+/** The day's brief. Facts are counted server-side; only the prose is written. */
+export async function getMorningBrief(hours = 24): Promise<MorningBrief> {
+  return request<MorningBrief>(`${API_PREFIX}/attention/brief?hours=${hours}`);
 }

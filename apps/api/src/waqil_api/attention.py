@@ -20,7 +20,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .contracts import AttentionFeedV1, AttentionItemV1
+import asyncio
+
+from pydantic import Field
+
+from .contracts import AttentionFeedV1, AttentionItemV1, Contract
 from .database import Database
 
 # What a delay actually costs, expressed as a base weight. A commitment made to
@@ -255,3 +259,148 @@ class AttentionService:
             total=len(live),
             deferred=len(snoozed),
         )
+
+
+class MorningBrief:
+    """Composes the day's brief: host-counted facts, model-written prose.
+
+    The split is the same one the document factory uses, and for the same
+    reason. Anything a model writes here is commentary on numbers it was
+    handed; it is never the source of them. A brief that says "you closed
+    three actions" when you closed one would poison the one surface meant to
+    be trusted at a glance.
+    """
+
+    def __init__(
+        self,
+        attention: AttentionService,
+        database: Database,
+        model: Any = None,
+        preference: Any | None = None,
+    ) -> None:
+        self.attention = attention
+        self.database = database
+        self.model = model
+        # The brief follows the same provider as everything else; without the
+        # aliases the routed provider cannot resolve which model to ask.
+        self.preference = preference
+        self.last_error = ""
+        # A morning brief regenerated on every page load is both wrong in
+        # concept and, on a rate-limited free tier, the reason its prose
+        # appears only sometimes. Composed once, then served from here.
+        self._cached: Any | None = None
+        self._cached_at: datetime | None = None
+        self._cache_ttl = timedelta(minutes=20)
+
+    async def compose(self, *, hours: int = 24, refresh: bool = False) -> Any:
+        from .contracts import MorningBriefV1
+
+        now = datetime.now(UTC)
+        if (
+            not refresh
+            and self._cached is not None
+            and self._cached_at is not None
+            and now - self._cached_at < self._cache_ttl
+            # Only a brief that actually got its prose is worth reusing; one
+            # that lost it to a rate limit should try again next time.
+            and self._cached.narrative
+        ):
+            return self._cached
+        since = now - timedelta(hours=max(hours, 1))
+        stamp = since.isoformat().replace("+00:00", "Z")
+        feed, changes = await asyncio.gather(
+            self.attention.feed(top=3), self.database.changes_since(stamp)
+        )
+
+        changed: list[str] = []
+        for win in changes.get("wins", []):
+            arr = win.get("yearly_arr")
+            amount = f" (${arr:,.0f} ARR)" if arr else ""
+            changed.append(f"Recorded a win: {win['title']} — {win['account_name']}{amount}")
+        for action in changes.get("closed_actions", []):
+            changed.append(f"Closed: {action['description']} — {action['account_name']}")
+        if changes.get("runs_completed"):
+            changed.append(f"{changes['runs_completed']} runs completed")
+        if changes.get("memories_kept"):
+            changed.append(f"{changes['memories_kept']} memories kept")
+        if changes.get("actions_created"):
+            changed.append(f"{changes['actions_created']} new actions captured")
+
+        brief = MorningBriefV1(
+            generated_at=now,
+            since=since,
+            changed=changed,
+            focus=feed.top,
+            waiting_total=feed.total,
+        )
+        if self.model is None:
+            return brief
+        facts = "\n".join(
+            [
+                f"Waiting on the user: {feed.total} items.",
+                "Top of the queue:",
+                *(
+                    f"- [{item.kind_label}] {item.title}"
+                    + (" (OVERDUE)" if item.overdue else "")
+                    for item in feed.top
+                ),
+                f"Changed in the last {hours} hours:",
+                *(f"- {line}" for line in changed or ["- nothing recorded"]),
+            ]
+        )
+        aliases: dict[str, str] = {}
+        if self.preference is not None:
+            try:
+                aliases = self.preference.resolve_aliases()
+            except Exception:  # noqa: BLE001 - fall back to provider defaults
+                aliases = {}
+        try:
+            written = await cast_any(self.model)._structured(
+                BriefProseV1,
+                system_prompt=(
+                    "You write the two short paragraphs that open someone's "
+                    "working day, over facts you are given. Never state a "
+                    "number, name, or outcome that is not in those facts, and "
+                    "never imply more happened than they show. `narrative` is "
+                    "two sentences on where things stand. `recommendation` is "
+                    "one sentence naming what to do first and why it matters "
+                    "more than the rest. Plain, specific, no cheerleading. Return both "
+                    "fields by calling the supplied function exactly once."
+                ),
+                user_prompt=facts,
+                role="planner",
+                model_aliases=aliases,
+                max_output_tokens=600,
+            )
+            brief = brief.model_copy(
+                update={
+                    "narrative": written.narrative,
+                    "recommendation": written.recommendation,
+                }
+            )
+        except Exception as error:  # noqa: BLE001 - the facts are the brief; prose is a bonus
+            # Surfaced, not swallowed: a brief that quietly loses its prose
+            # every morning is indistinguishable from one that never had any.
+            brief = brief.model_copy(
+                update={"narrative": "", "recommendation": ""}
+            )
+            self.last_error = f"{type(error).__name__}: {str(error)[:200]}"
+        self._cached, self._cached_at = brief, now
+        return brief
+
+
+class BriefProseV1(Contract):
+    """The written half of the brief.
+
+    Public name on purpose: providers derive a tool-function name from the
+    class, and a leading underscore produced `return__briefprose`, which
+    Command A+ answered in prose rather than calling."""
+
+    narrative: str = Field(default="", max_length=600)
+    recommendation: str = Field(default="", max_length=300)
+
+
+def cast_any(value: Any) -> Any:
+    """The provider's structured decode is a per-lane capability, not part of
+    the shared protocol."""
+    return value
