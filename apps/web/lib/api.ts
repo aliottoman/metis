@@ -1,4 +1,6 @@
 import type {
+  AnswerAtom,
+  AnswerEntity,
   AttentionBatchResult,
   MorningBrief,
   AttentionFeed,
@@ -1890,4 +1892,31 @@ export async function batchAttention(
 /** The day's brief. Facts are counted server-side; only the prose is written. */
 export async function getMorningBrief(hours = 24): Promise<MorningBrief> {
   return request<MorningBrief>(`${API_PREFIX}/attention/brief?hours=${hours}`);
+}
+
+/** The answer bank. `status` is one of active | pending | superseded | rejected. */
+export async function getAnswers(status = "active"): Promise<AnswerAtom[]> {
+  return request<AnswerAtom[]>(`${API_PREFIX}/answers?status=${encodeURIComponent(status)}`);
+}
+
+export async function getAnswerEntities(): Promise<AnswerEntity[]> {
+  return request<AnswerEntity[]>(`${API_PREFIX}/answers/entities`);
+}
+
+/** Active atoms this one might replace, found by shared entities. */
+export async function getAnswerConflicts(atomId: string): Promise<AnswerAtom[]> {
+  return request<AnswerAtom[]>(`${API_PREFIX}/answers/${encodeURIComponent(atomId)}/conflicts`);
+}
+
+/** Keep, reject, or retire an atom. `supersedes` retires what it replaces in
+ *  the same decision, so the bank never holds two answers that disagree. */
+export async function decideAnswer(
+  atomId: string,
+  status: "active" | "rejected" | "superseded",
+  supersedes: string[] = [],
+): Promise<AnswerAtom> {
+  return request<AnswerAtom>(`${API_PREFIX}/answers/${encodeURIComponent(atomId)}/decision`, {
+    method: "POST",
+    body: JSON.stringify({ status, supersedes }),
+  });
 }

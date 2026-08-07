@@ -24,6 +24,7 @@ type NavIconName =
   | "memory"
   | "sizing"
   | "today"
+  | "answers"
   | "settings";
 
 const navigation: Array<{ href: string; label: string; icon: NavIconName }> = [
@@ -35,6 +36,7 @@ const navigation: Array<{ href: string; label: string; icon: NavIconName }> = [
   { href: "/assets", label: "Assets", icon: "assets" },
   { href: "/tools", label: "Tool Workshop", icon: "tools" },
   { href: "/knowledge", label: "Knowledge", icon: "knowledge" },
+  { href: "/answers", label: "Answers", icon: "answers" },
   { href: "/memory", label: "Memory", icon: "memory" },
   { href: "/sizing", label: "Sizing", icon: "sizing" },
   { href: "/settings", label: "Settings", icon: "settings" },
@@ -59,6 +61,10 @@ function NavIcon({ name }: { name: NavIconName }) {
   if (name === "today") {
     // A checklist: the page is a queue of decisions, not a destination.
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4.2 5.6 5.4 6.8l2.2-2.4M4.2 10.4l1.2 1.2 2.2-2.4M4.2 15.2l1.2 1.2 2.2-2.4M10.6 5.3h5.2M10.6 10.1h5.2M10.6 14.9h5.2" /></svg>;
+  }
+  if (name === "answers") {
+    // A speech mark: the bank holds things you have already said well.
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M7.4 8.6H5.2a1.4 1.4 0 0 1-1.4-1.4V5.8a1.4 1.4 0 0 1 1.4-1.4h2.2a1.4 1.4 0 0 1 1.4 1.4v3.9c0 2.1-1.2 3.6-3 4.1M16.2 8.6H14a1.4 1.4 0 0 1-1.4-1.4V5.8A1.4 1.4 0 0 1 14 4.4h2.2a1.4 1.4 0 0 1 1.4 1.4v3.9c0 2.1-1.2 3.6-3 4.1" /></svg>;
   }
   if (name === "chat") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4 4.7h12v8.1H9l-3.7 2.8v-2.8H4z" /></svg>;

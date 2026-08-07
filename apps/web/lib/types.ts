@@ -1095,3 +1095,24 @@ export interface MorningBrief {
   narrative: string;
   recommendation: string;
 }
+
+export interface AnswerAtom {
+  id: string;
+  question: string;
+  paraphrases_json: string;
+  answer: string;
+  citations_json: string;
+  entities_json: string;
+  source_run_id: string | null;
+  status: "pending" | "active" | "superseded" | "rejected";
+  superseded_by: string | null;
+  confidence: number;
+  created_at: string;
+  decided_at: string | null;
+  overlap?: number;
+}
+
+export interface AnswerEntity {
+  entity: string;
+  atoms: number;
+}

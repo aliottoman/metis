@@ -10118,3 +10118,80 @@ body {
 .todayBrief ul { display: grid; gap: 3px; list-style: none; margin: 0; padding: 0; }
 .todayBrief li { color: var(--muted); font-size: 12px; }
 .todayBrief li::before { content: "· "; }
+
+/* ── Answer bank ──────────────────────────────────────────────────────────
+   A reading surface first: the answer is the point, and the controls sit
+   under it rather than competing with it. */
+.answerTabs { display: flex; gap: 4px; }
+.answerTabs button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 13px;
+}
+.answerTabs button.selected {
+  background: var(--glass-bg);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.answerEntities { display: flex; flex-wrap: wrap; gap: 5px; }
+.answerEntities button {
+  background: var(--canvas-deep);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 11px;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 10px;
+}
+.answerEntities button.selected { background: var(--glass-bg); border-color: var(--line-2); color: var(--ink); }
+.answerEntities b { color: var(--faint); font-weight: 600; }
+.answerCard {
+  background: var(--glass-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 8px;
+  padding: 18px 20px;
+}
+.answerHead { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; }
+.answerHead h2 { font-size: 15px; font-weight: 550; line-height: 1.45; margin: 0; }
+.answerStatus {
+  border-radius: 999px;
+  flex: none;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  text-transform: uppercase;
+}
+.answerStatus.is-active { background: var(--sage-light); color: var(--sage); }
+.answerStatus.is-superseded { background: var(--canvas-deep); color: var(--faint); }
+.answerBody { font-size: 13.5px; line-height: 1.65; margin: 0; }
+.answerMeta { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin: 0; }
+.answerMeta span {
+  color: var(--faint);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  margin-right: 6px;
+  text-transform: uppercase;
+}
+.answerConflicts {
+  background: var(--terracotta-light);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 11px 13px;
+}
+.answerConflicts strong { font-size: 12px; }
+.answerConflicts label { align-items: flex-start; display: flex; font-size: 12.5px; gap: 8px; line-height: 1.45; }
+.answerConflicts input { accent-color: var(--terracotta); margin-top: 2px; }
+.answerConflicts small { color: var(--muted); font-size: 11px; }
+.answerActions { display: flex; gap: 8px; margin-top: 4px; }
