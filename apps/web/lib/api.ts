@@ -1,4 +1,5 @@
 import type {
+  AttentionBatchResult,
   AttentionFeed,
   AssetEnvVar,
   AssetLogsV1,
@@ -1870,4 +1871,17 @@ export async function undeferAttention(key: string): Promise<AttentionFeed> {
     `${API_PREFIX}/attention/defer/${encodeURIComponent(key)}`,
     { method: "DELETE" },
   );
+}
+
+/** Decide many queued items at once. Only kinds whose decision is genuinely
+ *  one click are accepted; the result reports anything skipped. */
+export async function batchAttention(
+  keys: string[],
+  decision: "approve" | "reject" | "defer",
+  days = 7,
+): Promise<AttentionBatchResult> {
+  return request<AttentionBatchResult>(`${API_PREFIX}/attention/batch`, {
+    method: "POST",
+    body: JSON.stringify({ keys, decision, days }),
+  });
 }

@@ -57,6 +57,8 @@ from .contracts import (
     CustomerActionStatusV1,
     CustomerActionV1,
     CustomerCaptureV1,
+    AttentionBatchResultV1,
+    AttentionBatchV1,
     AttentionDeferV1,
     AttentionFeedV1,
     CustomerDashboardV1,
@@ -315,6 +317,53 @@ async def undefer_attention(item_key: str, request: Request) -> AttentionFeedV1:
     app = runtime(request)
     await app.attention.undefer(item_key)
     return await app.attention.feed()
+
+
+@router.post("/attention/batch", response_model=AttentionBatchResultV1)
+async def batch_attention(
+    body: AttentionBatchV1, request: Request
+) -> AttentionBatchResultV1:
+    """Decide many queued items at once.
+
+    Only kinds whose decision is genuinely one click are accepted: a memory
+    proposal is approve/reject, a customer action is done, and anything can be
+    deferred. Everything else keeps its own workbench, because a batch button
+    over a decision that needs reading is how a review queue becomes a rubber
+    stamp."""
+    app = runtime(request)
+    applied: list[str] = []
+    skipped: list[str] = []
+    memory_approved = False
+    for key in body.keys:
+        kind, _, record_id = key.partition(":")
+        if not record_id:
+            skipped.append(key)
+            continue
+        try:
+            if body.decision == "defer":
+                await app.attention.defer(key, kind, body.days)
+            elif kind == "memory" and body.decision in ("approve", "reject"):
+                mapped = (
+                    ProposalStatus.APPROVED
+                    if body.decision == "approve"
+                    else ProposalStatus.REJECTED
+                )
+                await app.database.decide_memory_proposal(record_id, mapped, body.reason)
+                memory_approved = memory_approved or body.decision == "approve"
+            elif kind == "customer_action" and body.decision == "approve":
+                await app.database.update_customer_action(record_id, status="done")
+            else:
+                skipped.append(key)
+                continue
+            applied.append(key)
+        except (KeyError, ValueError):
+            # One bad id must not abort the rest of the batch.
+            skipped.append(key)
+    if memory_approved and app.memory_index is not None:
+        app.spawn(app.memory_index.sync(), name="metis-memory-sync")
+    return AttentionBatchResultV1(
+        applied=applied, skipped=skipped, feed=await app.attention.feed()
+    )
 
 
 @router.get("/customers/dashboard", response_model=CustomerDashboardV1)

@@ -41,7 +41,7 @@ enum Pages {
       }
       main { position: relative; text-align: center; max-width: 640px; padding: 0 40px; }
       /* The pearl: lit body, turning film, specular — the companion, not a spinner. */
-      .pearl { position: relative; width: 84px; height: 84px; margin: 0 auto 26px;
+      .pearl { position: relative; width: 84px; height: 84px; margin: 0 auto 30px;
                animation: breathe 4.5s ease-in-out infinite; }
       .pearl::before {
         content: ""; position: absolute; inset: 0; border-radius: 50%;
@@ -51,7 +51,7 @@ enum Pages {
       }
       .film { position: absolute; inset: 6%; border-radius: 50%; overflow: hidden;
               -webkit-mask-image: radial-gradient(closest-side, #000 0 62%, transparent 88%); }
-      .film i { content: ""; position: absolute; inset: -30%; display: block; filter: blur(9px); opacity: .8;
+      .film i { position: absolute; inset: -30%; display: block; filter: blur(9px); opacity: .8;
                 background:
                   radial-gradient(38% 34% at 68% 24%, #ff7f5c 0%, rgba(255,127,92,0) 66%),
                   radial-gradient(40% 36% at 78% 62%, #c77bee 0%, rgba(199,123,238,0) 66%),
@@ -62,12 +62,24 @@ enum Pages {
               background: radial-gradient(closest-side, rgba(255,255,255,.96), rgba(255,255,255,0)); }
       @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
       @keyframes turn { to { transform: rotate(360deg); } }
-      .eyebrow {
-        margin: 0 0 10px; font: 12px ui-monospace, Menlo, monospace;
-        letter-spacing: .02em; text-transform: uppercase; color: rgba(255,255,255,.85);
+      /* Every block centres on the same axis. The eyebrow overrode `margin`
+         but kept the 46ch `max-width` below, which left it a narrow box
+         pinned to the left edge — its text then centred inside that box,
+         landing well left of the wordmark it is supposed to sit above. */
+      p  {
+        margin: 0 auto; max-width: 46ch; font-size: 15px;
+        color: rgba(255,255,255,.88); text-wrap: balance;
       }
-      h1 { margin: 0 0 12px; font-size: 58px; line-height: 1; font-weight: 400; letter-spacing: -.034em; }
-      p  { margin: 0 auto; max-width: 46ch; font-size: 15px; color: rgba(255,255,255,.88); }
+      .eyebrow {
+        margin: 0 auto 14px; max-width: none;
+        font: 12px ui-monospace, Menlo, monospace;
+        letter-spacing: .16em; text-transform: uppercase;
+        color: rgba(255,255,255,.82);
+      }
+      h1 {
+        margin: 0 0 14px; font-size: 56px; line-height: 1.02; font-weight: 400;
+        letter-spacing: -.034em; text-wrap: balance;
+      }
       code, pre { font: 11px ui-monospace, Menlo, monospace; }
       pre {
         margin: 20px auto 0; padding: 12px 14px; max-height: 190px; overflow: auto;
@@ -91,7 +103,7 @@ enum Pages {
       <div class="pearl"><span class="film"><i></i></span><span class="spec"></span></div>
       <p class="eyebrow">Your private thinking partner</p>
       <h1>Metis</h1>
-      <p>Waking the API and the interface. A moment — longer when the web app is rebuilding.</p>
+      <p>Waking the API and the interface. This takes a moment longer whenever the web app is rebuilding.</p>
     </main>
     """
 

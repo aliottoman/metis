@@ -10061,3 +10061,36 @@ body {
   .todayTopActions { grid-column: 2; justify-content: flex-start; }
   .todayList li { align-items: flex-start; flex-direction: column; gap: 8px; }
 }
+
+/* The batch bar appears only with a selection, so the page is a queue at
+   rest and a worksheet while you clear it. */
+.todayBatchBar {
+  align-items: center;
+  background: var(--ink);
+  border-radius: var(--radius-md);
+  color: var(--canvas);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 10px 12px 10px 16px;
+  position: sticky;
+  top: 8px;
+  z-index: 3;
+}
+.todayBatchBar strong { font-size: 12.5px; }
+.todayBatchBar > div { display: flex; gap: 8px; }
+.todayBatchBar .textButton { color: rgba(255, 255, 255, 0.72); }
+.todayBatchBar .secondaryButton {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--canvas);
+}
+.todayCheck {
+  accent-color: var(--forest, #2f5d50);
+  flex: none;
+  height: 15px;
+  margin: 0;
+  width: 15px;
+}
+.todayCheckSpacer { visibility: hidden; }
+.todayList li { align-items: center; }

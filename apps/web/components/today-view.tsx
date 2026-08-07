@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { deferAttention, getAttention, undeferAttention } from "@/lib/api";
+import { batchAttention, deferAttention, getAttention, undeferAttention } from "@/lib/api";
 import type { AttentionFeed, AttentionItem } from "@/lib/types";
 
 /** Order the groups appear in. Matches the queue's own weighting, so the page
@@ -27,6 +27,14 @@ const GROUP_TITLE: Record<AttentionItem["kind"], string> = {
   asset_trust: "Assets awaiting trust",
   stale_source: "Knowledge sources",
 };
+
+/** Kinds whose decision is genuinely one click. A batch control over
+ *  anything that needs reading first would turn review into a rubber stamp,
+ *  so the rest stay openable-only. */
+const BATCHABLE: ReadonlySet<AttentionItem["kind"]> = new Set([
+  "memory",
+  "customer_action",
+]);
 
 function relative(value: string | null): string {
   if (!value) return "";
@@ -53,6 +61,8 @@ export function TodayView() {
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [showDeferred, setShowDeferred] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [batchNote, setBatchNote] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -76,6 +86,36 @@ export function TodayView() {
       setFeed(await deferAttention(item.key, item.kind, days));
     } catch (deferError) {
       setError(deferError instanceof Error ? deferError.message : "Could not defer that.");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  function toggle(key: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function runBatch(decision: "approve" | "reject" | "defer") {
+    const keys = [...selected];
+    if (!keys.length) return;
+    setBusyKey("__batch__");
+    setBatchNote(null);
+    try {
+      const result = await batchAttention(keys, decision);
+      setFeed(result.feed);
+      setSelected(new Set());
+      setBatchNote(
+        result.skipped.length
+          ? `${result.applied.length} applied · ${result.skipped.length} skipped (no one-click decision for those)`
+          : `${result.applied.length} applied`,
+      );
+    } catch (batchError) {
+      setError(batchError instanceof Error ? batchError.message : "Could not apply that.");
     } finally {
       setBusyKey(null);
     }
@@ -123,6 +163,46 @@ export function TodayView() {
 
       {error ? <div className="composerError" role="alert"><span>!</span><p>{error}</p></div> : null}
 
+      {/* The batch bar exists only while something is selected, so the page
+          reads as a queue at rest and as a worksheet the moment you start
+          clearing it. Approve means "yes" for a memory and "done" for a
+          commitment — the verb each kind actually needs. */}
+      {selected.size ? (
+        <div className="todayBatchBar" role="region" aria-label="Selected items">
+          <strong>{selected.size} selected</strong>
+          <div>
+            <button
+              className="primaryButton"
+              type="button"
+              disabled={busyKey === "__batch__"}
+              onClick={() => void runBatch("approve")}
+            >
+              Approve / complete
+            </button>
+            <button
+              className="secondaryButton"
+              type="button"
+              disabled={busyKey === "__batch__"}
+              onClick={() => void runBatch("reject")}
+            >
+              Reject
+            </button>
+            <button
+              className="secondaryButton"
+              type="button"
+              disabled={busyKey === "__batch__"}
+              onClick={() => void runBatch("defer")}
+            >
+              Later
+            </button>
+            <button className="textButton" type="button" onClick={() => setSelected(new Set())}>
+              Clear
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {batchNote ? <p className="mutedMeta" role="status">{batchNote}</p> : null}
+
       {/* The headline three. If the page says three things need you, these are
           them — ranked by consequence, so a promise due today outranks a
           backlog that has waited months without anything breaking. */}
@@ -165,11 +245,39 @@ export function TodayView() {
         <section className="settingsSection" key={group.kind}>
           <div className="sectionTitle">
             <div><h2>{GROUP_TITLE[group.kind]}</h2></div>
+            {BATCHABLE.has(group.kind) ? (
+              <button
+                className="textButton"
+                type="button"
+                onClick={() => {
+                  const keys = group.items.map((item) => item.key);
+                  const all = keys.every((key) => selected.has(key));
+                  setSelected((current) => {
+                    const next = new Set(current);
+                    keys.forEach((key) => (all ? next.delete(key) : next.add(key)));
+                    return next;
+                  });
+                }}
+              >
+                {group.items.every((item) => selected.has(item.key)) ? "Clear" : "Select all"}
+              </button>
+            ) : null}
             <span className="sectionBadge">{group.items.length}</span>
           </div>
           <ul className="todayList">
             {group.items.map((item) => (
               <li key={item.key} className={item.overdue ? "isOverdue" : ""}>
+                {BATCHABLE.has(item.kind) ? (
+                  <input
+                    type="checkbox"
+                    className="todayCheck"
+                    checked={selected.has(item.key)}
+                    onChange={() => toggle(item.key)}
+                    aria-label={`Select: ${item.title}`}
+                  />
+                ) : (
+                  <span className="todayCheck todayCheckSpacer" aria-hidden="true" />
+                )}
                 <div className="todayItemBody">
                   <strong>{item.title}</strong>
                   <small>

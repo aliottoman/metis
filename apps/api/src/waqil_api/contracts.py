@@ -423,7 +423,8 @@ class PlanEnvelopeV1(Contract):
     schema_version: Literal["1"] = "1"
     summary: str
     route: Literal[
-        "direct", "existing_tool", "tool_factory", "tool_definition", "document"
+        "direct", "existing_tool", "tool_factory", "tool_definition", "document",
+        "queue_update",
     ]
     tool_slug: str | None = None
     risk_level: RiskLevel = RiskLevel.R0
@@ -1036,6 +1037,9 @@ class ApprovalRequestV1(Contract):
         "project_verify",
         "network",
         "dependency",
+        # Closing out work from the chat. The record only ever changes through
+        # this gate: the model proposes, the user approves, the host applies.
+        "queue_update",
     ]
     title: str
     summary: str
@@ -2375,3 +2379,52 @@ class AttentionDeferV1(Contract):
     kind: str = Field(min_length=1, max_length=40)
     days: int = Field(default=7, ge=1, le=365)
     reason: str = Field(default="", max_length=400)
+
+
+class ActionResolutionV1(Contract):
+    """One open action the user's message says is finished.
+
+    `action_id` is chosen from a supplied list, never composed: the host
+    rejects any id it did not offer, so a model cannot close a commitment it
+    has invented or one belonging to another account."""
+
+    action_id: str = Field(min_length=1, max_length=80)
+    note: str = Field(default="", max_length=600)
+
+
+class NewActionV1(Contract):
+    """A follow-up the message creates."""
+
+    description: str = Field(min_length=1, max_length=2_000)
+    account_id: str = Field(default="", max_length=80)
+    owner: str = Field(default="", max_length=160)
+    due_at: datetime | None = None
+
+
+class QueueUpdateV1(Contract):
+    """What a message reporting completed work would change.
+
+    Proposal-only. Nothing here touches a record until the approval it is
+    attached to is granted."""
+
+    summary: str = Field(default="", max_length=1_000)
+    completed: list[ActionResolutionV1] = Field(default_factory=list, max_length=25)
+    new_actions: list[NewActionV1] = Field(default_factory=list, max_length=25)
+    unmatched: list[str] = Field(default_factory=list, max_length=10)
+
+
+class AttentionBatchV1(Contract):
+    """Decide several queued items in one call."""
+
+    keys: list[str] = Field(min_length=1, max_length=100)
+    decision: Literal["approve", "reject", "defer"]
+    days: int = Field(default=7, ge=1, le=365)
+    reason: str = Field(default="", max_length=400)
+
+
+class AttentionBatchResultV1(Contract):
+    # Honest about partial success: a key whose kind has no one-click decision
+    # is reported, never silently counted as done.
+    applied: list[str] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+    feed: AttentionFeedV1

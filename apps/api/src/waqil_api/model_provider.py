@@ -44,6 +44,7 @@ from .contracts import (
 from .diagram_source import validate_diagram_source
 from .document_factory import is_explicit_document_request
 from .model_preference import is_cloud_model
+from .queue_update import is_queue_update_request
 from .web_research import is_explicit_web_request
 from .project_tools import (
     FINISH_TOOL_NAME,
@@ -436,6 +437,12 @@ def validate_plan_semantics(
         if arch is not None:
             raise ValueError("architecture requests require the reference architecture tool")
         return
+    if plan.route == "queue_update":
+        # A proposal about the user's own records. It carries no tool, and the
+        # write it may lead to is gated by its own approval, not by this risk.
+        if plan.tool_slug is not None or plan.risk_level != RiskLevel.R0:
+            raise ValueError("queue_update plans must have no tool and local risk R0")
+        return
     if plan.route == "document":
         # Rendering a file the user asked for. The host owns the renderer, so
         # there is no tool to register and no capability to grant: the model
@@ -593,6 +600,19 @@ def normalize_plan_semantics(
     # A request to produce a document outranks every tool route: the factory
     # renders it host-side from an authored outline, so no tool can serve it
     # and drafting one would answer a "make me a deck" with an approval gate.
+    # Reporting finished work settles commitments; it is never a tool request.
+    if is_queue_update_request(request.prompt):
+        return plan.model_copy(
+            update={
+                "summary": "Propose the record changes this message reports.",
+                "route": "queue_update",
+                "tool_slug": None,
+                "risk_level": RiskLevel.R0,
+                "steps": [],
+                "assumptions": assumptions,
+            }
+        )
+
     if is_explicit_document_request(request.prompt):
         return plan.model_copy(
             update={
@@ -771,7 +791,8 @@ def normalize_plan_payload(
         else []
     )
     valid_routes = {
-        "direct", "existing_tool", "tool_factory", "tool_definition", "document"
+        "direct", "existing_tool", "tool_factory", "tool_definition", "document",
+        "queue_update",
     }
     raw_route = payload.get("route")
     raw_slug = payload.get("tool_slug")

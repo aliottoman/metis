@@ -1079,3 +1079,9 @@ export interface AttentionFeed {
   total: number;
   deferred: number;
 }
+
+export interface AttentionBatchResult {
+  applied: string[];
+  skipped: string[];
+  feed: AttentionFeed;
+}

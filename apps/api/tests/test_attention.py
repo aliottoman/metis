@@ -179,3 +179,109 @@ async def test_a_failing_asset_library_narrows_the_queue_but_never_breaks_it() -
 
     feed = await AttentionService(_FakeDatabase(), assets=_Broken()).feed()
     assert feed.total == 0
+
+
+async def test_queue_update_only_closes_actions_the_host_offered() -> None:
+    """The iron-tight part: a model may pick from the supplied list, never
+    compose an id. An invented or foreign id is reported, never applied."""
+    from waqil_api.contracts import ActionResolutionV1, NewActionV1, QueueUpdateV1
+    from waqil_api.queue_update import validate
+
+    actions = [
+        {"id": "cact_real", "account_id": "cust_1", "account_name": "BAPCO",
+         "description": "Walk through the tenancy"},
+    ]
+    proposal = QueueUpdateV1(
+        completed=[
+            ActionResolutionV1(action_id="cact_real", note="done in the session"),
+            ActionResolutionV1(action_id="cact_invented"),
+        ],
+        new_actions=[NewActionV1(description="Send the pricing sheet")],
+    )
+    cleaned, matched = validate(proposal, actions)
+    assert [item.action_id for item in cleaned.completed] == ["cact_real"]
+    assert any("cact_invented" in item for item in cleaned.unmatched)
+    assert len(matched) == 1
+    # The follow-up inherits the only account in play rather than guessing.
+    assert cleaned.new_actions[0].account_id == "cust_1"
+
+
+async def test_a_new_action_with_no_resolvable_account_is_refused() -> None:
+    from waqil_api.contracts import NewActionV1, QueueUpdateV1
+    from waqil_api.queue_update import validate
+
+    actions = [
+        {"id": "a", "account_id": "cust_1", "account_name": "A", "description": "x"},
+        {"id": "b", "account_id": "cust_2", "account_name": "B", "description": "y"},
+    ]
+    proposal = QueueUpdateV1(new_actions=[NewActionV1(description="Ambiguous follow-up")])
+    cleaned, _ = validate(proposal, actions)
+    assert cleaned.new_actions == []
+    assert any("no account" in item for item in cleaned.unmatched)
+
+
+async def test_a_foreign_account_on_a_new_action_is_refused() -> None:
+    from waqil_api.contracts import NewActionV1, QueueUpdateV1
+    from waqil_api.queue_update import validate
+
+    actions = [{"id": "a", "account_id": "cust_1", "account_name": "A", "description": "x"}]
+    proposal = QueueUpdateV1(
+        new_actions=[NewActionV1(description="Sneaky", account_id="cust_other")]
+    )
+    cleaned, _ = validate(proposal, actions)
+    assert cleaned.new_actions == []
+    assert any("unknown account" in item for item in cleaned.unmatched)
+
+
+def test_queue_update_intent_is_conservative() -> None:
+    from waqil_api.queue_update import is_queue_update_request
+
+    assert is_queue_update_request("I completed the meeting with Bank Pivdenny")
+    assert is_queue_update_request("we met with BAPCO and walked the tenancy")
+    assert is_queue_update_request("add a follow-up to send the pricing sheet")
+    # Talking *about* work is not reporting it done.
+    assert not is_queue_update_request("what did I commit to for BAPCO?")
+    assert not is_queue_update_request("summarize the meeting notes")
+
+
+async def test_a_new_action_cannot_be_born_overdue() -> None:
+    """A model with no clock resolved "next week" to a date in a previous year;
+    the queue would then rank that follow-up as overdue, inventing urgency
+    ahead of real commitments."""
+    from datetime import UTC, datetime
+
+    from waqil_api.contracts import NewActionV1, QueueUpdateV1
+    from waqil_api.queue_update import validate
+
+    actions = [{"id": "a", "account_id": "c1", "account_name": "A", "description": "x"}]
+    today = datetime(2026, 8, 7, tzinfo=UTC)
+    proposal = QueueUpdateV1(
+        new_actions=[
+            NewActionV1(
+                description="Send the pricing sheet",
+                account_id="c1",
+                due_at=datetime(2025, 6, 23, tzinfo=UTC),
+            )
+        ]
+    )
+    cleaned, _ = validate(proposal, actions, today=today)
+    assert cleaned.new_actions[0].due_at is None
+    assert any("past due date" in item for item in cleaned.unmatched)
+
+
+async def test_a_future_due_date_is_kept() -> None:
+    from datetime import UTC, datetime
+
+    from waqil_api.contracts import NewActionV1, QueueUpdateV1
+    from waqil_api.queue_update import validate
+
+    actions = [{"id": "a", "account_id": "c1", "account_name": "A", "description": "x"}]
+    due = datetime(2026, 8, 14, tzinfo=UTC)
+    cleaned, _ = validate(
+        QueueUpdateV1(
+            new_actions=[NewActionV1(description="Later", account_id="c1", due_at=due)]
+        ),
+        actions,
+        today=datetime(2026, 8, 7, tzinfo=UTC),
+    )
+    assert cleaned.new_actions[0].due_at == due

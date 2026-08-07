@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict, cast
@@ -22,6 +23,7 @@ from .contracts import (
     ArtifactRefV1,
     Decision,
     DocumentOutlineV1,
+    QueueUpdateV1,
     EvalReportV1,
     EvalResultV1,
     ModelRequestV1,
@@ -44,7 +46,7 @@ from . import (
     tool_contracts,
 )
 from .database import Database
-from . import document_factory
+from . import document_factory, queue_update
 from .web_research import is_explicit_web_request
 from .diagram_source import (
     canonical_architecture_spec,
@@ -822,6 +824,8 @@ class AgentState(TypedDict):
     plan: dict[str, Any]
     # Host-resolved route kind, the target definition, its build, and any output.
     route_kind: str
+    # The validated proposal a queue_update approval will apply.
+    queue_update: NotRequired[dict[str, Any]]
     tool_definition: dict[str, Any]
     tool_build: dict[str, Any]
     tool_output: dict[str, Any]
@@ -912,6 +916,7 @@ class ControlPlane:
         )
         graph.add_node("plan", self._plan)
         graph.add_node("document_render", self._document_render)
+        graph.add_node("queue_update", self._queue_update)
         # The answer path is a specialized generate -> verify sub-graph.
         graph.add_node("synthesize", self._synthesize)
         graph.add_node("ground_review", self._ground_review)
@@ -955,6 +960,7 @@ class ControlPlane:
             {
                 "direct": "synthesize",
                 "document": "document_render",
+                "queue_update": "queue_update",
                 "architecture_existing": "reference_prepare",
                 "architecture_factory": "deep_worker_proposal",
                 "declarative_existing": "declarative_execute",
@@ -966,6 +972,11 @@ class ControlPlane:
         )
         # Generate then verify. The revision count lives in state, so the loop terminates.
         graph.add_edge("document_render", "publish")
+        graph.add_conditional_edges(
+            "queue_update",
+            lambda state: "approval" if state.get("approval_request") else "publish",
+            {"approval": "approval_interrupt", "publish": "publish"},
+        )
         graph.add_edge("synthesize", "ground_review")
         graph.add_conditional_edges(
             "ground_review",
@@ -3012,6 +3023,8 @@ class ControlPlane:
             return "direct"
         if plan.route == "document":
             return "document"
+        if plan.route == "queue_update":
+            return "queue_update"
         if plan.route == "tool_definition":
             return "tool_definition"
         arch = catalog.architecture_tool
@@ -3145,6 +3158,167 @@ class ControlPlane:
         if state.get("trusted_build_slug") and not state.get("tool_build"):
             return "trusted_build"
         return "approval_interrupt" if state.get("approval_request") else "publish"
+
+    async def _queue_update(self, state: AgentState) -> dict[str, Any]:
+        """Turn "I met them and did X" into a reviewed change to the record.
+
+        The model's only job is matching the message to open actions it was
+        handed; every id it returns is checked against that same list, so it
+        can close a commitment but never invent one. What survives validation
+        becomes an approval card naming each change, and the record is written
+        only after that card is approved.
+        """
+        await self._guard(state)
+        await self._stage(state, "planning", "Matching this to your open work…")
+        customer_id = state.get("model_aliases", {}).get("_customer_id", "")
+        data = await self.database.attention_data()
+        actions = [
+            action
+            for action in data.get("open_actions", [])
+            # A conversation scoped to one account may only touch that account.
+            if not customer_id or str(action.get("account_id")) == customer_id
+        ]
+        if not actions:
+            return {
+                "response_text": (
+                    "There are no open actions on record for me to close. If you "
+                    "want this tracked, capture it as a customer note first — "
+                    "then the actions it contains become part of the queue."
+                ),
+            }
+
+        try:
+            proposed = await cast(Any, self.model)._structured(
+                QueueUpdateV1,
+                system_prompt=(
+                    "You reconcile a short work report against a list of OPEN "
+                    "ACTIONS. For each action the message plainly says is "
+                    "finished, return its exact id in `completed` — ids come "
+                    "only from the supplied list and are never composed. Where "
+                    "the message describes work still owed, add it to "
+                    "`new_actions`. If part of the message matches nothing, put "
+                    "it in `unmatched` rather than forcing a match. Be "
+                    "conservative: closing the wrong commitment is worse than "
+                    "leaving one open, so when a mention is ambiguous, leave it."
+                ),
+                user_prompt=(
+                    # The model has no clock, and "next week" without one lands
+                    # in a previous year.
+                    f"Today is {datetime.now(UTC).date().isoformat()}.\n\n"
+                    f"Work report:\n{state['prompt']}\n\n"
+                    f"Open actions:\n{queue_update.candidates_block(actions)}"
+                ),
+                role="planner",
+                model_aliases=state.get("model_aliases", {}),
+                max_output_tokens=2048,
+            )
+        except Exception as error:  # noqa: BLE001 - a failed match must not fail the turn
+            return {
+                "response_text": (
+                    "I could not match that against your open actions "
+                    f"({type(error).__name__}). Nothing was changed."
+                ),
+            }
+
+        proposal, matched = queue_update.validate(proposed, actions)
+        if not proposal.completed and not proposal.new_actions:
+            unmatched = "\n".join(f"- {item}" for item in proposal.unmatched)
+            return {
+                "response_text": (
+                    "Nothing in your open actions matched that, so I have not "
+                    "changed anything."
+                    + (f"\n\n{unmatched}" if unmatched else "")
+                ),
+            }
+
+        body = queue_update.describe(proposal, matched)
+        payload = proposal.model_dump(mode="json")
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        action_id = f"queue-update:{state['run_id']}:{digest[:20]}"
+        approval = await self.database.create_approval(
+            ApprovalRequestV1(
+                id=f"appr_{hashlib.sha256(action_id.encode('utf-8')).hexdigest()[:32]}",
+                run_id=state["run_id"],
+                action_id=action_id,
+                kind="queue_update",
+                title=(
+                    f"Update your record: close {len(proposal.completed)}, "
+                    f"add {len(proposal.new_actions)}?"
+                ),
+                summary=body,
+                risk_level=RiskLevel.R1,
+                input_digest=digest,
+                permissions=[],
+            )
+        )
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "approval.required",
+            approval.model_dump(mode="json"),
+        )
+        return {
+            "approval_request": approval.model_dump(mode="json"),
+            "queue_update": payload,
+        }
+
+    async def _apply_queue_update(
+        self,
+        state: AgentState,
+        request: ApprovalRequestV1,
+        decision: ApprovalDecisionV1,
+    ) -> dict[str, Any]:
+        """Write the approved changes, and only those.
+
+        Re-validated against the live open set at apply time: an action closed
+        by hand between the proposal and the decision must not be closed twice,
+        and the digest binds the decision to the exact card that was shown."""
+        if decision.decision != Decision.APPROVE.value:
+            return {"response_text": "Left your record untouched."}
+        proposal = QueueUpdateV1.model_validate(state.get("queue_update", {}))
+        data = await self.database.attention_data()
+        live = {str(action["id"]) for action in data.get("open_actions", [])}
+        closed = 0
+        for resolution in proposal.completed:
+            if resolution.action_id not in live:
+                continue  # already settled elsewhere; nothing to do
+            await self.database.update_customer_action(
+                resolution.action_id, status="done"
+            )
+            closed += 1
+        created = 0
+        for candidate in proposal.new_actions:
+            await self.database.create_customer_action(
+                candidate.account_id,
+                description=candidate.description,
+                owner=candidate.owner,
+                # The column stores ISO text; the contract parses a datetime.
+                due_at=(
+                    candidate.due_at.isoformat().replace("+00:00", "Z")
+                    if candidate.due_at
+                    else None
+                ),
+            )
+            created += 1
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "queue.updated",
+            {"closed": closed, "created": created},
+        )
+        parts = []
+        if closed:
+            parts.append(f"closed {closed} action{'s' if closed != 1 else ''}")
+        if created:
+            parts.append(f"added {created} follow-up{'s' if created != 1 else ''}")
+        return {
+            "response_text": (
+                f"Done — {' and '.join(parts)}." if parts
+                else "Nothing was left to change; your record already matched."
+            )
+        }
 
     async def _document_render(self, state: AgentState) -> dict[str, Any]:
         """Author a document's content, then render it to a real file.
@@ -4722,6 +4896,8 @@ class ControlPlane:
             return await self._apply_project_build(state, request, decision)
         if request.kind == "project_verify":
             return await self._apply_verification_approval(state, request, decision)
+        if request.kind == "queue_update":
+            return await self._apply_queue_update(state, request, decision)
         if request.kind == "define_tool":
             return await self._apply_definition_approval(state, request, decision)
         if request.kind == "activate_definition":
