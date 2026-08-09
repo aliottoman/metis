@@ -92,9 +92,22 @@ async def test_the_pending_changeset_rides_into_the_follow_up_run() -> None:
     assert note["tool"] == "resume_staged"
     assert note["result"]["carried_files"] == sorted(STAGED)
     assert "missing" in note["result"]["blocked_reason"]
+    assert note["result"]["verification_summary"] == "2 files"
+    assert "complete findings" in note["result"]["note"]
     assert events.emitted == [
         ("project.staged_resumed", {"files": sorted(STAGED), "from_run": "run_prev"})
     ]
+
+
+@pytest.mark.asyncio
+async def test_the_complete_approval_summary_reaches_the_repair_trace() -> None:
+    approval = _approval()
+    approval.summary = "finding\n" * 1_200
+    plane, _ = _plane(approval=approval, staged=STAGED)
+
+    seeded = await ControlPlane._carry_pending_overlay(plane, _state())
+
+    assert seeded["project_trace"][0]["result"]["verification_summary"] == approval.summary
 
 
 @pytest.mark.asyncio

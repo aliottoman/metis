@@ -1448,7 +1448,6 @@ export function ChatWorkspace() {
   }
 
   const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === "assistant"), [messages]);
-  const latestUser = useMemo(() => [...messages].reverse().find((message) => message.role === "user"), [messages]);
 
   // Artifacts reach the UI as live run events, so a conversation reopened
   // later showed none — exactly when someone comes back for the file they

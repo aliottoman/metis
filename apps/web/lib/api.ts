@@ -869,14 +869,6 @@ export async function getToolVersionEvidence(
   );
 }
 
-export async function getToolProposalEvidence(
-  proposalId: string,
-): Promise<ToolVersionEvidence> {
-  return request<ToolVersionEvidence>(
-    `${API_PREFIX}/tool-proposals/${encodeURIComponent(proposalId)}/evidence`,
-  );
-}
-
 export async function getToolImprovementEvidence(
   proposalId: string,
 ): Promise<ToolImprovementEvidence> {

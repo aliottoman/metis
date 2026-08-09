@@ -5,7 +5,6 @@ import hashlib
 import html
 import json
 import mimetypes
-import os
 import re
 import shutil
 import signal

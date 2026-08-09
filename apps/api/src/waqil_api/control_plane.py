@@ -1392,9 +1392,20 @@ class ControlPlane:
                 "ok": True,
                 "carried_files": sorted(staged),
                 "blocked_reason": str(getattr(approval, "blocked_reason", "") or ""),
+                # blocked_reason is deliberately concise for the approval
+                # banner: it names the first defect and says "and N more".
+                # A repair model needs the actual findings, all of which are
+                # already present in the host-authored approval summary. Without
+                # this, a cloud repair can fix only one problem per follow-up
+                # and has to rediscover the rest through repeated verification.
+                # Approval summaries are already bounded to 12K when authored;
+                # do not clip them again here or the tail of a larger finding
+                # set disappears precisely when the repair model needs it.
+                "verification_summary": str(getattr(approval, "summary", "") or ""),
                 "note": (
                     "staged changes from the previous turn, carried into this one "
-                    "exactly as verification inspected them; read_file sees them"
+                    "exactly as verification inspected them; read_file sees them, "
+                    "and verification_summary contains the complete findings"
                 ),
             },
         }
