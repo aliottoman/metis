@@ -10,6 +10,7 @@ from waqil_api.config import Settings
 from waqil_api.model_provider import OCIResponsesModelProvider
 from waqil_api.project_conformance import (
     json_body_requests,
+    native_form_requests,
     staged_conformance_errors,
 )
 
@@ -75,6 +76,116 @@ def test_a_handler_taking_a_model_is_accepted() -> None:
     )
 
     assert staged_conformance_errors(staged) == []
+
+
+def test_a_native_form_posted_to_a_json_model_is_an_error() -> None:
+    staged = _staged(
+        app__main_dot_py=(
+            "from fastapi import FastAPI\n"
+            "from pydantic import BaseModel\n"
+            "app = FastAPI()\n"
+            "class Submission(BaseModel):\n"
+            "    message: str\n"
+            "@app.post('/submit')\n"
+            "async def submit(payload: Submission):\n"
+            "    return {'echo': payload.message}\n"
+        ),
+        app__static__index_dot_html=(
+            '<form method="post" action="/submit">'
+            '<input name="message"><button>Send</button></form>'
+        ),
+    )
+
+    errors = staged_conformance_errors(staged)
+
+    assert len(errors) == 1
+    assert errors[0]["path"] == "app/main.py"
+    assert "native form data" in errors[0]["error"]
+    assert "422" in errors[0]["error"]
+
+
+def test_a_native_form_handler_using_form_is_accepted() -> None:
+    staged = _staged(
+        app__main_dot_py=(
+            "from fastapi import FastAPI, Form\n"
+            "app = FastAPI()\n"
+            "@app.post('/submit')\n"
+            "async def submit(message: str = Form(...)):\n"
+            "    return {'echo': message}\n"
+        ),
+        app__static__index_dot_html=(
+            "<FORM METHOD='POST' ACTION='/submit?source=browser'>"
+            "<input name='message'></FORM>"
+        ),
+    )
+
+    assert staged_conformance_errors(staged) == []
+
+
+def test_a_native_form_handler_using_annotated_form_is_accepted() -> None:
+    staged = _staged(
+        app__main_dot_py=(
+            "from typing import Annotated\n"
+            "from fastapi import FastAPI, Form\n"
+            "app = FastAPI()\n"
+            "@app.post('/submit')\n"
+            "async def submit(message: Annotated[str, Form()]):\n"
+            "    return {'echo': message}\n"
+        ),
+        app__static__index_dot_html=(
+            '<form method="post" action="/submit"><input name="message"></form>'
+        ),
+    )
+
+    assert staged_conformance_errors(staged) == []
+
+
+def test_a_native_get_form_matches_fastapi_query_parameters() -> None:
+    staged = _staged(
+        app__main_dot_py=(
+            "from fastapi import FastAPI\n"
+            "app = FastAPI()\n"
+            "@app.get('/search')\n"
+            "async def search(query: str):\n"
+            "    return {'query': query}\n"
+        ),
+        app__static__index_dot_html=(
+            '<form action="/search"><input name="query"></form>'
+        ),
+    )
+
+    assert staged_conformance_errors(staged) == []
+
+
+def test_a_script_intercepted_form_is_left_to_the_json_request_check() -> None:
+    staged = _staged(
+        app__main_dot_py=(
+            "from fastapi import FastAPI\n"
+            "from pydantic import BaseModel\n"
+            "app = FastAPI()\n"
+            "class Submission(BaseModel):\n"
+            "    message: str\n"
+            "@app.post('/submit')\n"
+            "async def submit(payload: Submission):\n"
+            "    return {'echo': payload.message}\n"
+        ),
+        app__static__index_dot_html=(
+            '<form method="post" action="/submit">'
+            "<script>form.addEventListener('submit', e => e.preventDefault())</script>"
+            "</form>"
+        ),
+    )
+
+    assert staged_conformance_errors(staged) == []
+
+
+def test_native_form_reader_ignores_external_and_default_get_forms() -> None:
+    document = (
+        '<form action="https://example.com/submit" method="post"></form>'
+        '<form action="/search"></form>'
+    )
+
+    assert native_form_requests(document) == {("GET", "/search")}
 
 
 def test_a_path_parameter_route_still_matches_its_template_literal() -> None:

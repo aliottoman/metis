@@ -84,7 +84,13 @@ async def _service(settings: Settings) -> tuple[ProjectWorkspaceService, str]:
 
 
 def _drive(client: TestClient, run_id: str, until: set[str]) -> dict[str, Any]:
-    for _ in range(200):
+    # Several cases run the complete verification ladder in a background task.
+    # A fixed two-second polling window became flaky when another release gate
+    # was compiling model schemas at the same time, despite the run completing
+    # normally a fraction later. Keep fast polling, but give loaded CI hosts a
+    # realistic ceiling.
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
         run = client.get(f"/api/v1/runs/{run_id}").json()
         if run["status"] in until:
             return run

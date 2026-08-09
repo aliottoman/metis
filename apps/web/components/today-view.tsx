@@ -41,17 +41,6 @@ const GROUP_TITLE: Record<AttentionKind, string> = {
   stale_source: "Knowledge sources",
 };
 
-/** One-word labels for the rail chips, where the count leads. */
-const SHORT_LABEL: Record<AttentionKind, string> = {
-  run_approval: "Runs",
-  customer_action: "Commitments",
-  customer_note: "Notes",
-  tool_proposal: "Tools",
-  memory: "Memory",
-  asset_trust: "Assets",
-  stale_source: "Sources",
-};
-
 /** Kinds whose decision is genuinely one click, so a batch control is honest. */
 const BATCHABLE: ReadonlySet<AttentionKind> = new Set(["memory", "customer_action"]);
 

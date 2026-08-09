@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import re
 from collections.abc import Iterable
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +137,37 @@ def _accepts_a_body(function: ast.FunctionDef | ast.AsyncFunctionDef, models: se
     return False
 
 
+def _accepts_form_data(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether a FastAPI handler can consume a browser's native form encoding."""
+    arguments = [*function.args.args, *function.args.kwonlyargs]
+    for argument in arguments:
+        annotation = _annotation_name(argument.annotation) if argument.annotation else ""
+        if annotation in {"Request", "UploadFile"}:
+            # A Request may call await request.form() itself; UploadFile is a
+            # multipart form value even when it is not written as File(...).
+            return True
+        if argument.annotation and any(
+            (
+                isinstance(node, ast.Name)
+                and node.id in {"File", "Form"}
+            )
+            or (
+                isinstance(node, ast.Attribute)
+                and node.attr in {"File", "Form"}
+            )
+            for node in ast.walk(argument.annotation)
+        ):
+            # FastAPI also supports Annotated[str, Form()] with no default.
+            return True
+        default = _default_for(function, argument)
+        if not isinstance(default, ast.Call):
+            continue
+        factory = getattr(default.func, "id", "") or getattr(default.func, "attr", "")
+        if factory in {"File", "Form"}:
+            return True
+    return False
+
+
 def _annotation_name(annotation: ast.expr) -> str:
     """The outermost name of an annotation, ignoring Optional/Annotated wrappers."""
     if isinstance(annotation, ast.Name):
@@ -169,9 +201,11 @@ def _default_for(
     return None
 
 
-def _routes(trees: dict[str, ast.Module], models: set[str]) -> dict[tuple[str, str], tuple[str, int, bool]]:
-    """Every declared route → (file, line, whether it accepts a request body)."""
-    routes: dict[tuple[str, str], tuple[str, int, bool]] = {}
+def _routes(
+    trees: dict[str, ast.Module], models: set[str]
+) -> dict[tuple[str, str], tuple[str, int, bool, bool]]:
+    """Every route → (file, line, accepts a body, accepts browser form data)."""
+    routes: dict[tuple[str, str], tuple[str, int, bool, bool]] = {}
     for path, tree in trees.items():
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -186,7 +220,12 @@ def _routes(trees: dict[str, ast.Module], models: set[str]) -> dict[tuple[str, s
                 if not isinstance(url, ast.Constant) or not isinstance(url.value, str):
                     continue
                 key = (method.upper(), _normalise_path(url.value))
-                routes[key] = (path, node.lineno, _accepts_a_body(node, models))
+                routes[key] = (
+                    path,
+                    node.lineno,
+                    _accepts_a_body(node, models),
+                    _accepts_form_data(node),
+                )
     return routes
 
 
@@ -211,7 +250,7 @@ def request_shape_findings(
             if route is None or route[2] or (method, url) in seen:
                 continue
             seen.add((method, url))
-            handler_path, lineno, _ = route
+            handler_path, lineno, _, _ = route
             findings.append(
                 _finding(
                     handler_path,
@@ -219,6 +258,74 @@ def request_shape_findings(
                     f"handler on line {lineno} declares no body parameter — FastAPI "
                     "reads its arguments from the query string, so every one of "
                     "those requests fails with 422. Take a Pydantic model.",
+                )
+            )
+    return findings
+
+
+class _NativeFormParser(HTMLParser):
+    """Collect explicit native form submissions without executing repository HTML."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.requests: set[tuple[str, str]] = set()
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        if tag.casefold() != "form":
+            return
+        values = {name.casefold(): value or "" for name, value in attrs}
+        action = values.get("action", "").strip()
+        if not action.startswith("/"):
+            return
+        method = values.get("method", "get").strip().upper() or "GET"
+        self.requests.add((method, _normalise_path(action)))
+
+
+def native_form_requests(document: str) -> set[tuple[str, str]]:
+    parser = _NativeFormParser()
+    parser.feed(document)
+    parser.close()
+    return parser.requests
+
+
+def native_form_findings(
+    trees: dict[str, ast.Module],
+    documents: dict[str, str],
+    scripts: dict[str, str],
+    models: set[str],
+) -> list[dict[str, str]]:
+    """Native forms pointed at handlers that only understand JSON or query args."""
+    routes = _routes(trees, models)
+    findings: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for document_path, document in sorted(documents.items()):
+        # A script that cancels the browser submission may serialize the form
+        # itself. The JSON-request check handles its fetch call, so treating the
+        # dormant native action as live here would be a false positive.
+        if "preventDefault(" in document or any(
+            "preventDefault(" in script for script in scripts.values()
+        ):
+            continue
+        for method, url in sorted(native_form_requests(document)):
+            if method in {"GET", "HEAD"}:
+                # Native GET forms encode fields into the query string, which
+                # is exactly where FastAPI reads bare scalar parameters.
+                continue
+            route = routes.get((method, url))
+            if route is None or route[3] or (method, url) in seen:
+                continue
+            seen.add((method, url))
+            handler_path, lineno, _, _ = route
+            findings.append(
+                _finding(
+                    handler_path,
+                    f"{document_path} submits native form data to {method} {url}, but "
+                    f"the handler on line {lineno} does not declare Form(...) or read "
+                    "the Request form — a browser submission fails with 422. Accept "
+                    "form data, or intercept the form and send the JSON shape the "
+                    "handler expects.",
                 )
             )
     return findings
@@ -307,6 +414,7 @@ def staged_conformance_errors(
     """Every way this changeset falls short of what the turn set out to do."""
     trees: dict[str, ast.Module] = {}
     scripts: dict[str, str] = {}
+    documents: dict[str, str] = {}
     for path, entry in staged.items():
         content = str(entry.get("content", ""))
         suffix = Path(path).suffix.lower()
@@ -318,11 +426,14 @@ def staged_conformance_errors(
                 continue
         elif suffix in {".js", ".mjs", ".ts"}:
             scripts[path] = content
+        elif suffix in {".html", ".htm"}:
+            documents[path] = content
 
     models = _model_names(trees)
     findings = [
         *missing_planned_files(staged, list(planned or []), set(on_disk)),
         *request_shape_findings(trees, scripts, models),
+        *native_form_findings(trees, documents, scripts, models),
         *undocumented_settings(trees, staged),
     ]
     findings.sort(key=lambda item: (item["severity"] != ERROR, item["path"]))

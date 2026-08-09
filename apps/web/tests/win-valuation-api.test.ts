@@ -75,7 +75,7 @@ test("estimateWinValuation posts to the win-scoped valuation endpoint", async ()
 test("acceptWinValuation sends the estimate through unchanged by default", async () => {
   const originalFetch = globalThis.fetch;
   let requestedBody: Record<string, unknown> = {};
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = async (_input, init) => {
     requestedBody = JSON.parse(String(init?.body));
     return jsonResponse({ ...VALUATION, status: "accepted" });
   };
@@ -92,7 +92,7 @@ test("acceptWinValuation sends the estimate through unchanged by default", async
 test("acceptWinValuation carries a corrected figure", async () => {
   const originalFetch = globalThis.fetch;
   let requestedBody: Record<string, unknown> = {};
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = async (_input, init) => {
     requestedBody = JSON.parse(String(init?.body));
     return jsonResponse({ ...VALUATION, status: "accepted" });
   };
@@ -124,7 +124,7 @@ test("saveSkuRates sends only the edited rows", async () => {
   const originalFetch = globalThis.fetch;
   let requestedMethod = "";
   let requestedBody: { updates?: Array<Record<string, unknown>> } = {};
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = async (_input, init) => {
     requestedMethod = String(init?.method);
     requestedBody = JSON.parse(String(init?.body));
     return jsonResponse({
