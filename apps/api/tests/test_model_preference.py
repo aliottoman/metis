@@ -45,6 +45,10 @@ def test_pinning_one_model_routes_every_role_to_it(tmp_path) -> None:
         "quality": "qwen3.6:35b-mlx",
         "_provider": "local",
         "_oci_tools": "",
+        # The synthesized coder safety fallback: with no Cohere key in these
+        # settings, the ladder holds only the default local coder, so an
+        # outage on the pinned model degrades a build instead of ending it.
+        "_fallbacks_coder": '[{"provider": "local", "model": "north-mini-code-1.0:mlx-nvfp4"}]',
     }
 
 
@@ -148,3 +152,61 @@ def test_a_stale_oci_preference_collapses_to_local_when_the_lane_is_off(tmp_path
     )
     preference = ModelPreferenceStore(off).load()
     assert preference.provider == "local"
+
+
+def test_role_chains_round_trip_and_set_the_primary(tmp_path) -> None:
+    """An explicit chain is the selection, not a decoration on it: its first
+    entry becomes the role's primary, and the whole ladder rides into the
+    aliases every run is frozen with."""
+    import json as _json
+
+    from waqil_api.contracts import RoleChainEntryV1
+
+    store = ModelPreferenceStore(_settings(tmp_path))
+    saved = store.save(
+        "pinned",
+        "qwen3.6:35b-mlx",
+        role_chains={
+            "coder": [
+                RoleChainEntryV1(provider="local", model="glm-5.2:cloud"),
+                RoleChainEntryV1(provider="local", model="qwen3-coder:30b"),
+            ]
+        },
+    )
+    assert [entry.model for entry in saved.role_chains["coder"]] == [
+        "glm-5.2:cloud",
+        "qwen3-coder:30b",
+    ]
+    aliases = store.resolve_aliases()
+    # chain[0] IS the coder, even under a different pin.
+    assert aliases["coder"] == "glm-5.2:cloud"
+    chain = _json.loads(aliases["_chain_coder"])
+    assert [entry["model"] for entry in chain] == ["glm-5.2:cloud", "qwen3-coder:30b"]
+
+    # None leaves chains untouched; {} clears them.
+    kept = store.save("pinned", "qwen3.6:35b-mlx")
+    assert "coder" in kept.role_chains
+    cleared = store.save("pinned", "qwen3.6:35b-mlx", role_chains={})
+    assert cleared.role_chains == {}
+
+
+def test_role_chain_validation_refuses_broken_ladders(tmp_path) -> None:
+    """A rung that cannot answer is refused where the choice is made — a
+    ladder that fails exactly when it is needed is worse than none."""
+    import pytest as _pytest
+
+    from waqil_api.contracts import RoleChainEntryV1
+
+    store = ModelPreferenceStore(_settings(tmp_path))
+    # A hosted model measured to ignore tool calling.
+    with _pytest.raises(ValueError, match="does not honour tool calling"):
+        store.save(
+            "split", None,
+            role_chains={"coder": [RoleChainEntryV1(provider="local", model="minimax-m3:cloud")]},
+        )
+    # A lane with no key behind it.
+    with _pytest.raises(ValueError, match="Cohere, which is not configured"):
+        store.save(
+            "split", None,
+            role_chains={"coder": [RoleChainEntryV1(provider="cohere")]},
+        )

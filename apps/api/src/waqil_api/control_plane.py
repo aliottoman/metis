@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -35,7 +36,9 @@ from .contracts import (
     ModelRequestV1,
     PlanEnvelopeV1,
     PlanningRequestV1,
+    PROJECT_READ_TOOLS,
     ProjectAgentStepV1,
+    ProjectBuildPlanV1,
     ProjectToolCallV1,
     ProposalStatus,
     RiskLevel,
@@ -74,14 +77,21 @@ from .model_provider import (
     RoutingCatalog,
     ToolRoute,
     build_planning_attachment_evidence,
+    classify_backend_unavailable,
     default_routing_catalog,
     is_explicit_toolify_request,
     is_new_application_request,
     is_project_build_instruction,
+    is_project_build_request,
     normalize_plan_semantics,
     validate_plan_semantics,
 )
-from .project_scaffold import SCAFFOLD_VERSION, build_capabilities, scaffold_prompt
+from .project_scaffold import (
+    SCAFFOLD_VERSION,
+    build_capabilities,
+    scaffold_prompt,
+    wants_web_ui,
+)
 from .project_workspace import ProjectWorkspaceError, VerificationNotApprovedError
 from .run_history import changes_from_trace
 from .policy import (
@@ -122,6 +132,126 @@ def _bounded_check_name(call: ProjectToolCallV1) -> str:
 _REPEATABLE_PROJECT_READS = frozenset({"list_files", "search_code", "read_file"})
 
 
+def _writes_files(state: AgentState) -> bool:
+    """Whether this turn is meant to write files, by the best available reading.
+
+    The plan call answers this with the request AND the repository in front of
+    it, so its answer wins wherever it exists. The regex is what remains for a
+    provider that does not declare one, and for the steps before the plan is
+    taken — the same predicate this gate used before, no worse than it was.
+
+    The two disagree in both directions, which is why the model was given the
+    question: "what does app/main.py do?" matches the build regex because it
+    contains a path, and a whole-application rewire misses it because it has
+    no indefinite article.
+    """
+    declared = str(state.get("project_build_intent") or "")
+    if declared:
+        return declared != "question"
+    return is_project_build_instruction(state["prompt"])
+
+
+def _coder_chain(aliases: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The ordered coder ladder for this run, primary first, never empty.
+
+    An explicit chain (`_chain_coder`, from the preference's role_chains) is
+    taken wholesale — its first entry IS the user's coder choice. Otherwise
+    the ladder is the run's own primary plus any synthesized safety fallbacks
+    (`_fallbacks_coder`). Unparseable JSON degrades to the primary alone,
+    which is exactly the pre-chain behavior.
+    """
+    explicit = str(aliases.get("_chain_coder") or "")
+    if explicit:
+        try:
+            entries = json.loads(explicit)
+        except ValueError:
+            entries = []
+        chain = [
+            {
+                "provider": str(entry.get("provider") or "local"),
+                "model": entry.get("model"),
+            }
+            for entry in entries
+            if isinstance(entry, dict)
+        ]
+        if chain:
+            return chain
+    primary = {
+        "provider": str(aliases.get("_provider") or "local"),
+        "model": aliases.get("coder"),
+    }
+    raw = str(aliases.get("_fallbacks_coder") or "")
+    extras: list[Any] = []
+    if raw:
+        try:
+            extras = json.loads(raw)
+        except ValueError:
+            extras = []
+    return [
+        primary,
+        *(
+            {
+                "provider": str(entry.get("provider") or "local"),
+                "model": entry.get("model"),
+            }
+            for entry in extras
+            if isinstance(entry, dict)
+        ),
+    ]
+
+
+def _chain_step_aliases(
+    aliases: Mapping[str, Any], entry: Mapping[str, Any]
+) -> dict[str, str]:
+    """The run's aliases with one ladder rung applied, for one call.
+
+    A copy, never a mutation: `_provider` is global to the run (chat reads it
+    too), so a rung routes the CALL without rewriting the run.
+    """
+    patched = {str(k): str(v) for k, v in aliases.items()}
+    patched["_provider"] = str(entry.get("provider") or "local")
+    model = entry.get("model")
+    if model:
+        patched["coder"] = str(model)
+    return patched
+
+
+def _chain_entry_label(entry: Mapping[str, Any], aliases: Mapping[str, Any]) -> str:
+    """A rung as the user would name it, for the fallback event."""
+    provider = str(entry.get("provider") or "local")
+    if provider == "cohere":
+        return "Cohere Command A+"
+    if provider == "oci":
+        return "Grok (OCI)"
+    return str(entry.get("model") or aliases.get("coder") or "local model")
+
+
+def _model_has_written(staged: Mapping[str, Any]) -> bool:
+    """Whether the MODEL has staged a file this turn, ignoring host-seeded ones.
+
+    The host seeds appkit/ (and .env.example) into the overlay before the model
+    starts, so "is the overlay non-empty" stopped meaning "has the model made
+    progress" the moment the scaffold could be staged up front. Timing gates
+    that key off model progress — plan-after-exploration above all — must look
+    past the seed, or a build that wears the design language would plan blind on
+    step one purely because appkit was staged for it.
+    """
+    return any(
+        not (path == "appkit" or path.startswith("appkit/") or path == ".env.example")
+        for path in staged
+    )
+
+
+def _has_seeded_scaffold(staged: Mapping[str, Any]) -> bool:
+    """Whether the host-owned appkit scaffold is already in the overlay."""
+    return any(path == "appkit" or path.startswith("appkit/") for path in staged)
+
+
+def _model_written_count(staged: Mapping[str, Any]) -> int:
+    """How many staged paths the model wrote, excluding host-seeded scaffold."""
+    return sum(1 for path in staged if _model_has_written({path: None}))
+
+
 def _write_failed_since(trace: list[dict[str, Any]], start: int, path: str) -> bool:
     """Whether a write to ``path`` was refused after trace position ``start``.
 
@@ -141,9 +271,15 @@ def _write_failed_since(trace: list[dict[str, Any]], start: int, path: str) -> b
 
 
 def _repeated_project_call(
-    state: AgentState, call: ProjectToolCallV1
+    state: Mapping[str, Any], call: ProjectToolCallV1
 ) -> dict[str, Any] | None:
     """A tool error when this read was already answered, unchanged, in this turn.
+
+    Takes any mapping carrying ``project_trace`` rather than the whole state,
+    because a batch of reads has to be checked against the trace as it grows
+    within one step — the entries the earlier members of the batch just added
+    are not in graph state yet, and two identical reads in one reply would
+    otherwise both execute.
 
     Nothing in the loop otherwise notices that the same listing has been fetched
     ten times, and each repeat pushes the useful evidence further out of the
@@ -734,6 +870,22 @@ _BLOCKED_STEP_GUIDANCE: dict[str, str] = {
         "the local model server did not answer. Check that Ollama is running, then "
         "send this message again."
     ),
+    "rate_limited": (
+        "the model backend is rate-limited or out of quota right now, so it "
+        "returned no reply. This is a limit on the account behind the backend, "
+        "not a problem with your request — wait a moment (or switch lanes in the "
+        "model menu) and send this message again."
+    ),
+    "backend_error": (
+        "the model backend returned a server error and no reply. This is the "
+        "provider being unavailable, not a problem with your request — send this "
+        "message again shortly, or switch lanes in the model menu."
+    ),
+    "backend_timeout": (
+        "the model backend did not answer in time, so no reply came back. Send "
+        "this message again; if it keeps timing out, a smaller request or a "
+        "different lane will get through."
+    ),
 }
 
 
@@ -829,11 +981,57 @@ class AgentState(TypedDict):
     # the same file it cannot rewrite will otherwise spend the entire step budget
     # on it; past the limit the target is closed for the turn.
     project_blocked_targets: dict[str, int]
-    # The files this build turn committed to writing, named on its first step.
-    # Completion is held against it: while a planned file is unstaged the build
-    # is demonstrably unfinished, whatever the model's summary says. Empty means
-    # no manifest was taken, and the older "did you stage anything" rule applies.
+    # The files this build turn committed to writing, named once it had looked
+    # around. Completion is held against it: while a planned file is unstaged
+    # the build is demonstrably unfinished, whatever the model's summary says.
+    # Empty means no manifest was taken, and the older "did you stage anything"
+    # rule applies.
     project_planned_files: list[str]
+    # Whether the plan call has already run this turn. Distinct from holding
+    # files: a plan that legitimately named none (a question, or a task needing
+    # no new files) must not be re-requested on every step that follows.
+    project_plan_taken: bool
+    # The model's own reading of the turn, from that same call: "build",
+    # "edit" or "question", and "whole_app" or "narrow". Empty when the
+    # provider does not declare them, in which case every consumer falls back
+    # to the prompt regexes exactly as it did before.
+    project_build_intent: str
+    project_build_scope: str
+    # Manifest revisions the model has made this turn, via revise_plan. Bounded:
+    # correcting a falsified plan is the point, re-planning instead of writing
+    # is the failure mode next door.
+    project_plan_revisions: int
+    # Read-only calls that came in the same reply as the pending one and run in
+    # the same step. Only ever set when the whole reply was reads, so nothing
+    # here can stage, check, or change what the call after it would have been.
+    project_pending_reads: list[dict[str, Any]]
+    # Consecutive read-only steps with no write, check or plan revision between
+    # them. A model can explore usefully for a while, but a run of reads that
+    # never becomes a write is not progress — one live turn read 22 files in a
+    # row and hit the step budget having staged nothing. Reset by any write,
+    # check or revise; past a ceiling the turn narrows (see below) and only
+    # then ends.
+    project_consecutive_reads: int
+    # Which rung of the coder ladder this run is on. 0 is the primary; a lane
+    # that failed to answer advances it, and the rest of the turn stays on the
+    # rung that worked rather than re-trying the dead one every step.
+    project_chain_index: int
+    # Where the turn is in the explore→act arc: "" → "exploring" → "building".
+    # Derived, one-way, and emitted as project.phase events so the timeline
+    # can show the arc; the act transition is what the structural read gate
+    # under a focus keys off.
+    project_phase: str
+    # The one file a drifting turn has been narrowed to. Empty in the normal
+    # case: a model that keeps writing never gets narrowed at all. When set,
+    # the step request offers only this path, which is what turned a four-file
+    # conversion no model would attempt whole into one it completed a file at
+    # a time. Cleared the moment the file is staged, so the turn continues with
+    # the rest of its plan.
+    project_focus_path: str
+    # How many times this turn has been narrowed. Every round either produces a
+    # file or ends the turn, so this cannot grow without bound; it is carried
+    # for the record and for the event stream.
+    project_focus_rounds: int
     # The acceptance scenarios named alongside the manifest: the spec's own
     # claims made checkable, replayed by the sandbox rung against the finished
     # app. Plain dicts (AcceptanceScenarioV1 shape) so checkpoints stay JSON.
@@ -1849,7 +2047,7 @@ class ControlPlane:
             state.get("project_verify_bonus_steps", 0)
         )
         if iterations >= step_cap:
-            if staged:
+            if _model_has_written(staged):
                 # The verify-fix budget is separate from the step budget on
                 # purpose. A build that burns every step without declaring
                 # complete used to skip verification's fix loop entirely and
@@ -1878,9 +2076,10 @@ class ControlPlane:
                 # Out of steps, but not out of work: whatever was staged is
                 # still a coherent offer, so it goes to the batch approval
                 # instead of being silently dropped with the loop.
+                staged_count = sum(1 for p in staged if _model_has_written({p: 1}))
                 return {
                     "response_text": (
-                        f"I reached the step limit with {len(staged)} staged file "
+                        f"I reached the step limit with {staged_count} staged file "
                         "change(s) ready. Review them below — approving applies "
                         "everything staged so far; a follow-up message continues the work."
                     ),
@@ -1898,12 +2097,12 @@ class ControlPlane:
             # A streak this long is a loop, not a rough patch: every further
             # step would be another refusal pushing useful evidence out of the
             # trace window. End the turn while it can still end honestly.
-            if staged:
+            if _model_has_written(staged):
                 return {
                     "response_text": (
                         f"I stopped after {refused} consecutive refused tool calls — "
-                        f"the loop was no longer making progress. {len(staged)} staged "
-                        "file change(s) are still ready to review below; a follow-up "
+                        f"the loop was no longer making progress. {_model_written_count(staged)} "
+                        "staged file change(s) are still ready to review below; a follow-up "
                         "message continues the work."
                     ),
                     "project_pending_call": {},
@@ -1918,6 +2117,79 @@ class ControlPlane:
                 ),
                 "project_pending_call": {},
                 "project_refused_streak": 0,
+            }
+        explored = int(state.get("project_consecutive_reads", 0))
+        focused = str(state.get("project_focus_path", "") or "")
+        owed_now = [
+            path
+            for path in (state.get("project_planned_files") or [])
+            if path not in staged
+        ]
+        if explored >= _explore_budget(state) and owed_now and not focused:
+            # Drifting, but there is still work it committed to. Rather than
+            # ending the turn, narrow it to ONE file and let it try again.
+            #
+            # This is the measured fix, not a guess: the exact four-file
+            # conversion that GLM-5.2 read twenty-two times and never wrote,
+            # split into one-file requests, produced all of it — real imports,
+            # a real mount, the design language composed correctly, every rung
+            # of verification clean. The model could always do the work; what
+            # it could not do was hold four substantial files at once.
+            #
+            # Deliberately triggered by BEHAVIOUR, not by a file count. A
+            # threshold like "chunk when the plan names 3+ files" would slow a
+            # model that can take them in one pass (deepseek-v4-pro wrote six)
+            # and would still miss a model that stalls on two. What matters is
+            # whether THIS model on THIS task is converging, and the read-run
+            # already measures exactly that. A model that never drifts never
+            # meets this branch at all.
+            target = owed_now[0]
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.focused",
+                {
+                    "step": iterations + 1,
+                    "path": target,
+                    "after_reads": explored,
+                    "still_owed": owed_now,
+                    "round": int(state.get("project_focus_rounds", 0)) + 1,
+                },
+            )
+            return {
+                "project_focus_path": target,
+                "project_focus_rounds": int(state.get("project_focus_rounds", 0)) + 1,
+                # The counter restarts: the model is being asked a different,
+                # smaller question, and it deserves the allowance to answer it.
+                "project_consecutive_reads": 0,
+                "project_pending_call": {},
+            }
+        ceiling = _FOCUSED_EXPLORE_STEPS if focused else _explore_budget(state)
+        if explored >= ceiling:
+            # Either it was narrowed to one file and still would not write it,
+            # or it drifted with nothing left owed to narrow to. Both mean
+            # there is no smaller question left to ask, so the turn ends
+            # honestly — whatever was staged before is still a coherent offer.
+            if _model_has_written(staged):
+                return {
+                    "response_text": (
+                        f"I stopped after inspecting {explored} files in a row without "
+                        "writing — the loop was no longer making progress. The file "
+                        "change(s) staged before that are ready to review below; a "
+                        "follow-up message continues the work."
+                    ),
+                    "project_pending_call": {},
+                    "project_consecutive_reads": 0,
+                }
+            return {
+                "response_text": (
+                    f"I read {explored} files in a row without writing anything and was "
+                    "not converging on a change. No change was applied; send a narrower, "
+                    "more specific instruction — which file, and what to change — or "
+                    "switch to the cloud builder."
+                ),
+                "project_pending_call": {},
+                "project_consecutive_reads": 0,
             }
         # One name for every provider. Naming the model here ("North is
         # working…") was wrong two ways: North is not always the one running,
@@ -1944,10 +2216,14 @@ class ControlPlane:
         )
         spec_info = await self._project_spec_rewrite(state, iterations, staged)
         spec_text = str((spec_info or {}).get("spec") or "")
-        planned, planned_scenarios = await self._project_manifest(
+        plan = await self._project_manifest(
             state, prompt_context, iterations, staged, spec_text=spec_text
         )
-        if planned == [] and is_new_application_request(state["prompt"]):
+        planned = plan["files"]
+        planned_scenarios = plan["scenarios"]
+        if planned == [] and plan["intent"] != "question" and is_new_application_request(
+            state["prompt"]
+        ):
             # Asked twice, named nothing — a plan failure, distinct from a
             # manifest that merely could not be requested (None). Scoped to
             # whole-application requests: a path-level build ("create app/x.py")
@@ -1967,29 +2243,100 @@ class ControlPlane:
                 ),
                 "project_pending_call": {},
             }
-        # Carried on EVERY outcome, not just a clean step. The manifest is only
-        # taken on step one, so losing it to a single unreadable reply would
-        # silently drop the gate for the whole turn — the next step, no longer
-        # step one, would never ask for it again.
+        # Carried on EVERY outcome, not just a clean step. The manifest is
+        # taken once, so losing it to a single unreadable reply would silently
+        # drop the gate for the whole turn — the step after it, no longer the
+        # one that asks, would never ask again.
         carry: dict[str, Any] = (
             {"project_planned_files": planned}
             if planned and not state.get("project_planned_files")
             else {}
         )
-        if carry and planned_scenarios:
-            # The scenarios ride the manifest's carry rules exactly: taken on
-            # step one, survived on every outcome, or lost with the plan.
+        if not iterations and not state.get("project_phase") and is_project_build_request(
+            state["prompt"]
+        ):
+            # The explore→act arc, made visible: a build turn opens in the
+            # exploring phase and the timeline says so, instead of the user
+            # watching an undifferentiated run of list_files.
+            carry["project_phase"] = "exploring"
+            await self.events.emit(
+                state["run_id"], state["conversation_id"],
+                "project.phase", {"phase": "exploring", "step": iterations + 1},
+            )
+        if plan["taken"]:
+            # The plan was requested this step. Its answers ride the manifest's
+            # carry rules exactly — recorded on every outcome, or lost with it
+            # — and `taken` is itself carried so a plan that named nothing is
+            # not re-requested on every subsequent step.
+            carry["project_plan_taken"] = True
+            if plan["intent"]:
+                carry["project_build_intent"] = plan["intent"]
+                carry["project_build_scope"] = plan["scope"]
+            if plan["files"] and plan["intent"] in ("", "build", "edit"):
+                # A plan with files is the act transition: exploration has an
+                # answer, and what follows is expected to write toward it.
+                carry["project_phase"] = "building"
+                await self.events.emit(
+                    state["run_id"], state["conversation_id"],
+                    "project.phase",
+                    {"phase": "building", "step": iterations + 1, "files": plan["files"]},
+                )
+                # And written down: METIS.md rides into every step's context,
+                # so the plan survives any trace window or reset.
+                plan_recorder = getattr(getattr(self, "projects", None), "record_plan", None)
+                if plan_recorder is not None:
+                    await plan_recorder(
+                        project_id,
+                        {
+                            "files": plan["files"],
+                            "intent": plan["intent"] or "build",
+                            "scope": plan["scope"] or "narrow",
+                        },
+                    )
+        if carry.get("project_planned_files") and planned_scenarios:
             carry["project_planned_scenarios"] = planned_scenarios
         if spec_info and not state.get("project_spec"):
             carry["project_spec"] = spec_info
-        # A whole-application build starts from verified infrastructure, not a
-        # blank tree: the host stages appkit (and .env.example) before the
-        # model's first step. Seeded entries ride the same overlay as model
-        # writes — visible on the approval card, applied only through the same
-        # single approval. Narrow on purpose: a request to add one file gets
-        # no scaffold, and like the manifest, a scaffold that cannot be staged
-        # degrades to the old behaviour rather than failing the turn.
-        if not iterations and not staged and is_new_application_request(state["prompt"]):
+        # A build that wears the Metis design language starts from verified
+        # infrastructure, not a blank tree: the host stages appkit (and
+        # .env.example) so the model composes the vendored theme instead of
+        # inventing one. Seeded entries ride the same overlay as model writes —
+        # visible on the approval card, applied only through the same single
+        # approval — and stage_scaffold is idempotent, skipping every path the
+        # overlay or disk already has, so a degraded stage just seeds nothing.
+        #
+        # The decision axis is the CAPABILITY the build needs, read from the
+        # REQUEST, not from the plan. This is the Logivity lesson, live and then
+        # live again: a reskin of an existing Streamlit app onto appkit names no
+        # new application and is scope=narrow, so the scope gates missed it —
+        # and worse, the plan call that would have carried the intent is itself
+        # unreliable on the hosted lane, so a gate that waits for the plan waits
+        # forever. Both live runs ended with the model saying "the scaffold
+        # entry is empty" and asking how to proceed, unable to create appkit
+        # itself because writes under appkit/ are refused.
+        #
+        # So appkit is seeded up front, on step one, whenever the request is a
+        # build/edit that asks to wear the web design language — a fact of the
+        # prompt, knowable with no model call at all. is_new_application_request
+        # still covers a brand-new app whose prompt never says "appkit"; the
+        # post-plan branch remains as a backstop for a whole-app build the
+        # prompt regex missed. Seeding appkit does NOT count as model progress
+        # (see _model_has_written), so plan-after-exploration is unaffected.
+        wants_web = wants_web_ui(state["prompt"])
+        wants_scaffold = (
+            not iterations
+            and not _has_seeded_scaffold(staged)
+            and (
+                is_new_application_request(state["prompt"])
+                or (is_project_build_request(state["prompt"]) and wants_web)
+            )
+        ) or (
+            plan["taken"]
+            and plan["intent"] in ("build", "edit")
+            and (plan["scope"] == "whole_app" or wants_web)
+            and not _has_seeded_scaffold(staged)
+        )
+        if wants_scaffold:
             try:
                 staged, seeded = await self.projects.stage_scaffold(
                     project_id, staged, build_capabilities(state["prompt"])
@@ -2004,36 +2351,100 @@ class ControlPlane:
                     "project.scaffold_staged",
                     {"files": seeded, "version": SCAFFOLD_VERSION},
                 )
-        try:
-            step = await self.model.project_step(
-                self._project_step_request(
-                    state, prompt_context, trace, staged, iterations, planned,
-                    spec_text=spec_text
+        # The coder ladder for this run: [primary, backup, ...]. A lane that
+        # fails to ANSWER (rate limit, quota, 5xx, timeout, a grammar the
+        # backend refuses) advances the ladder and the same step is retried on
+        # the next rung — a malformed REPLY does not, because that is the
+        # model's own mistake and the loop's evidence path is how it corrects
+        # itself. The index is carried in state, so once a rung is found dead
+        # the rest of the turn never re-tries it.
+        aliases = dict(state.get("model_aliases", {}))
+        chain = _coder_chain(aliases)
+        index = min(int(state.get("project_chain_index", 0)), len(chain) - 1)
+        step: ProjectAgentStepV1 | None = None
+        while True:
+            attempt_aliases = _chain_step_aliases(aliases, chain[index])
+            request = self._project_step_request(
+                # The carry, not the incoming state: a plan taken THIS step
+                # has to reach THIS step's request. Reading state alone
+                # delays the declaration by one step, and the step it would
+                # miss is the one that matters — a turn the model has just
+                # called a question would still be sent the build grammar,
+                # in which answering is not expressible. The attempt's
+                # aliases ride the same patch so the request's own
+                # provider-dependent choices (trace budget, reference size)
+                # match the lane actually being called.
+                cast(
+                    AgentState,
+                    {**state, **carry, "model_aliases": attempt_aliases},
                 ),
-                model_aliases=state.get("model_aliases", {}),
+                prompt_context, trace, staged, iterations, planned,
+                spec_text=spec_text,
             )
-        except PermanentModelError as exc:
-            # The backend refused the request before the model ran. There is no
-            # reply to correct, so treating this as the model's mistake spends
-            # the whole retry budget on identical failures and then blames the
-            # model for a host-side defect — which is exactly how a schema that
-            # could not compile went days being read as "the model is
-            # unintelligible". End the turn and name the real cause.
-            return {**carry, **await self._blocked_project_step(state, exc, iterations, staged)}
-        except ModelProviderError as exc:
-            # A step the host could not read is the model's own tool error: it
-            # becomes evidence and the model gets the next step to correct
-            # itself. Failing the turn here would discard every staged file
-            # over one malformed JSON object, which for a long build is the
-            # most expensive possible response to a recoverable mistake.
-            return {**carry, **self._malformed_project_step(state, exc, iterations, staged)}
-        except ValueError as exc:
-            # A wire reply that validated but will not convert — a completion
-            # with a blank response, a tool step naming no tool. to_step raises
-            # outside the provider's own error handling, so without this the
-            # run fails outright and the staged changeset goes with it. It is a
-            # badly shaped reply like any other, so it becomes evidence.
-            return {**carry, **self._malformed_project_step(state, exc, iterations, staged)}
+            try:
+                step = await self.model.project_step(
+                    request, model_aliases=attempt_aliases
+                )
+                break
+            except (PermanentModelError, ModelProviderError) as exc:
+                if isinstance(exc, PermanentModelError):
+                    # The backend refused the request before the model ran —
+                    # a grammar it cannot compile, a model that is not
+                    # loaded. Nothing to correct, so it is lane failure.
+                    reason = exc.reason
+                else:
+                    reason = classify_backend_unavailable(exc)
+                    if reason is None:
+                        # The model DID answer, unreadably. That is the
+                        # model's own tool error: it becomes evidence and the
+                        # model gets the next step to correct itself. Failing
+                        # the turn would discard every staged file over one
+                        # malformed JSON object.
+                        return {
+                            **carry,
+                            **self._malformed_project_step(
+                                state, exc, iterations, staged
+                            ),
+                        }
+                if index + 1 < len(chain):
+                    await self.events.emit(
+                        state["run_id"],
+                        state["conversation_id"],
+                        "run.model_fallback",
+                        {
+                            "role": "coder",
+                            "step": iterations + 1,
+                            "from": _chain_entry_label(chain[index], aliases),
+                            "to": _chain_entry_label(chain[index + 1], aliases),
+                            "reason": reason,
+                            "detail": str(exc)[:300],
+                        },
+                    )
+                    index += 1
+                    carry["project_chain_index"] = index
+                    continue
+                # The ladder is exhausted; end the turn naming the real cause
+                # — which used to be the outcome after the FIRST failure.
+                return {
+                    **carry,
+                    **await self._blocked_project_step(
+                        state,
+                        exc
+                        if isinstance(exc, PermanentModelError)
+                        else PermanentModelError(str(exc), reason=reason),
+                        iterations,
+                        staged,
+                    ),
+                }
+            except ValueError as exc:
+                # A wire reply that validated but will not convert — a
+                # completion with a blank response, a tool step naming no
+                # tool. A badly shaped reply like any other; it becomes
+                # evidence.
+                return {
+                    **carry,
+                    **self._malformed_project_step(state, exc, iterations, staged),
+                }
         step_result = await self._project_step_result(
             state, step, iterations, project_context, planned
         )
@@ -2131,56 +2542,109 @@ class ControlPlane:
         iterations: int,
         staged: dict[str, Any],
         spec_text: str = "",
-    ) -> tuple[list[str] | None, list[dict[str, Any]]]:
-        """The file list this build turn is accountable to, taken once —
-        together with the acceptance scenarios that make "done" checkable.
+    ) -> dict[str, Any]:
+        """The file list this turn is accountable to, taken once — with the
+        acceptance scenarios that make "done" checkable, and the model's own
+        reading of what kind of turn this is.
 
-        Asked on the first step of a build turn only, and inside this node
-        rather than as a graph node of its own — a new node would change the
-        graph topology (and so the checkpoint schema every in-flight run is
-        pinned to) and spend supersteps out of the recursion budget, for a call
-        that happens at most once per turn. It deliberately does not advance
-        project_iterations: the manifest is not one of the model's steps, and
-        charging a step for it would push real work past tight budgets.
+        Taken AFTER the loop has looked around, not before it. The manifest
+        used to be the first thing that happened, so it was written from the
+        request and a directory listing and then never revised — and because
+        an owed manifest narrows create_file's path to an enum of exactly what
+        is unwritten, a plan the evidence later falsified became the only
+        legal write the model had. One live turn planned two paths a Streamlit
+        project could not contain, spent five steps proving they did not
+        exist, and then ended on three replies its backend refused to generate,
+        because nothing it wanted to say was expressible. A few steps of
+        reading first costs nothing — those steps happen anyway — and the plan
+        is now written against what the project actually holds. revise_plan
+        handles the rest: evidence that arrives later can still correct it.
 
-        Returns None when a manifest was not applicable or could not be
+        Lives inside this node rather than as a graph node of its own — a new
+        node would change the graph topology (and so the checkpoint schema
+        every in-flight run is pinned to) and spend supersteps out of the
+        recursion budget, for a call that happens at most once per turn. It
+        deliberately does not advance project_iterations: the manifest is not
+        one of the model's steps, and charging a step for it would push real
+        work past tight budgets.
+
+        ``files`` is None when a manifest was not applicable or could not be
         requested — the loop then behaves exactly as it did before the gate
         existed, the right fallback for a gate that only sharpens an existing
-        guard. Returns [] only when the model was asked twice and named
-        nothing: the caller treats that as a plan failure and ends the turn,
-        because a planless build drifting through its step budget is how a
-        configured model once spent thirty minutes producing a 35-byte
-        __init__.py.
+        guard. It is [] only when the model was asked twice and named nothing:
+        the caller treats that as a plan failure and ends the turn, because a
+        planless build drifting through its step budget is how a configured
+        model once spent thirty minutes producing a 35-byte __init__.py.
         """
         existing = list(state.get("project_planned_files") or [])
-        if existing:
-            return existing, list(state.get("project_planned_scenarios") or [])
+        if existing or state.get("project_plan_taken"):
+            return {
+                "files": existing or None,
+                "scenarios": list(state.get("project_planned_scenarios") or []),
+                "intent": str(state.get("project_build_intent") or ""),
+                "scope": str(state.get("project_build_scope") or ""),
+                "taken": False,
+            }
+        unplanned: dict[str, Any] = {
+            "files": None, "scenarios": [], "intent": "", "scope": "", "taken": False
+        }
         # (the spec rewrite, when one applies, has already run — see
         # _project_spec_rewrite, which this method's request text comes from)
-        if iterations or staged or not is_project_build_instruction(state["prompt"]):
-            return None, []
+        #
+        # The prefilter is deliberately the BROAD predicate, not the narrow
+        # one that used to gate this call. Its only job now is to keep a plan
+        # call off turns that are plainly not about code at all; deciding
+        # whether a request that mentions code is a build, an edit or a
+        # question is the plan's own job, and it is the job the regexes kept
+        # getting wrong in both directions.
+        if not is_project_build_request(state["prompt"]):
+            return unplanned
+        # Read first, plan second — but not forever: a turn where the MODEL has
+        # already staged a file is past the point where the gate can be
+        # established late, so it is taken immediately in that case. The
+        # host-seeded appkit scaffold does not count — it is present from step
+        # one on a web build, and letting it force the plan early would undo the
+        # exploration this gate exists to allow.
+        if iterations < _PLAN_AFTER_STEPS and not _model_has_written(staged):
+            return unplanned
         request = {
             "user_request": spec_text or state["prompt"],
             "project_context": prompt_context,
             "conversation_summary": state.get("conversation_summary", ""),
+            # What the exploration steps actually found. This is the whole
+            # point of planning late: the plan is answered against the real
+            # tree and the real file contents, not against the request alone.
+            "tool_trace": _bounded_project_trace(
+                list(state.get("project_trace", [])), max_characters=24_000
+            ),
         }
+        intent = ""
+        scope = ""
         for _ in range(2):
             try:
                 plan = await self.model.project_plan_files(
                     request, model_aliases=state.get("model_aliases", {})
                 )
             except Exception:  # noqa: BLE001 - a missing manifest only loses the gate
-                return None, []
+                return unplanned
             # Scripted fakes still return a bare list; the real providers now
-            # return the whole plan, scenarios included.
+            # return the whole plan, scenarios and declared intent included.
             planned = getattr(plan, "files", plan)
             scenarios = [
                 item.model_dump(mode="json") for item in getattr(plan, "scenarios", [])
             ][:8]
+            # "" from a provider that does not declare — every caller falls
+            # back to the regexes in that case, so a scripted or older
+            # provider keeps exactly its previous behaviour.
+            intent = str(getattr(plan, "intent", "") or "")
+            scope = str(getattr(plan, "scope", "") or "")
             # Bounded by the contract as well; this keeps the manifest inside
             # the same changeset budget the overlay itself enforces.
             files = [str(path) for path in planned][: self.settings.project_staged_max_files]
-            if files:
+            if files or intent == "question":
+                # A declared question is a complete answer, not a failed plan:
+                # it is taken, it holds no files, and it turns the build gates
+                # off rather than sending the turn round for a second ask.
                 await self.events.emit(
                     state["run_id"],
                     state["conversation_id"],
@@ -2188,10 +2652,21 @@ class ControlPlane:
                     {
                         "files": files,
                         "scenarios": [str(item.get("name", "")) for item in scenarios],
+                        "intent": intent,
+                        "scope": scope,
+                        "after_steps": iterations,
                     },
                 )
-                return files, scenarios
-        return [], []
+                return {
+                    "files": files,
+                    "scenarios": scenarios,
+                    "intent": intent,
+                    "scope": scope,
+                    "taken": True,
+                }
+        return {
+            "files": [], "scenarios": [], "intent": intent, "scope": scope, "taken": True
+        }
 
     def _project_step_request(
         self,
@@ -2204,6 +2679,14 @@ class ControlPlane:
         spec_text: str = "",
     ) -> dict[str, Any]:
         remaining = [path for path in (planned or []) if path not in staged]
+        # A turn that drifted has been narrowed to one file. Offering only that
+        # path is the whole mechanism: `files_still_to_write` is what narrows
+        # create_file's enum on the tool-calling lanes and what the local
+        # grammar pins to, so the model is asked the small question the live
+        # test showed it can answer instead of the large one it cannot.
+        focus = str(state.get("project_focus_path", "") or "")
+        if focus and focus in remaining:
+            remaining = [focus]
         # A gate the model cannot pass is worse than no gate. Once the overlay
         # has not changed for this many steps the manifest stops withholding
         # `complete`, so a stuck turn ends with an honest account of what it
@@ -2273,8 +2756,8 @@ class ControlPlane:
             # file still unwritten, are the same fact about the same turn. Same
             # predicate the premature-finish guard uses, so detection lives in
             # one place.
-            "build_turn": is_project_build_instruction(state["prompt"])
-            and (not staged or bool(remaining))
+            "build_turn": _writes_files(state)
+            and (not _model_has_written(staged) or bool(remaining))
             and not stalled,
             # Set only when the previous step was refused for the *shape* of its
             # arguments, which is the one failure resending the same tool can
@@ -2287,6 +2770,42 @@ class ControlPlane:
             # retry_tool, which knows the exact tool; released the moment the
             # manifest is satisfied or the turn stalls, both of which empty it.
             "write_pin": [] if stalled else list(state.get("project_write_pin") or []),
+            # A hard nudge when the model has read many files in a row without
+            # writing one. Reads are cheap and a model can drift into inspecting
+            # forever; this is the step where it is told, in the request it acts
+            # on, to commit or stop. The turn ends on its own a few steps later
+            # (see _explore_budget) — this is the warning before that, and it
+            # names the remaining steps so the warning is actionable rather
+            # than merely stern.
+            **(
+                {
+                    # The narrowed instruction, word for word what the live
+                    # chunked test used when the same model completed the same
+                    # conversion a file at a time.
+                    "attention": (
+                        f"Write ONLY this one file now: {focus}. Ignore every other "
+                        "file in the plan for this step — you will be asked for them "
+                        "afterwards. You have already read this project; do not read "
+                        "further. Send the complete contents of that single file with "
+                        "create_file (or a patch if it exists). If it genuinely cannot "
+                        "be written, say so with revise_plan or finish."
+                    )
+                }
+                if focus
+                else {
+                    "attention": (
+                        f"You have inspected {int(state.get('project_consecutive_reads', 0))} "
+                        "files in a row without writing anything, and this turn ends "
+                        f"after {_explore_budget(state)}. Stop reading now. Your next "
+                        "call must change the project — create_file or a patch — or, if "
+                        "the plan is wrong, revise_plan, or finish/respond if you cannot "
+                        "proceed. Start with the single file you are most sure about; "
+                        "you can refine it in a later step."
+                    )
+                }
+                if int(state.get("project_consecutive_reads", 0)) >= _explore_nudge_at(state)
+                else {}
+            ),
         }
 
     async def _blocked_project_step(
@@ -2325,9 +2844,9 @@ class ControlPlane:
             "response_text": (
                 f"I stopped this turn: {guidance}"
                 + (
-                    f"\n\nThe {len(staged)} file change(s) staged before that are below "
-                    "for you to accept or discard."
-                    if staged
+                    f"\n\nThe {_model_written_count(staged)} file change(s) staged "
+                    "before that are below for you to accept or discard."
+                    if _model_has_written(staged)
                     else " Nothing was staged, and nothing was written."
                 )
             ),
@@ -2369,9 +2888,9 @@ class ControlPlane:
                     f"I could not read {streak} replies from the model in a row, so I "
                     "stopped this turn."
                     + (
-                        f" The {len(staged)} file change(s) staged before that are below "
-                        "for you to accept or discard."
-                        if staged
+                        f" The {_model_written_count(staged)} file change(s) staged "
+                        "before that are below for you to accept or discard."
+                        if _model_has_written(staged)
                         else " Nothing was staged, and nothing was written."
                     )
                 ),
@@ -2660,7 +3179,7 @@ class ControlPlane:
             ]
             if (
                 missing
-                and staged_paths
+                and _model_has_written(staged_paths)
                 and int(state.get("project_stall_steps", 0)) < _MAX_STALL_STEPS
                 and empty_finishes < _MAX_EMPTY_PROJECT_FINISHES
             ):
@@ -2678,10 +3197,11 @@ class ControlPlane:
                     state, iterations, empty_finishes, missing
                 )
             if (
-                not staged_paths
+                not _model_has_written(staged_paths)
                 and empty_finishes < _MAX_EMPTY_PROJECT_FINISHES
             ):
-                # A completion with nothing staged. The contract says finishing
+                # A completion with nothing the model wrote — the host-seeded
+                # appkit scaffold does not make a build real. The contract says finishing
                 # is a work claim ("use finish only when the work is complete"),
                 # and the talk channel exists precisely so an ANSWER never has
                 # to wear one: respond publishes, ask_user pauses. So an empty
@@ -2756,6 +3276,10 @@ class ControlPlane:
                 "artifacts": [],
             }
         assert step.tool_call is not None
+        if step.tool_call.name == "revise_plan":
+            return await self._revise_project_plan(
+                state, step.tool_call, iterations, project_context
+            )
         if step.tool_call.name == "respond":
             # The talk channel: an answer, not a completion claim. It skips the
             # complete branch above on purpose — no premature-finish guard, no
@@ -2782,11 +3306,183 @@ class ControlPlane:
             "project_malformed_streak": 0,
             "project_empty_finish_streak": 0,
             "project_pending_call": step.tool_call.model_dump(mode="json"),
+            # Read-only calls that arrived in the same reply, run by the same
+            # execute node without a model round-trip between them. Empty for
+            # every other kind of step; the contract only ever fills it when
+            # the whole reply was reads.
+            "project_pending_reads": [
+                call.model_dump(mode="json") for call in step.extra_calls
+            ],
             "project_verify_pending": pending_verification,
             # The narrowing lasts exactly one step: the model has now answered
             # under it, and the execute node decides whether another is owed.
             "project_retry_tool": "",
             "project_write_pin": [],
+        }
+
+    async def _revise_project_plan(
+        self,
+        state: AgentState,
+        call: ProjectToolCallV1,
+        iterations: int,
+        project_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Replace this turn's manifest with the one the evidence supports.
+
+        The manifest is a gate, and every gate the host holds shut needs a key
+        the model can reach. Without one, a plan written before the project was
+        read hardened into the only expressible write: a reskin planned against
+        `app/static/index.html` in a Streamlit project left the model with a
+        create_file whose path enum held two files that could not exist there,
+        and it answered by generating calls its own backend refused — three in
+        a row, and the turn ended having written nothing.
+
+        Handled here rather than in the workspace because nothing about it
+        touches a file. It is a state edit, recorded as trace evidence like any
+        other tool result, so the next step sees both the new plan and the
+        reason for it. Bounded by _MAX_PLAN_REVISIONS: correcting a falsified
+        plan is the point; re-planning in place of writing is the failure mode
+        immediately next door, and it looks identical for the first two turns.
+        """
+        revisions = int(state.get("project_plan_revisions", 0))
+        previous = list(state.get("project_planned_files") or [])
+        reason = str(call.arguments.get("reason", "")).strip()[:600]
+        raw = call.arguments.get("files")
+        files = ProjectBuildPlanV1(
+            files=[str(item) for item in raw][:24] if isinstance(raw, list) else []
+        ).files[: self.settings.project_staged_max_files]
+        if revisions >= _MAX_PLAN_REVISIONS:
+            result = {
+                "ok": False,
+                "error": (
+                    f"The plan has already been revised {revisions} time(s), which "
+                    "is the limit for one turn. Work to the plan you have: write "
+                    f"the files still owed, or finish and say plainly what you "
+                    "could not do and why."
+                ),
+            }
+            return {
+                "project_context": project_context,
+                "project_iterations": iterations + 1,
+                "project_malformed_streak": 0,
+                **self._project_evidence(
+                    state, call, result, int(state.get("project_checks_run", 0))
+                ),
+            }
+        if not isinstance(raw, list):
+            # Not a refusal of the intent — a refusal of the shape. Sending it
+            # back as an argument-shape error is what earns the next step a
+            # grammar narrowed to this tool's own required keys.
+            result = {
+                "ok": False,
+                "error": (
+                    "revise_plan needs files as an array of project-relative "
+                    "paths (send [] if this task needs no new files) and reason "
+                    "as what you found."
+                ),
+            }
+            return {
+                "project_context": project_context,
+                "project_iterations": iterations + 1,
+                "project_malformed_streak": 0,
+                **self._project_evidence(
+                    state,
+                    call,
+                    result,
+                    int(state.get("project_checks_run", 0)),
+                    retry_tool="revise_plan",
+                ),
+            }
+        if files == previous:
+            # A revision that changes nothing — the model restating the plan it
+            # already has, which one live run did twice in a row, spending a
+            # scarce revision each time to move nothing. Accept it, but do not
+            # count it and do not re-announce it: point the model back at the
+            # work instead.
+            result = {
+                "ok": True,
+                "output": {
+                    "plan": files,
+                    "note": (
+                        "The plan is unchanged — these are the files it already "
+                        "held. Stop revising and start writing: create the next "
+                        "owed file, or finish if the work is done."
+                    ),
+                },
+            }
+            return {
+                "project_context": project_context,
+                "project_iterations": iterations + 1,
+                "project_malformed_streak": 0,
+                **self._project_evidence(
+                    state, call, result, int(state.get("project_checks_run", 0))
+                ),
+            }
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.plan_revised",
+            {
+                "step": iterations + 1,
+                "revision": revisions + 1,
+                "previous_files": previous,
+                "files": files,
+                "reason": reason,
+            },
+        )
+        plan_recorder = getattr(getattr(self, "projects", None), "record_plan", None)
+        if plan_recorder is not None:
+            # The corrected plan replaces the written one, reason included, so
+            # the file always shows the plan the turn is actually held to.
+            await plan_recorder(
+                str(state.get("model_aliases", {}).get("_project_id", "")),
+                {
+                    "files": files,
+                    "intent": str(state.get("project_build_intent") or "build"),
+                    "scope": str(state.get("project_build_scope") or "narrow"),
+                    "reason": reason,
+                },
+            )
+        result = {
+            "ok": True,
+            "output": {
+                "plan": files,
+                "note": (
+                    "The plan for this turn is now the list above; it is what "
+                    "your completion will be held against."
+                    if files
+                    else "This turn now plans no new files. Finish with an "
+                    "account of what you found, or use respond to answer."
+                ),
+            },
+        }
+        evidence = self._project_evidence(
+            state, call, result, int(state.get("project_checks_run", 0))
+        )
+        return {
+            "project_context": project_context,
+            "project_iterations": iterations + 1,
+            "project_malformed_streak": 0,
+            "project_empty_finish_streak": 0,
+            **evidence,
+            "project_planned_files": files,
+            "project_plan_revisions": revisions + 1,
+            # A corrected plan is progress, not a stall: the counter that
+            # releases the manifest gate measures steps since the overlay last
+            # moved, and holding a revision against it would push a turn that
+            # just did the right thing closer to losing its gate.
+            "project_stall_steps": 0,
+            # Same reasoning for the refusal breaker. The refusals that led
+            # here are usually writes against the plan that was wrong, and
+            # ending the turn one step after the model finally fixed the cause
+            # is the opposite of what that breaker is for.
+            "project_refused_streak": 0,
+            # And the exploration counter: revising the plan is a decision, not
+            # another read, so it breaks a run of reads rather than extending it.
+            "project_consecutive_reads": 0,
+            # The scenarios described the old file list. Keeping them would
+            # replay the abandoned plan's claims against the new one.
+            "project_planned_scenarios": [],
         }
 
     async def _search_memories(self, prompt: str) -> list[str]:
@@ -2821,13 +3517,18 @@ class ControlPlane:
     def _route_after_project_step(self, state: AgentState) -> str:
         staged = state.get("project_staged") or {}
         if state.get("response_text") and not state.get("project_pending_call"):
-            # A finished turn with staged work raises the one batch approval;
-            # with nothing staged there is nothing to gate.
-            return "build_approval" if staged else "publish"
+            # A finished turn with model-written work raises the one batch
+            # approval; with nothing but the host-seeded appkit scaffold there
+            # is nothing the user needs to approve — a reskin that stopped to
+            # ask a question should not surface an approval card for
+            # infrastructure the model never built on.
+            return "build_approval" if _model_has_written(staged) else "publish"
         call = state.get("project_pending_call", {})
         if not call:
-            # No answer and no tool call: the step was unreadable and has been
-            # recorded as evidence. Hand the model the next step to correct it.
+            # No answer and no tool call: the step was unreadable, or it was a
+            # host affordance the step node answered itself (revise_plan), and
+            # either way its result is already trace evidence. Hand the model
+            # the next step to act on it.
             return "retry"
         if call.get("name") == "ask_user":
             # A question for the user suspends the turn; the answer resumes it
@@ -2899,7 +3600,36 @@ class ControlPlane:
             # budget. A model spent 44 straight steps re-reading one file.
             blocked[target] = blocked.get(target, 0) + 1
             return self._project_evidence(
-                state, call, repeat, checks_run, blocked_targets=blocked
+                state, call, repeat, checks_run, blocked_targets=blocked,
+                # The step bought no information: the answer was already in the
+                # model's own trace. This is the doom-loop signal.
+                unproductive=True,
+            )
+        focus_gate = str(state.get("project_focus_path", "") or "")
+        if (
+            focus_gate
+            and call.name in PROJECT_READ_TOOLS
+            and int(state.get("project_consecutive_reads", 0)) >= _FOCUSED_READ_ALLOWANCE
+        ):
+            # The structural half of the act phase. A narrowed turn was already
+            # TOLD to write; a model that keeps reading past its allowance now
+            # gets the refusal as evidence instead of the file contents — the
+            # permission-gated explore→act split, applied at the moment it
+            # matters. Bounded twice over: refusals feed the refused streak,
+            # and the focused ceiling still ends the turn.
+            return self._project_evidence(
+                state,
+                call,
+                {
+                    "ok": False,
+                    "error": (
+                        f"This turn is narrowed to writing {focus_gate}, and reads "
+                        "are closed until it is staged. Send create_file with the "
+                        f"complete contents of {focus_gate} (or apply_patch if it "
+                        "exists) now."
+                    ),
+                },
+                checks_run,
             )
         if not is_check and blocked.get(target, 0) >= _MAX_TARGET_REFUSALS:
             # The same call failing over and over is not progress the loop can
@@ -3002,7 +3732,94 @@ class ControlPlane:
         evidence["project_refused_streak"] = (
             0 if result["ok"] else int(state.get("project_refused_streak", 0)) + 1
         )
+        # A narrowed turn is released the moment its file lands, so the model
+        # goes back to working from the whole plan. If it drifts again the next
+        # owed file is narrowed to in turn — which is the auto-chunking, arrived
+        # at by watching the model rather than by counting files up front.
+        focus = str(state.get("project_focus_path", "") or "")
+        if focus and staged_update is not None and focus in staged_update:
+            evidence["project_focus_path"] = ""
+        if changed and state.get("project_phase") != "building":
+            # A small edit writes before any plan exists; the first staged
+            # byte is its act transition.
+            evidence["project_phase"] = "building"
+            await self.events.emit(
+                state["run_id"], state["conversation_id"],
+                "project.phase", {"phase": "building", "via": call.name},
+            )
+        # project_consecutive_reads is set inside _project_evidence, so it lands
+        # on every exit path (the repeat guard and the closed-target guard both
+        # return early through it) — see the note there.
+        followers = [
+            ProjectToolCallV1.model_validate(item)
+            for item in (state.get("project_pending_reads") or [])
+        ]
+        if followers:
+            evidence["project_trace"] = await self._run_batched_reads(
+                state, project_id, followers, evidence["project_trace"], staged, blocked
+            )
         return evidence
+
+    async def _run_batched_reads(
+        self,
+        state: AgentState,
+        project_id: str,
+        calls: list[ProjectToolCallV1],
+        trace: list[dict[str, Any]],
+        staged: dict[str, Any],
+        blocked: dict[str, int],
+    ) -> list[dict[str, Any]]:
+        """Run the read-only calls that rode in with this step's first one.
+
+        Every transport used to take the first tool call off a reply and drop
+        the rest, so a model that answered "list this directory and read these
+        two files" paid a full round-trip for each read it had already asked
+        for — out of a 48-step budget where the reads are most of the steps.
+
+        Deliberately its own small path rather than a loop around the whole
+        execute node: reads stage nothing and run nothing, so none of what
+        makes that node long — the overlay, the checks budget, the write pin,
+        the approval gate — applies. The repeat guard does apply, and it is
+        given the trace as it grows, so two identical reads in one reply
+        cannot both execute.
+        """
+        running = list(trace)
+        for call in calls:
+            repeat = _repeated_project_call({"project_trace": running}, call)
+            if repeat is not None:
+                running.append(
+                    {"tool": call.name, "arguments": call.arguments, "result": repeat}
+                )
+                continue
+            target = f"{call.name}:{str(call.arguments.get('path', ''))[:200]}"
+            if blocked.get(target, 0) >= _MAX_TARGET_REFUSALS:
+                continue
+            await self._stage(
+                state, "project_tool", f"Using {call.name.replace('_', ' ')}…"
+            )
+            try:
+                output, _ = await self.projects.execute_staged(
+                    project_id, call, staged, []
+                )
+                result: dict[str, Any] = {"ok": True, "output": output}
+            except Exception as exc:  # noqa: BLE001 - a bad read is evidence
+                result = {"ok": False, "error": str(exc)[:1_000]}
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.tool_result",
+                {
+                    "tool": call.name,
+                    "ok": result["ok"],
+                    "staged": False,
+                    "staged_files": len(staged),
+                    "batched": True,
+                },
+            )
+            running.append(
+                {"tool": call.name, "arguments": call.arguments, "result": result}
+            )
+        return running[-24:]
 
     async def _emit_check_result(
         self, state: AgentState, call: ProjectToolCallV1, result: dict[str, Any]
@@ -3039,6 +3856,7 @@ class ControlPlane:
         retry_tool: str = "",
         write_pin: list[str] | None = None,
         blocked_targets: dict[str, int] | None = None,
+        unproductive: bool = False,
     ) -> dict[str, Any]:
         trace = list(state.get("project_trace", []))
         trace.append(
@@ -3051,6 +3869,12 @@ class ControlPlane:
         return {
             "project_trace": trace[-24:],
             "project_pending_call": {},
+            # Cleared here rather than at the one place the batch runs, because
+            # this method is on EVERY path out of a step — including the ones
+            # that refuse the primary call and return early. Graph state merges
+            # partial dicts, so a batch left behind on one of those paths would
+            # be run again against the next step's unrelated pending call.
+            "project_pending_reads": [],
             "project_checks_run": checks_run,
             "project_retry_tool": retry_tool,
             "project_write_pin": list(write_pin or []),
@@ -3058,6 +3882,29 @@ class ControlPlane:
                 blocked_targets
                 if blocked_targets is not None
                 else dict(state.get("project_blocked_targets") or {})
+            ),
+            # A read advances the exploration counter; anything else resets it.
+            # Set HERE, on every exit path, because a repeat is answered by the
+            # guard and returns early, before the main execute path.
+            #
+            # Reads are NOT equal, and treating them as equal was the mistake.
+            # Measured on two real 48-step turns: the productive one (GLM-5.2,
+            # three files written) executed every call it made — 67 of them,
+            # thanks to read batching — while the pathological one (kimi, zero
+            # files) had 36 of its 48 steps refused as repeats. The difference
+            # is not how much each read, it is whether the reading learned
+            # anything. A big model working through a big codebase legitimately
+            # reads a great deal; a looping one asks for what it already has.
+            #
+            # So a fresh read costs 1 and an unproductive one costs
+            # _UNPRODUCTIVE_READ_WEIGHT. That gives real exploration a long
+            # leash — bounded anyway by the step budget — while a doom loop
+            # trips in a handful of steps instead of dozens.
+            "project_consecutive_reads": (
+                int(state.get("project_consecutive_reads", 0))
+                + (_UNPRODUCTIVE_READ_WEIGHT if unproductive else 1)
+                if call.name in PROJECT_READ_TOOLS
+                else 0
             ),
         }
 
@@ -6065,6 +6912,21 @@ class ControlPlane:
             report = await self.projects.materialize_staged(project_id, staged)
             applied = list(report.get("applied", []))
             skipped = list(report.get("skipped", []))
+            planned_files = list(state.get("project_planned_files") or [])
+            plan_recorder = getattr(getattr(self, "projects", None), "record_plan", None)
+            if planned_files and plan_recorder is not None:
+                # The written plan now shows what actually landed — checked
+                # boxes for applied files — so a follow-up turn (or the user)
+                # reads progress, not the original wish list.
+                await plan_recorder(
+                    project_id,
+                    {
+                        "files": planned_files,
+                        "intent": str(state.get("project_build_intent") or "build"),
+                        "scope": str(state.get("project_build_scope") or "narrow"),
+                    },
+                    done=[item for item in applied if item in planned_files],
+                )
             parts = [base] if base else []
             if applied:
                 parts.append(
@@ -6502,6 +7364,16 @@ def initial_state(
         project_blocked_targets={},
         project_planned_files=[],
         project_planned_scenarios=[],
+        project_plan_taken=False,
+        project_build_intent="",
+        project_build_scope="",
+        project_plan_revisions=0,
+        project_pending_reads=[],
+        project_consecutive_reads=0,
+        project_chain_index=0,
+        project_phase="",
+        project_focus_path="",
+        project_focus_rounds=0,
         project_spec={},
         project_stall_steps=0,
         project_refused_streak=0,
@@ -6582,6 +7454,89 @@ _MAX_STALL_STEPS = 6
 # spent making the trace worse, and a model five refusals deep does not
 # recover by being given forty more.
 _MAX_REFUSED_STEPS = 5
+
+
+# Consecutive read-only steps — with no write, check, or plan revision between
+# them — before the turn is nudged, then ended. Reads succeed, so neither the
+# refusal streak nor the stall gate (which only releases `complete`) ever fires
+# on a model that just keeps reading; one live turn read 22 files in a row and
+# ran out the whole 48-step budget having staged nothing. The nudge tells the
+# model to write or finish; the ceiling ends the turn and offers whatever was
+# staged. Both sit far above honest exploration — a real build interleaves a
+# write within a handful of reads, which resets the count.
+_EXPLORE_BASE_STEPS = 10
+_EXPLORE_STEPS_PER_PLANNED_FILE = 3
+_EXPLORE_CEILING = 28
+
+
+def _explore_budget(state: AgentState) -> int:
+    """How many reads in a row this turn may take before it is ended.
+
+    Scaled by the plan, because a flat number is wrong at both ends. A live
+    GLM-5.2 turn planning a five-file whole-app conversion read sixteen things
+    — essentially the project plus the whole vendored appkit, once each — and
+    a flat ceiling of sixteen cut it off exactly when exploration was complete
+    and writing was next. Meanwhile a one-file edit that has read ten times is
+    already lost.
+
+    So: a base allowance for orienting, plus room per file the model has
+    actually committed to writing, capped so nothing can read forever. The
+    pathology this bounds — one live kimi turn spent 40+ reads, most of them
+    repeats, and hit the step budget having staged nothing — is still caught,
+    because that turn planned three files and would have been ended at 19.
+    """
+    planned = len(state.get("project_planned_files") or [])
+    return min(
+        _EXPLORE_BASE_STEPS + planned * _EXPLORE_STEPS_PER_PLANNED_FILE,
+        _EXPLORE_CEILING,
+    )
+
+
+def _explore_nudge_at(state: AgentState) -> int:
+    """When to tell the model to stop reading — a few steps before the end."""
+    return max(4, _explore_budget(state) - 5)
+
+
+# Reads allowed once a turn has been narrowed to a single file. Deliberately
+# tight: the question is now "write this one file", the model has already read
+# the project, and a couple of confirming looks is the most that can honestly
+# be needed. If it will not write one named file after that, no smaller
+# question exists and the turn should end rather than grind on.
+_FOCUSED_EXPLORE_STEPS = 5
+
+# Reads a narrowed turn may still make before the executor closes reading
+# structurally. Two is a confirming look at the target and one more; past
+# that, the refusal itself is the evidence that writing is the only move.
+_FOCUSED_READ_ALLOWANCE = 2
+
+
+# What one unproductive read costs against the exploration budget, where a
+# fresh read costs 1. An unproductive read is one the repeat guard answered:
+# the model asked for something already in its own trace, so the step bought
+# no information. Weighting it is what separates the two live 48-step turns
+# that otherwise look identical from the outside — 42 fresh reads that
+# produced three files, against 36 repeats that produced none. Five means a
+# genuine loop ends in a few steps while a model reading widely is left alone.
+_UNPRODUCTIVE_READ_WEIGHT = 5
+
+
+# Steps of looking around before the turn's file manifest is taken. The plan
+# used to be the first thing that happened, which meant it was written from
+# the request and a bare directory listing — and since an owed manifest
+# narrows create_file's path to an enum of what is unwritten, a plan the
+# project later contradicted became the only write the model could express.
+# Three steps is a listing, a search and a read: enough to know what kind of
+# project this is, cheap because those steps happen anyway, and far short of
+# the budget. A turn that stages a file sooner is planned immediately instead.
+_PLAN_AFTER_STEPS = 3
+
+
+# Manifest revisions one turn may make. Revising is the escape from a plan the
+# evidence disproved, but a model that rewrites its plan every other step is
+# not converging on one — it is using the plan channel to avoid writing. Two
+# corrections is room for "wrong framework" and then "wrong layout"; past that
+# the turn keeps the plan it has and answers to it.
+_MAX_PLAN_REVISIONS = 2
 
 
 _NO_PROJECT_GUIDANCE = """That reads like a request to write files, but no project is open in this conversation — so there is nowhere for me to write them.

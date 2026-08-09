@@ -549,3 +549,150 @@ def test_project_respond_answers_without_the_stage_footer(tmp_path: Path) -> Non
         assert final["role"] == "assistant"
         assert "This project uses FastAPI" in final["content"]
         assert "No file changes were staged" not in final["content"]
+
+
+def test_the_ollama_lane_can_write_a_project_map_when_no_cloud_key_exists() -> None:
+    """Opening a project must not require an OCI or Cohere key.
+
+    It used to: the router bootstrapped on Grok or Cohere and nothing else, and
+    the workspace refused outright when neither was configured. With the Grok
+    lane switched off and a spent Cohere trial quota — the real state of this
+    install — every new project became unopenable with a bare 500, even though
+    the Ollama lane the user actually runs on can answer the same structured
+    request. It is also the better fallback for a call that ships the whole
+    repository: a pinned local model keeps that snapshot on-device.
+    """
+    import asyncio
+
+    from waqil_api.model_provider import RoutedModelProvider
+
+    seen: dict[str, object] = {}
+
+    class Local:
+        async def bootstrap_project(self, snapshot, *, model_aliases=None):
+            seen["called"] = "local"
+            seen["aliases"] = model_aliases
+            return "map-from-ollama"
+
+    class Cloud:
+        def __init__(self, available: bool) -> None:
+            self.available = available
+
+        async def bootstrap_project(self, snapshot):
+            seen["called"] = "cloud"
+            return "map-from-cloud"
+
+    # Neither cloud key configured — the Ollama lane writes the map, and the
+    # user's pinned model is what it is told to use.
+    router = RoutedModelProvider(Local(), Cloud(False), Cloud(False))
+    result = asyncio.run(
+        router.bootstrap_project({"project": {}}, model_aliases={"planner": "glm-5.2:cloud"})
+    )
+    assert result == "map-from-ollama"
+    assert seen["called"] == "local"
+    assert seen["aliases"] == {"planner": "glm-5.2:cloud"}
+
+    # A configured cloud key still keeps first refusal.
+    seen.clear()
+    router = RoutedModelProvider(Local(), Cloud(True), Cloud(False))
+    assert asyncio.run(router.bootstrap_project({"project": {}})) == "map-from-cloud"
+    assert seen["called"] == "cloud"
+
+
+def test_a_dead_cloud_key_falls_through_to_the_ollama_lane() -> None:
+    """`available` means "configured", not "working".
+
+    Cohere on this install has a key and a spent trial quota, so an
+    availability check routed every project map to a provider that answers
+    429 — and opening any new project failed with a bare 500. A map is a
+    single idempotent call, so a failure must fall through to the next
+    provider rather than end the request.
+    """
+    import asyncio
+
+    from waqil_api.model_provider import ModelProviderError, RoutedModelProvider
+
+    class Local:
+        async def bootstrap_project(self, snapshot, *, model_aliases=None):
+            return "map-from-ollama"
+
+    class DeadCloud:
+        available = True
+
+        async def bootstrap_project(self, snapshot):
+            raise ModelProviderError('Cohere returned HTTP 429: {"message":"Trial key"}')
+
+    class OffCloud:
+        available = False
+
+        async def bootstrap_project(self, snapshot):  # pragma: no cover
+            raise AssertionError("an unconfigured provider must not be tried")
+
+    router = RoutedModelProvider(Local(), OffCloud(), DeadCloud())
+    assert asyncio.run(router.bootstrap_project({"project": {}})) == "map-from-ollama"
+
+    # When nothing can answer, the CLOUD cause is what surfaces — it is the
+    # actionable one, where the local error is just the last thing to fail.
+    class DeadLocal:
+        async def bootstrap_project(self, snapshot, *, model_aliases=None):
+            raise ModelProviderError("ollama is not running")
+
+    router = RoutedModelProvider(DeadLocal(), OffCloud(), DeadCloud())
+    try:
+        asyncio.run(router.bootstrap_project({"project": {}}))
+        raise AssertionError("expected the map to fail")
+    except ModelProviderError as exc:
+        assert "429" in str(exc)
+
+
+@pytest.mark.asyncio
+async def test_the_plan_is_written_to_the_project_and_survives_revision(tmp_path) -> None:
+    """Plan-as-file: the build plan lands in .metis as a checklist the next
+    context window can read, replaces itself on revision instead of stacking,
+    and marks what actually landed."""
+    projects_root = tmp_path / "Projects"
+    project = projects_root / "demo"
+    project.mkdir(parents=True)
+    (project / "README.md").write_text("# Demo\n", encoding="utf-8")
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        repo_root=tmp_path,
+        asset_roots=[projects_root],
+        model_backend="deterministic",
+        allow_test_backends=True,
+    )
+    assets = AssetManager(settings.asset_roots, catalog_path=settings.asset_catalog_path)
+    project_id = (await assets.scan())[0].id
+    service = ProjectWorkspaceService(settings, assets, DeterministicModelProvider())
+    await service.open(project_id)
+
+    await service.record_plan(
+        project_id,
+        {"files": ["app/main.py", "app/static/index.html"], "intent": "build", "scope": "narrow"},
+    )
+    notes = (project / ".metis" / "METIS.md").read_text(encoding="utf-8")
+    assert "- [ ] `app/main.py`" in notes
+    assert "- [ ] `app/static/index.html`" in notes
+    plan = json.loads((project / ".metis" / "plan.json").read_text(encoding="utf-8"))
+    assert plan["files"] == ["app/main.py", "app/static/index.html"]
+
+    # A revision REPLACES the section — one plan in the file, ever.
+    await service.record_plan(
+        project_id,
+        {"files": ["app.py"], "intent": "edit", "scope": "narrow",
+         "reason": "the project is Streamlit; there is no app/ package"},
+    )
+    notes = (project / ".metis" / "METIS.md").read_text(encoding="utf-8")
+    assert notes.count("Current build plan") == 1
+    assert "- [ ] `app.py`" in notes
+    assert "app/static/index.html" not in notes.split("<!-- metis-plan:start -->")[1]
+    assert "the project is Streamlit" in notes
+
+    # Applied files come back checked.
+    await service.record_plan(
+        project_id, {"files": ["app.py"], "intent": "edit", "scope": "narrow"},
+        done=["app.py"],
+    )
+    notes = (project / ".metis" / "METIS.md").read_text(encoding="utf-8")
+    assert "- [x] `app.py`" in notes

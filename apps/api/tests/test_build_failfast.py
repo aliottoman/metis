@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from waqil_api.control_plane import ControlPlane
+from waqil_api.control_plane import _PLAN_AFTER_STEPS, ControlPlane
 
 
 async def _noop(*args: object, **kwargs: object) -> None:
@@ -44,7 +44,11 @@ def _plane(model: object) -> ControlPlane:
 
 
 @pytest.mark.asyncio
-async def test_an_empty_plan_ends_the_turn_before_any_step_is_spent() -> None:
+async def test_an_empty_plan_ends_the_turn_without_spending_another_step() -> None:
+    """The plan is now taken after a few steps of looking around, so "before any
+    step is spent" became "before the step this plan was meant to start". The
+    verdict is unchanged: asked twice and naming nothing ends the turn rather
+    than letting a planless build drift through its budget."""
     class NoPlanModel:
         def __init__(self) -> None:
             self.plan_calls = 0
@@ -64,6 +68,7 @@ async def test_an_empty_plan_ends_the_turn_before_any_step_is_spent() -> None:
             "run_id": "run_x",
             "conversation_id": "conv_x",
             "model_aliases": {"_project_id": "asset_x"},
+            "project_iterations": _PLAN_AFTER_STEPS,
         },
     )
 
@@ -106,6 +111,7 @@ async def test_a_plan_that_recovers_on_retry_continues_normally() -> None:
             "run_id": "run_x",
             "conversation_id": "conv_x",
             "model_aliases": {"_project_id": "asset_x"},
+            "project_iterations": _PLAN_AFTER_STEPS,
         },
     )
 

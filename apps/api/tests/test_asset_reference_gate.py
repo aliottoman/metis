@@ -81,3 +81,40 @@ def test_unmounted_absolute_paths_and_externals_never_false_alarm() -> None:
 def test_escaping_the_project_is_skipped_not_crashed() -> None:
     files = {"static/styles.css": "h1 { background: url('../../../etc/passwd'); }\n"}
     assert _reference_findings(files) == []
+
+
+def test_an_inline_svg_data_uri_is_not_a_missing_asset() -> None:
+    """A data: URI carries a whole document, and an inline SVG routinely holds
+    its own url(...) pointing at a filter defined inside itself.
+
+    Those belong to that document, not to this project. The outer
+    url("data:…") does not match the CSS pattern — its payload contains quotes
+    — so the scanner reached past it and blamed the INNER url(%23n). That fired
+    on Metis's own vendored appkit/static/theme.css and raised a blocking "the
+    page loads broken" finding on every web build that staged the scaffold.
+    """
+    files = {
+        "static/theme.css": (
+            ".grain {\n"
+            "  background-image: url(\"data:image/svg+xml,%3Csvg "
+            "xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E"
+            "%3CfeTurbulence baseFrequency='0.8'/%3E%3C/filter%3E"
+            "%3Crect filter='url(%23n)'/%3E%3C/svg%3E\");\n"
+            "}\n"
+        ),
+    }
+    assert _reference_findings(files) == []
+
+
+def test_the_real_vendored_theme_raises_nothing() -> None:
+    """The regression guard proper: Metis's own design language must not be
+    reported as broken by Metis's own gate."""
+    from waqil_api.project_scaffold import scaffold_sources
+
+    theme = scaffold_sources(["web_ui"])["appkit/static/theme.css"]
+    assert _reference_findings({"appkit/static/theme.css": theme}) == []
+
+
+def test_a_percent_encoded_anchor_is_an_anchor() -> None:
+    files = {"static/styles.css": "rect { filter: url(%23noise); }\n"}
+    assert _reference_findings(files) == []

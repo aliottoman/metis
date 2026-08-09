@@ -11,8 +11,10 @@ import {
 import type {
   LocalModelSession,
   ModelPreference,
+  ModelRole,
   ProjectMode,
   ProjectWorkspace,
+  RoleChainEntry,
 } from "@/lib/types";
 
 const IDLE_OPTIONS: Array<[LocalModelSession["idle_timeout_seconds"], string]> = [
@@ -30,6 +32,29 @@ const CONTEXT_OPTIONS: Array<[LocalModelSession["context_window"], string]> = [
   [65536, "64K · long documents"],
   [131072, "128K · heavy"],
 ];
+
+// The three routing roles a preference may ladder, with the words a user
+// should see. Order matters: coder first, because its ladder steers builds.
+const ROLE_ROWS: Array<[ModelRole, string, string]> = [
+  ["coder", "Coder", "Writes project builds — the ladder that matters most"],
+  ["planner", "Planner", "Routes requests and plans work"],
+  ["quality", "Reviewer", "Quality and review passes"],
+];
+
+/** One ladder rung as a select value: "local:<model>", "cohere:", "oci:", "". */
+function encodeRung(entry: RoleChainEntry | undefined): string {
+  if (!entry) return "";
+  if (entry.provider === "local") return entry.model ? `local:${entry.model}` : "";
+  return `${entry.provider}:`;
+}
+
+function decodeRung(value: string): RoleChainEntry | null {
+  if (!value) return null;
+  if (value === "cohere:") return { provider: "cohere", model: null };
+  if (value === "oci:") return { provider: "oci", model: null };
+  if (value.startsWith("local:")) return { provider: "local", model: value.slice(6) };
+  return null;
+}
 
 function gigabytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
@@ -81,12 +106,12 @@ type ModelControlProps = {
 /**
  * One control, top-right of the chat pane, for what runs the next message.
  *
- * Plain chat picks a provider — on-device or Grok in the cloud. A project has
- * its own two modes instead (Grok maps once then North runs turns, or Grok
- * leads every step), so when a project is scoped this shows those rather than a
- * provider toggle the project routing would ignore. The on-device launch
- * controls live under a divider, since both plain-local chat and the Grok→Local
- * project mode run answers on the same local weights.
+ * Plain chat picks a provider — the Ollama lane, Grok, or Cohere. A project
+ * has its own three modes instead (the Ollama lane runs each step, or Grok or
+ * Command A+ leads every step), so when a project is scoped this shows those
+ * rather than a provider toggle the project routing would ignore. The
+ * on-device launch controls live under a divider, since both plain-local chat
+ * and the Ollama-lane project mode run answers through the same daemon.
  */
 export function ModelControl({
   preference,
@@ -113,10 +138,58 @@ export function ModelControl({
   const modelTouched = useRef(false);
   const sessionRef = useRef<LocalModelSession | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Ladder edits under composition: preference refreshes must not clobber a
+  // half-built chain, so the store only follows the server while untouched.
+  const [chains, setChains] = useState<ModelPreference["role_chains"]>({});
+  const [chainsDirty, setChainsDirty] = useState(false);
 
   const provider = preference?.provider ?? "local";
   const ociAvailable = preference?.oci_available === true;
   const cohereAvailable = preference?.cohere_available === true;
+
+  useEffect(() => {
+    if (!chainsDirty) setChains(preference?.role_chains ?? {});
+  }, [preference, chainsDirty]);
+
+  function setRung(role: ModelRole, slot: number, value: string) {
+    setChainsDirty(true);
+    setChains((current) => {
+      const ladder = [...(current[role] ?? [])];
+      const entry = decodeRung(value);
+      if (entry) {
+        while (ladder.length < slot) ladder.push({ provider: "local", model: null });
+        ladder[slot] = entry;
+      } else {
+        ladder.splice(slot);
+      }
+      const next = { ...current };
+      const kept = ladder.filter((item) => item.provider !== "local" || item.model);
+      if (kept.length) next[role] = kept;
+      else delete next[role];
+      return next;
+    });
+  }
+
+  async function saveChains() {
+    if (!preference) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await setModelPreference(
+        preference.mode,
+        preference.model,
+        preference.provider,
+        preference.oci_tools,
+        chains,
+      );
+      setChainsDirty(false);
+      onPreferenceChange?.(saved);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "The ladder could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const apply = useCallback((next: LocalModelSession) => {
     setSession(next);
@@ -346,12 +419,21 @@ export function ModelControl({
           ? "ready"
           : localState;
 
+  // The local-lane project mode runs steps on whatever the Ollama lane
+  // resolves: the pinned model when one is pinned there, else the session's.
+  const ollamaLaneModel =
+    provider === "local" && preference?.mode === "pinned" && preference.model
+      ? preference.model
+      : session?.selected_model ?? null;
+
   const triggerLabel = project
     ? projectMode === "grok_continuous"
-      ? "Keep Grok"
+      ? "Grok"
       : projectMode === "cohere_continuous"
         ? "Command A+"
-        : "Grok → Local"
+        : ollamaLaneModel
+          ? `Ollama · ${shortModel(ollamaLaneModel)}`
+          : `Local · ${localStateLabel(session, now)}`
     : provider === "oci"
       ? "Cloud · Grok"
       : provider === "cohere"
@@ -394,8 +476,12 @@ export function ModelControl({
                   disabled={disabled || projectBusy}
                   onClick={() => onChooseProjectMode("grok_bootstrap_local")}
                 >
-                  <strong>Grok → Local</strong>
-                  <small>Grok maps once; North handles project turns on-device.</small>
+                  <strong>Ollama lane</strong>
+                  <small>
+                    {`A cloud model maps the repo once; ${
+                      ollamaLaneModel ? shortModel(ollamaLaneModel) : "your Ollama model"
+                    } runs each project step.`}
+                  </small>
                 </button>
                 <button
                   type="button"
@@ -403,11 +489,19 @@ export function ModelControl({
                   aria-checked={projectMode === "grok_continuous"}
                   className={projectMode === "grok_continuous" ? "selected" : ""}
                   disabled={disabled || projectBusy || !ociAvailable}
-                  title={ociAvailable ? undefined : "Configure OCI in Settings first"}
+                  title={
+                    ociAvailable
+                      ? undefined
+                      : "Enable the Grok lane (WAQIL_GROK_LANE_ENABLED) and configure OCI Responses first"
+                  }
                   onClick={() => onChooseProjectMode("grok_continuous")}
                 >
-                  <strong>Keep Grok</strong>
-                  <small>{ociAvailable ? "Grok leads every bounded project step — largest context." : "Needs OCI Responses configured."}</small>
+                  <strong>Grok</strong>
+                  <small>
+                    {ociAvailable
+                      ? "Grok leads every bounded project step — largest context."
+                      : "Off — needs the Grok lane enabled and OCI Responses configured."}
+                  </small>
                 </button>
                 <button
                   type="button"
@@ -419,7 +513,7 @@ export function ModelControl({
                   onClick={() => onChooseProjectMode("cohere_continuous")}
                 >
                   <strong>Command A+</strong>
-                  <small>{cohereAvailable ? "Cohere leads every bounded step — strongest on code quality." : "Needs a Cohere API key configured."}</small>
+                  <small>{cohereAvailable ? "Cohere Command A+ leads every bounded step." : "Needs a Cohere API key configured."}</small>
                 </button>
               </div>
             </>
@@ -588,6 +682,47 @@ export function ModelControl({
               </button>
             </div>
           ) : null}
+
+          <div className="modelControlSession">
+            <div className="modelControlSessionHead">
+              <span className="eyebrow">Roles &amp; backups</span>
+              {chainsDirty ? (
+                <button
+                  type="button"
+                  className="modelControlStop"
+                  onClick={() => void saveChains()}
+                  disabled={busy || providerSaving}
+                >
+                  {busy ? "Saving…" : "Save ladder"}
+                </button>
+              ) : null}
+            </div>
+            {ROLE_ROWS.map(([role, label, hint]) => (
+              <div key={role} className="modelControlRoleRow">
+                <span className="modelControlRoleName" title={hint}>{label}</span>
+                {[0, 1, 2].map((slot) => (
+                  <select
+                    key={slot}
+                    aria-label={`${label} ${slot === 0 ? "primary" : `backup ${slot}`}`}
+                    value={encodeRung(chains[role]?.[slot])}
+                    onChange={(event) => setRung(role, slot, event.target.value)}
+                    disabled={busy || providerSaving}
+                  >
+                    <option value="">{slot === 0 ? "Current selection" : "— none —"}</option>
+                    {(session?.models ?? []).map((item) => (
+                      <option key={item.id} value={`local:${item.id}`}>{item.name}</option>
+                    ))}
+                    {cohereAvailable ? <option value="cohere:">Command A+ (Cohere)</option> : null}
+                    {ociAvailable ? <option value="oci:">Grok (OCI)</option> : null}
+                  </select>
+                ))}
+              </div>
+            ))}
+            <p className="modelControlAdvice">
+              First rung is the primary; a lane that stops answering falls to the
+              next rung mid-run. The coder ladder steers project builds.
+            </p>
+          </div>
 
           {(session?.state === "error" && showLocalSession) || error ? (
             <p className="modelControlError" role="alert">{error || session?.error}</p>

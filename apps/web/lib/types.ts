@@ -512,11 +512,23 @@ export interface PersonalProfile {
   updated_at?: string | null;
 }
 
+export interface RoleChainEntry {
+  provider: "local" | "oci" | "cohere";
+  // The Ollama model for a local rung; the OCI and Cohere lanes run their
+  // configured model and leave this null.
+  model: string | null;
+}
+
+export type ModelRole = "planner" | "coder" | "quality";
+
 export interface ModelPreference {
   mode: "split" | "pinned";
   model: string | null;
   provider: "local" | "oci" | "cohere";
   oci_tools: Array<"x_search" | "code_interpreter">;
+  // Per-role fallback ladders, first entry primary. Empty = no explicit
+  // chain: the role runs exactly as it always has.
+  role_chains: Partial<Record<ModelRole, RoleChainEntry[]>>;
   oci_available: boolean;
   cohere_available: boolean;
 }

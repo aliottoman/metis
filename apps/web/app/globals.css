@@ -9966,6 +9966,19 @@ body {
 .modelControlSession label { display: grid; gap: 5px; }
 .modelControlSession label > span { color: var(--muted); font-size: 10.5px; font-weight: 640; }
 .modelControlRow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* One role's ladder: name, then primary → backup → backup. */
+.modelControlRoleRow {
+  display: grid;
+  grid-template-columns: 58px 1fr 1fr 1fr;
+  gap: 6px;
+  align-items: center;
+}
+.modelControlRoleRow .modelControlRoleName {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 640;
+}
+.modelControlRoleRow select { height: 30px; font-size: 11px; }
 .modelControlSession select {
   width: 100%;
   height: 36px;

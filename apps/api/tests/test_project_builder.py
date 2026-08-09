@@ -2041,14 +2041,20 @@ async def test_a_planned_dotfile_matches_the_key_the_overlay_actually_stores(
 
 
 @pytest.mark.asyncio
-async def test_the_manifest_is_taken_once_and_costs_no_step(tmp_path: Path) -> None:
+async def test_the_manifest_is_taken_after_looking_around_and_costs_no_step(
+    tmp_path: Path,
+) -> None:
     """The plan is a property of the turn, not one of the model's steps.
 
     It runs inside the existing node rather than as a graph node of its own, so
     the checkpoint schema and the recursion budget are untouched, and it must
     not consume a project_iteration — the step budget is tight enough that
-    charging one pushes real work past it."""
-    from waqil_api.control_plane import ControlPlane
+    charging one pushes real work past it.
+
+    It is also taken AFTER the loop has read a little, not before: a plan
+    written from the request alone is a plan the project can contradict, and
+    an owed manifest narrows create_file to exactly what it named."""
+    from waqil_api.control_plane import ControlPlane, _PLAN_AFTER_STEPS
 
     calls = {"count": 0}
 
@@ -2068,26 +2074,298 @@ async def test_the_manifest_is_taken_once_and_costs_no_step(tmp_path: Path) -> N
         "conversation_id": "conv_x",
     }
 
-    planned, scenarios = await ControlPlane._project_manifest(plane, state, {}, 0, {})
-    assert planned == ["alpha.txt", "beta.txt"]
-    assert scenarios == []
+    # Not while the loop is still looking around.
+    for early in range(_PLAN_AFTER_STEPS):
+        assert (await ControlPlane._project_manifest(plane, state, {}, early, {}))[
+            "files"
+        ] is None
+    assert calls["count"] == 0
+
+    plan = await ControlPlane._project_manifest(
+        plane, state, {}, _PLAN_AFTER_STEPS, {}
+    )
+    assert plan["files"] == ["alpha.txt", "beta.txt"]
+    assert plan["scenarios"] == []
+    assert plan["taken"] is True
     assert calls["count"] == 1
 
-    # Never re-asked: once on the first step of the turn, then carried in state.
-    assert await ControlPlane._project_manifest(
-        plane, {**state, "project_planned_files": planned}, {}, 3, {}
-    ) == (planned, [])
-    assert calls["count"] == 1
-    # Not on a later step, not once work is staged, and not for a question —
-    # None, meaning "no manifest applies", never [] ("asked, got nothing").
-    assert (await ControlPlane._project_manifest(plane, state, {}, 2, {}))[0] is None
-    assert (await ControlPlane._project_manifest(plane, state, {}, 0, {"a": {}}))[0] is None
+    # Never re-asked: once per turn, then carried in state.
+    carried = await ControlPlane._project_manifest(
+        plane, {**state, "project_planned_files": plan["files"]}, {}, 9, {}
+    )
+    assert carried["files"] == plan["files"]
+    assert carried["taken"] is False
+    # Nor after a plan that legitimately named nothing — `taken` is what stops
+    # a question being re-planned on every step that follows it.
     assert (
         await ControlPlane._project_manifest(
-            plane, {**state, "prompt": "What does main.py do?"}, {}, 0, {}
+            plane, {**state, "project_plan_taken": True}, {}, 9, {}
         )
-    )[0] is None
+    )["taken"] is False
     assert calls["count"] == 1
+
+    # A turn that staged a file before the threshold is planned at once: the
+    # gate cannot be established late once work is already in the overlay.
+    early_stage = await ControlPlane._project_manifest(plane, state, {}, 0, {"a": {}})
+    assert early_stage["files"] == ["alpha.txt", "beta.txt"]
+    assert calls["count"] == 2
+
+    # The prefilter still keeps plan calls off turns that are not about code.
+    assert (
+        await ControlPlane._project_manifest(
+            plane, {**state, "prompt": "Thanks, that all looks good."}, {}, 9, {}
+        )
+    )["files"] is None
+    assert calls["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_the_plan_declares_the_turns_intent_and_the_regexes_step_back() -> None:
+    """Classification moves to the model that has the repository in front of it.
+
+    The regex is a keyword match on the user's wording, and it is wrong in both
+    directions: a question that happens to contain "add" and a source path
+    reads as a build, and a whole-application rewire reads as no build at all
+    (it never says "create" and names no file). A provider that declares intent
+    now decides; one that does not keeps the old predicate exactly."""
+    from waqil_api.control_plane import _writes_files
+
+    # Over-fires: a question carrying a create verb and a path.
+    question = "Where would I add a new route in app/main.py?"
+    assert _writes_files({"prompt": question}) is True
+    assert _writes_files({"prompt": question, "project_build_intent": "question"}) is False
+
+    # Under-fires: the live Logivity turn, which writes across the whole UI.
+    rewire = "Rewire this app's entire UI onto the Metis design language in appkit."
+    assert _writes_files({"prompt": rewire}) is False
+    assert _writes_files({"prompt": rewire, "project_build_intent": "edit"}) is True
+    # "build" and "edit" both write; only "question" turns the gate off.
+    assert _writes_files({"prompt": rewire, "project_build_intent": "build"}) is True
+
+
+def test_an_infra_failure_is_not_reported_as_an_unreadable_model_reply() -> None:
+    """A 429/quota/5xx/timeout is the backend failing to answer, not the model
+    replying unintelligibly. Live proof: an exhausted Cohere trial key (HTTP
+    429) drove the loop to say "I could not read 3 replies from the model" —
+    blaming the model for the backend being out of quota."""
+    from waqil_api.model_provider import (
+        ModelProviderError,
+        PermanentModelError,
+        classify_backend_unavailable,
+    )
+
+    quota = ModelProviderError(
+        'Cohere returned HTTP 429: {"message":"You are using a Trial key, '
+        'which is limited to 1000 API calls / month"}'
+    )
+    assert classify_backend_unavailable(quota) == "rate_limited"
+    assert classify_backend_unavailable(ModelProviderError("Cohere kept failing after 3 attempts")) == "backend_error"
+    assert classify_backend_unavailable(ModelProviderError("Grok call timed out after 120 seconds")) == "backend_timeout"
+
+    # Genuinely malformed model replies stay malformed — the model DID answer,
+    # unreadably, and the loop must feed that back as evidence, not end the turn.
+    assert classify_backend_unavailable(ModelProviderError("hosted model returned prose instead of a project tool call")) is None
+    assert classify_backend_unavailable(ModelProviderError("Grok returned invalid project tool arguments")) is None
+
+    # A permanent pre-model refusal is classify_model_error's job; this must
+    # not shadow it (both would end the turn, but with different guidance).
+    assert classify_backend_unavailable(PermanentModelError("failed to parse grammar", reason="grammar_compile")) is None
+
+
+@pytest.mark.asyncio
+async def test_a_backend_outage_ends_the_turn_honestly_not_as_malformed() -> None:
+    """The loop half of Finding D: a provider that raises a 429 must end the
+    turn with the honest 'backend unavailable' message and NOT advance the
+    malformed-reply streak."""
+    from waqil_api.control_plane import ControlPlane
+    from waqil_api.model_provider import ModelProviderError
+
+    class QuotaModel:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            return SimpleNamespace(files=[], scenarios=[], intent="edit", scope="narrow")
+
+        async def project_step(self, request, *, model_aliases=None):
+            raise ModelProviderError('Cohere returned HTTP 429: {"message":"Trial key"}')
+
+    plane = object.__new__(ControlPlane)
+    plane.model = QuotaModel()
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.projects = SimpleNamespace(context=_empty_context, stage_scaffold=None)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_staged_max_files=48,
+        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_max_chars=0, project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+
+    result = await ControlPlane._project_step(plane, {
+        "prompt": "Add a /health route to app/main.py.",
+        "run_id": "run_x", "conversation_id": "conv_x",
+        "model_aliases": {"_project_id": "asset_x"},
+        "project_iterations": 0,
+    })
+
+    assert "rate-limited or out of quota" in result["response_text"]
+    # Not counted as an unreadable reply.
+    assert result.get("project_malformed_streak", 0) == 0
+    assert "could not read" not in result["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_run_of_reads_without_a_write_ends_the_turn() -> None:
+    """Finding B: reads succeed, so neither the refusal streak nor the stall
+    gate stops a model that just keeps reading. The exploration ceiling does —
+    one live turn read 40+ files in a row and hit the step budget with nothing
+    staged."""
+    from waqil_api.control_plane import ControlPlane, _explore_budget
+
+    plane = object.__new__(ControlPlane)
+    plane.projects = SimpleNamespace(context=_empty_context)
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_verify_bonus_steps=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+    base = {
+        "prompt": "Rework the dashboard.",
+        "run_id": "r", "conversation_id": "c",
+        "model_aliases": {"_project_id": "asset_x"},
+        "project_iterations": 20,
+    }
+
+    # Nothing staged: the honest dead-end message, not an offer.
+    dry = await ControlPlane._project_step(
+        plane, {**base, "project_consecutive_reads": _explore_budget(base)}
+    )
+    assert "without writing" in dry["response_text"]
+    assert dry["project_consecutive_reads"] == 0
+
+    # With staged work: the run of reads still ends the turn, but offers it.
+    staged = {**base, "project_staged": {"app/main.py": {"bytes": 10}}}
+    offered = await ControlPlane._project_step(
+        plane, {**staged, "project_consecutive_reads": _explore_budget(staged)}
+    )
+    assert "ready to review" in offered["response_text"]
+
+
+def test_the_exploration_budget_scales_with_what_was_planned() -> None:
+    """A flat ceiling is wrong at both ends.
+
+    A live GLM-5.2 turn planning a five-file whole-app conversion read sixteen
+    things — the project plus the vendored appkit, roughly once each — and a
+    flat sixteen cut it off exactly when exploration was done and writing was
+    next. A one-file edit that has read ten times is already lost. So the
+    allowance follows the plan, and stays capped."""
+    from waqil_api.control_plane import _explore_budget, _explore_nudge_at
+
+    unplanned = _explore_budget({"project_planned_files": []})
+    one_file = _explore_budget({"project_planned_files": ["a.py"]})
+    whole_app = _explore_budget(
+        {"project_planned_files": ["a.py", "b.py", "c.py", "d.py", "e.py"]}
+    )
+    assert unplanned < one_file < whole_app
+    # The GLM conversion (5 planned files, 16 reads) now survives to write.
+    assert whole_app > 16
+    # And nothing reads forever: the live kimi pathology (3 planned, 40+ reads)
+    # is still ended well before the step budget.
+    assert _explore_budget({"project_planned_files": ["a", "b", "c"]}) < 40
+    assert _explore_budget({"project_planned_files": ["x"] * 50}) <= 28
+    # The nudge always lands before the end, with room to act on it.
+    for plan in ([], ["a"], ["a"] * 5, ["a"] * 50):
+        state = {"project_planned_files": plan}
+        assert _explore_nudge_at(state) < _explore_budget(state)
+
+
+@pytest.mark.asyncio
+async def test_a_web_reskin_seeds_appkit_on_step_one_without_the_plan() -> None:
+    """The Logivity lesson, twice over: appkit is what a reskin needs, and the
+    plan call that would carry the intent is unreliable on the hosted lane — so
+    the scaffold must be seeded from the REQUEST, up front, with no model call.
+    And seeding it must not count as model progress, or plan-after-exploration
+    would collapse to step one just because appkit was staged."""
+    from waqil_api.control_plane import ControlPlane, _model_has_written
+    from waqil_api.contracts import ProjectAgentStepV1, ProjectToolCallV1
+
+    seeded_calls = {"n": 0}
+
+    async def _stage_scaffold(project_id, staged, capabilities):
+        seeded_calls["n"] += 1
+        nxt = dict(staged)
+        nxt["appkit/static/theme.css"] = {"content": ":root{}", "origin": "create", "bytes": 6}
+        nxt["appkit/web.py"] = {"content": "x=1", "origin": "create", "bytes": 3}
+        return nxt, ["appkit/static/theme.css", "appkit/web.py"]
+
+    plans = {"n": 0}
+
+    class Model:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            plans["n"] += 1
+            # The hosted lane's unreliability, reproduced: the plan call raises,
+            # so nothing downstream can depend on it having run.
+            raise RuntimeError("hosted structured decode failed")
+
+        async def project_step(self, request, *, model_aliases=None):
+            # Assert the scaffold reached the model on the very first step.
+            assert request["scaffold"], "appkit note must be present on step 1"
+            return ProjectAgentStepV1(
+                status="tool", tool_call=ProjectToolCallV1(name="list_files", arguments={}),
+            )
+
+    plane = object.__new__(ControlPlane)
+    plane.model = Model()
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.projects = SimpleNamespace(context=_empty_context, stage_scaffold=_stage_scaffold)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_staged_max_files=48,
+        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_max_chars=0, project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+
+    result = await ControlPlane._project_step(plane, {
+        "prompt": "Rewire this app's entire UI onto the Metis design language in appkit, "
+                  "mount it with mount_appkit_static(app), link /appkit/theme.css first.",
+        "run_id": "run_x", "conversation_id": "conv_x",
+        "model_aliases": {"_project_id": "asset_x"},
+        "project_iterations": 0,
+    })
+
+    # appkit was seeded from the request, with no working plan behind it.
+    staged = result["project_staged"]
+    assert any(p.startswith("appkit/") for p in staged)
+    assert seeded_calls["n"] == 1
+    # And the seed is not model progress: _model_has_written sees past it, so
+    # the plan-after-exploration gate would still hold.
+    assert _model_has_written(staged) is False
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_revise_plan_does_not_burn_a_revision() -> None:
+    """Finding C: a revision that restates the current plan (one live run did it
+    twice) is accepted but not counted, and the model is pointed back at the
+    work rather than re-announced to."""
+    from waqil_api.control_plane import ControlPlane
+
+    plane = object.__new__(ControlPlane)
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.settings = SimpleNamespace(project_staged_max_files=48)
+    state = {
+        "prompt": "x", "run_id": "r", "conversation_id": "c",
+        "project_planned_files": ["app/main.py", "app/static/index.html"],
+        "project_plan_revisions": 0, "project_trace": [],
+    }
+    call = ProjectToolCallV1(
+        name="revise_plan",
+        arguments={"files": ["app/main.py", "app/static/index.html"], "reason": "same"},
+    )
+    result = await ControlPlane._revise_project_plan(plane, state, call, 5, {})
+    assert result.get("project_plan_revisions", 0) == 0  # not counted
+    assert "unchanged" in result["project_trace"][-1]["result"]["output"]["note"]
 
 
 @pytest.mark.asyncio
@@ -2135,6 +2413,8 @@ async def test_planning_the_build_does_not_spend_one_of_the_models_steps() -> No
     plane._guard = _noop_emit
     plane._stage = _noop_emit
 
+    from waqil_api.control_plane import _PLAN_AFTER_STEPS
+
     result = await ControlPlane._project_step(
         plane,
         {
@@ -2142,22 +2422,23 @@ async def test_planning_the_build_does_not_spend_one_of_the_models_steps() -> No
             "run_id": "run_x",
             "conversation_id": "conv_x",
             "model_aliases": {"_project_id": "asset_x"},
-            "project_iterations": 0,
+            "project_iterations": _PLAN_AFTER_STEPS,
         },
     )
 
     assert result["project_planned_files"] == ["alpha.txt"]
-    assert result["project_iterations"] == 1  # the step, and only the step
+    # The step, and only the step: planning rides inside it and charges nothing.
+    assert result["project_iterations"] == _PLAN_AFTER_STEPS + 1
     assert result["project_pending_call"]["name"] == "create_file"
 
 
 @pytest.mark.asyncio
-async def test_the_manifest_survives_an_unreadable_first_reply() -> None:
-    """The manifest is taken on step one only, so it has to be carried out of
-    every outcome of step one — including the ones that return early. Losing it
+async def test_the_manifest_survives_an_unreadable_reply_on_the_step_it_lands() -> None:
+    """The manifest is taken once, so it has to be carried out of every outcome
+    of the step that takes it — including the ones that return early. Losing it
     to a single malformed reply would drop the gate for the rest of the turn,
-    and step two, no longer being step one, would never ask for it again."""
-    from waqil_api.control_plane import ControlPlane
+    and the next step, no longer the one that asks, would never ask again."""
+    from waqil_api.control_plane import ControlPlane, _PLAN_AFTER_STEPS
     from waqil_api.model_provider import ModelProviderError
 
     class UnreadableModel:
@@ -2192,11 +2473,13 @@ async def test_the_manifest_survives_an_unreadable_first_reply() -> None:
         "run_id": "run_x",
         "conversation_id": "conv_x",
         "model_aliases": {"_project_id": "asset_x"},
+        "project_iterations": _PLAN_AFTER_STEPS,
     }
 
     result = await ControlPlane._project_step(plane, state)
 
     assert result["project_planned_files"] == ["alpha.txt", "beta.txt"]
+    assert result["project_plan_taken"] is True
     assert result["project_malformed_streak"] == 1
 
 
@@ -2204,7 +2487,7 @@ async def test_the_manifest_survives_an_unreadable_first_reply() -> None:
 async def test_a_manifest_the_model_cannot_produce_leaves_the_loop_as_it_was() -> None:
     """The gate only sharpens an existing guard, so losing it must cost nothing
     else. A build with no manifest behaves exactly as it did before."""
-    from waqil_api.control_plane import ControlPlane
+    from waqil_api.control_plane import ControlPlane, _PLAN_AFTER_STEPS
 
     class FailingModel:
         async def project_plan_files(self, request, *, model_aliases=None):
@@ -2215,7 +2498,7 @@ async def test_a_manifest_the_model_cannot_produce_leaves_the_loop_as_it_was() -
         settings=SimpleNamespace(project_staged_max_files=48),
         events=SimpleNamespace(emit=_noop_emit),
     )
-    planned, _scenarios = await ControlPlane._project_manifest(
+    plan = await ControlPlane._project_manifest(
         plane,
         {
             "prompt": "Build out the whole app from scratch.",
@@ -2223,10 +2506,236 @@ async def test_a_manifest_the_model_cannot_produce_leaves_the_loop_as_it_was() -
             "conversation_id": "c",
         },
         {},
-        0,
+        _PLAN_AFTER_STEPS,
         {},
     )
-    assert planned is None  # infra failure degrades; [] is reserved for "asked, got nothing"
+    # Infra failure degrades; [] is reserved for "asked, got nothing".
+    assert plan["files"] is None
+    # And it is not recorded as taken, so a later step may still get a plan.
+    assert plan["taken"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_plan_taken_this_step_reaches_this_steps_request() -> None:
+    """The declaration must not be a step late.
+
+    The step that takes the plan is the one that has to act on it: a turn the
+    model has just called a question would otherwise still be sent the build
+    grammar, in which answering the user is not expressible at all."""
+    from waqil_api.control_plane import ControlPlane, _PLAN_AFTER_STEPS
+
+    seen: list[dict[str, Any]] = []
+
+    class QuestionModel:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            return SimpleNamespace(files=[], scenarios=[], intent="question", scope="narrow")
+
+        async def project_step(self, request, *, model_aliases=None):
+            seen.append(request)
+            from waqil_api.contracts import ProjectAgentStepV1, ProjectToolCallV1
+
+            return ProjectAgentStepV1(
+                status="tool",
+                tool_call=ProjectToolCallV1(
+                    name="respond", arguments={"message": "It is a Streamlit app."}
+                ),
+            )
+
+    plane = object.__new__(ControlPlane)
+    plane.model = QuestionModel()
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.projects = SimpleNamespace(context=_empty_context)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_reference_dir=Path("/nonexistent-reference"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            # The regex reads this as a build: it carries "add" and a source path.
+            "prompt": "Where would I add a new route in app/main.py?",
+            "run_id": "run_x",
+            "conversation_id": "conv_x",
+            "model_aliases": {"_project_id": "asset_x"},
+            "project_iterations": _PLAN_AFTER_STEPS,
+        },
+    )
+
+    assert seen[0]["build_turn"] is False
+    assert result["project_build_intent"] == "question"
+    assert result["project_plan_taken"] is True
+    assert result["response_text"] == "It is a Streamlit app."
+
+
+@pytest.mark.asyncio
+async def test_batched_reads_all_run_inside_the_one_step_that_carried_them() -> None:
+    """The loop half of read batching: every read in the reply is executed and
+    lands in the trace, without a model round-trip between them — and the batch
+    is cleared afterwards so it cannot be replayed against a later step."""
+    from waqil_api.control_plane import ControlPlane
+
+    seen: list[str] = []
+
+    class Workspace:
+        async def execute_staged(self, project_id, call, staged, next_paths=()):
+            seen.append(f"{call.name}:{call.arguments.get('path', '')}")
+            return {"ok": True, "lines": []}, None
+
+    plane = object.__new__(ControlPlane)
+    plane.projects = Workspace()
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.settings = SimpleNamespace(project_verify_max_runs=2)
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+    state = {
+        "run_id": "run_x",
+        "conversation_id": "conv_x",
+        "model_aliases": {"_project_id": "asset_x"},
+        "project_trace": [],
+        "project_pending_call": {"name": "list_files", "arguments": {}},
+        "project_pending_reads": [
+            {"name": "read_file", "arguments": {"path": "app/main.py"}},
+            {"name": "read_file", "arguments": {"path": "app/config.py"}},
+            # The same read twice: the repeat guard sees the trace as it grows,
+            # so the second is answered from the first rather than re-run.
+            {"name": "read_file", "arguments": {"path": "app/main.py"}},
+        ],
+    }
+
+    result = await ControlPlane._project_execute(plane, state)
+
+    assert seen == ["list_files:", "read_file:app/main.py", "read_file:app/config.py"]
+    assert [entry["tool"] for entry in result["project_trace"]] == [
+        "list_files",
+        "read_file",
+        "read_file",
+        "read_file",
+    ]
+    assert result["project_trace"][-1]["result"]["ok"] is False
+    assert result["project_pending_reads"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_step_still_clears_its_batch() -> None:
+    """_project_evidence is on every path out of a step, including the ones
+    that refuse the primary call and return early. A batch left behind on one
+    of those would be run against the next step's unrelated pending call."""
+    from waqil_api.project_workspace import ProjectWorkspaceError
+
+    ControlPlane, plane, state = _execute_plane(
+        ProjectWorkspaceError("refuses to overwrite an existing file"),
+        project_pending_reads=[{"name": "read_file", "arguments": {"path": "a.py"}}],
+    )
+    assert (await ControlPlane._project_execute(plane, state))[
+        "project_pending_reads"
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_revise_plan_replaces_a_manifest_the_project_contradicts() -> None:
+    """The way out of a plan the evidence disproved.
+
+    This is the live Logivity deadlock in miniature: a manifest naming
+    `app/static/index.html` in a project that is a Streamlit script, which
+    narrowed create_file's path to an enum of two files that could not exist
+    there. The model had explored, knew the plan was wrong, and had no legal
+    move it believed in — so it generated calls its own backend refused, three
+    in a row, and the turn ended having written nothing."""
+    from waqil_api.control_plane import ControlPlane, _MAX_PLAN_REVISIONS
+
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def _record(run_id, conversation_id, kind, payload):
+        events.append((kind, payload))
+
+    plane = object.__new__(ControlPlane)
+    plane.events = SimpleNamespace(emit=_record)
+    plane.settings = SimpleNamespace(project_staged_max_files=48)
+    state = {
+        "prompt": "Rewire this app's entire UI onto the Metis design language.",
+        "run_id": "run_x",
+        "conversation_id": "conv_x",
+        "project_planned_files": ["app/static/index.html", "app/static/style.css"],
+        "project_planned_scenarios": [{"name": "homepage loads"}],
+        "project_trace": [],
+    }
+    call = ProjectToolCallV1(
+        name="revise_plan",
+        arguments={
+            "files": ["app.py"],
+            "reason": "This is a Streamlit app: it has no app/static and serves no HTML.",
+        },
+    )
+
+    result = await ControlPlane._revise_project_plan(plane, state, call, 5, {})
+
+    assert result["project_planned_files"] == ["app.py"]
+    assert result["project_plan_revisions"] == 1
+    # A corrected plan is progress, so it must not advance the stall counter
+    # that releases the manifest gate.
+    assert result["project_stall_steps"] == 0
+    # The old plan's acceptance scenarios described files that are gone.
+    assert result["project_planned_scenarios"] == []
+    # It costs the step it took, and it never becomes a pending workspace call.
+    assert result["project_iterations"] == 6
+    assert result["project_pending_call"] == {}
+    assert result["project_trace"][-1]["result"]["ok"] is True
+    assert [kind for kind, _ in events] == ["project.plan_revised"]
+    assert events[0][1]["previous_files"] == [
+        "app/static/index.html",
+        "app/static/style.css",
+    ]
+
+    # Bounded: re-planning instead of writing looks identical for two turns.
+    spent = {**state, "project_plan_revisions": _MAX_PLAN_REVISIONS}
+    refused = await ControlPlane._revise_project_plan(plane, spent, call, 5, {})
+    assert refused["project_trace"][-1]["result"]["ok"] is False
+    assert "limit for one turn" in refused["project_trace"][-1]["result"]["error"]
+    assert "project_planned_files" not in refused
+
+
+@pytest.mark.asyncio
+async def test_revise_plan_never_reaches_the_workspace(tmp_path: Path) -> None:
+    """It edits the turn's plan in graph state and touches no file, so the
+    workspace must refuse it by name — never as an unsupported tool, which
+    would mean it had fallen off the roster."""
+    projects_root = tmp_path / "Projects"
+    (projects_root / "demo").mkdir(parents=True)
+    (projects_root / "demo" / "main.py").write_text("VALUE = 1\n", encoding="utf-8")
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        repo_root=tmp_path,
+        asset_roots=[projects_root],
+        model_backend="deterministic",
+        allow_test_backends=True,
+    )
+    assets = AssetManager(
+        settings.asset_roots,
+        approval_path=settings.asset_approval_path,
+        catalog_path=settings.asset_catalog_path,
+    )
+    discovered = await assets.scan()
+    service = ProjectWorkspaceService(settings, assets, DeterministicModelProvider())
+
+    with pytest.raises(ProjectWorkspaceError) as refused:
+        await service.execute_staged(
+            discovered[0].id,
+            ProjectToolCallV1(
+                name="revise_plan", arguments={"files": [], "reason": "wrong stack"}
+            ),
+            {},
+        )
+    assert "unsupported project tool" not in str(refused.value)
 
 
 def test_sandbox_verdict_is_honest_when_a_masked_import_left_the_app_unrun() -> None:
@@ -2391,3 +2900,409 @@ def test_an_acceptance_failure_is_not_excused_as_an_environment_limit() -> None:
     assert "modules could not import — GET /convert" not in card
     # Neither is dressed up as a blocking defect: both are still advisory.
     assert "would stop this project working" not in card
+
+
+@pytest.mark.asyncio
+async def test_a_drifting_turn_is_narrowed_to_one_file_before_it_is_ended() -> None:
+    """Auto-chunking, triggered by behaviour rather than by a file count.
+
+    The live evidence: the same four-file conversion GLM-5.2 read 22 times and
+    never wrote, split into one-file requests, produced every file with clean
+    verification. So a turn that stops converging is narrowed to a single owed
+    file instead of being ended — and only ended if it will not write even that.
+
+    Deliberately NOT keyed on how many files the plan names: a threshold like
+    "chunk at 3+" would slow a model that takes them in one pass
+    (deepseek-v4-pro wrote six) and still miss one that stalls on two.
+    """
+    from waqil_api.control_plane import (
+        ControlPlane, _FOCUSED_EXPLORE_STEPS, _explore_budget,
+    )
+
+    plane = object.__new__(ControlPlane)
+    plane.projects = SimpleNamespace(context=_empty_context)
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.settings = SimpleNamespace(project_agent_max_steps=48, project_verify_bonus_steps=0)
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+
+    drifting = {
+        "prompt": "Convert this to FastAPI.",
+        "run_id": "r", "conversation_id": "c",
+        "model_aliases": {"_project_id": "asset_x"},
+        "project_iterations": 20,
+        "project_planned_files": ["app/main.py", "app/static/index.html", "app/static/app.js"],
+        "project_staged": {},
+    }
+    drifting["project_consecutive_reads"] = _explore_budget(drifting)
+
+    narrowed = await ControlPlane._project_step(plane, drifting)
+    # Narrowed to the first owed file, not ended.
+    assert narrowed["project_focus_path"] == "app/main.py"
+    assert narrowed["project_focus_rounds"] == 1
+    assert narrowed["project_consecutive_reads"] == 0
+    assert "response_text" not in narrowed
+
+    # The step request now offers ONLY that file — which is what narrows
+    # create_file's enum on the tool-calling lanes — and says so in words.
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_reference_enabled=False,
+        project_reference_dir=Path("/none"), project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
+    )
+    request = ControlPlane._project_step_request(
+        plane, {**drifting, **narrowed}, {}, [], {}, 21,
+        planned=drifting["project_planned_files"],
+    )
+    assert request["files_still_to_write"] == ["app/main.py"]
+    assert "Write ONLY this one file" in request["attention"]
+    assert "app/main.py" in request["attention"]
+
+    # Still refusing to write the one named file — now the turn ends.
+    stuck = {**drifting, **narrowed, "project_consecutive_reads": _FOCUSED_EXPLORE_STEPS}
+    plane.settings = SimpleNamespace(project_agent_max_steps=48, project_verify_bonus_steps=0)
+    ended = await ControlPlane._project_step(plane, stuck)
+    assert "without writing" in ended["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_keeps_writing_is_never_narrowed() -> None:
+    """The ladder must be invisible to a model that is doing the work.
+
+    deepseek-v4-pro wrote six files in one turn; nothing here should have
+    slowed it down. Every write resets the read run, so the narrowing branch
+    is never reached."""
+    from waqil_api.contracts import ProjectAgentStepV1, ProjectToolCallV1
+    from waqil_api.control_plane import ControlPlane, _explore_budget
+
+    class Writer:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            return SimpleNamespace(files=[], scenarios=[], intent="build", scope="narrow")
+
+        async def project_step(self, request, *, model_aliases=None):
+            # The whole point: a productive model is never handed the narrowed
+            # instruction, because it never stopped converging.
+            assert "Write ONLY this one file" not in str(request.get("attention", ""))
+            return ProjectAgentStepV1(
+                status="tool",
+                tool_call=ProjectToolCallV1(
+                    name="create_file", arguments={"path": "c.py", "content": "C = 1\n"}
+                ),
+            )
+
+    plane = object.__new__(ControlPlane)
+    plane.model = Writer()
+    plane.projects = SimpleNamespace(context=_empty_context)
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_verify_bonus_steps=0,
+        project_staged_max_files=48, project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800, project_reference_enabled=False,
+        project_reference_dir=Path("/none"), project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+
+    productive = {
+        "prompt": "Convert this to FastAPI.",
+        "run_id": "r", "conversation_id": "c",
+        "model_aliases": {"_project_id": "asset_x"},
+        "project_iterations": 20,
+        "project_planned_files": ["a.py", "b.py", "c.py", "d.py"],
+        "project_staged": {"a.py": {"bytes": 1}, "b.py": {"bytes": 1}},
+        # A write just landed, so the read run is zero.
+        "project_consecutive_reads": 0,
+    }
+    assert _explore_budget(productive) > 0
+    result = await ControlPlane._project_step(plane, productive)
+    # Not narrowed, not ended — it simply proceeds to the next write.
+    assert "project_focus_path" not in result
+    assert "response_text" not in result
+    assert result["project_pending_call"]["name"] == "create_file"
+
+
+def test_reads_are_weighted_by_whether_they_learned_anything() -> None:
+    """Read COUNT is the wrong primitive; productivity is the right one.
+
+    Measured on two real 48-step turns that look identical from the outside:
+    the productive one (GLM-5.2, three files written) executed every call it
+    made, while the pathological one (kimi, zero files) had 36 of its 48 steps
+    refused as repeats — the model asking for what was already in its trace.
+
+    So a big model reading widely through a big codebase is left alone, and a
+    doom loop trips in a handful of steps. This is the same conclusion the
+    published harness work reaches: iteration counts alone are too coarse, and
+    repeated identical calls are the signal worth acting on.
+    """
+    from waqil_api.control_plane import (
+        ControlPlane, _UNPRODUCTIVE_READ_WEIGHT, _explore_budget,
+    )
+
+    call = ProjectToolCallV1(name="read_file", arguments={"path": "a.py"})
+    fresh = ControlPlane._project_evidence(
+        {"project_consecutive_reads": 4}, call, {"ok": True}, 0
+    )
+    assert fresh["project_consecutive_reads"] == 5  # a fresh read costs 1
+
+    looped = ControlPlane._project_evidence(
+        {"project_consecutive_reads": 4}, call, {"ok": False}, 0, unproductive=True
+    )
+    assert looped["project_consecutive_reads"] == 4 + _UNPRODUCTIVE_READ_WEIGHT
+
+    # A write still clears the run entirely.
+    wrote = ControlPlane._project_evidence(
+        {"project_consecutive_reads": 20},
+        ProjectToolCallV1(name="create_file", arguments={"path": "a.py", "content": "x"}),
+        {"ok": True}, 0,
+    )
+    assert wrote["project_consecutive_reads"] == 0
+
+    # The real numbers: GLM's longest fresh run survives, kimi's loop does not.
+    budget = _explore_budget({"project_planned_files": ["a", "b", "c", "d"]})
+    assert 18 < budget, "GLM's 18 consecutive fresh reads must not be cut off"
+    assert 6 * _UNPRODUCTIVE_READ_WEIGHT > budget, "kimi's loop must trip quickly"
+
+
+@pytest.mark.asyncio
+async def test_a_dead_coder_lane_falls_down_the_ladder_mid_turn() -> None:
+    """The per-role ladder, walked live: a lane that fails to ANSWER advances
+    to the next rung and the same step retries there — visibly, and without
+    ending the turn, which is what a single dead lane used to do. A malformed
+    REPLY must never advance the ladder: that is the model's own mistake, and
+    the evidence loop is how it corrects itself."""
+    import json as _json
+
+    from waqil_api.contracts import ProjectAgentStepV1, ProjectToolCallV1
+    from waqil_api.control_plane import ControlPlane
+    from waqil_api.model_provider import ModelProviderError
+
+    calls: list[str] = []
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def _emit(run_id, conversation_id, kind, payload):
+        events.append((kind, payload))
+
+    class LadderModel:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            raise RuntimeError("plan unavailable")
+
+        async def project_step(self, request, *, model_aliases=None):
+            calls.append(f"{model_aliases['_provider']}:{model_aliases.get('coder')}")
+            if model_aliases["_provider"] == "local":
+                raise ModelProviderError("Ollama returned HTTP 429: too many requests")
+            return ProjectAgentStepV1(
+                status="tool",
+                tool_call=ProjectToolCallV1(name="list_files", arguments={}),
+            )
+
+    plane = object.__new__(ControlPlane)
+    plane.model = LadderModel()
+    plane.events = SimpleNamespace(emit=_emit)
+    plane.projects = SimpleNamespace(context=_empty_context)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_staged_max_files=48,
+        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_max_chars=0, project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+
+    chain = _json.dumps([
+        {"provider": "local", "model": "glm-5.2:cloud"},
+        {"provider": "cohere", "model": None},
+    ])
+    result = await ControlPlane._project_step(plane, {
+        "prompt": "Add a /health route.",
+        "run_id": "r", "conversation_id": "c",
+        "model_aliases": {
+            "_project_id": "asset_x", "_provider": "local",
+            "coder": "glm-5.2:cloud", "_chain_coder": chain,
+        },
+        "project_iterations": 0,
+    })
+
+    # Both rungs were tried in ONE step, and the step succeeded on the second.
+    assert calls == ["local:glm-5.2:cloud", "cohere:glm-5.2:cloud"]
+    assert result["project_pending_call"]["name"] == "list_files"
+    # The turn remembers the working rung, so later steps skip the dead one.
+    assert result["project_chain_index"] == 1
+    fallback = [p for k, p in events if k == "run.model_fallback"]
+    assert len(fallback) == 1
+    assert fallback[0]["from"] == "glm-5.2:cloud"
+    assert fallback[0]["to"] == "Cohere Command A+"
+    assert fallback[0]["reason"] == "rate_limited"
+
+    # A malformed reply does NOT advance the ladder.
+    calls.clear()
+    events.clear()
+
+    class MalformedModel(LadderModel):
+        async def project_step(self, request, *, model_aliases=None):
+            calls.append(model_aliases["_provider"])
+            raise ModelProviderError("hosted model returned invalid project tool arguments")
+
+    plane.model = MalformedModel()
+    result = await ControlPlane._project_step(plane, {
+        "prompt": "Add a /health route.",
+        "run_id": "r", "conversation_id": "c",
+        "model_aliases": {
+            "_project_id": "asset_x", "_provider": "local",
+            "coder": "glm-5.2:cloud", "_chain_coder": chain,
+        },
+        "project_iterations": 0,
+    })
+    assert calls == ["local"]  # one attempt, no ladder walk
+    assert result["project_malformed_streak"] == 1
+    assert not [k for k, _ in events if k == "run.model_fallback"]
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_ladder_ends_the_turn_naming_the_cause() -> None:
+    """When every rung is dead the turn ends exactly as a single dead lane
+    used to — honestly, with the backend named — rather than looping."""
+    import json as _json
+
+    from waqil_api.contracts import ProjectAgentStepV1  # noqa: F401
+    from waqil_api.control_plane import ControlPlane
+    from waqil_api.model_provider import ModelProviderError
+
+    class DeadEverywhere:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            raise RuntimeError("plan unavailable")
+
+        async def project_step(self, request, *, model_aliases=None):
+            raise ModelProviderError("returned HTTP 429: rate limit")
+
+    plane = object.__new__(ControlPlane)
+    plane.model = DeadEverywhere()
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.projects = SimpleNamespace(context=_empty_context)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_staged_max_files=48,
+        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_max_chars=0, project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+
+    result = await ControlPlane._project_step(plane, {
+        "prompt": "Add a /health route.",
+        "run_id": "r", "conversation_id": "c",
+        "model_aliases": {
+            "_project_id": "asset_x", "_provider": "local", "coder": "m1",
+            "_fallbacks_coder": _json.dumps([{"provider": "local", "model": "m2"}]),
+        },
+        "project_iterations": 0,
+    })
+    assert "rate-limited or out of quota" in result["response_text"]
+    assert result.get("project_malformed_streak", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_narrowed_turn_has_its_reads_closed_structurally() -> None:
+    """The permission half of explore→act: a turn narrowed to one file gets a
+    small confirming allowance, then reads are REFUSED by the executor — the
+    refusal is the evidence — rather than merely advised against."""
+    from waqil_api.control_plane import ControlPlane, _FOCUSED_READ_ALLOWANCE
+
+    executed: list[str] = []
+
+    class Workspace:
+        async def execute_staged(self, project_id, call, staged, next_paths=()):
+            executed.append(call.name)
+            return {"ok": True, "lines": []}, None
+
+    plane = object.__new__(ControlPlane)
+    plane.projects = Workspace()
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.settings = SimpleNamespace(project_verify_max_runs=2)
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+    base = {
+        "run_id": "r", "conversation_id": "c",
+        "model_aliases": {"_project_id": "asset_x"},
+        "project_trace": [], "project_focus_path": "app/main.py",
+        "project_pending_call": {"name": "read_file", "arguments": {"path": "x.py"}},
+    }
+
+    # Within the allowance the read executes.
+    fine = await ControlPlane._project_execute(
+        plane, {**base, "project_consecutive_reads": _FOCUSED_READ_ALLOWANCE - 1}
+    )
+    assert executed == ["read_file"]
+    assert fine["project_trace"][-1]["result"]["ok"] is True
+
+    # Past it the executor refuses without executing, naming the owed file.
+    refused = await ControlPlane._project_execute(
+        plane, {**base, "project_consecutive_reads": _FOCUSED_READ_ALLOWANCE}
+    )
+    assert executed == ["read_file"]  # nothing new ran
+    error = refused["project_trace"][-1]["result"]["error"]
+    assert "narrowed to writing app/main.py" in error
+    # A write is never gated.
+    write = await ControlPlane._project_execute(plane, {
+        **base,
+        "project_consecutive_reads": 20,
+        "project_pending_call": {"name": "create_file",
+                                  "arguments": {"path": "app/main.py", "content": "x"}},
+    })
+    assert executed == ["read_file", "create_file"]
+    assert write["project_trace"][-1]["result"]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_explore_act_arc_is_emitted_as_phase_events() -> None:
+    """The arc the research pattern names, made visible: exploring on the
+    first step of a build turn, building when a plan with files lands."""
+    from waqil_api.contracts import ProjectAgentStepV1, ProjectToolCallV1
+    from waqil_api.control_plane import ControlPlane, _PLAN_AFTER_STEPS
+
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def _emit(run_id, conversation_id, kind, payload):
+        events.append((kind, payload))
+
+    class Model:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            return SimpleNamespace(
+                files=["app/main.py"], scenarios=[], intent="build", scope="narrow"
+            )
+
+        async def project_step(self, request, *, model_aliases=None):
+            return ProjectAgentStepV1(
+                status="tool", tool_call=ProjectToolCallV1(name="list_files", arguments={}),
+            )
+
+    plane = object.__new__(ControlPlane)
+    plane.model = Model()
+    plane.events = SimpleNamespace(emit=_emit)
+    plane.projects = SimpleNamespace(context=_empty_context, stage_scaffold=None)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_staged_max_files=48,
+        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_max_chars=0, project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+    base = {
+        "prompt": "Add a /health route to app/main.py.",
+        "run_id": "r", "conversation_id": "c",
+        "model_aliases": {"_project_id": "asset_x"},
+    }
+
+    opened = await ControlPlane._project_step(plane, {**base, "project_iterations": 0})
+    assert opened["project_phase"] == "exploring"
+    assert [p["phase"] for k, p in events if k == "project.phase"] == ["exploring"]
+
+    events.clear()
+    planned = await ControlPlane._project_step(plane, {
+        **base,
+        "project_iterations": _PLAN_AFTER_STEPS,
+        "project_phase": "exploring",
+    })
+    assert planned["project_phase"] == "building"
+    assert [p["phase"] for k, p in events if k == "project.phase"] == ["building"]

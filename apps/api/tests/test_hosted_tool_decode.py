@@ -169,11 +169,96 @@ async def test_a_hosted_build_step_sends_tools_and_converts_the_call(settings) -
 
 
 @pytest.mark.asyncio
-async def test_prose_instead_of_a_tool_call_is_a_model_error(settings) -> None:
+async def test_reads_that_arrive_together_are_kept_and_run_in_one_step(
+    settings,
+) -> None:
+    """A reply full of reads is one step, not four round-trips.
+
+    Every transport used to take the first call and drop the rest, so a model
+    that answered "list the directory and read these two files" was billed a
+    full step for each read it had already asked for."""
     provider, _ = provider_with(
-        settings, ToolReply(content="I created the files you asked for.")
+        settings,
+        ToolReply(
+            tool_calls=[
+                {"name": "list_files", "args": {}},
+                {"name": "read_file", "args": {"path": "app/main.py"}},
+                {"name": "search_code", "args": {"query": "FastAPI"}},
+            ]
+        ),
     )
-    with pytest.raises(ModelProviderError, match="prose instead of a project tool call"):
+    step = await provider.project_step(build_request(), model_aliases=HOSTED)
+    assert step.tool_call is not None
+    assert step.tool_call.name == "list_files"
+    assert [call.name for call in step.extra_calls] == ["read_file", "search_code"]
+
+
+@pytest.mark.asyncio
+async def test_a_write_is_never_batched_with_anything(settings) -> None:
+    """Writes stay exclusive in both directions.
+
+    A batch runs with no model step between its members, so a write must be
+    able to inform what comes after it — and the refusal breaker, the write
+    pin and the staging overlay all assume one write per step."""
+    write_first, _ = provider_with(
+        settings,
+        ToolReply(
+            tool_calls=[
+                {"name": "create_file", "args": {"path": "a.py", "content": "A = 1\n"}},
+                {"name": "read_file", "args": {"path": "app/main.py"}},
+            ]
+        ),
+    )
+    step = await write_first.project_step(build_request(), model_aliases=HOSTED)
+    assert step.tool_call is not None and step.tool_call.name == "create_file"
+    assert step.extra_calls == []
+
+    read_then_write, _ = provider_with(
+        settings,
+        ToolReply(
+            tool_calls=[
+                {"name": "read_file", "args": {"path": "app/main.py"}},
+                {"name": "create_file", "args": {"path": "a.py", "content": "A = 1\n"}},
+                {"name": "read_file", "args": {"path": "b.py"}},
+            ]
+        ),
+    )
+    step = await read_then_write.project_step(build_request(), model_aliases=HOSTED)
+    assert step.tool_call is not None and step.tool_call.name == "read_file"
+    # Stops at the write rather than reordering what the model asked for, so
+    # the trailing read is not silently hoisted in front of it.
+    assert step.extra_calls == []
+
+
+@pytest.mark.asyncio
+async def test_prose_is_a_completion_here_exactly_as_on_the_other_transports(
+    settings,
+) -> None:
+    """All three tool-calling transports treat a text-only reply the same way.
+
+    This path alone used to raise, and it cost a real turn: a live
+    deepseek-v4-pro answering a plain project question in prose burned three
+    malformed strikes and died, where the identical reply through Cohere would
+    have been published. Prose becomes a completion; the loop's own
+    premature-finish guard — which is provider-independent — is what decides
+    whether that completion is honest."""
+    provider, _ = provider_with(
+        settings, ToolReply(content="It is a Streamlit app that reads invoices.")
+    )
+    step = await provider.project_step(build_request(), model_aliases=HOSTED)
+    assert step.status == "complete"
+    assert step.response == "It is a Streamlit app that reads invoices."
+    # And the guard that judges it is still the one that catches a fabricated
+    # build claim — the transport does not get to decide that.
+    assert step.tool_call is None
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reply_with_no_call_and_no_text_is_still_an_error(
+    settings,
+) -> None:
+    provider, _ = provider_with(settings, ToolReply(content=""))
+    with pytest.raises(ModelProviderError, match="neither a project tool call nor any text"):
         await provider.project_step(build_request(), model_aliases=HOSTED)
 
 

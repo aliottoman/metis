@@ -533,6 +533,7 @@ class ProjectToolCallV1(Contract):
         "inspect_api",
         "ask_user",
         "respond",
+        "revise_plan",
     ]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
@@ -563,6 +564,19 @@ class ProjectAgentStepV1(Contract):
     status: Literal["tool", "complete"]
     response: str = Field(default="", max_length=40_000)
     tool_call: ProjectToolCallV1 | None = None
+    # Further READ-ONLY calls that arrived in the same reply, to run in the
+    # same step. The tool-calling transports have always been handed these —
+    # a hosted model asked to look around commonly returns a listing and two
+    # reads at once — and they were dropped on the floor: every provider
+    # returned on the first call it found. Each discarded read then cost a
+    # whole round-trip to ask for again, out of a 48-step budget.
+    #
+    # Reads only, and only when EVERY call in the reply is a read: a batch is
+    # executed in order with no model step between its members, so anything
+    # whose result should change the next call — a write, a check — must stay
+    # exclusive. The refusal breaker, the write pin and the staging overlay
+    # all assume one write per step, and this leaves that untouched.
+    extra_calls: list[ProjectToolCallV1] = Field(default_factory=list, max_length=3)
     learnings: list[str] = Field(default_factory=list, max_length=16)
 
     @model_validator(mode="before")
@@ -646,6 +660,10 @@ PROJECT_TOOL_ARGUMENT_PROPERTIES: dict[str, dict[str, Any]] = {
     "question": {"type": "string"},
     "options": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
     "message": {"type": "string"},
+    # revise_plan. `files` is the corrected manifest, so it carries the same
+    # bound the manifest contract does; `reason` is what the evidence showed.
+    "files": {"type": "array", "items": {"type": "string"}, "maxItems": 24},
+    "reason": {"type": "string"},
 }
 
 # What each tool actually needs, mirroring the host's own refusals so the
@@ -668,6 +686,15 @@ PROJECT_TOOL_REQUIRED_ARGUMENTS: dict[str, list[str]] = {
     # claiming any build work happened.
     "ask_user": ["question"],
     "respond": ["message"],
+    # The plan channel. A manifest is taken once and then holds the turn
+    # accountable to it — including by narrowing create_file's path to an enum
+    # of what is still owed. That is right when the plan is right and a trap
+    # when it is not: a reskin planned against paths the project does not have
+    # left the model with no legal write it believed in, and three replies the
+    # backend refused to generate ended the turn. revise_plan is the way out
+    # that is not "give up": the model states the corrected file list and what
+    # the evidence showed, the host re-gates on the new list.
+    "revise_plan": ["files", "reason"],
 }
 
 # The roster's talk tools: host affordances the loop routes itself (a pause on
@@ -675,6 +702,22 @@ PROJECT_TOOL_REQUIRED_ARGUMENTS: dict[str, list[str]] = {
 # roster so every transport can call them, and they must never reach the
 # workspace executor, which only knows files and checks.
 PROJECT_TALK_TOOLS: frozenset[str] = frozenset({"ask_user", "respond"})
+
+# Tools that only look: they stage nothing, run nothing, and cannot change
+# what a later call in the same reply would have wanted to do. That is what
+# makes them safe to execute as a batch inside one step. run_check is
+# deliberately absent — it executes a command — and so is every write.
+PROJECT_READ_TOOLS: frozenset[str] = frozenset(
+    {"list_files", "search_code", "read_file", "inspect_api"}
+)
+
+# The same rule for the plan channel: revise_plan rewrites the turn's manifest
+# in graph state and never touches a file.
+PROJECT_PLAN_TOOLS: frozenset[str] = frozenset({"revise_plan"})
+
+# Every roster tool the loop answers itself. The workspace refuses all of them
+# by name, so a routing bug is loud instead of arriving as "unsupported tool".
+PROJECT_HOST_TOOLS: frozenset[str] = PROJECT_TALK_TOOLS | PROJECT_PLAN_TOOLS
 
 # Merged into the emitted schema for `arguments`, replacing the open
 # `additionalProperties: true` a dict[str, Any] would otherwise produce. The
@@ -701,6 +744,7 @@ PROJECT_TOOL_OPTIONAL_ARGUMENTS: dict[str, list[str]] = {
     "inspect_api": ["symbol"],
     "ask_user": ["options"],
     "respond": [],
+    "revise_plan": [],
 }
 
 # One line per tool saying what it is for, in the terms the model has to get
@@ -751,6 +795,14 @@ _PROJECT_TOOL_NOTES: dict[str, str] = {
         "Answer the user without claiming any build work happened. Use it for "
         "questions about the project, explanations, and status — a respond turn "
         "is complete in itself and stages nothing."
+    ),
+    "revise_plan": (
+        "Correct this turn's file manifest when what you read contradicts it — "
+        "a planned path the project does not have, a framework that makes it "
+        "wrong, work that turns out to need different files. files is the "
+        "complete corrected list (send [] if the task needs no new files), "
+        "reason is what you found. Use this instead of writing a file you "
+        "believe is wrong, and instead of finishing to escape the plan."
     ),
 }
 
@@ -887,8 +939,23 @@ class ProjectBuildPlanV1(Contract):
     ``complete`` out of the grammar until every planned file exists in the
     overlay, and the model is answering against its own plan rather than the
     host's guess at one.
+
+    ``intent`` and ``scope`` are the same move applied to classification. What
+    kind of turn this is used to be decided by host regexes over the user's
+    wording — which read "what does app/main.py do?" as a build because it
+    contains a path, and read a whole-application rewire as narrow because it
+    lacked an indefinite article. The model answering here has the request AND
+    the repository map in front of it, so it is simply better placed to say.
+    The regexes survive as the fallback for a provider that cannot answer.
     """
 
+    # What this turn is. "build" and "edit" both write files and both earn the
+    # strict finish gate; only "question" turns it off, and a question that
+    # names files is still a question.
+    intent: Literal["build", "edit", "question"] = "build"
+    # Whether this stands up a whole application (which earns the appkit
+    # scaffold) or works inside one that already exists.
+    scope: Literal["whole_app", "narrow"] = "narrow"
     files: list[str] = Field(default_factory=list, max_length=24)
     # The acceptance scenarios that make "done" checkable against the spec
     # rather than against the model's summary. Optional: an empty list keeps
@@ -948,6 +1015,7 @@ class ProjectAgentStepWireV1(Contract):
         "inspect_api",
         "ask_user",
         "respond",
+        "revise_plan",
     ] = ""
     arguments: dict[str, Any] = Field(
         default_factory=dict, json_schema_extra=_CLOSED_TOOL_ARGUMENTS
@@ -998,6 +1066,10 @@ class ProjectBuildStepWireV1(Contract):
     # ask_user is here — a mid-build model may genuinely be blocked on the
     # user — but respond is deliberately NOT: a prose exit from a build turn
     # is exactly the escape this narrowed grammar exists to close off.
+    # revise_plan IS here, and belongs here most of all: this is the grammar a
+    # build wears while it still owes files, so it is exactly where a model
+    # that has just proved the plan wrong needs a legal move that is not
+    # writing the wrong file.
     tool: Literal[
         "list_files",
         "search_code",
@@ -1008,6 +1080,7 @@ class ProjectBuildStepWireV1(Contract):
         "run_check",
         "inspect_api",
         "ask_user",
+        "revise_plan",
     ]
     arguments: dict[str, Any] = Field(
         default_factory=dict, json_schema_extra=_CLOSED_TOOL_ARGUMENTS
@@ -1450,6 +1523,24 @@ class PersonalProfileUpdateV1(Contract):
     content: str = Field(default="", max_length=16_000)
 
 
+class RoleChainEntryV1(Contract):
+    """One rung of a role's model ladder: a lane, and the model on it.
+
+    ``model`` matters only on the local (Ollama) lane, which serves many
+    models; the OCI and Cohere lanes each run their configured model and
+    ignore it. Kept as two fields rather than a parsed string so the UI can
+    render lanes and models as separate controls.
+    """
+
+    provider: Literal["local", "oci", "cohere"] = "local"
+    model: str | None = Field(default=None, max_length=200)
+
+
+# The three routing roles a preference may chain. Spelled once: the store
+# validates against it, resolve_aliases iterates it, and the UI renders it.
+MODEL_ROLES: tuple[str, ...] = ("planner", "coder", "quality")
+
+
 class ModelPreferenceV1(Contract):
     mode: Literal["split", "pinned"] = "split"
     model: str | None = None
@@ -1457,8 +1548,25 @@ class ModelPreferenceV1(Contract):
     oci_tools: list[Literal["x_search", "code_interpreter"]] = Field(
         default_factory=lambda: ["code_interpreter"], max_length=2
     )
+    # Per-role fallback ladders, first entry primary. Empty means "no explicit
+    # chain": the role runs exactly as it always has, plus the synthesized
+    # safety fallback resolve_aliases documents. Bounded: a ladder longer than
+    # four is a configuration smell, not resilience.
+    role_chains: dict[str, list[RoleChainEntryV1]] = Field(default_factory=dict)
     oci_available: bool = False
     cohere_available: bool = False
+
+    @field_validator("role_chains")
+    @classmethod
+    def validate_role_chains(
+        cls, value: dict[str, list[RoleChainEntryV1]]
+    ) -> dict[str, list[RoleChainEntryV1]]:
+        for role, chain in value.items():
+            if role not in MODEL_ROLES:
+                raise ValueError(f"unknown model role: {role}")
+            if len(chain) > 4:
+                raise ValueError(f"{role} chain is longer than 4 entries")
+        return value
 
 
 class ModelPreferenceUpdateV1(Contract):
@@ -1468,6 +1576,10 @@ class ModelPreferenceUpdateV1(Contract):
     oci_tools: list[Literal["x_search", "code_interpreter"]] = Field(
         default_factory=lambda: ["code_interpreter"], max_length=2
     )
+    # None means "leave the stored chains as they are"; an empty dict clears
+    # them. The distinction lets the existing UI save mode/model without
+    # knowing chains exist.
+    role_chains: dict[str, list[RoleChainEntryV1]] | None = None
 
 
 class LocalModelOptionV1(Contract):

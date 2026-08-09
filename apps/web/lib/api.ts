@@ -1203,6 +1203,24 @@ export async function saveProfile(content: string): Promise<PersonalProfile> {
   );
 }
 
+function normalizeRoleChains(value: unknown): ModelPreference["role_chains"] {
+  const raw = asRecord(value);
+  const chains: ModelPreference["role_chains"] = {};
+  for (const role of ["planner", "coder", "quality"] as const) {
+    const entries = listFrom(raw[role])
+      .map((entry) => asRecord(entry))
+      .map((entry) => ({
+        provider:
+          entry.provider === "oci" ? ("oci" as const)
+          : entry.provider === "cohere" ? ("cohere" as const)
+          : ("local" as const),
+        model: entry.model == null ? null : stringValue(entry.model),
+      }));
+    if (entries.length) chains[role] = entries;
+  }
+  return chains;
+}
+
 function normalizeModelPreference(value: unknown): ModelPreference {
   const item = asRecord(value);
   return {
@@ -1212,6 +1230,7 @@ function normalizeModelPreference(value: unknown): ModelPreference {
     oci_tools: listFrom(item.oci_tools)
       .map((entry) => stringValue(entry))
       .filter((entry): entry is "x_search" | "code_interpreter" => entry === "x_search" || entry === "code_interpreter"),
+    role_chains: normalizeRoleChains(item.role_chains),
     oci_available: item.oci_available === true,
     cohere_available: item.cohere_available === true,
   };
@@ -1226,11 +1245,17 @@ export async function setModelPreference(
   model: string | null,
   provider: "local" | "oci" | "cohere" = "local",
   ociTools: Array<"x_search" | "code_interpreter"> = ["code_interpreter"],
+  // undefined leaves the stored chains untouched, so every existing call
+  // site keeps its behavior; {} clears them.
+  roleChains?: ModelPreference["role_chains"],
 ): Promise<ModelPreference> {
   return normalizeModelPreference(
     await request<unknown>(`${API_PREFIX}/settings/model`, {
       method: "PUT",
-      body: JSON.stringify({ mode, model, provider, oci_tools: ociTools }),
+      body: JSON.stringify({
+        mode, model, provider, oci_tools: ociTools,
+        ...(roleChains !== undefined ? { role_chains: roleChains } : {}),
+      }),
     }),
   );
 }

@@ -22,7 +22,7 @@ from typing import Any
 from .asset_library import AssetLibraryError, AssetManager
 from .config import Settings
 from .contracts import (
-    PROJECT_TALK_TOOLS,
+    PROJECT_HOST_TOOLS,
     ProjectBootstrapV1,
     ProjectCheckV1,
     ProjectToolCallV1,
@@ -147,6 +147,9 @@ _MANAGED_HEADER = "<!-- metis-project-context:v1 -->"
 _LEARNINGS_START = "<!-- metis-learnings:start -->"
 _LEARNINGS_END = "<!-- metis-learnings:end -->"
 
+_PLAN_START = "<!-- metis-plan:start -->"
+_PLAN_END = "<!-- metis-plan:end -->"
+
 
 class ProjectWorkspaceError(RuntimeError):
     """A refused project tool call.
@@ -186,6 +189,27 @@ def _now() -> str:
 
 def _bounded_line(value: Any, limit: int = 500) -> str:
     return " ".join(str(value or "").replace("\x00", "").split())[:limit]
+
+
+def _bootstrap_aliases(preference: Any | None) -> dict[str, str] | None:
+    """The routing hint for a project map, or None when there is no preference.
+
+    Only consulted by the Ollama fallback: the cloud providers pin their own
+    model. A preference store that cannot answer is not worth failing a map
+    over, so any error degrades to "no hint" and the role defaults apply.
+    """
+    if preference is None:
+        return None
+    try:
+        return dict(preference.resolve_aliases())
+    except Exception:  # noqa: BLE001 - a routing hint is never worth a failure
+        return None
+
+
+def _preferred_planner(preference: Any | None, settings: Settings) -> str:
+    """The model name to RECORD for a map the Ollama lane wrote."""
+    aliases = _bootstrap_aliases(preference) or {}
+    return str(aliases.get("planner") or settings.planner_model)
 
 
 def _read_window(
@@ -374,12 +398,18 @@ class ProjectWorkspaceService:
         bootstrap_model: Any,
         verification: ProjectVerificationService | None = None,
         sandbox: ProjectSandboxService | None = None,
+        preference: Any | None = None,
     ) -> None:
         self.settings = settings
         self.assets = assets
         self.bootstrap_model = bootstrap_model
         self.verification = verification
         self.sandbox = sandbox
+        # The user's chosen model, so a map that falls back to the Ollama lane
+        # runs on the model they actually picked rather than on the settings
+        # default — which is a local 35B that is usually not even loaded.
+        # Optional: a service built without one behaves exactly as before.
+        self.preference = preference
         self._lock = asyncio.Lock()
 
     async def list(self) -> list[ProjectWorkspaceV1]:
@@ -446,29 +476,51 @@ class ProjectWorkspaceService:
             if bootstrap is None:
                 available = getattr(self.bootstrap_model, "available", None)
                 if available is None and hasattr(self.bootstrap_model, "oci"):
-                    # The router bootstraps on Grok, or on Cohere when OCI is
-                    # absent, so either configured key is enough to make a map.
+                    # Mirror the router's own order (Grok, then Cohere, then the
+                    # Ollama lane) so the manifest records who actually wrote
+                    # the map rather than always claiming Grok.
+                    #
+                    # The Ollama fallback is why this no longer refuses: making
+                    # a map used to require an OCI or Cohere key, so with the
+                    # Grok lane off and a spent Cohere quota — the real state of
+                    # this install — no project could be opened at all.
                     cohere = getattr(self.bootstrap_model, "cohere", None)
                     oci_ready = bool(getattr(self.bootstrap_model.oci, "available", False))
                     cohere_ready = bool(
                         cohere is not None and getattr(cohere, "available", False)
                     )
-                    available = oci_ready or cohere_ready
-                    if not oci_ready and cohere_ready:
+                    if oci_ready:
+                        available = True
+                    elif cohere_ready:
+                        available = True
                         bootstrapper = "cohere"
                         bootstrap_model_name = self.settings.cohere_model
+                    else:
+                        available = True
+                        bootstrapper = "ollama"
+                        bootstrap_model_name = _preferred_planner(
+                            self.preference, self.settings
+                        )
                 if available is False:
                     raise ProjectWorkspaceError(
-                        "A project map needs a cloud provider: configure OCI Responses "
-                        "or a Cohere API key"
+                        "A project map needs a model backend that can answer a "
+                        "structured request; none is configured"
                     )
-                bootstrap = await self.bootstrap_model.bootstrap_project(
-                    {
-                        "project": metadata,
-                        "manifest": snapshot,
-                        "bounded_file_samples": sample,
-                    }
-                )
+                request = {
+                    "project": metadata,
+                    "manifest": snapshot,
+                    "bounded_file_samples": sample,
+                }
+                aliases = _bootstrap_aliases(self.preference)
+                try:
+                    bootstrap = await self.bootstrap_model.bootstrap_project(
+                        request, model_aliases=aliases
+                    )
+                except TypeError:
+                    # A provider (or a test double) whose bootstrap_project
+                    # predates the aliases keyword. The map is worth more than
+                    # the routing hint, so it still gets made.
+                    bootstrap = await self.bootstrap_model.bootstrap_project(request)
                 self._write_initial_notes(notes_path, metadata, bootstrap)
             elif not notes_path.is_file():
                 self._write_initial_notes(notes_path, metadata, bootstrap)
@@ -579,10 +631,11 @@ class ProjectWorkspaceService:
         return {"path": str(target.relative_to(root)), "summary": detail, "digest": digest}
 
     async def execute(self, asset_id: str, call: ProjectToolCallV1) -> dict[str, Any]:
-        if call.name in PROJECT_TALK_TOOLS:
-            # Roster tools, but host affordances: the loop pauses on ask_user
-            # and publishes respond itself. Reaching the workspace means a
-            # routing bug, and a loud refusal beats a silent misfile.
+        if call.name in PROJECT_HOST_TOOLS:
+            # Roster tools, but host affordances: the loop pauses on ask_user,
+            # publishes respond, and re-gates on revise_plan, all itself.
+            # Reaching the workspace means a routing bug, and a loud refusal
+            # beats a silent misfile.
             raise ProjectWorkspaceError(
                 f"{call.name} is a talk tool the loop handles; it never runs "
                 "in the workspace"
@@ -637,7 +690,7 @@ class ProjectWorkspaceService:
         ``next_paths`` is the files the turn planned and has not written, so a
         refused write can name the one the build actually still owes.
         """
-        if call.name in PROJECT_TALK_TOOLS:
+        if call.name in PROJECT_HOST_TOOLS:
             raise ProjectWorkspaceError(
                 f"{call.name} is a talk tool the loop handles; it never runs "
                 "in the workspace"
@@ -1448,6 +1501,69 @@ class ProjectWorkspaceService:
             raise ProjectWorkspaceError("verification checks are disabled")
         await self.verification.revoke(asset_id)
         return await self.verification_view(asset_id)
+
+    async def record_plan(
+        self,
+        asset_id: str,
+        plan: dict[str, Any],
+        *,
+        done: list[str] | None = None,
+    ) -> None:
+        """The current build plan, as a file the next context window can read.
+
+        A plan used to live only in graph state — real enough to gate the
+        turn, invisible to the user, and gone from the model's view the moment
+        the trace window slid past it. Written down it becomes what the
+        published harness work calls a control object: reviewable in the
+        project, versioned with it, and — because METIS.md rides into every
+        step's context — the one part of the plan that survives any reset.
+
+        `done` marks the files that have actually landed. Best-effort by
+        design: a plan that cannot be written must never cost the turn that
+        made it, so every failure is swallowed here.
+        """
+        files = [str(item) for item in (plan.get("files") or [])][:24]
+        finished = {str(item) for item in (done or [])}
+        intent = _bounded_line(plan.get("intent"), 20) or "build"
+        scope = _bounded_line(plan.get("scope"), 20) or "narrow"
+        reason = _bounded_line(plan.get("reason"), 300)
+        lines = [
+            f"### Current build plan · {intent} ({scope}) · {_now()[:10]}",
+        ]
+        if reason:
+            lines.append(f"_Revised: {reason}_")
+        lines.extend(
+            f"- [{'x' if item in finished else ' '}] `{item}`" for item in files
+        )
+        if not files:
+            lines.append("- (no new files planned)")
+        body = "\n".join(lines)
+        try:
+            async with self._lock:
+                root = await self.assets.project_path(asset_id)
+                metis_dir = root / ".metis"
+                if not metis_dir.is_dir():
+                    return
+                (metis_dir / "plan.json").write_text(
+                    json.dumps(
+                        {**plan, "files": files, "done": sorted(finished)}, indent=2
+                    ),
+                    encoding="utf-8",
+                )
+                path = metis_dir / "METIS.md"
+                if not path.is_file() or path.is_symlink():
+                    return
+                text = path.read_text(encoding="utf-8")
+                block = f"{_PLAN_START}\n{body}\n{_PLAN_END}"
+                start = text.find(_PLAN_START)
+                end = text.find(_PLAN_END)
+                if start >= 0 and end > start:
+                    text = text[:start] + block + text[end + len(_PLAN_END) :]
+                else:
+                    text = text.rstrip() + "\n\n" + block + "\n"
+                path.write_text(text, encoding="utf-8")
+        except Exception:  # noqa: BLE001 - the plan file is never worth a turn
+            return
 
     async def record_learnings(
         self, asset_id: str, run_id: str, learnings: list[str]
