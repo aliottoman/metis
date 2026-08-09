@@ -398,7 +398,7 @@ body { background: var(--m-paper); color: var(--m-ink); }
    so it gets the language rather than inheriting the leftovers.
    ═══════════════════════════════════════════════════════════════════════ */
 
-.messageList { max-width: 860px; }
+.messageList { max-width: 1040px; }
 /* Nothing should rest inside the mask ramp at the head of the sheet. */
 .chatWorkspace:not(.isEmpty) .messageList { padding-top: 52px; }
 
@@ -419,12 +419,27 @@ body { background: var(--m-paper); color: var(--m-ink); }
   border-radius: 16px;
   box-shadow: none;
 }
+/* Your message is a contained bubble: it shrinks to its text and sits toward
+   Metis's column, so a short reply reads small and the focus stays on what
+   Metis says. A long one caps its width AND height, then scrolls inside the
+   bubble instead of pushing the whole thread down. Editing gets full width. */
+.chatMessage.message-user:not(.isEditing) .messageBody {
+  justify-self: end;
+  max-width: min(72%, 620px);
+}
+.chatMessage.message-user:not(.isEditing) .messageContent {
+  max-height: 340px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.chatMessage.message-user .messageAuthor { display: none; }
+.chatMessage.message-user .messageActions { justify-content: flex-end; }
 .chatMessage.message-assistant .messageBody {
   background: none;
   border: 0;
   box-shadow: none;
 }
-.messageContent { color: var(--m-ink); font-size: 14.5px; line-height: 1.66; }
+.messageContent { color: var(--m-ink); font-size: 13.5px; line-height: 1.62; }
 .messageContent a { color: var(--m-ink); text-decoration-color: var(--m-ink-3); }
 .messageContent pre,
 .artifactTextPreview,
@@ -435,7 +450,20 @@ body { background: var(--m-paper); color: var(--m-ink); }
 }
 
 .messageAvatar { background: var(--m-surface); box-shadow: inset 0 0 0 1px var(--m-line); }
-.messageAvatar.metisAvatar { background: var(--m-paper-lift); }
+/* The companion is the assistant mark now, so its slot is just a centred
+   holder — no disc, no ring behind the bead — sized to the 32px avatar column
+   and letting the streaming bead's morph spill past its box. */
+.messageAvatar.metisAvatar {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+}
 .message-user .messageAvatar,
 .messageAvatar.userAvatar { background: #ece4f5; color: var(--m-ink); box-shadow: inset 0 0 0 1px #ddd0ea; }
 
@@ -1784,6 +1812,8 @@ select { border-radius: var(--m-r-field); }
   font-size: 10px;
 }
 .approvalActions { gap: 8px; margin-top: 11px; }
+.elicitationOptions { gap: 8px; margin-top: 11px; }
+.elicitationTextForm { gap: 8px; margin-top: 9px; }
 .decisionRecorded { color: var(--m-ink-2); font-size: 11.5px; margin-top: 9px; }
 .approvalBlocked > p { color: var(--m-ink-2); font-size: 11.5px; line-height: 1.55; }
 
@@ -2326,6 +2356,15 @@ select { border-radius: var(--m-r-field); }
 }
 .contextChip > button:hover:not(:disabled) { background: rgba(33, 31, 29, 0.08); }
 
+/* The tracker-update action sits in the chips row but is a verb, not a
+   context tag: seat it at the pills' height and weight without the pill fill. */
+.trackerChipAction {
+  align-self: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+.trackerChipAction:disabled { opacity: 0.55; cursor: default; }
+
 /* Everywhere else the accent blue was standing in for "chosen". */
 .modelControlChoice button.selected,
 .pickerOption[aria-selected="true"],
@@ -2696,3 +2735,157 @@ select { border-radius: var(--m-r-field); }
   box-shadow: none;
   color: #fbf8f2;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Chat: calmer transitions and inline approvals
+   Smaller type in a wider column (a coding-assistant density) is set above on
+   .messageList / .messageContent. Here: content that fades in instead of
+   snapping when the working line becomes the answer, and an approval surfaced
+   in the thread rather than only in the drawer.
+   ══════════════════════════════════════════════════════════════════════ */
+
+@keyframes mMsgIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.chatWorkspace .messageContent,
+.chatWorkspace .reasoningPanel,
+.chatWorkspace .inlineApprovalDock {
+  animation: mMsgIn 0.3s var(--m-ease) both;
+}
+
+/* An approval surfaced inline where you are reading — capped to a comfortable
+   measure, left in the column, and a touch more present than the drawer's
+   card because it is the live question. */
+.inlineApprovalDock { margin: 12px 0 4px; max-width: 680px; }
+.approvalCard.isInline {
+  margin-top: 0;
+  padding: 15px 17px;
+  background: var(--m-paper-lift);
+  box-shadow: inset 0 0 0 1px var(--m-coral-soft), 0 12px 32px -18px rgba(33, 31, 29, 0.5);
+}
+.approvalCard.isInline .approvalTitle strong { font-size: 13.5px; }
+.approvalCard.isInline > p { font-size: 12.5px; }
+
+/* Capture status on the account overview: coral while something still waits
+   for analysis, quiet ink once it has been analysed. */
+.customerSectionCard em.sourceWaiting { color: var(--m-coral); font-style: normal; }
+.customerSectionCard em.sourceSaved { color: var(--m-ink-3); font-style: normal; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chatWorkspace .messageContent,
+  .chatWorkspace .reasoningPanel,
+  .chatWorkspace .inlineApprovalDock { animation: none; }
+}
+
+/* A note/action opened from the Today queue flashes a soft ring when you land
+   on it, so "open" points your eye at the exact item, not just the tab. */
+@keyframes mDeepLinkFlash {
+  0% { box-shadow: 0 0 0 0 rgba(199, 130, 92, 0); }
+  22% { box-shadow: 0 0 0 3px var(--m-coral-soft); }
+  100% { box-shadow: 0 0 0 0 rgba(199, 130, 92, 0); }
+}
+.isDeepLinked { animation: mDeepLinkFlash 2.4s var(--m-ease); }
+@media (prefers-reduced-motion: reduce) {
+  .isDeepLinked { animation: none; }
+}
+
+/* "＋ Knowledge" on an attached document — a quiet pill beside the file, so a
+   dropped doc can be kept in the knowledge base, not just read for one turn. */
+.attachmentKnowledge {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r-pill);
+  color: var(--m-ink-2);
+  font-size: 10.5px;
+  padding: 2px 9px;
+  margin-right: 4px;
+  transition: background-color 0.18s var(--m-ease), color 0.18s var(--m-ease);
+}
+.attachmentKnowledge:hover:not(:disabled) { background: var(--m-surface); color: var(--m-ink); }
+.attachmentKnowledge:disabled { opacity: 0.72; cursor: default; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Assets — the page fields and the detail drawer, brought onto the matured
+   surface. Two things were off: the search/select fields used a translucent
+   white that tinted against the dotted page (the "inner colour"), and the
+   drawer kept 8–10px "debug" type with a status chip so pale it read as blank.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Page fields — a clean paper field, one hairline, a soft lilac focus. No
+   white translucency; the retired indigo accent is gone. */
+.assetFieldLabel { color: var(--m-ink-3); font-size: 10px; font-weight: 600; letter-spacing: 0.05em; }
+.assetSearchControl {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 12px;
+  box-shadow: none;
+  min-height: 44px;
+}
+.assetSearchControl:focus-within {
+  background: var(--m-paper-lift);
+  border-color: #c6b8d6;
+  box-shadow: 0 0 0 3px rgba(194, 156, 224, 0.2);
+}
+.assetSearchControl > span { color: var(--m-ink-3); font-size: 15px; }
+.assetSearchControl input { color: var(--m-ink); font-size: 13.5px; }
+.assetSearchControl input::placeholder { color: var(--m-ink-3); }
+/* background-color only, so the select keeps its chevron background-images. */
+.assetSelectField select {
+  background-color: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 12px;
+  color: var(--m-ink-2);
+  font-size: 13px;
+  min-height: 44px;
+}
+.assetSelectField select:focus-visible { border-color: #c6b8d6; box-shadow: 0 0 0 3px rgba(194, 156, 224, 0.2); }
+
+/* Drawer — paper ground, reading-scale type, and a defined status row so the
+   status reads as its own section rather than a pale chip on blank space. */
+.assetDrawer { background: var(--m-paper); }
+.assetDrawerBody { padding: 22px 26px 40px; }
+.appMain .assetDrawerHeader h2 { font-size: 25px; }
+.assetDrawerHeader p { color: var(--m-ink-2); font-size: 13px; line-height: 1.6; margin-top: 10px; max-width: 60ch; }
+.assetDrawerKicker, .assetSectionLabel { font-size: 10px; }
+
+.assetRuntimeStrip {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  padding: 11px 14px;
+}
+.assetRuntimeStrip > code { color: var(--m-ink-3); font-size: 11.5px; max-width: 60%; }
+
+/* Status chips — sized to read, coloured by state on the matured palette
+   (used on the cards and in the drawer alike). */
+.assetStatus { font-size: 10px; gap: 6px; letter-spacing: 0.045em; min-height: 24px; padding: 0 10px; }
+.assetStatus i { height: 6px; width: 6px; }
+.assetStatus.isRunning { background: var(--m-mint-surface, #e5f4ef); border-color: transparent; color: var(--m-green-ink, #00754e); }
+.assetStatus.isReady { background: var(--m-surface); border-color: transparent; color: var(--m-ink-2); }
+.assetStatus.isReview,
+.assetStatus.isTransitioning { background: #fbecc7; border-color: transparent; color: #856121; }
+.assetStatus.isError { background: var(--terracotta-light, #ffe6de); border-color: transparent; color: var(--coral-ink, #cf4023); }
+
+/* Recipe, trust and disclosure sections — reading scale, matured hairlines,
+   and env inputs that match the fields above. */
+.assetRecipeNotice p { color: var(--m-ink-2); font-size: 12.5px; line-height: 1.6; }
+.assetRecipeNotice code { font-size: 11px; }
+.assetTrustReview pre { font-size: 11px; line-height: 1.6; max-height: 160px; }
+.assetTrustApproved strong { font-size: 12px; }
+.assetTrustApproved small { font-size: 10.5px; }
+.assetDisclosure,
+.assetEnvSection.assetDisclosure,
+.assetLogsSection.assetDisclosure { border-bottom-color: var(--m-line); }
+.assetDisclosureSummary strong { font-family: inherit; font-size: 14px; }
+.assetDisclosureSummary > span,
+.assetDisclosureSummary small { color: var(--m-ink-3); font-size: 10.5px; }
+.assetDisclosureSummary::after { color: var(--m-ink-3); }
+.assetDisclosureBody > p:first-child { color: var(--m-ink-2); font-size: 12px; line-height: 1.6; }
+.assetEnvControl input {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 9px;
+}
+.assetEnvField code { font-size: 12px; }

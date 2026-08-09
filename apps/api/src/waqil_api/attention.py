@@ -173,7 +173,7 @@ class AttentionService:
                 title=str(action.get("description") or "Open action"),
                 detail=f"{action.get('account_name', '')}"
                 + (f" · owner {owner}" if owner else ""),
-                href=f"/customers?account={action['account_id']}&tab=actions",
+                href=f"/customers?account={action['account_id']}&tab=actions&action={action['id']}",
                 created_at=action.get("created_at"),
                 due_at=action.get("due_at"),
                 account_id=str(action.get("account_id") or "") or None,
@@ -185,7 +185,7 @@ class AttentionService:
                 kind="customer_note",
                 title=str(note.get("title") or "Captured note"),
                 detail=f"{note.get('account_name', '')} · captured, not yet analyzed",
-                href=f"/customers?account={note['account_id']}&tab=sources",
+                href=f"/customers?account={note['account_id']}&tab=sources&source={note['id']}",
                 created_at=note.get("created_at"),
                 account_id=str(note.get("account_id") or "") or None,
             )

@@ -353,3 +353,75 @@ def test_thinking_blocks_are_separated_from_the_answer() -> None:
     }
     assert _cohere_message_text(message) == "391"
     assert _cohere_thinking_text(message) == "let me compute 17*23"
+
+
+class _Reply:
+    """The parts of an httpx response the retry path reads."""
+
+    def __init__(self, status_code: int, body: dict | None = None) -> None:
+        self.status_code = status_code
+        self._body = body if body is not None else {}
+        self.text = json.dumps(self._body)
+        self.headers: dict[str, str] = {}
+
+    def json(self) -> dict:
+        return self._body
+
+
+class _CountingClient:
+    def __init__(self, *replies: _Reply) -> None:
+        self.replies = list(replies)
+        self.calls = 0
+
+    async def post(self, path: str, json: dict) -> _Reply:  # noqa: A002 - httpx's name
+        self.calls += 1
+        return self.replies.pop(0)
+
+
+def _provider_with(settings: Settings, client: _CountingClient) -> CohereModelProvider:
+    provider = CohereModelProvider(settings)
+    provider._client_instance = client  # type: ignore[assignment]
+    return provider
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        _Reply(500, {"message": "internal server error"}),
+        _Reply(503, {"message": "unavailable"}),
+        _Reply(422, {"error_type": "NO_VALID_RESPONSE_GENERATED"}),
+        _Reply(422, {"error_type": "INVALID_TOOL_GENERATION"}),
+        _Reply(422, {"error_type": "HALLUCINATED_ALL_TOOL_CALLS"}),
+    ],
+)
+async def test_a_transient_service_failure_is_retried_not_surfaced(
+    tmp_path, failure: _Reply
+) -> None:
+    """One live battery run lost a build turn, a web-research turn and a deck
+    turn to three of these, each on the first attempt, with nothing wrong on
+    this side. They are the service failing to generate, not a bad request."""
+    client = _CountingClient(failure, _Reply(200, {"message": {"content": []}}))
+    provider = _provider_with(_settings(tmp_path), client)
+    assert await provider._chat({"messages": []}) == {"message": {"content": []}}
+    assert client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_a_request_this_side_got_wrong_fails_at_once(tmp_path) -> None:
+    client = _CountingClient(_Reply(400, {"message": "invalid request"}))
+    provider = _provider_with(_settings(tmp_path), client)
+    with pytest.raises(ModelProviderError, match="HTTP 400"):
+        await provider._chat({"messages": []})
+    assert client.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_transient_failure_that_never_clears_surfaces_its_real_status(
+    tmp_path,
+) -> None:
+    client = _CountingClient(*(_Reply(500, {"message": "down"}) for _ in range(3)))
+    provider = _provider_with(_settings(tmp_path), client)
+    with pytest.raises(ModelProviderError, match="HTTP 500"):
+        await provider._chat({"messages": []})
+    assert client.calls == 3

@@ -86,6 +86,28 @@ def test_a_draft_the_scanner_would_reject_never_touches_disk(tmp_path) -> None:
     assert not (project / ".metis" / "asset.json").exists()
 
 
+def test_a_build_command_is_written_as_a_launch_build_step(tmp_path) -> None:
+    project = _project(tmp_path)
+    recipe = STREAMLIT_RECIPE.model_copy(
+        update={"build_command": ["npm", "--prefix", "web", "run", "build"]}
+    )
+    body = write_recipe(project, recipe)
+    stored = json.loads((project / ".metis" / "asset.json").read_text())
+    assert stored == body
+    # The flat recipe field becomes one nested build step on disk.
+    assert stored["launch"]["build"] == [["npm", "--prefix", "web", "run", "build"]]
+
+
+def test_a_build_command_the_scanner_would_reject_never_touches_disk(tmp_path) -> None:
+    project = _project(tmp_path)
+    # A control char in a build token fails the same argv rules the launch
+    # command obeys, so the draft never survives validation.
+    poisoned = STREAMLIT_RECIPE.model_copy(update={"build_command": ["npm", "run\nbuild"]})
+    with pytest.raises(RecipeError, match="did not survive validation"):
+        write_recipe(project, poisoned)
+    assert not (project / ".metis" / "asset.json").exists()
+
+
 class _FakeCohere:
     available = True
 

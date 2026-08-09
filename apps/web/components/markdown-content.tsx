@@ -161,15 +161,38 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
     const list = line.match(/^\s*([-+*]|\d+[.)])\s+(.+)$/);
     if (list) {
       const ordered = /^\d/.test(list[1]);
+      // Honor the first marker's number so `3. 4. 5.` renders 3,4,5; the rest
+      // increment positionally, so a model that writes `1.` on every line still
+      // yields 1,2,3 rather than repeating the literal marker.
+      const start = ordered ? Number.parseInt(list[1], 10) || 1 : 1;
       const items: string[] = [];
       while (index < lines.length) {
-        const item = lines[index].match(/^\s*([-+*]|\d+[.)])\s+(.+)$/);
+        const current = lines[index];
+        if (!current.trim()) {
+          // A blank line ends the list ONLY if what follows isn't another item
+          // of the same kind. Otherwise it's a "loose" list (blank lines between
+          // items — which models emit constantly) and must stay ONE list, or
+          // every item becomes its own <ol> and the counter restarts at 1.
+          let lookahead = index + 1;
+          while (lookahead < lines.length && !lines[lookahead].trim()) lookahead += 1;
+          const nextItem = lookahead < lines.length
+            ? lines[lookahead].match(/^\s*([-+*]|\d+[.)])\s+(.+)$/)
+            : null;
+          if (!nextItem || /^\d/.test(nextItem[1]) !== ordered) break;
+          index = lookahead;
+          continue;
+        }
+        const item = current.match(/^\s*([-+*]|\d+[.)])\s+(.+)$/);
         if (!item || /^\d/.test(item[1]) !== ordered) break;
         items.push(item[2]);
         index += 1;
       }
       const children = items.map((item, itemIndex) => <li key={itemIndex}>{inlineMarkdown(item, `li-${index}-${itemIndex}`)}</li>);
-      blocks.push(ordered ? <ol key={`list-${index}`}>{children}</ol> : <ul key={`list-${index}`}>{children}</ul>);
+      blocks.push(
+        ordered
+          ? <ol key={`list-${index}`} start={start}>{children}</ol>
+          : <ul key={`list-${index}`}>{children}</ul>,
+      );
       continue;
     }
 

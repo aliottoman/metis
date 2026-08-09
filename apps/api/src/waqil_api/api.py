@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, AsyncIterator, Literal
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from .asset_library import AssetLibraryError
@@ -89,6 +89,7 @@ from .contracts import (
     WinValuationAcceptV1,
     WinValuationV1,
     Decision,
+    ElicitationAnswerV1,
     FeedbackV1,
     HealthV1,
     KnowledgeSnippetV1,
@@ -180,7 +181,16 @@ def _require_project_mode_available(app: AppRuntime, mode: str) -> None:
         return
     provider = PROJECT_MODE_PROVIDER.get(mode)
     if provider == "oci" and not app.model_preference.oci_available:
-        raise HTTPException(status_code=409, detail="continuous Grok mode is unavailable")
+        # A stored grok_continuous session replays this check on every send,
+        # so the refusal has to say what to DO, not just what is off.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "continuous Grok mode is unavailable — the Grok lane is "
+                "switched off. Pick another project mode for this chat "
+                "(Command A+ or the local lane) from the model control."
+            ),
+        )
     if provider == "cohere" and not app.model_preference.cohere_available:
         raise HTTPException(
             status_code=409,
@@ -508,7 +518,7 @@ async def delete_customer_account(account_id: str, request: Request) -> Response
     status_code=status.HTTP_201_CREATED,
 )
 async def capture_customer_source(
-    body: CustomerCaptureV1, request: Request
+    body: CustomerCaptureV1, request: Request, background: BackgroundTasks
 ) -> CustomerSourceV1:
     app = runtime(request)
     if await app.database.get_customer_account(body.account_id) is None:
@@ -524,6 +534,11 @@ async def capture_customer_source(
     value = {key: item for key, item in row.items() if key != "content_hash"}
     if duplicate and value["status"] == "waiting":
         value["status"] = "duplicate"
+    elif value["status"] == "waiting" and app.customers is not None:
+        # Fresh note → extract it in the background on the pinned cloud model,
+        # so it is waiting-for-review by the time you open the record. No-ops on
+        # a local pin; the 201 returns immediately either way.
+        background.add_task(app.customers.auto_analyze, str(row["id"]))
     return CustomerSourceV1.model_validate(value)
 
 
@@ -544,6 +559,18 @@ async def analyze_customer_source(
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+@router.get(
+    "/customers/sources/{source_id}/proposal",
+    response_model=CustomerUpdateProposalV1 | None,
+)
+async def get_customer_source_proposal(
+    source_id: str, request: Request
+) -> CustomerUpdateProposalV1 | None:
+    service = runtime(request).customers
+    assert service is not None
+    return await service.open_proposal(source_id)
+
+
 @router.put(
     "/customers/proposals/{proposal_id}/save",
     response_model=CustomerUpdateProposalV1,
@@ -554,6 +581,26 @@ async def save_customer_update(
     service = runtime(request).customers
     assert service is not None
     value = await service.save_proposal(proposal_id, body.extraction)
+    if value is None:
+        raise HTTPException(
+            status_code=409, detail="customer update is missing or already reviewed"
+        )
+    return value
+
+
+@router.post(
+    "/customers/proposals/{proposal_id}/apply",
+    response_model=CustomerUpdateProposalV1,
+)
+async def apply_customer_update(
+    proposal_id: str, request: Request
+) -> CustomerUpdateProposalV1:
+    """One-click apply: commit a pending proposal's own extraction to the record
+    unchanged. This is the button on the chat's analysis card; reviewing and
+    editing first still goes through the save endpoint above."""
+    service = runtime(request).customers
+    assert service is not None
+    value = await service.apply_proposal(proposal_id)
     if value is None:
         raise HTTPException(
             status_code=409, detail="customer update is missing or already reviewed"
@@ -1421,6 +1468,13 @@ async def list_runs(
             approval=await app.database.get_pending_approval(run.id)
             if run.status == RunStatus.AWAITING_APPROVAL
             else None,
+            # ask_user has no approvals table — its pending question rides the
+            # checkpoint — so recovery reads it back the same way the run resumes.
+            elicitation=await app.control_plane.get_pending_elicitation(
+                run.id, run.conversation_id
+            )
+            if run.status == RunStatus.AWAITING_INPUT and app.control_plane is not None
+            else None,
         )
         for run in runs
     ]
@@ -1535,6 +1589,62 @@ async def decide_run(
             approval_id=approval.id, decision=body.decision, reason=body.reason
         ),
     )
+    return (await app.database.get_run(run_id))  # type: ignore[return-value]
+
+
+@router.post("/runs/{run_id}/answers", response_model=RunV1)
+async def answer_run(
+    run_id: str, body: ElicitationAnswerV1, request: Request
+) -> RunV1:
+    """Answer an ask_user pause and resume the same turn.
+
+    The twin of decide_run for the input pause: the reply becomes the ask_user
+    tool result and the run continues on the same event stream. The pending
+    question is read from the checkpoint (there is no approvals table for it),
+    and the answer is validated against it exactly as an approval decision is
+    validated against its request."""
+    app = runtime(request)
+    run = await app.database.get_run(run_id)
+    if run is None:
+        raise not_found("run")
+    if run.status != RunStatus.AWAITING_INPUT:
+        raise HTTPException(status_code=409, detail="run is not awaiting input")
+    assert app.control_plane is not None
+    pending = await app.control_plane.get_pending_elicitation(
+        run_id, run.conversation_id
+    )
+    if pending is None:
+        raise HTTPException(status_code=409, detail="run has no pending question")
+    if body.elicitation_id is not None and body.elicitation_id != pending.id:
+        raise HTTPException(
+            status_code=409, detail="elicitation ID does not match the pending question"
+        )
+    option = (body.option or "").strip()
+    text = (body.text or "").strip()
+    if option and pending.options and option not in pending.options:
+        raise HTTPException(
+            status_code=409, detail="option is not one of the offered choices"
+        )
+    if text and not pending.allow_text:
+        raise HTTPException(
+            status_code=409, detail="this question does not accept a free-text answer"
+        )
+    # The one payload-shape rule the contract defers to this endpoint: a reply
+    # must actually say something.
+    if not option and not text:
+        raise HTTPException(
+            status_code=422, detail="an answer must include a choice or free text"
+        )
+    answer = ElicitationAnswerV1(
+        elicitation_id=pending.id, option=option or None, text=text or None
+    )
+    await app.events.emit(
+        run_id,
+        run.conversation_id,
+        "elicitation.answered",
+        {"elicitation_id": pending.id, "option": answer.option, "text": answer.text},
+    )
+    await app.control_plane.resume_elicitation(run_id, run.conversation_id, answer)
     return (await app.database.get_run(run_id))  # type: ignore[return-value]
 
 
@@ -2137,13 +2247,19 @@ async def configure_notion(
 
 
 @router.post("/corpus/notion/sync", response_model=NotionSyncResultV1)
-async def sync_notion(request: Request) -> NotionSyncResultV1:
+async def sync_notion(request: Request, background: BackgroundTasks) -> NotionSyncResultV1:
+    app = runtime(request)
     try:
-        return await runtime(request).notion.sync()
+        result = await app.notion.sync()
     except NotionError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except CohereUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    # Map the freshly-synced pages into customer records in the background, so
+    # the sync response is not held up by per-account extraction.
+    if app.customers is not None:
+        background.add_task(app.customers.ingest_notion_documents, app.notion.last_synced_documents())
+    return result
 
 
 @router.post(
@@ -2194,6 +2310,21 @@ async def reindex_corpus_source(
         return await runtime(request).corpus.index_source(source_id)
     except KeyError as exc:
         raise not_found("corpus source") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except CohereUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/corpus/documents/{upload_id}", response_model=CorpusReindexResultV1)
+async def add_document_to_knowledge(
+    upload_id: str, request: Request
+) -> CorpusReindexResultV1:
+    """Persist an already-uploaded document into the knowledge base."""
+    try:
+        return await runtime(request).corpus.ingest_document(upload_id)
+    except KeyError as exc:
+        raise not_found("upload") from exc
     except PermissionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except CohereUnavailable as exc:

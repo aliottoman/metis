@@ -447,7 +447,14 @@ export async function getConversationProject(
   if (value == null) return null;
   const item = asRecord(unwrap(value));
   const projectId = stringValue(item.projectId ?? item.project_id);
-  const mode = item.mode === "grok_continuous" ? "grok_continuous" : "grok_bootstrap_local";
+  // Every stored mode passes through verbatim. This used to coerce anything
+  // that was not grok_continuous — cohere_continuous included — down to
+  // grok_bootstrap_local, so reloading a Cohere conversation showed the wrong
+  // mode AND posted it back on the next send, silently rewriting the session.
+  const mode =
+    item.mode === "grok_continuous" || item.mode === "cohere_continuous"
+      ? item.mode
+      : "grok_bootstrap_local";
   return projectId ? {
     conversationId: stringValue(item.conversationId ?? item.conversation_id, conversationId),
     projectId,
@@ -465,6 +472,22 @@ export async function decideRun(
   await request(`${API_PREFIX}/runs/${encodeURIComponent(runId)}/decisions`, {
     method: "POST",
     body: JSON.stringify({ approval_id: approvalId, decision, reason }),
+  });
+}
+
+/** Answer an ask_user pause, resuming the same turn with the reply as the tool
+ * result. The twin of decideRun for the input pause. */
+export async function answerElicitation(
+  runId: string,
+  reply: { option?: string; text?: string; elicitationId?: string },
+): Promise<void> {
+  await request(`${API_PREFIX}/runs/${encodeURIComponent(runId)}/answers`, {
+    method: "POST",
+    body: JSON.stringify({
+      option: reply.option,
+      text: reply.text,
+      elicitation_id: reply.elicitationId,
+    }),
   });
 }
 
@@ -1109,6 +1132,25 @@ export async function reindexCorpusSource(id: string): Promise<CorpusReindexResu
   };
 }
 
+/** Persist an already-uploaded document into the knowledge base (corpus). */
+export async function addDocumentToKnowledge(uploadId: string): Promise<CorpusReindexResult> {
+  const response = asRecord(
+    await request<unknown>(
+      `${API_PREFIX}/corpus/documents/${encodeURIComponent(uploadId)}`,
+      { method: "POST" },
+    ),
+  );
+  return {
+    source_id: stringValue(response.source_id, ""),
+    status: stringValue(response.status, "indexed") as CorpusReindexResult["status"],
+    files_indexed: numberValue(response.files_indexed) ?? 0,
+    files_skipped: numberValue(response.files_skipped) ?? 0,
+    files_removed: numberValue(response.files_removed) ?? 0,
+    chunks: numberValue(response.chunks) ?? 0,
+    message: stringValue(response.message),
+  };
+}
+
 export async function deleteCorpusSource(id: string): Promise<void> {
   await request(`${API_PREFIX}/corpus/sources/${encodeURIComponent(id)}`, {
     method: "DELETE",
@@ -1295,6 +1337,13 @@ export async function analyzeCustomerSource(sourceId: string): Promise<CustomerP
   return request<CustomerProposal>(
     `${API_PREFIX}/customers/sources/${encodeURIComponent(sourceId)}/analyze`,
     { method: "POST" },
+  );
+}
+
+/** The pending review proposal for a source (auto-analyzed or Notion-derived), or null. */
+export async function getCustomerSourceProposal(sourceId: string): Promise<CustomerProposal | null> {
+  return request<CustomerProposal | null>(
+    `${API_PREFIX}/customers/sources/${encodeURIComponent(sourceId)}/proposal`,
   );
 }
 
@@ -1582,6 +1631,15 @@ export async function createCustomerOutput(
   );
 }
 
+/** One-click apply: commit a filed note's analysis to the account profile. The
+ *  write is gated here — nothing lands until this is called from the card. */
+export async function applyCustomerProposal(proposalId: string): Promise<void> {
+  await request<unknown>(
+    `${API_PREFIX}/customers/proposals/${encodeURIComponent(proposalId)}/apply`,
+    { method: "POST" },
+  );
+}
+
 function numberRecord(value: unknown): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [key, entry] of Object.entries(asRecord(value))) {
@@ -1706,6 +1764,9 @@ export function normalizeAsset(value: unknown): AssetV1 {
     launchConfigured: item.launchConfigured === true || item.launch_configured === true,
     launchApproved: item.launchApproved === true || item.launch_approved === true,
     launchCommand: listFrom(item.launchCommand ?? item.launch_command).map((part) => stringValue(part)),
+    buildCommand: listFrom(item.buildCommand ?? item.build_command).map((step) =>
+      listFrom(step).map((part) => stringValue(part)),
+    ),
     envKeys: listFrom(item.envKeys ?? item.env_keys).map((key) => stringValue(key)).filter(Boolean),
     envFile: listFrom(item.envFile ?? item.env_file)
       .map(normalizeAssetEnvVar)

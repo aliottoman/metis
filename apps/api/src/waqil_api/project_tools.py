@@ -1,7 +1,7 @@
 """Provider-neutral project function schemas for tool-calling decode.
 
-Two transports reach the same seven workspace tools plus the completion
-channel. The OCI provider has always sent these definitions as real function
+Two transports reach the same workspace tools, the talk channel (ask_user /
+respond) and the completion channel. The OCI provider has always sent these definitions as real function
 schemas; the Ollama provider sends them to hosted models, where the platform
 enforces tool calling but ignores ``format`` grammars. Lifting them here keeps
 one set of definitions for both — the drift this prevents is not hypothetical:
@@ -196,6 +196,62 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
                     "name": {"type": "string", "minLength": 1, "maxLength": 32},
                 },
                 "required": ["name"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "ask_user",
+            "description": (
+                "Pause this turn to ask the user ONE clarifying question. Their "
+                "answer returns as this call's result and the same turn "
+                "continues with it. Use only when the request is genuinely "
+                "ambiguous in a way that changes what you would build, or when "
+                "the user invited questions — otherwise choose a sensible "
+                "default and disclose it in your summary. Never ask more than "
+                "once per turn."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "description": "The one question that unblocks the work.",
+                    },
+                    "options": {
+                        "type": "array",
+                        "items": {"type": "string", "maxLength": 200},
+                        "maxItems": 6,
+                        "description": (
+                            "Up to 6 short answer choices. Omit for free text."
+                        ),
+                    },
+                },
+                "required": ["question"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "respond",
+            "description": (
+                "Answer the user directly, without claiming any build work "
+                "happened. Use it for questions about the project, "
+                "explanations, and status. A respond turn is complete in "
+                "itself; do not follow it with finish_project_task."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The complete user-facing answer.",
+                    },
+                },
+                "required": ["message"],
                 "additionalProperties": False,
             },
         },

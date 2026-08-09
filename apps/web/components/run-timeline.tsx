@@ -2,7 +2,9 @@
 
 import { useMemo } from "react";
 
-import type { ApprovalRequest, RunEventV1 } from "@/lib/types";
+import { ApprovalCard } from "@/components/approval-card";
+import { approvalFrom } from "@/lib/approvals";
+import type { RunEventV1 } from "@/lib/types";
 
 interface RunTimelineProps {
   events: RunEventV1[];
@@ -167,27 +169,6 @@ function eventSummary(event: RunEventV1): string {
     (event.type.includes("delta") ? "Streaming response" : "Recorded by the control plane");
 }
 
-function approvalFrom(event: RunEventV1): ApprovalRequest | null {
-  // Only the persisted request event is actionable. Status events such as
-  // run.awaiting_approval and approval.applied do not carry an approval ID.
-  if (event.type !== "approval.required") return null;
-  const nested = event.payload.approval;
-  const payload = nested && typeof nested === "object" ? nested as Record<string, unknown> : event.payload;
-  const id = payload.id ?? payload.approval_id;
-  if (typeof id !== "string" || !id) return null;
-  return {
-    id: String(id),
-    run_id: event.run_id,
-    title: String(payload.title ?? payload.action ?? "Approve this action?"),
-    summary: String(payload.summary ?? payload.description ?? "Metis needs your permission before it can continue."),
-    risk_level: payload.risk_level ? String(payload.risk_level) as ApprovalRequest["risk_level"] : undefined,
-    permissions: Array.isArray(payload.permissions) ? payload.permissions.map(String) : [],
-    action_digest: payload.action_digest ? String(payload.action_digest) : payload.input_digest ? String(payload.input_digest) : undefined,
-    status: payload.status ? String(payload.status) as ApprovalRequest["status"] : "pending",
-    blocked_reason: payload.blocked_reason ? String(payload.blocked_reason) : undefined,
-  };
-}
-
 export function RunTimeline({ events, connection, streamError, onDecision, decidedApprovals, decisionBusy, approveLabel = "Approve once" }: RunTimelineProps) {
   const ordered = useMemo(() => [...events].sort((a, b) => a.sequence - b.sequence), [events]);
 
@@ -215,30 +196,13 @@ export function RunTimeline({ events, connection, streamError, onDecision, decid
                 </div>
                 <p>{eventSummary(event)}</p>
                 {approval ? (
-                  <section className="approvalCard">
-                    <div className="approvalTitle"><span>{approval.risk_level ?? "R3"}</span><strong>{approval.title}</strong></div>
-                    <p>{approval.summary}</p>
-                    {approval.permissions?.length ? <div className="permissionList">{approval.permissions.map((permission) => <span key={permission}>{permission}</span>)}</div> : null}
-                    {approval.action_digest ? <code title={approval.action_digest}>Action {approval.action_digest.slice(0, 12)}</code> : null}
-                    {decided ? (
-                      <div className="decisionRecorded">✓ Decision recorded</div>
-                    ) : approval.blocked_reason ? (
-                      // No Approve button at all, rather than a disabled one: a
-                      // greyed button reads as "try again", and this never
-                      // becomes approvable without a follow-up that fixes it.
-                      <div className="approvalBlocked">
-                        <p><strong>Cannot be applied.</strong> {approval.blocked_reason}</p>
-                        <div className="approvalActions">
-                          <button type="button" className="dangerButton" disabled={decisionBusy === approval.id} onClick={() => void onDecision(approval.id, "reject")}>Reject</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="approvalActions">
-                        <button type="button" className="dangerButton" disabled={decisionBusy === approval.id} onClick={() => void onDecision(approval.id, "reject")}>Reject</button>
-                        <button type="button" className="primaryButton" disabled={decisionBusy === approval.id} onClick={() => void onDecision(approval.id, "approve")}>{approveLabel}</button>
-                      </div>
-                    )}
-                  </section>
+                  <ApprovalCard
+                    approval={approval}
+                    decided={decided}
+                    decisionBusy={decisionBusy}
+                    onDecision={onDecision}
+                    approveLabel={approveLabel}
+                  />
                 ) : null}
               </div>
             </article>

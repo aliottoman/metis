@@ -137,6 +137,17 @@ def is_explicit_build_request(prompt: str) -> bool:
     return any(pattern.search(lowered) for pattern in _BUILD_PATTERNS)
 
 
+# A tool named with a job of its own — "a tool THAT summarises", "a tool TO
+# convert" — as opposed to a follow-up pointing back at one already drafted
+# ("build it", "create this into a tool"). The difference decides whether a
+# build request may be answered by building whatever happens to be pending.
+_NEW_TOOL_SUBJECT = re.compile(r"\btools?\b\s+(?:that|which|to|for)\s+\w+", re.IGNORECASE)
+
+
+def describes_a_new_tool(prompt: str) -> bool:
+    return bool(_NEW_TOOL_SUBJECT.search(prompt))
+
+
 def _find_catalog_tool(catalog: RoutingCatalog, slug: str | None) -> ToolRoute | None:
     if not slug:
         return None
@@ -437,6 +448,17 @@ def validate_plan_semantics(
         if arch is not None:
             raise ValueError("architecture requests require the reference architecture tool")
         return
+    if plan.route == "ask_user":
+        # Pausing to ask a question grants no capability: no tool, R0, and the
+        # question must be real. An architecture request is never a question —
+        # it has a deterministic tool — so it may not detour through ask_user.
+        if plan.tool_slug is not None or plan.risk_level != RiskLevel.R0:
+            raise ValueError("ask_user plans must have no tool and local risk R0")
+        if not (plan.question or "").strip():
+            raise ValueError("ask_user plans must carry a question")
+        if arch is not None:
+            raise ValueError("architecture requests require the reference architecture tool")
+        return
     if plan.route == "queue_update":
         # A proposal about the user's own records. It carries no tool, and the
         # write it may lead to is gated by its own approval, not by this risk.
@@ -633,7 +655,15 @@ def normalize_plan_semantics(
     # explicitly asks for the web cannot be honored by any of them — routing
     # it to one turns "research online" into confident recall.
     web_intent = is_explicit_web_request(request.prompt)
-    named = _find_catalog_tool(catalog, plan.tool_slug)
+    # An ask_user plan carries no tool — the contract says so and validation
+    # enforces it — so a slug arriving beside one is noise, not a selection.
+    # Honouring it sent "build me a tool that summarises things" to build a
+    # temperature converter.
+    named = (
+        None
+        if plan.route == "ask_user"
+        else _find_catalog_tool(catalog, plan.tool_slug)
+    )
 
     # 1. Run a runnable tool the planner named — but not when the user explicitly
     #    wants to build/update (that should build) or wants the live web, and
@@ -655,7 +685,16 @@ def normalize_plan_semantics(
         if named is not None and named.buildable and not named.disabled:
             return _declarative_plan(plan, "tool_factory", named, assumptions)
         buildable = [t for t in catalog.tools if t.buildable and not t.disabled]
-        if len(buildable) == 1 and (build_intent or toolify_intent):
+        if (
+            len(buildable) == 1
+            and (build_intent or toolify_intent)
+            # …but only as a follow-up. This rescue exists so "build it" after a
+            # Gate-1 approval builds the approved definition. A request that
+            # names a job of its own is not that: "build me a tool that
+            # summarises things" was answered by building the pending
+            # temperature converter and running it on the request.
+            and not describes_a_new_tool(request.prompt)
+        ):
             return _declarative_plan(plan, "tool_factory", buildable[0], assumptions)
 
     # 3. Nothing buildable, but the named tool is runnable — run it (e.g. a "build
@@ -670,14 +709,25 @@ def normalize_plan_semantics(
     ):
         return _declarative_plan(plan, "existing_tool", named, assumptions)
 
-    # 4. Draft a NEW tool — only on the user's explicit words. The planner
+    # 4. Ask, rather than build a guess. Every deterministic route above has
+    #    declined: no registered tool is runnable for this, and none is pending.
+    #    So a build request that reaches here and still has the planner asking a
+    #    question is one whose subject was never stated — "build me a tool that
+    #    summarises things" names no input, no output and no example. That used
+    #    to skip the pause outright (an explicit build could never ask), draft a
+    #    project-card tool on the bare word "summar", run it against nothing,
+    #    and answer "Untitled Project" three times over.
+    if plan.route == "ask_user" and (plan.question or "").strip():
+        return _ask_user_plan(plan, assumptions)
+
+    # 5. Draft a NEW tool — only on the user's explicit words. The planner
     #    proposing "tool_definition" on its own is a model inference, and
     #    honoring it is how "research X for me" once detoured into a tool
     #    factory with two approval gates instead of just answering.
     if definition_ready and toolify_intent:
         return _tool_definition_plan(plan, assumptions)
 
-    # 5. Rescue: the planner proposed no tool, but the user named a runnable one
+    # 6. Rescue: the planner proposed no tool, but the user named a runnable one
     #    outright ("use the break-even calculator tool"). Answering that from the
     #    model's own arithmetic discards the tool's determinism and audit trail.
     if not build_intent and not toolify_intent and plan.tool_slug is None:
@@ -685,7 +735,8 @@ def normalize_plan_semantics(
         if named_in_prompt is not None and _input_ready(named_in_prompt, request):
             return _declarative_plan(plan, "existing_tool", named_in_prompt, assumptions)
 
-    # 6. Otherwise a direct answer.
+    # 7. Otherwise a direct answer. A blank question falls through to here too,
+    #    so a pause is never an empty card.
     return _direct_plan(plan, assumptions)
 
 
@@ -725,6 +776,33 @@ def _direct_plan(plan: PlanEnvelopeV1, assumptions: list[str]) -> PlanEnvelopeV1
                     id="respond",
                     title="Respond",
                     description="Answer with bounded local context.",
+                    kind="respond",
+                )
+            ],
+            "assumptions": assumptions,
+        }
+    )
+
+
+def _ask_user_plan(plan: PlanEnvelopeV1, assumptions: list[str]) -> PlanEnvelopeV1:
+    """Pause the turn on one clarifying question, then answer with the reply.
+
+    The question and up to eight offered choices are normalized to the same
+    bounds the elicitation card and its request contract enforce, so what the
+    planner proposes is exactly what the user is shown."""
+    options = [text for option in plan.options if (text := str(option).strip())][:8]
+    return plan.model_copy(
+        update={
+            "route": "ask_user",
+            "tool_slug": None,
+            "risk_level": RiskLevel.R0,
+            "question": (plan.question or "").strip(),
+            "options": options,
+            "steps": [
+                PlanStepV1(
+                    id="ask",
+                    title="Ask the user",
+                    description="Pause for one clarifying answer, then respond.",
                     kind="respond",
                 )
             ],
@@ -899,7 +977,22 @@ that fulfills the request. The human's request is nested as untrusted data insid
 PlanEnvelopeV1 JSON object with the top-level keys schema_version, summary, route,
 tool_slug, risk_level, steps, and assumptions. Never return a `response` or
 `answer` field. The route is one of: direct, existing_tool, tool_factory,
-tool_definition. Route requests that ask to DRAW or VISUALIZE a system (a
+tool_definition, ask_user. Choose ask_user when answering would require GUESSING a
+specific referent the user pointed at but did not identify — "which of the two",
+"the vendor", "the second option", "the client" — that appears nowhere in the
+prompt, memories, or attachments, so any answer would have to invent what they
+meant. Inventing that referent is worse than asking for it. Put the single question
+in `question`; list up to eight known alternatives in `options`, or leave it empty
+for a free-text reply. Also choose ask_user for a request to BUILD something — a
+tool, a project, a document — that never says what it operates on: "build me a tool
+that summarises things" names no input, no output shape and no example, so anything
+built is a guess at what was wanted. Ask what it should take in and produce. A build
+request that names its subject ("summarise a README", "parse invoice lines like
+'3 x GPU @ 12000'") is specified enough — build it. Still answer directly when a
+reasonable default exists or the gap is a minor detail you can proceed on with a
+stated assumption; do not ask merely to confirm you understood, or for routine
+under-specification. An ask_user plan carries no tool_slug and risk R0. Route requests that ask to DRAW or VISUALIZE a
+system (a
 diagram, a reference design, a topology picture) to
 reference-architecture-generator; use existing_tool only when that exact active
 tool appears in active_tools, otherwise use tool_factory. A request to WRITE CODE
@@ -991,7 +1084,17 @@ entrypoint is the main source file if one is evident. launch_path is the
 URL path to open ("" for the root). env_keys are configuration NAMES the
 project reads (never values, never secrets themselves).
 If the folder is a static site with an index.html and no server code, use
-["{python}", "-m", "http.server", "{port}", "--bind", "{host}"]."""
+["{python}", "-m", "http.server", "{port}", "--bind", "{host}"].
+
+build_command is OPTIONAL and for one situation only: the launch serves a
+frontend that has to be COMPILED first. If the app serves a build-output
+directory — web/dist, dist, build, .next — while the sources beside it (a
+web/ or frontend/ with a package.json) are what a developer actually edits,
+emit build_command as the argv that produces that output, so an edit is
+compiled before every launch. Same rules as launch_command: plain argv, no
+shell, no cd — use a tool's own flag to choose the directory, e.g.
+["npm", "--prefix", "web", "run", "build"]. Omit build_command entirely for
+interpreted apps served straight from source (Python, static HTML)."""
 
 
 PROJECT_BOOTSTRAP_SYSTEM = """You are creating the first durable working map for a
@@ -1047,6 +1150,16 @@ file is not in that list, you did not create it, and saying otherwise reports wo
 that never happened. When you were asked to build and staged_changes is still
 empty, do not return status=complete with a success story — create the files
 first, or state plainly that nothing was built and why.
+
+Talking to the user is its own channel, never a completion. To answer a question
+about the project — what it uses, how it works, what you would change — call
+respond with the full answer; do not stage files for a question, and do not
+finish. When the request is genuinely ambiguous in a way that changes what you
+would build, or the user explicitly invited questions, call ask_user with ONE
+crisp question (and up to 6 options); the answer comes back as the call's result
+and this same turn continues with it. Otherwise prefer sensible defaults and
+disclose them in your summary — ask because the answer changes the work, not for
+reassurance, and never more than once per turn.
 
 Build real, working software, not a sketch of it. Every function you write must do
 the thing it is named for — never leave a stub, a hard-coded mock, a bare pass, or a
@@ -1147,11 +1260,14 @@ empty list.
 
 scenarios: 2 to 5 requests a verifier will replay against the finished app,
 each one an explicit claim from the request made checkable. Name the routes the
-app itself will declare. Prefer the claims that distinguish a working app from a
-plausible skeleton: the upload route accepts a real image, the assessment
-endpoint's response names a risk verdict, the list route mentions a stored
-record. body_kind "image_upload" sends a real PNG; "json" sends body as the
-request body. expect_contains holds lowercase substrings the response text must
+app itself will declare. path is the request line, so a GET whose route reads
+query parameters MUST carry them: "/convert?value=0&direction=c-to-f", never
+"/convert" — a route with required parameters answers 422 to a bare path, and
+the scenario then proves nothing about a working app. Prefer the claims that
+distinguish a working app from a plausible skeleton: the upload route accepts a
+real image, the assessment endpoint's response names a risk verdict, the list
+route mentions a stored record. body_kind "image_upload" sends a real PNG;
+"json" sends body as the request body. expect_contains holds lowercase substrings the response text must
 include — use it only where the request states what the output must say. The
 verifier runs with no network and no credentials, so a scenario that needs a
 live external call should expect "2xx_or_4xx", which passes when the route is
@@ -2248,10 +2364,10 @@ class OCIResponsesModelProvider:
 
     @property
     def available(self) -> bool:
-        return bool(
-            self.settings.allow_oci_responses
-            and self.settings.oci_responses_project_id.strip()
-        )
+        # The one formula lives on Settings — this used to be a second
+        # hand-written copy of the preference store's predicate, and the lane
+        # kill-switch would have had to land in both.
+        return self.settings.grok_lane_available
 
     async def _client(self) -> Any:
         if self._client_instance is not None:
@@ -2803,17 +2919,54 @@ class CohereModelProvider:
             await self._client_instance.aclose()
             self._client_instance = None
 
+    # Failures that are the service's, not the request's, and that a second
+    # identical call routinely clears. The two 422s are decode failures rather
+    # than malformed requests — Cohere's own message for them is "try again" —
+    # and one of each killed a live build turn, a web-research turn and a deck
+    # turn in a single battery run, with nothing wrong on this side.
+    _TRANSIENT_ERROR_TYPES = frozenset(
+        {
+            "NO_VALID_RESPONSE_GENERATED",
+            "INVALID_TOOL_GENERATION",
+            # Cohere's verdict when nothing it generated matched an advertised
+            # tool. A prompt shape can cause it systematically — that is why the
+            # customer catalog is presented as labels rather than callables —
+            # but it also lands on one call out of a dozen identical ones, and
+            # losing the whole turn to that is the worse failure. A retry costs
+            # one call; a systematic case still surfaces after three.
+            "HALLUCINATED_ALL_TOOL_CALLS",
+        }
+    )
+
+    @classmethod
+    def _is_transient(cls, response: Any) -> bool:
+        """Whether this failed reply is worth one more attempt."""
+        if response.status_code >= 500:
+            return True
+        if response.status_code != 422:
+            return False
+        try:
+            body = response.json()
+        except ValueError:
+            return False
+        return str((body or {}).get("error_type", "")) in cls._TRANSIENT_ERROR_TYPES
+
     async def _chat(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """One /v2/chat call, with one bounded retry on a rate limit.
+        """One /v2/chat call, with bounded retries on a rate limit or a
+        transient service failure.
 
         Trial keys are capped per minute, and a build step arriving one second
-        early should wait its turn rather than fail the turn: a single 429
-        retry honours Retry-After (bounded), and a second 429 surfaces as the
-        model error it is.
+        early should wait its turn rather than fail the turn: a 429 retry
+        honours Retry-After (bounded). A 5xx, or a 422 whose error_type says
+        the service failed to generate rather than that the request was wrong,
+        is retried on the same terms. What is genuinely this side's fault —
+        a bad payload, a missing key — still fails at once, unretried.
         """
         client = await self._client()
         body = {"model": self.settings.cohere_model, **payload}
-        for attempt in range(2):
+        attempts = 3
+        for attempt in range(attempts):
+            last = attempt == attempts - 1
             try:
                 async with asyncio.timeout(self.settings.model_call_timeout_seconds):
                     response = await client.post("/v2/chat", json=body)
@@ -2826,12 +2979,17 @@ class CohereModelProvider:
                 raise ModelProviderError(
                     f"Cohere call failed: {str(exc)[:400]}"
                 ) from exc
-            if response.status_code == 429 and not attempt:
+            if response.status_code == 429 and not last:
                 try:
                     delay = float(response.headers.get("retry-after", "6"))
                 except ValueError:
                     delay = 6.0
                 await asyncio.sleep(min(max(delay, 1.0), 20.0))
+                continue
+            if not last and self._is_transient(response):
+                # Short and fixed: these clear immediately or not at all, and a
+                # long backoff here is time the user spends watching a spinner.
+                await asyncio.sleep(1.0 + attempt)
                 continue
             if response.status_code >= 400:
                 raise ModelProviderError(
@@ -2842,7 +3000,9 @@ class CohereModelProvider:
                 return response.json()
             except ValueError as exc:
                 raise ModelProviderError("Cohere returned a non-JSON reply") from exc
-        raise ModelProviderError("Cohere rate limit persisted after a bounded retry")
+        raise ModelProviderError(
+            f"Cohere kept failing after {attempts} attempts"
+        )
 
     async def transcribe(
         self, audio: bytes, filename: str, media_type: str, *, language: str = ""
@@ -3266,7 +3426,20 @@ class RoutedModelProvider:
     def _selected(self, model_aliases: dict[str, str] | None) -> ModelProvider:
         provider = (model_aliases or {}).get("_provider")
         if provider == "oci":
-            return self.oci
+            # getattr with a True default: only a provider that SAYS it is off
+            # triggers the degrade; one that never grew the flag keeps its old
+            # behavior.
+            if getattr(self.oci, "available", True):
+                return self.oci
+            # model_aliases are frozen into the run row at creation, so a
+            # queued, recoverable, or approval-replayed run can still say
+            # "oci" after the lane was switched off. Degrading here — the
+            # only chokepoint every dispatch passes — turns what was a
+            # mid-conversation "config error" run failure into the same
+            # fallback a fresh run would have chosen.
+            if self.cohere is not None and getattr(self.cohere, "available", True):
+                return self.cohere
+            return self.local
         if provider == "cohere" and self.cohere is not None:
             return self.cohere
         return self.local
@@ -3429,8 +3602,19 @@ class DeterministicModelProvider:
                     ),
                 ],
             )
-        # A registered declarative tool whose slug clearly matches the request.
         prompt = request.prompt.lower()
+        # An explicit request to be asked a clarifying question. This gives the
+        # demo mode and the ask_user tests a network-free way to exercise the
+        # pause; the question and choices are fixed so the pause is deterministic.
+        if "ask me to choose" in prompt:
+            return PlanEnvelopeV1(
+                summary="Pause to ask which option the user wants.",
+                route="ask_user",
+                risk_level=RiskLevel.R0,
+                question="Which option would you like?",
+                options=["Option A", "Option B"],
+            )
+        # A registered declarative tool whose slug clearly matches the request.
         for candidate in catalog.tools:
             tokens = [token for token in candidate.slug.split("-") if len(token) > 3]
             if not candidate.disabled and tokens and any(token in prompt for token in tokens):
@@ -3614,6 +3798,42 @@ class DeterministicModelProvider:
         *,
         model_aliases: dict[str, str] | None = None,
     ) -> ProjectAgentStepV1:
+        if "[project-ask-test]" in str(request.get("user_request", "")):
+            # The talk channel end to end: ask, receive the answer as this
+            # call's result, then respond with it — no completion, no files.
+            trace = request.get("tool_trace", [])
+            answered = [
+                item
+                for item in trace
+                if item.get("tool") == "ask_user" and item.get("result", {}).get("ok")
+            ]
+            if not answered:
+                return ProjectAgentStepV1(
+                    status="tool",
+                    tool_call=ProjectToolCallV1(
+                        name="ask_user",
+                        arguments={
+                            "question": "Which option would you like?",
+                            "options": ["Option A", "Option B"],
+                        },
+                    ),
+                )
+            reply = str(answered[-1].get("result", {}).get("answer", ""))
+            return ProjectAgentStepV1(
+                status="tool",
+                tool_call=ProjectToolCallV1(
+                    name="respond",
+                    arguments={"message": f"They answered: {reply}."},
+                ),
+            )
+        if "[project-respond-test]" in str(request.get("user_request", "")):
+            return ProjectAgentStepV1(
+                status="tool",
+                tool_call=ProjectToolCallV1(
+                    name="respond",
+                    arguments={"message": "This project uses FastAPI with one entrypoint."},
+                ),
+            )
         if "[project-create-test]" in str(request.get("user_request", "")):
             trace = request.get("tool_trace", [])
             if not trace:

@@ -1157,3 +1157,39 @@ async def test_a_finished_manifest_tells_the_model_it_is_done() -> None:
     )
     assert "Every file you planned is staged" not in provider.captured["system_prompt"]
     assert "finishing is unavailable" in provider.captured["system_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_a_stale_oci_alias_degrades_instead_of_breaking_the_run(settings) -> None:
+    """model_aliases are frozen into the run row, so a queued or replayed run
+    can still say "oci" after the lane was switched off. The router is the one
+    chokepoint every dispatch passes; degrading there turns a mid-conversation
+    "config error" failure into the fallback a fresh run would have chosen."""
+
+    class FakeProvider:
+        def __init__(self, name, available=True):
+            self.name = name
+            self.available = available
+
+        async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+            from waqil_api.contracts import ModelResultV1
+
+            return ModelResultV1(model=self.name, content=self.name)
+
+    request = ModelRequestV1(role="planner", system_prompt="s", user_prompt="u")
+
+    # Lane off, Cohere configured: the stale alias lands on Cohere.
+    routed = RoutedModelProvider(
+        FakeProvider("local"),
+        FakeProvider("cloud", available=False),
+        cohere=FakeProvider("cohere", available=True),
+    )
+    assert (
+        await routed.generate(request, model_aliases={"_provider": "oci"})
+    ).model == "cohere"
+
+    # Lane off, no Cohere: local carries it.
+    routed = RoutedModelProvider(FakeProvider("local"), FakeProvider("cloud", available=False))
+    assert (
+        await routed.generate(request, model_aliases={"_provider": "oci"})
+    ).model == "local"

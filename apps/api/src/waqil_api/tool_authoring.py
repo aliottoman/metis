@@ -71,6 +71,13 @@ class Archetype:
     capability_profile: CapabilityProfileV1
     route_facts: ToolRouteFactsV1
     eval_fixtures: tuple[EvalFixture, ...] = field(default_factory=tuple)
+    # What the request must name for this template to claim it: the subject it
+    # consumes. A keyword says the task *sounds* like this archetype; this says
+    # the draft is actually about the thing it reads. Empty means a keyword
+    # alone is enough — which is right for the general fallback and wrong for a
+    # narrow template, since "a tool that summarises things" is not a request
+    # for a README project card.
+    required_context: tuple[str, ...] = ()
     # Code-authoring archetypes: the model writes the tool's `run(inputs, model)`
     # implementation (AST-gated at build time) from this pinned prompt.
     authored: bool = False
@@ -78,6 +85,10 @@ class Archetype:
 
     def matches(self, haystack: str) -> bool:
         if any(word in haystack for word in self.disqualifiers):
+            return False
+        if self.required_context and not any(
+            word in haystack for word in self.required_context
+        ):
             return False
         return any(keyword in haystack for keyword in self.keywords)
 
@@ -133,6 +144,14 @@ _TEXT_SUMMARY = Archetype(
         "calculat", "comput", "parse", "parsing", "total", "subtotal", "sum of",
         "vat", "tax", "count", "tally", "invoice", "amount", "price", "cost",
         "percent", "rate", "score", "estimate", "convert", "formula",
+    ),
+    # This template reads a README or project text and returns a project card.
+    # A request has to be about such a document for it to fit: on a bare "a tool
+    # that summarises things" it built a project-card tool that then rendered
+    # "Untitled Project" three times over.
+    required_context=(
+        "readme", "project", "repo", "repository", "codebase", "document",
+        "doc ", "docs", "file", "page", "article", "text", "card", "overview",
     ),
     default_name="Project Summary Card",
     default_description=(

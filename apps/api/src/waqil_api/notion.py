@@ -284,6 +284,12 @@ class NotionService:
         self._db = database
         self._corpus = corpus
         self._client_factory = client_factory
+        self._last_documents: list[NotionDocument] = []
+
+    def last_synced_documents(self) -> list[NotionDocument]:
+        """The pages fetched by the most recent sync, so the customer-record
+        mapper can read them without a second round-trip to Notion."""
+        return list(self._last_documents)
 
     def _load(self) -> dict[str, Any]:
         try:
@@ -368,6 +374,7 @@ class NotionService:
             documents, skipped_inaccessible = await asyncio.to_thread(
                 self._fetch_documents, token, roots
             )
+            self._last_documents = documents
             written, removed = await asyncio.to_thread(
                 self._materialize, documents
             )

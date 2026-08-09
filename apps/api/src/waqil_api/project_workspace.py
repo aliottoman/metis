@@ -22,6 +22,7 @@ from typing import Any
 from .asset_library import AssetLibraryError, AssetManager
 from .config import Settings
 from .contracts import (
+    PROJECT_TALK_TOOLS,
     ProjectBootstrapV1,
     ProjectCheckV1,
     ProjectToolCallV1,
@@ -578,6 +579,14 @@ class ProjectWorkspaceService:
         return {"path": str(target.relative_to(root)), "summary": detail, "digest": digest}
 
     async def execute(self, asset_id: str, call: ProjectToolCallV1) -> dict[str, Any]:
+        if call.name in PROJECT_TALK_TOOLS:
+            # Roster tools, but host affordances: the loop pauses on ask_user
+            # and publishes respond itself. Reaching the workspace means a
+            # routing bug, and a loud refusal beats a silent misfile.
+            raise ProjectWorkspaceError(
+                f"{call.name} is a talk tool the loop handles; it never runs "
+                "in the workspace"
+            )
         root = await self.assets.project_path(asset_id)
         if call.name == "list_files":
             return await asyncio.to_thread(self._list_files, root, call.arguments)
@@ -628,6 +637,11 @@ class ProjectWorkspaceService:
         ``next_paths`` is the files the turn planned and has not written, so a
         refused write can name the one the build actually still owes.
         """
+        if call.name in PROJECT_TALK_TOOLS:
+            raise ProjectWorkspaceError(
+                f"{call.name} is a talk tool the loop handles; it never runs "
+                "in the workspace"
+            )
         root = await self.assets.project_path(asset_id)
         if call.name == "list_files":
             return (

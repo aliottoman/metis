@@ -1,0 +1,553 @@
+/* Metis design language — the visual contract every generated app wears.
+ *
+ * Distilled from the Metis workspace's authoritative layer (matured.css), so
+ * an app built here is recognisably part of the same family:
+ *
+ *   Warm greige paper, never cool grey. Three surfaces and one hairline.
+ *   Mono uppercase eyebrows in a grey that leans lilac.
+ *   Flat panels — depth is spent only on things that genuinely float.
+ *   Headings carry by size and negative tracking, never by weight.
+ *   Colour is rationed: pale wash plus dark ink, never a saturated fill.
+ *
+ * Light-only, on purpose. System fonts only — no web fonts, no CDN — so a
+ * page renders identically offline. Motion honours prefers-reduced-motion.
+ *
+ * Compose the documented classes. Do not redeclare colors, fonts, radii or
+ * shadows in your own stylesheet: that is how a build drifts out of the
+ * family, and it is the one thing this file exists to prevent.
+ */
+
+:root {
+  /* Surfaces — warm greige paper. Three, and only three. */
+  --paper: #f7f4ef;       /* the page itself */
+  --paper-lift: #fcfaf6;  /* raised: inputs, chips, controls */
+  --surface: #ede9e1;     /* panel fill: every card and section */
+
+  /* Ink */
+  --ink: #211f1d;         /* primary text */
+  --ink-btn: #1a1815;     /* the dark pill fill, deeper than text */
+  --ink-2: #5e5a54;       /* secondary / body copy */
+  --ink-3: #7b7789;       /* muted — lavender-tinted, for eyebrows and meta */
+  --line: #dfdacf;        /* the one hairline, 1px everywhere */
+  --line-hover: #c6b8d6;  /* an interactive edge lights lilac, never darker grey */
+
+  /* Brand */
+  --purple: #c29ce0;      /* the field: page headers, front doors */
+  --purple-edge: #e0c8ea;
+  --forest: #39594d;      /* the primary button */
+  --forest-deep: #2f4a40;
+  --coral: #ff7759;       /* act on this */
+  --coral-soft: #ffad9b;
+  --bloom: linear-gradient(270deg, #d18ee2, #ff7759);
+
+  /* Pale washes — a state is a wash plus dark ink, never a saturated fill. */
+  --mint-surface: #e5f4ef; /* healthy / running / done */
+  --mint-edge: #c6e3d6;
+  --green-ink: #00754e;
+  --lav-surface: #f0dff3;  /* selected */
+  --lav-edge: #e0c8ea;
+  --lav-ink: #773d92;
+  --warn-surface: #fbecc7;
+  --warn-ink: #856121;
+  --danger-surface: #ffe6de;
+  --danger-edge: #ffad9b;
+  --danger-ink: #cf4023;
+  --blue-surface: #e2eafa;
+  --blue-edge: #c9d8f1;
+  --blue-ink: #33578c;
+
+  /* Depth — tinted purple or warm brown, never neutral black, and negative
+     spread so it reads as lift rather than as a drop shadow. */
+  --shadow-float: 0 24px 60px -28px rgba(60, 30, 80, 0.45);
+  --shadow-band: 0 22px 48px -30px rgba(60, 30, 80, 0.55);
+
+  --r-pill: 999px;   /* every text control, chip, badge */
+  --r-field: 12px;   /* inputs */
+  --r-card: 14px;    /* every panel */
+  --r-band: 20px;    /* header bands, empty states */
+
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Film grain. Greyscale over `overlay`, so mid-grey is a no-op and only the
+   deviation shows — it reads as film rather than as a grey veil. Never
+   interactive. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 220px 220px;
+}
+
+/* Size and tightness carry the hierarchy, not weight. */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0;
+}
+h1 { font-size: clamp(28px, 3.4vw, 40px); line-height: 1.04; letter-spacing: -0.034em; }
+h2 { font-size: 20px; line-height: 1.2; letter-spacing: -0.022em; }
+h3 { font-size: 16px; line-height: 1.3; letter-spacing: -0.016em; }
+
+p { margin: 0; }
+
+a {
+  color: var(--lav-ink);
+  text-decoration-color: var(--purple-edge);
+  text-underline-offset: 3px;
+  transition: color 0.22s var(--ease);
+}
+a:hover { color: var(--ink); }
+
+code, kbd, pre, .mono { font-family: var(--font-mono); font-size: 0.9em; }
+code { background: var(--surface); border-radius: 6px; padding: 0.12em 0.42em; }
+pre {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-field);
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+
+/* Focus follows the host's shape, and lights lilac. */
+:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+
+::selection { background: var(--lav-surface); }
+
+* { scrollbar-color: rgba(94, 90, 84, 0.28) transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(94, 90, 84, 0.24);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: var(--r-pill);
+}
+::-webkit-scrollbar-thumb:hover { background-color: rgba(94, 90, 84, 0.4); background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Layout ────────────────────────────────────────────────────────────── */
+
+.page {
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 54px clamp(24px, 5vw, 76px) 80px;
+}
+.page-narrow { max-width: 820px; }
+
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.stack-sm { display: flex; flex-direction: column; gap: 8px; }
+.stack-lg { display: flex; flex-direction: column; gap: 30px; }
+
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.spread { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.grid-2 { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+
+.divider { height: 1px; background: var(--line); border: 0; margin: 2px 0; }
+
+/* ── The header band ───────────────────────────────────────────────────── */
+/* The front door: one purple field with metal surfacing under it. This is the
+   most recognisable Metis element — use it once, at the top of the page. */
+
+.page-header {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 27px 30px 29px;
+  border-radius: var(--r-band);
+  background: var(--purple);
+  color: #fff;
+  box-shadow: var(--shadow-band);
+}
+.page-header::before {
+  content: "";
+  position: absolute;
+  inset: -30% -10% auto auto;
+  width: 480px;
+  height: 340px;
+  transform: rotate(19deg);
+  background:
+    conic-gradient(from 210deg, #ff7759, #7be3d8, #d18ee2, #ffe08a, #ff7759);
+  filter: blur(26px);
+  opacity: 0.5;
+  mask-image: radial-gradient(closest-side, #000, transparent);
+  -webkit-mask-image: radial-gradient(closest-side, #000, transparent);
+  z-index: -1;
+}
+/* The purple poured back over the metal, densest under the type. */
+.page-header::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, var(--purple) 32%, rgba(194, 156, 224, 0.62) 100%);
+  z-index: -1;
+}
+.page-header h1 { color: #fff; margin-top: 7px; }
+.page-header p { color: rgba(255, 255, 255, 0.88); max-width: 68ch; margin-top: 9px; }
+.page-header .eyebrow { color: rgba(255, 255, 255, 0.82); }
+.page-header :focus-visible { outline-color: rgba(255, 255, 255, 0.9); }
+
+/* ── Typography helpers ────────────────────────────────────────────────── */
+
+/* The signature move: mono, uppercase, lavender-grey. Every label, kicker,
+   timestamp and column head. Never body text. */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.lede { color: var(--ink-2); font-size: 15px; line-height: 1.55; max-width: 68ch; }
+.muted { color: var(--ink-2); }
+.faint { color: var(--ink-3); }
+.small { font-size: 12.5px; }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ── Surfaces ──────────────────────────────────────────────────────────── */
+/* Flat by design. The blur was retired here: it cost legibility on dense
+   pages, and depth belongs to things that actually float. */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  box-shadow: none;
+  padding: 22px 24px;
+}
+.card-tight { padding: 15px 17px; }
+
+/* Only for a card that is itself a control (a whole row you can click). */
+.card-interactive { transition: border-color 0.22s var(--ease); cursor: pointer; }
+.card-interactive:hover { border-color: var(--line-hover); }
+
+/* A card resting on a card: lift, so the layers stay legible. */
+.card-lift { background: var(--paper-lift); }
+
+.card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+/* Genuinely floating: dialogs, popovers. */
+.floating {
+  background: var(--paper-lift);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-float);
+  padding: 22px 24px;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+/* One motion for the whole control family, so no two controls answer the
+   pointer at a different speed. Hover is colour, never lift. */
+
+.btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding-inline: 17px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 680;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--paper-lift);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color 0.22s var(--ease), border-color 0.22s var(--ease),
+    color 0.22s var(--ease), box-shadow 0.22s var(--ease);
+}
+.btn:hover { border-color: var(--line-hover); }
+.btn:active { transform: scale(0.985); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+.btn-primary {
+  background: var(--forest);
+  border-color: var(--forest);
+  color: #f4f7f5;
+}
+.btn-primary:hover { background: var(--forest-deep); border-color: var(--forest-deep); }
+
+/* Inverts on hover — the ink pill is the strongest thing on the page. */
+.btn-ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn-ghost:hover { background: var(--ink-btn); border-color: transparent; color: #fbf8f2; }
+
+.btn-danger { background: transparent; border-color: var(--danger-edge); color: var(--danger-ink); }
+.btn-danger:hover { background: var(--danger-surface); border-color: var(--danger-edge); }
+
+.btn-sm { min-height: 30px; padding-inline: 13px; font-size: 10px; }
+
+/* ── Forms ─────────────────────────────────────────────────────────────── */
+
+.field { display: flex; flex-direction: column; gap: 7px; }
+
+.label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.input, .textarea, .select {
+  width: 100%;
+  min-height: 42px;
+  font-family: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  background-color: var(--paper-lift);
+  border: 1px solid var(--line);
+  border-radius: var(--r-field);
+  padding: 11px 13px;
+  transition: border-color 0.22s var(--ease), box-shadow 0.22s var(--ease);
+}
+.input::placeholder, .textarea::placeholder { color: var(--ink-3); }
+.input:focus, .textarea:focus, .select:focus {
+  outline: none;
+  border-color: var(--line-hover);
+  box-shadow: 0 0 0 3px rgba(194, 156, 224, 0.2);
+}
+.textarea { resize: vertical; min-height: 96px; line-height: 1.6; }
+.hint { font-size: 12px; color: var(--ink-3); }
+
+/* ── Dropzone ──────────────────────────────────────────────────────────── */
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 190px;
+  padding: 40px 32px;
+  text-align: center;
+  color: var(--ink-2);
+  /* Transparent on purpose: a lift fill this large reads as a bright hole
+     punched into the greige. The dashed hairline carries the affordance, and
+     the zone borrows whatever surface it sits on. */
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-band);
+  cursor: pointer;
+  transition: border-color 0.22s var(--ease), background-color 0.22s var(--ease),
+    color 0.22s var(--ease);
+}
+.dropzone:hover { border-color: var(--line-hover); }
+.dropzone.is-active {
+  border-color: var(--purple);
+  border-style: solid;
+  background: var(--lav-surface);
+  color: var(--ink);
+}
+.dropzone svg { width: 28px; height: 28px; opacity: 0.5; }
+/* The bloom mark: use for the one glyph at the centre of an empty state. */
+.dropzone-mark, .empty-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: var(--bloom);
+  color: #fff;
+  box-shadow: 0 12px 30px -12px rgba(209, 142, 226, 0.7);
+}
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+
+.table-wrap { overflow-x: auto; }
+
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table thead th {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: left;
+  padding: 0 12px 9px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+.table tbody td { padding: 11px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.table tbody tr:last-child td { border-bottom: 0; }
+.table tbody tr { transition: background-color 0.22s var(--ease); }
+.table tbody tr:hover { background: var(--paper-lift); }
+
+/* ── Chips, dots, notes ────────────────────────────────────────────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 11px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--paper-lift);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.chip-ok { background: var(--mint-surface); border-color: var(--mint-edge); color: var(--green-ink); }
+.chip-selected { background: var(--lav-surface); border-color: var(--lav-edge); color: var(--lav-ink); }
+.chip-warn { background: var(--warn-surface); border-color: transparent; color: var(--warn-ink); }
+.chip-danger { background: var(--danger-surface); border-color: var(--danger-edge); color: var(--danger-ink); }
+.chip-info { background: var(--blue-surface); border-color: var(--blue-edge); color: var(--blue-ink); }
+
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.dot-ok { background: var(--green-ink); }
+.dot-warn { background: var(--warn-ink); }
+.dot-danger { background: var(--coral); }
+
+.note {
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--r-field);
+  /* Transparent for the same reason as the dropzone — a toned note earns its
+     wash, a plain one is just text with an edge. */
+  background: transparent;
+  padding: 13px 15px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.note-ok { background: var(--mint-surface); border-color: var(--mint-edge); border-left-color: var(--green-ink); color: var(--green-ink); }
+.note-warn { background: var(--warn-surface); border-color: transparent; border-left-color: var(--warn-ink); color: var(--warn-ink); }
+.note-danger { background: var(--danger-surface); border-color: var(--danger-edge); border-left-color: var(--coral); color: var(--danger-ink); }
+
+/* ── Stats ─────────────────────────────────────────────────────────────── */
+
+.stat { display: flex; flex-direction: column; gap: 5px; }
+.stat-value {
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 400;
+  letter-spacing: -0.022em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ── Empty & loading ───────────────────────────────────────────────────── */
+
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 40px 32px;
+  text-align: center;
+  color: var(--ink-2);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-band);
+}
+.empty p, .empty span { max-width: 46ch; font-size: 13px; }
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--line);
+  border-top-color: var(--ink-3);
+  border-radius: 50%;
+  animation: spin 720ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Reads on paper and on a card alike: the bar is the hairline tone, and only
+   the travelling sheen is lighter. */
+.skeleton {
+  min-height: 13px;
+  border-radius: var(--r-field);
+  background: linear-gradient(90deg, var(--line), var(--paper-lift), var(--line));
+  background-size: 200% 100%;
+  animation: sheen 1.3s var(--ease) infinite;
+}
+@keyframes sheen { to { background-position: -200% 0; } }
+
+/* Content that arrives after first paint lands, it does not slide in twice. */
+.rise { animation: rise 300ms var(--ease) both; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .rise, .skeleton { opacity: 1; transform: none; }
+}
+
+/* Hover-revealed affordances must stay visible where there is no pointer. */
+@media (hover: none) {
+  .hover-reveal { opacity: 1 !important; }
+}
+
+@media (max-width: 640px) {
+  .page { padding: 30px 18px 60px; }
+  .card { padding: 17px 18px; }
+  .page-header { padding: 22px 20px 24px; }
+}

@@ -88,6 +88,10 @@ function commandLabel(parts: string[]): string {
   return parts.map((part) => JSON.stringify(part)).join(" ");
 }
 
+function buildLabel(steps: string[][]): string {
+  return steps.map((step) => commandLabel(step)).join("\n");
+}
+
 function clampDrawerWidth(value: number): number {
   return Math.min(MAX_ASSET_DRAWER_WIDTH, Math.max(MIN_ASSET_DRAWER_WIDTH, value));
 }
@@ -442,8 +446,12 @@ export function AssetLibrary() {
 
   function approveLaunchRecipe() {
     if (!selected || !selected.launchConfigured) return;
+    const buildText =
+      selected.buildCommand.length > 0
+        ? `Builds before launch (also runs on your Mac):\n${buildLabel(selected.buildCommand)}\n\n`
+        : "";
     const accepted = window.confirm(
-      `Trust this exact launch recipe for ${selected.name}?\n\n${commandLabel(selected.launchCommand)}\n\nThis starts project code directly on your Mac with your user account's filesystem and network access. Recipes using uv may prepare an isolated dependency environment on first launch. Any recipe change will require approval again.`,
+      `Trust this exact launch recipe for ${selected.name}?\n\n${commandLabel(selected.launchCommand)}\n\n${buildText}This starts project code directly on your Mac with your user account's filesystem and network access. Recipes using uv may prepare an isolated dependency environment on first launch. Any recipe change will require approval again.`,
     );
     if (accepted) void runAction(selected, "approve");
   }
@@ -814,6 +822,12 @@ export function AssetLibrary() {
                         network. Metis remembers approval only for this exact recipe.
                       </p>
                       <pre>{commandLabel(selected.launchCommand)}</pre>
+                      {selected.buildCommand.length > 0 ? (
+                        <>
+                          <p className="assetBuildLabel">Builds before launch, on your Mac:</p>
+                          <pre>{buildLabel(selected.buildCommand)}</pre>
+                        </>
+                      ) : null}
                       <button
                         className="primaryButton"
                         type="button"

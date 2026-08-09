@@ -58,6 +58,7 @@ test("normalizes the asset catalog contract and legacy field casing", async () =
       launchConfigured: true,
       launchApproved: true,
       launchCommand: ["pnpm", "dev"],
+      buildCommand: [],
       envKeys: ["DAC_OCID"],
       envFile: [
         { key: "DAC_OCID", isSet: true, sensitive: false },

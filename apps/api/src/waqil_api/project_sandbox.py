@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -40,6 +41,48 @@ _ENTRYPOINT_HINTS = ("app/main.py", "main.py", "src/main.py", "app.py", "app/api
 
 _MAX_INPUT_FILES = 2_048
 _MAX_INPUT_BYTES = 32_000_000
+
+# Where the Podman installers actually put the binary. The API inherits PATH
+# from whatever launched it — Metis.app, launchd, a bare shell — and none of
+# those are guaranteed to carry the official installer's /opt/podman/bin. That
+# gap is how a Mac with a working `podman` still verified nothing: every
+# consumer resolved the binary through the launcher's PATH and quietly
+# degraded to the static gate.
+_PODMAN_FALLBACK_DIRS = ("/opt/podman/bin", "/opt/homebrew/bin", "/usr/local/bin")
+
+
+def podman_binary() -> str | None:
+    """The podman executable, resolved independently of the launcher's PATH.
+
+    PATH wins when it answers, so a user's own arrangement keeps working; the
+    known install locations answer when it does not. None means podman is
+    genuinely absent, and callers degrade exactly as they always have.
+    """
+    found = shutil.which("podman")
+    if found:
+        return found
+    for directory in _PODMAN_FALLBACK_DIRS:
+        candidate = Path(directory) / "podman"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def podman_child_env() -> dict[str, str]:
+    """The environment for wrapper subprocesses, with podman's directory on PATH.
+
+    The wrappers resolve podman themselves (`shutil.which`) so the host never
+    dictates a binary across the trust boundary — it only guarantees the child
+    sees the same one the host verified. When podman is absent this is a plain
+    copy of the environment and the wrapper reports unavailable, as before.
+    """
+    env = dict(os.environ)
+    binary = podman_binary()
+    if binary:
+        parent = str(Path(binary).parent)
+        if parent not in env.get("PATH", "").split(os.pathsep):
+            env["PATH"] = parent + os.pathsep + env.get("PATH", "")
+    return env
 
 # Sandbox error codes that mean "the sandbox did not run", as opposed to "the
 # project is broken". These degrade to the static gate instead of being reported
@@ -149,9 +192,17 @@ def import_order(paths: list[str], staged: dict[str, dict[str, Any]], limit: int
     return ordered
 
 
-def _finding(path: str, error: str, severity: str = ERROR) -> dict[str, str]:
-    """One reportable defect, in the shape every gate in the loop returns."""
-    return {"path": path, "error": error, "severity": severity}
+def _finding(
+    path: str, error: str, severity: str = ERROR, kind: str = ""
+) -> dict[str, str]:
+    """One reportable defect, in the shape every gate in the loop returns.
+
+    `kind` is the check that produced it, carried so the approval card can tell
+    an app that could not be exercised from one that was exercised and answered
+    wrongly. Reading that back out of the message text is how a failed
+    acceptance scenario came to be reported as "2 modules could not import".
+    """
+    return {"path": path, "error": error, "severity": severity, "kind": kind}
 
 
 def _where_path(check: dict[str, Any], fallback: str) -> tuple[str, str]:
@@ -250,6 +301,7 @@ class ProjectSandboxService:
                     capture_output=True,
                     timeout=self.settings.project_sandbox_timeout_seconds,
                     check=False,
+                    env=podman_child_env(),
                 )
             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                 return SandboxOutcome(
@@ -271,9 +323,13 @@ class ProjectSandboxService:
         if self._machine_checked:
             return
         self._machine_checked = True
+        binary = podman_binary()
+        if binary is None:
+            # Nothing to start; the wrapper reports unavailable on its own.
+            return
         try:
             probe = subprocess.run(
-                ["podman", "info", "--format", "{{.Host.Security.Rootless}}"],
+                [binary, "info", "--format", "{{.Host.Security.Rootless}}"],
                 capture_output=True,
                 timeout=20,
                 check=False,
@@ -281,7 +337,7 @@ class ProjectSandboxService:
             if probe.returncode == 0:
                 return
             started = subprocess.run(
-                ["podman", "machine", "start"], capture_output=True, timeout=120, check=False
+                [binary, "machine", "start"], capture_output=True, timeout=120, check=False
             )
             self._machine_started_here = started.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
@@ -306,10 +362,13 @@ class ProjectSandboxService:
             return False
         self._machine_started_here = False
         self._machine_checked = False
+        binary = podman_binary()
+        if binary is None:
+            return False
         try:
             stopped = await asyncio.to_thread(
                 subprocess.run,
-                ["podman", "machine", "stop"],
+                [binary, "machine", "stop"],
                 capture_output=True,
                 timeout=120,
                 check=False,
@@ -433,6 +492,7 @@ def classify_envelope(
                     path,
                     f"{name} failed: {detail}{location}",
                     WARNING if check.get("content_miss") else ERROR,
+                    kind="acceptance",
                 )
             )
         elif check.get("kind") == "request":

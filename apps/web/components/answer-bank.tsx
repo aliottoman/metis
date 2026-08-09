@@ -27,6 +27,16 @@ function parseList(raw: string): string[] {
   }
 }
 
+/** Entities carry a colour so the same subject reads the same everywhere —
+ *  the companion's own hues, assigned by a stable hash (mirrors the asset
+ *  library's TAG_TONES). Colour by meaning, never decoration. */
+const TONES = ["mint", "coral", "violet", "blue", "gold"] as const;
+function toneFor(value: string): (typeof TONES)[number] {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  return TONES[hash % TONES.length];
+}
+
 export function AnswerBank() {
   const [tab, setTab] = useState<Tab>("pending");
   const [atoms, setAtoms] = useState<AnswerAtom[]>([]);
@@ -148,6 +158,7 @@ export function AnswerBank() {
             <button
               key={tag.entity}
               type="button"
+              data-tone={toneFor(tag.entity)}
               className={entityFilter === tag.entity ? "selected" : ""}
               onClick={() => setEntityFilter(entityFilter === tag.entity ? null : tag.entity)}
             >
@@ -170,9 +181,11 @@ export function AnswerBank() {
       ) : null}
 
       {visible.map((atom) => {
-        const paraphrases = parseList(atom.paraphrases_json);
-        const citations = parseList(atom.citations_json);
-        const tags = parseList(atom.entities_json);
+        // Dedupe: a source cited twice in one run should show once, and it
+        // keeps React's keys unique.
+        const paraphrases = [...new Set(parseList(atom.paraphrases_json))];
+        const citations = [...new Set(parseList(atom.citations_json))];
+        const tags = [...new Set(parseList(atom.entities_json))];
         const clashes = conflicts[atom.id] ?? [];
         const chosen = replacing[atom.id] ?? new Set<string>();
         return (
@@ -185,16 +198,37 @@ export function AnswerBank() {
             </div>
             <p className="answerBody">{atom.answer}</p>
 
-            {paraphrases.length ? (
-              <p className="answerMeta">
-                <span>Also asked as</span> {paraphrases.join(" · ")}
-              </p>
-            ) : null}
-            {tags.length ? (
-              <p className="answerMeta"><span>About</span> {tags.join(" · ")}</p>
-            ) : null}
-            {citations.length ? (
-              <p className="answerMeta"><span>Grounded in</span> {citations.join(" · ")}</p>
+            {/* Provenance sits in one quiet footer under the answer: how else it
+                was phrased, what it is about, and what it stands on. */}
+            {paraphrases.length || tags.length || citations.length ? (
+              <dl className="answerMetaGrid">
+                {paraphrases.length ? (
+                  <div className="answerMetaRow">
+                    <dt>Also asked as</dt>
+                    <dd>{paraphrases.join(" · ")}</dd>
+                  </div>
+                ) : null}
+                {tags.length ? (
+                  <div className="answerMetaRow">
+                    <dt>About</dt>
+                    <dd className="answerChips">
+                      {tags.map((tag) => (
+                        <span className="answerChip" key={tag} data-tone={toneFor(tag)}>{tag}</span>
+                      ))}
+                    </dd>
+                  </div>
+                ) : null}
+                {citations.length ? (
+                  <div className="answerMetaRow">
+                    <dt>Grounded in</dt>
+                    <dd className="answerChips">
+                      {citations.map((cite) => (
+                        <span className="answerChip isCite" key={cite} title={cite}>{cite}</span>
+                      ))}
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
             ) : null}
 
             {/* Supersession is decided here, not at retrieval: two active

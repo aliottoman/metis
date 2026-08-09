@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import code_graph
+from .attachment_text import extract_attachment_text
 from .chunking import chunk_text, lang_for
 from .config import Settings
 from .contracts import (
@@ -138,6 +140,48 @@ class CorpusService:
 
     async def delete_source(self, source_id: str) -> bool:
         return await self._db.delete_corpus_source(source_id)
+
+    async def _ensure_uploads_source(self) -> CorpusSourceV1:
+        """The single managed source that documents added from chat land in."""
+        source = await self._db.get_corpus_source_by_provider("upload")
+        if source is None:
+            self._settings.uploads_mirror_dir.mkdir(parents=True, exist_ok=True)
+            source = await self.register_source(
+                str(self._settings.uploads_mirror_dir),
+                "Uploaded documents",
+                "notes",
+                provider="upload",
+            )
+        return source
+
+    async def ingest_document(self, upload_id: str) -> CorpusReindexResultV1:
+        """Add one already-uploaded document to the knowledge base: extract its
+        text, drop it into the managed 'Uploaded documents' source, and index
+        it through the same chunk→embed→retrieve pipeline as every other source.
+        The explicit request is the consent to embed."""
+        upload = await self._db.get_upload_record(upload_id)
+        if upload is None:
+            raise KeyError("upload not found")
+        content = await asyncio.to_thread(Path(str(upload["blob_path"])).read_bytes)
+        text = extract_attachment_text(
+            str(upload["filename"]),
+            str(upload["media_type"]),
+            content,
+            max_bytes=self._settings.corpus_max_file_bytes,
+        )
+        source = await self._ensure_uploads_source()
+        mirror = self._settings.uploads_mirror_dir
+        mirror.mkdir(parents=True, exist_ok=True)
+        stem = re.sub(r"[^a-z0-9]+", "-", Path(str(upload["filename"])).stem.lower()).strip("-")
+        name = f"{stem or 'document'}--{str(upload['sha256'])[:16]}.md"
+        header = f"# {upload['filename']}\n\nUploaded document, added to the knowledge base.\n\n"
+        await asyncio.to_thread((mirror / name).write_text, header + text, encoding="utf-8")
+        # The user asking to add it is the consent for cloud embedding.
+        if not source.consent:
+            source = await self.set_consent(
+                source.id, True, "Document added to the knowledge base"
+            )
+        return await self.index_source(source.id)
 
     # ── Indexing ─────────────────────────────────────────────────────────────
 

@@ -4422,6 +4422,24 @@ class Database:
         value["extraction"] = _loads(value.pop("extraction_json"), {})
         return value
 
+    async def get_open_proposal_for_source(self, source_id: str) -> dict[str, Any] | None:
+        """The latest still-open ('review') proposal for a source, so an
+        auto-analyzed note can be opened for review without its proposal id."""
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return self._connection().execute(
+                    "SELECT * FROM customer_update_proposals WHERE source_id = ? "
+                    "AND status = 'review' ORDER BY created_at DESC LIMIT 1",
+                    (source_id,),
+                ).fetchone()
+
+        row = await self._call(operation)
+        if row is None:
+            return None
+        value = dict(row)
+        value["extraction"] = _loads(value.pop("extraction_json"), {})
+        return value
+
     async def save_customer_proposal(
         self, proposal_id: str, extraction: dict[str, Any]
     ) -> dict[str, Any] | None:

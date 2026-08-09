@@ -28,6 +28,11 @@ export interface ChatMessage {
   reasoning?: string;
   streaming?: boolean;
   failed?: boolean;
+  // Set on a message the client generated locally, not from a model run —
+  // today only the activity-tracker update dropped in from a scoped chat.
+  // It gates off run-only affordances (Retry, the artifact viewer) that make
+  // no sense on a deterministically generated artifact.
+  kind?: "tracker";
 }
 
 export interface ArtifactRef {
@@ -37,6 +42,18 @@ export interface ArtifactRef {
   size?: number;
   sha256?: string;
   download_url?: string;
+}
+
+export interface CustomerActionSuggestion {
+  run_id?: string;
+  kind: "apply_extraction";
+  proposal_id: string;
+  account_id: string;
+  facts: number;
+  actions: number;
+  people: number;
+  // A ready-to-read count, e.g. "3 facts, 1 action".
+  summary: string;
 }
 
 export interface ApprovalRequest {
@@ -51,6 +68,19 @@ export interface ApprovalRequest {
   // Set when the host proved this action cannot work. Approve is withheld while
   // it is present; the API refuses the same decision independently.
   blocked_reason?: string;
+}
+
+// One clarifying question the run paused to ask (ask_user). Mirrors
+// ApprovalRequest's shape: it arrives on an `elicitation.requested` event and is
+// resolved through the one answers endpoint that resumes the same turn.
+export interface ElicitationRequest {
+  id: string;
+  run_id?: string;
+  question: string;
+  options: string[];
+  // Whether the card also offers a free-text reply. Always true when there are
+  // no options.
+  allow_text: boolean;
 }
 
 export interface RunEventV1 {
@@ -88,6 +118,8 @@ export interface RunRecord {
 export interface RecoverableRun {
   run: RunRecord;
   approval: ApprovalRequest | null;
+  // Present instead of `approval` when the run paused on a question (ask_user).
+  elicitation?: ElicitationRequest | null;
 }
 
 export interface EvalSummary {
@@ -850,6 +882,7 @@ export interface AssetV1 {
   launchConfigured: boolean;
   launchApproved: boolean;
   launchCommand: string[];
+  buildCommand: string[][];
   envKeys: string[];
   envFile: AssetEnvVar[];
   envFilePresent: boolean;

@@ -8,6 +8,7 @@ import {
   acceptWinValuation,
   addCustomerPerson,
   analyzeCustomerSource,
+  getCustomerSourceProposal,
   captureCustomerSource,
   createCustomer,
   createCustomerAction,
@@ -29,6 +30,7 @@ import {
   getCustomerDashboard,
   getCustomerSettings,
   getLocalModelSession,
+  getModelPreference,
   getSkuRates,
   listCustomers,
   saveCustomerProposal,
@@ -58,8 +60,10 @@ import type {
   CustomerSource,
   CustomerWin,
   LocalModelSession,
+  ModelPreference,
   SkuRateCard,
 } from "@/lib/types";
+import { activeModelLabel, isCloudActive } from "@/lib/model";
 
 type CustomerTab =
   | "overview" | "notes" | "timeline" | "actions" | "wins"
@@ -202,12 +206,18 @@ const EMPTY_PERSON: PersonDraft = { name: "", role: "", organization: "" };
 export function CustomerWorkbench() {
   const params = useSearchParams();
   const requestedAccount = params.get("account");
+  const requestedTab = params.get("tab");
+  const requestedSource = params.get("source");
+  const requestedAction = params.get("action");
   const [accounts, setAccounts] = useState<CustomerAccount[]>([]);
   const [dashboard, setDashboard] = useState<CustomerDashboard | null>(null);
   const [detail, setDetail] = useState<CustomerAccountDetail | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(requestedAccount);
-  const [tab, setTab] = useState<CustomerTab>("overview");
+  const [tab, setTab] = useState<CustomerTab>(
+    () => (TABS.some(([value]) => value === requestedTab) ? (requestedTab as CustomerTab) : "overview"),
+  );
   const [session, setSession] = useState<LocalModelSession | null>(null);
+  const [modelPreference, setModelPreference] = useState<ModelPreference | null>(null);
   const [settings, setSettings] = useState<CustomerSettings>({ tracker_url: "", activity_template: "", updated_at: null });
   const [newAccountName, setNewAccountName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -255,17 +265,26 @@ export function CustomerWorkbench() {
   const [editingPerson, setEditingPerson] = useState<{ id: string; draft: PersonDraft } | null>(null);
   const [editingSource, setEditingSource] = useState<{ id: string; draft: SourceDraft } | null>(null);
 
+  // What runs capture/analysis here is the same model the chat header shows.
+  // A cloud pin (Command A+, Grok, a hosted model) is "on" with nothing
+  // resident on-device — so status and the analyze gate follow the pin, not
+  // the local session alone. Only a genuine no-model state reads as "off".
+  const modelLabel = activeModelLabel(modelPreference, session);
+  const modelReady = isCloudActive(modelPreference) || session?.state === "ready";
+
   const refreshIndex = useCallback(async () => {
-    const [nextAccounts, nextDashboard, nextSession, nextSettings, nextRates] = await Promise.all([
+    const [nextAccounts, nextDashboard, nextSession, nextSettings, nextRates, nextPreference] = await Promise.all([
       listCustomers(),
       getCustomerDashboard(),
       getLocalModelSession().catch(() => null),
       getCustomerSettings(),
       getSkuRates().catch(() => null),
+      getModelPreference().catch(() => null),
     ]);
     setAccounts(nextAccounts);
     setDashboard(nextDashboard);
     if (nextSession) setSession(nextSession);
+    if (nextPreference) setModelPreference(nextPreference);
     setSettings(nextSettings);
     if (nextRates) setRateCard(nextRates);
     setSelectedId((current) => current || requestedAccount || nextAccounts[0]?.id || null);
@@ -278,6 +297,31 @@ export function CustomerWorkbench() {
   useEffect(() => {
     void refreshIndex().catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Customer data could not be loaded."));
   }, [refreshIndex]);
+
+  // A deep link from Today (or search) carries the account, the tab, and the
+  // item to land on. Follow all three — the old code read only ?account, so you
+  // always landed on Overview instead of the note the item pointed at.
+  useEffect(() => {
+    if (requestedAccount) setSelectedId(requestedAccount);
+    if (TABS.some(([value]) => value === requestedTab)) setTab(requestedTab as CustomerTab);
+  }, [requestedAccount, requestedTab]);
+
+  // Once the record loads on the right tab, scroll the exact note/action into
+  // view and flash it, so "open" lands on the thing the item was about.
+  useEffect(() => {
+    const targetId = requestedSource
+      ? `source-${requestedSource}`
+      : requestedAction
+        ? `action-${requestedAction}`
+        : null;
+    if (!targetId || !detail) return;
+    const node = document.getElementById(targetId);
+    if (!node) return;
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    node.classList.add("isDeepLinked");
+    const timer = window.setTimeout(() => node.classList.remove("isDeepLinked"), 2400);
+    return () => window.clearTimeout(timer);
+  }, [detail, tab, requestedSource, requestedAction]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -463,6 +507,27 @@ export function CustomerWorkbench() {
       setReview(structuredClone(next.extraction));
     } catch (analysisError) {
       fail(analysisError, "The note could not be analyzed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Open the pending update for a source that was already analyzed — auto on
+  // capture, or from a Notion page — so the review is one click, not a hunt.
+  async function openReview(sourceId: string) {
+    if (busy) return;
+    setBusy(sourceId);
+    setError(null);
+    try {
+      const next = await getCustomerSourceProposal(sourceId);
+      if (next) {
+        setProposal(next);
+        setReview(structuredClone(next.extraction));
+      } else {
+        setNotice("That note has no pending update to review.");
+      }
+    } catch (reviewError) {
+      fail(reviewError, "The pending update could not be opened.");
     } finally {
       setBusy(null);
     }
@@ -1293,7 +1358,7 @@ export function CustomerWorkbench() {
                     <p>{[detail.account.industry, detail.account.region, detail.account.aliases.length ? `aka ${detail.account.aliases.join(", ")}` : ""].filter(Boolean).join(" · ") || "No profile details yet"}</p>
                   </div>
                   <div className="customerAccountActions">
-                    <span className={`customerModelState state-${session?.state ?? "off"}`}><i />{session?.state === "ready" ? `${session.selected_model} ready` : "Model off · capture still works"}</span>
+                    <span className={`customerModelState state-${modelReady ? "ready" : session?.state ?? "off"}`}><i />{modelLabel ? `${modelLabel} ready` : "Model off · capture still works"}</span>
                     <button className="secondaryButton" type="button" onClick={() => setProfileDraft({
                       name: detail.account.name,
                       aliases: detail.account.aliases.join(", "),
@@ -1329,6 +1394,29 @@ export function CustomerWorkbench() {
                   <article><span>Open actions</span><strong>{detail.account.open_actions}</strong></article>
                   <article><span>Saved facts</span><strong>{detail.facts.length}</strong></article>
                   <article><span>Notes</span><strong>{detail.notes.length}</strong></article>
+                  {detail.sources.length ? (
+                    <div className="customerSectionCard wide">
+                      <header><strong>Recently captured</strong></header>
+                      {[...detail.sources]
+                        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                        .slice(0, 4)
+                        .map((source) => (
+                          <p key={source.id}>
+                            <b>{source.source_kind}</b>
+                            <span>
+                              {source.title || `${source.content.slice(0, 120)}${source.content.length > 120 ? "…" : ""}`}
+                              {source.status === "waiting"
+                                ? <em className="sourceWaiting"> · waiting for analysis</em>
+                                : source.status === "review"
+                                  ? <em className="sourceWaiting"> · ready to review</em>
+                                  : source.status === "saved"
+                                    ? <em className="sourceSaved"> · analyzed</em>
+                                    : null}
+                            </span>
+                          </p>
+                        ))}
+                    </div>
+                  ) : null}
                   <div className="customerSectionCard wide">
                     <header><strong>Latest understanding</strong></header>
                     {detail.facts.slice(0, 6).map((fact) => <p key={fact.id}><b>{fact.kind.replace("_", " ")}</b>{fact.content}</p>)}
@@ -1487,7 +1575,7 @@ export function CustomerWorkbench() {
                       </div>
                     </div>
                   ) : (
-                    <div className={`customerActionRow ${action.status !== "open" ? "complete" : ""} ${isOverdue(action) ? "isOverdue" : ""}`} key={action.id}>
+                    <div className={`customerActionRow ${action.status !== "open" ? "complete" : ""} ${isOverdue(action) ? "isOverdue" : ""}`} key={action.id} id={`action-${action.id}`}>
                       <label>
                         <input type="checkbox" checked={action.status === "done"} disabled={busy === action.id} onChange={() => void toggleAction(action.id, action.status)} />
                         <span>
@@ -1630,7 +1718,7 @@ export function CustomerWorkbench() {
               {tab === "sources" ? (
                 <section className="customerSourceList">
                   {detail.sources.map((source) => editingSource?.id === source.id ? (
-                    <article key={source.id}>
+                    <article key={source.id} id={`source-${source.id}`}>
                       <div className="customerInlineForm">
                         <input value={editingSource.draft.title} onChange={(event) => setEditingSource({ ...editingSource, draft: { ...editingSource.draft, title: event.target.value } })} aria-label="Note title" />
                         <select value={editingSource.draft.source_kind} onChange={(event) => setEditingSource({ ...editingSource, draft: { ...editingSource.draft, source_kind: event.target.value } })} aria-label="Note type">
@@ -1646,10 +1734,10 @@ export function CustomerWorkbench() {
                       </div>
                     </article>
                   ) : (
-                    <article key={source.id}>
+                    <article key={source.id} id={`source-${source.id}`}>
                       <header>
                         <div><span>{source.source_kind}</span><strong>{source.title}</strong></div>
-                        <b className={`source-${source.status}`}>{source.status === "waiting" ? "Waiting for analysis" : source.status}</b>
+                        <b className={`source-${source.status}`}>{source.status === "waiting" ? "Waiting for analysis" : source.status === "review" ? "Ready to review" : source.status}</b>
                       </header>
                       <p>{source.content}</p>
                       <footer>
@@ -1658,8 +1746,12 @@ export function CustomerWorkbench() {
                           <button type="button" onClick={() => setEditingSource({ id: source.id, draft: { title: source.title, content: source.content, source_kind: source.source_kind } })}>Edit</button>
                           <button type="button" className="isDanger" disabled={busy === source.id} onClick={() => void removeSource(source.id)}>Delete</button>
                           {source.status === "waiting" ? (
-                            <button className="secondaryButton" type="button" disabled={session?.state !== "ready" || busy === source.id} onClick={() => void analyze(source.id)}>
-                              {session?.state === "ready" ? busy === source.id ? "Analyzing…" : "Analyze note" : "Launch model to analyze"}
+                            <button className="secondaryButton" type="button" disabled={!modelReady || busy === source.id} onClick={() => void analyze(source.id)}>
+                              {modelReady ? busy === source.id ? "Analyzing…" : "Analyze note" : "Launch model to analyze"}
+                            </button>
+                          ) : source.status === "review" ? (
+                            <button className="secondaryButton" type="button" disabled={busy === source.id} onClick={() => void openReview(source.id)}>
+                              {busy === source.id ? "Opening…" : "Review update"}
                             </button>
                           ) : null}
                         </div>

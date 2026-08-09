@@ -18,9 +18,12 @@ from waqil_api.config import Settings
 from waqil_api.contracts import ProjectToolCallV1
 from waqil_api.model_provider import DeterministicModelProvider
 from waqil_api.project_scaffold import (
+    build_capabilities,
+    scaffold_note,
     scaffold_prompt,
     scaffold_sources,
     wants_oci_responses,
+    wants_web_ui,
 )
 from waqil_api.project_workspace import ProjectWorkspaceError, ProjectWorkspaceService
 
@@ -201,3 +204,67 @@ def test_scaffold_prompt_describes_what_the_project_carries() -> None:
     assert "appkit.oci_responses" in oci_note
     assert "OCI_RESPONSES_PROJECT_ID" in oci_note
     assert "never" in oci_note.lower()
+
+
+def test_a_page_serving_build_is_vendored_the_design_language() -> None:
+    """The complaint this closes: every build invented its own visual style,
+    because "follow the frontend design language" shipped no design language
+    behind the words. A build that renders anything now receives one."""
+    capabilities = build_capabilities(
+        "Build a FastAPI web app with a clean UI for uploading diagrams"
+    )
+    assert "web_ui" in capabilities
+    sources = scaffold_sources(capabilities)
+    assert "appkit/web.py" in sources
+    assert "appkit/static/theme.css" in sources
+
+
+def test_a_json_only_build_is_not_given_a_stylesheet() -> None:
+    """Narrow enough that a backend with no pages stays unthemed."""
+    assert not wants_web_ui("Build a REST service with endpoints for invoices")
+    assert not wants_web_ui("a CLI tool that renames files")
+    sources = scaffold_sources(build_capabilities("Build a CLI that renames files"))
+    assert "appkit/static/theme.css" not in sources
+
+
+def test_a_files_only_capability_earns_no_env_example() -> None:
+    """web_ui projects no variables, so a page-only build must not receive a
+    .env.example carrying a header and nothing under it — that reads as a
+    configuration step the app does not actually have."""
+    sources = scaffold_sources(frozenset({"web_ui"}))
+    assert ".env.example" not in sources
+    assert ".env.example" in scaffold_sources(frozenset({"oci_responses"}))
+
+
+def test_the_scaffold_note_hands_over_the_theme_and_its_vocabulary() -> None:
+    """A vendored stylesheet nothing links is invisible. The note has to carry
+    the mount, the link and the class names, or the model composes its own."""
+    note = scaffold_note(has_oci=False, has_web=True)
+    assert "mount_appkit_static" in note
+    assert "/appkit/theme.css" in note
+    for klass in (".page", ".eyebrow", ".card", ".btn-primary", ".chip", ".dropzone"):
+        assert klass in note, klass
+    # And the prohibition, in as many words.
+    assert "no CSS framework" in note or "no CDN" in note
+
+    silent = scaffold_note(has_oci=False, has_web=False)
+    assert "theme.css" not in silent
+
+
+def test_the_vendored_theme_is_the_metis_palette_not_a_generic_one() -> None:
+    """Pins the identity itself. These exact values are the workspace's own —
+    warm greige paper, the one hairline, the lavender-grey muted ink, the
+    purple field — so a well-meaning rewrite to some other palette fails here
+    rather than shipping quietly into every future build."""
+    css = scaffold_sources(frozenset({"web_ui"}))["appkit/static/theme.css"]
+    for token in ("#f7f4ef", "#ede9e1", "#211f1d", "#7b7789", "#dfdacf", "#c29ce0", "#39594d"):
+        assert token in css, token
+    # Flat panels: the blur was retired for legibility and must stay retired.
+    assert "backdrop-filter" not in css
+    # No web fonts and no CDN, so a page renders identically offline. The test
+    # is for FETCHES, not for the string "http": the grain's inline SVG carries
+    # an xmlns, which is an identifier the browser never requests.
+    assert "@import" not in css
+    assert "url(http" not in css.replace(" ", "")
+    assert "fonts.googleapis" not in css
+    assert "prefers-reduced-motion" in css
