@@ -81,7 +81,7 @@ import { useDictation } from "@/hooks/use-dictation";
  */
 function projectModeBlocked(mode: ProjectMode, preference: ModelPreference | null): string | null {
   if (mode === "grok_continuous" && !preference?.oci_available) {
-    return "Keep Grok needs OCI Responses to be available. Configure it in Settings first.";
+    return "Grok mode needs the Grok lane enabled and OCI Responses configured in Settings first.";
   }
   if (mode === "cohere_continuous" && !preference?.cohere_available) {
     return "Command A+ mode needs a Cohere API key. Add WAQIL_COHERE_API_KEY in Settings first.";
@@ -237,10 +237,6 @@ export function ChatWorkspace() {
   const [projects, setProjects] = useState<ProjectWorkspace[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectMode, setProjectMode] = useState<ProjectMode>("grok_bootstrap_local");
-  // Whether the user has picked a project mode themselves this session. The
-  // Command A+ default below must never fight an explicit choice or a mode
-  // restored from a stored conversation.
-  const userChoseProjectModeRef = useRef(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [projectOpening, setProjectOpening] = useState(false);
   const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>("auto");
@@ -534,18 +530,14 @@ export function ChatWorkspace() {
     }
   }
 
-  // Command A+ leads projects by default when its key is configured — the
-  // measured result behind this: on the same build spec it wrote better code
-  // than the hosted Ollama lane and needs no OCI subscription. Grok stays the
-  // default only where there is no Cohere key to use.
-  useEffect(() => {
-    if (userChoseProjectModeRef.current || selectedProjectId) return;
-    if (modelPreference?.cohere_available) setProjectMode("cohere_continuous");
-  }, [modelPreference?.cohere_available, selectedProjectId]);
-
+  // The Ollama lane leads projects by default (the useState initial value
+  // above). Command A+ used to claim this seat on the strength of one build
+  // spec; the two-lane battery that followed reversed that result, and the
+  // build coder now lives on the Ollama lane. A conversation restored from
+  // storage still carries its own stored mode — that is set where the
+  // conversation loads, not here, so no default can overwrite it.
   async function chooseProjectMode(mode: ProjectMode) {
     if (projectOpening || runActive || projectMode === mode) return;
-    userChoseProjectModeRef.current = true;
     const blocked = projectModeBlocked(mode, modelPreference);
     if (blocked) {
       setError(blocked);

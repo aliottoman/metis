@@ -257,6 +257,43 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
         },
         {
             "type": "function",
+            "name": "revise_plan",
+            "description": (
+                "Correct this turn's file manifest when what you have read "
+                "contradicts it — a planned path this project does not have, a "
+                "framework that makes the plan wrong, work that needs different "
+                "files than were named. Send the COMPLETE corrected list, not a "
+                "delta; send [] if the task needs no new files. Use this rather "
+                "than writing a file you believe is wrong, and rather than "
+                "finishing to escape the plan."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 24,
+                        "description": (
+                            "The complete corrected list of project-relative "
+                            "paths this turn will write."
+                        ),
+                    },
+                    "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 600,
+                        "description": (
+                            "What you found that makes the current plan wrong."
+                        ),
+                    },
+                },
+                "required": ["files", "reason"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
             "name": FINISH_TOOL_NAME,
             "description": "Finish the project turn with a user-facing response and stable non-secret learnings.",
             "parameters": {

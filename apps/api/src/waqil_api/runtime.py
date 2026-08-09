@@ -148,6 +148,7 @@ class AppRuntime:
             self.model,
             verification=self.verification,
             sandbox=self.project_sandbox,
+            preference=self.model_preference,
         )
         self._checkpointer_context = AsyncSqliteSaver.from_conn_string(
             str(self.settings.checkpoint_path)

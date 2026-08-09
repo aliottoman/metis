@@ -66,6 +66,11 @@ function titleFor(type: string): string {
     "evaluation.completed": "Evaluation complete",
     "project.check_result": "Verification check",
     "project.verification_decided": "Verification decision",
+    "project.build_planned": "Build plan",
+    "project.plan_revised": "Build plan corrected",
+    "project.focused": "Narrowed to one file",
+    "project.phase": "Phase",
+    "run.model_fallback": "Model fallback",
     "approval.required": "Approval needed",
     "approval.applied": "Approval recorded",
     "run.awaiting_approval": "Waiting for approval",
@@ -164,6 +169,35 @@ function eventSummary(event: RunEventV1): string {
     return payload.approved
       ? "Verification checks approved for this project."
       : "Verification checks were declined.";
+  }
+  if (event.type === "project.build_planned") {
+    const files = Array.isArray(payload.files) ? payload.files : [];
+    const intent = getText(payload, "intent");
+    const after = numText(payload.after_steps, "0");
+    const read = `after reading ${after} step${after === "1" ? "" : "s"}`;
+    if (!files.length) return `${intent || "no files"} · ${read}`;
+    return `${files.length} file(s) · ${files.join(", ")} · ${read}`;
+  }
+  if (event.type === "project.plan_revised") {
+    const files = Array.isArray(payload.files) ? payload.files : [];
+    const reason = getText(payload, "reason");
+    const now = files.length ? files.join(", ") : "no new files";
+    return reason ? `${reason} → ${now}` : `now ${now}`;
+  }
+  if (event.type === "project.focused") {
+    const path = getText(payload, "path") ?? "one file";
+    return `writing ${path} first — the turn was reading without converging`;
+  }
+  if (event.type === "project.phase") {
+    return getText(payload, "phase") === "building"
+      ? "exploration answered — building now"
+      : "exploring the project";
+  }
+  if (event.type === "run.model_fallback") {
+    const from = getText(payload, "from") ?? "the primary";
+    const to = getText(payload, "to") ?? "a backup";
+    const reason = getText(payload, "reason") ?? "unavailable";
+    return `${from} stopped answering (${reason}) — continuing on ${to}`;
   }
   return getText(payload, "summary", "message", "status", "tool_name", "tool", "node", "error") ??
     (event.type.includes("delta") ? "Streaming response" : "Recorded by the control plane");

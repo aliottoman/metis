@@ -250,6 +250,7 @@ async def put_model_preference(
             body.model,
             provider=body.provider,
             oci_tools=body.oci_tools,
+            role_chains=body.role_chains,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -1409,8 +1410,9 @@ async def create_message(
         # since routing is not the step that struggles. Grok's own mode is
         # left alone, and a pinned preference already suppressed this. The
         # shift only means something on the local provider — the OCI and
-        # Cohere transports name their own models.
-        if model_aliases["_provider"] == "local":
+        # Cohere transports name their own models. An explicit coder chain
+        # outranks it entirely: its first entry IS the user's coder choice.
+        if model_aliases["_provider"] == "local" and "_chain_coder" not in model_aliases:
             try:
                 cloud_coder = app.model_preference.project_coder()
             except ValueError as error:

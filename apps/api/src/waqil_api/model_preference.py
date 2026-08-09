@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 
 from .config import Settings
-from .contracts import ModelPreferenceV1
+from .contracts import MODEL_ROLES, ModelPreferenceV1, RoleChainEntryV1
 
 
 def is_cloud_model(model: str) -> bool:
@@ -113,9 +113,33 @@ class ModelPreferenceStore:
             model=model,
             provider=provider,
             oci_tools=list(dict.fromkeys(oci_tools)),
+            role_chains=self._parse_chains(raw.get("role_chains")),
             oci_available=self.oci_available,
             cohere_available=self.cohere_available,
         )
+
+    @staticmethod
+    def _parse_chains(raw: object) -> dict[str, list[RoleChainEntryV1]]:
+        """Stored chains, with anything unparseable dropped rather than fatal.
+
+        The file is user-owned JSON: a hand-edit that breaks one entry should
+        cost that entry, not every model preference in the app.
+        """
+        if not isinstance(raw, dict):
+            return {}
+        chains: dict[str, list[RoleChainEntryV1]] = {}
+        for role, entries in raw.items():
+            if role not in MODEL_ROLES or not isinstance(entries, list):
+                continue
+            parsed: list[RoleChainEntryV1] = []
+            for entry in entries[:4]:
+                try:
+                    parsed.append(RoleChainEntryV1.model_validate(entry))
+                except Exception:  # noqa: BLE001 - one bad entry costs itself
+                    continue
+            if parsed:
+                chains[role] = parsed
+        return chains
 
     @property
     def oci_available(self) -> bool:
@@ -134,6 +158,7 @@ class ModelPreferenceStore:
         *,
         provider: str = "local",
         oci_tools: list[str] | None = None,
+        role_chains: dict[str, list[RoleChainEntryV1]] | None = None,
     ) -> ModelPreferenceV1:
         if mode not in ("split", "pinned"):
             raise ValueError("mode must be 'split' or 'pinned'")
@@ -158,6 +183,12 @@ class ModelPreferenceStore:
         selected_tools = list(dict.fromkeys(oci_tools or []))
         if any(item not in ("x_search", "code_interpreter") for item in selected_tools):
             raise ValueError("unsupported OCI native tool")
+        # None keeps what is stored; {} clears. The distinction lets a save
+        # from a surface that predates chains leave them untouched.
+        if role_chains is None:
+            stored = self.load().role_chains
+        else:
+            stored = self._validated_chains(role_chains)
         path = self._settings.model_preference_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -167,11 +198,48 @@ class ModelPreferenceStore:
                     "model": model.strip() if model else None,
                     "provider": provider,
                     "oci_tools": selected_tools,
+                    "role_chains": {
+                        role: [entry.model_dump(mode="json") for entry in chain]
+                        for role, chain in stored.items()
+                    },
                 }
             ),
             encoding="utf-8",
         )
         return self.load()
+
+    def _validated_chains(
+        self, chains: dict[str, list[RoleChainEntryV1]]
+    ) -> dict[str, list[RoleChainEntryV1]]:
+        """Chains fit to store, refused loudly where the choice is made.
+
+        The same principle as the pinned-model gate above: a hosted model that
+        ignores tool calling, or a lane with no key behind it, is refused at
+        selection time — the alternative is a fallback ladder that "works"
+        until the day it is needed and then fails exactly like no ladder.
+        """
+        cleaned: dict[str, list[RoleChainEntryV1]] = {}
+        for role, chain in chains.items():
+            if role not in MODEL_ROLES:
+                raise ValueError(f"unknown model role: {role}")
+            entries: list[RoleChainEntryV1] = []
+            for entry in chain[:4]:
+                if entry.provider == "oci" and not self.oci_available:
+                    raise ValueError(
+                        f"the {role} chain names OCI, which is not configured"
+                    )
+                if entry.provider == "cohere" and not self.cohere_available:
+                    raise ValueError(
+                        f"the {role} chain names Cohere, which is not configured"
+                    )
+                if entry.provider == "local" and entry.model:
+                    capability_error = hosted_model_capability_error(entry.model)
+                    if capability_error:
+                        raise ValueError(capability_error)
+                entries.append(entry)
+            if entries:
+                cleaned[role] = entries
+        return cleaned
 
     def project_coder(self) -> str:
         """The coder a project build should use, or "" to keep the default.
@@ -209,22 +277,54 @@ class ModelPreferenceStore:
         return coder
 
     def resolve_aliases(self) -> dict[str, str]:
-        """The `model_aliases` a new run should use, honoring the preference."""
+        """The `model_aliases` a new run should use, honoring the preference.
+
+        Chains ride in the aliases as `_chain_<role>` JSON so they are frozen
+        into the run row with everything else: a run that started under one
+        ladder keeps it, exactly as it keeps its models. An explicit chain's
+        first entry IS that role's primary — "completely controllable" means
+        the ladder is the selection, not a decoration on it. Without an
+        explicit coder chain a safety ladder is synthesized (Cohere when its
+        key exists, then the default local coder) so an outage degrades a
+        build instead of ending it; synthesized fallbacks never change the
+        primary, so absent chains behave exactly as before on a healthy lane.
+        """
         preference = self.load()
         provider_aliases = {
             "_provider": preference.provider,
             "_oci_tools": ",".join(preference.oci_tools),
         }
         if preference.mode == "pinned" and preference.model:
-            return {
+            aliases = {
                 "planner": preference.model,
                 "coder": preference.model,
                 "quality": preference.model,
                 **provider_aliases,
             }
-        return {
-            "planner": self._settings.planner_model,
-            "coder": self._settings.coder_model,
-            "quality": self._settings.quality_model,
-            **provider_aliases,
-        }
+        else:
+            aliases = {
+                "planner": self._settings.planner_model,
+                "coder": self._settings.coder_model,
+                "quality": self._settings.quality_model,
+                **provider_aliases,
+            }
+        for role in MODEL_ROLES:
+            chain = preference.role_chains.get(role) or []
+            if chain:
+                primary = chain[0]
+                if primary.provider == "local" and primary.model:
+                    aliases[role] = primary.model
+                aliases[f"_chain_{role}"] = json.dumps(
+                    [entry.model_dump(mode="json") for entry in chain]
+                )
+            elif role == "coder":
+                fallbacks: list[dict[str, str | None]] = []
+                if self.cohere_available and preference.provider != "cohere":
+                    fallbacks.append({"provider": "cohere", "model": None})
+                if self._settings.coder_model != aliases["coder"]:
+                    fallbacks.append(
+                        {"provider": "local", "model": self._settings.coder_model}
+                    )
+                if fallbacks:
+                    aliases["_fallbacks_coder"] = json.dumps(fallbacks)
+        return aliases

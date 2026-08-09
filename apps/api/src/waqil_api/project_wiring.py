@@ -660,7 +660,27 @@ _HTML_REFS = (
 )
 _CSS_REF = re.compile(r"url\(\s*[\"']?([^\"'()]+?)[\"']?\s*\)", re.IGNORECASE)
 # A scheme (http:, https:, data:, mailto:…), protocol-relative //, or anchor.
-_EXTERNAL_REF = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
+# `%23` is an anchor too: a percent-encoded '#', which is how an inline SVG
+# spells an internal reference such as url(%23n).
+_EXTERNAL_REF = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#|%23)", re.IGNORECASE)
+
+# A data: URI carries a whole document in its value — an inline SVG commonly
+# contains its own url(...) pointing at a filter defined inside itself. Those
+# are not project files, and the reference scanners must never see them: the
+# outer url("data:…") does not match _CSS_REF (its payload holds quotes), so
+# the scanner reached past it and blamed the INNER url(%23n) on a missing file.
+# That fired on Metis's own vendored appkit/static/theme.css and raised a
+# blocking "the page loads broken" finding on every web build that staged it.
+_DATA_URI = re.compile(r"""url\(\s*(["']?)data:[^)]*?\1\s*\)""", re.IGNORECASE)
+
+
+def _without_data_uris(text: str) -> str:
+    """The same text with data: URI payloads blanked, newlines preserved.
+
+    Replacing rather than deleting keeps every later character at its original
+    offset, so the line numbers the findings report stay correct.
+    """
+    return _DATA_URI.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
 
 
 def _posix_dir(path: str) -> str:
@@ -771,13 +791,17 @@ def _asset_reference_findings(
     findings: list[dict[str, str]] = []
     for path in sorted(p for p in staged if p.endswith((".html", ".htm", ".css"))):
         text = texts.get(path) or str(staged[path].get("content", ""))
+        # Scan the text with data: URI payloads blanked out — an inline SVG
+        # carries its own url(...) references, and they belong to that document,
+        # not to this project. Offsets are preserved so line numbers stay right.
+        scanned = _without_data_uris(text)
         if path.endswith(".css"):
-            references = [(m.start(1), m.group(1)) for m in _CSS_REF.finditer(text)]
+            references = [(m.start(1), m.group(1)) for m in _CSS_REF.finditer(scanned)]
         else:
             references = [
                 (m.start(1), m.group(1))
                 for pattern in _HTML_REFS
-                for m in pattern.finditer(text)
+                for m in pattern.finditer(scanned)
             ]
         for offset, raw in sorted(references):
             target, authoritative = _resolve_reference(raw, path, mounts)

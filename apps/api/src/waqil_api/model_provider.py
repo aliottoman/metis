@@ -36,6 +36,7 @@ from .contracts import (
     RiskLevel,
     ToolDefinitionDraftV1,
     ToolDefinitionV1,
+    PROJECT_READ_TOOLS,
     PROJECT_TOOL_REQUIRED_ARGUMENTS,
     grammar_schema,
     project_step_retry_schema,
@@ -225,6 +226,51 @@ def classify_model_error(error: BaseException) -> str | None:
     """Name the permanent cause of a backend error, or None if a retry may help."""
     text = f"{type(error).__name__}: {error}".lower()
     for marker, reason in _PERMANENT_MODEL_ERRORS:
+        if marker in text:
+            return reason
+    return None
+
+
+# Substrings that identify an INFRASTRUCTURE failure — the request reached the
+# backend and the backend failed to answer (rate limit, quota, a 5xx, a
+# timeout, a dropped connection), so no model reply was ever generated. This
+# is deliberately SEPARATE from classify_model_error, which gates the local
+# provider's own retry loop: adding "timed out" there would change how a local
+# call retries. Here it only changes how the project loop REPORTS a failure —
+# an infra outage is not the model replying unintelligibly, and saying "I
+# could not read 3 replies from the model" when a trial key hit its quota
+# blames the model for the backend being down.
+_BACKEND_UNAVAILABLE_ERRORS: tuple[tuple[str, str], ...] = (
+    ("http 429", "rate_limited"),
+    ("rate limit", "rate_limited"),
+    ("too many requests", "rate_limited"),
+    ("trial key", "rate_limited"),
+    ("quota", "rate_limited"),
+    ("http 500", "backend_error"),
+    ("http 502", "backend_error"),
+    ("http 503", "backend_error"),
+    ("http 504", "backend_error"),
+    ("http 529", "backend_error"),
+    ("overloaded", "backend_error"),
+    ("kept failing after", "backend_error"),
+    ("timed out", "backend_timeout"),
+    ("call timed out", "backend_timeout"),
+    ("call failed", "backend_unreachable"),
+)
+
+
+def classify_backend_unavailable(error: BaseException) -> str | None:
+    """Name an infrastructure failure that produced no model reply, or None.
+
+    A permanent pre-model refusal (grammar that will not compile, a model that
+    is not loaded) is classify_model_error's job and is handled first. This
+    names the transient-but-turn-ending case the project loop was mistaking
+    for an unreadable model reply.
+    """
+    if classify_model_error(error) is not None:
+        return None
+    text = f"{type(error).__name__}: {error}".lower()
+    for marker, reason in _BACKEND_UNAVAILABLE_ERRORS:
         if marker in text:
             return reason
     return None
@@ -1151,6 +1197,15 @@ that never happened. When you were asked to build and staged_changes is still
 empty, do not return status=complete with a success story — create the files
 first, or state plainly that nothing was built and why.
 
+files_still_to_write is this turn's plan, and it was written before the project
+was read. When what you read contradicts it — a planned path this project does
+not have, a framework that makes the plan wrong, work that needs different
+files — call revise_plan with the COMPLETE corrected list and what you found.
+That is the correct move, and it is expected: explore first, and revise the
+plan the moment the evidence disagrees with it. Do NOT write a file you believe
+is wrong just because the plan named it, and do not finish in order to escape a
+plan you could have corrected.
+
 Talking to the user is its own channel, never a completion. To answer a question
 about the project — what it uses, how it works, what you would change — call
 respond with the full answer; do not stage files for a question, and do not
@@ -1246,9 +1301,34 @@ Return spec as plain text (the sections above), and assumptions as the list of
 defaults you chose where the request was silent."""
 
 
-PROJECT_PLAN_SYSTEM = """You are planning one coding task before any file is
-written: the files it requires, and the acceptance scenarios that will prove the
+PROJECT_PLAN_SYSTEM = """You are planning one coding task: what kind of task it
+is, the files it requires, and the acceptance scenarios that will prove the
 finished app does what was asked.
+
+project_context.manifest.file_tree and the tool_trace are what this project
+ACTUALLY contains, and they outrank the request's own wording. A request that
+names app/static/index.html for a project whose tree holds only app.py and a
+Streamlit dependency is describing a different application: say so through
+intent and files rather than planning paths that cannot exist here.
+
+intent: "build" to stand up new code, "edit" to change code that exists,
+"question" ONLY when the user asks for information and nothing in the project
+will change. A request that tells you to rewire, reskin, rebuild, refactor,
+convert, add, remove, replace, fix, or otherwise CHANGE the project is "edit"
+(or "build" if it stands up something new) — however it is phrased, and even if
+it never says "create". "Rewire this app's UI onto the design language and
+delete every style rule" is an edit, not a question. Naming a file does not by
+itself make a request a build — "what does app/main.py do?" is a question — but
+asking for a change to that file is not. "question" turns off the gate that
+refuses a finish while planned files are unwritten AND the exploration ceiling's
+expectation that a build commits to writing, so choosing it wrongly lets a real
+build read forever and finish having written nothing: reserve it for requests a
+plain text answer fully satisfies.
+
+scope: "whole_app" when this stands up a whole application from nothing,
+"narrow" when it works inside an application that already exists. A rewire, a
+reskin, a refactor and a bug fix are all narrow, however much of the app they
+touch.
 
 files: only project-relative paths — no prose, no explanation, no directories.
 List every file the request asks for, including configuration, documentation and
@@ -1316,6 +1396,58 @@ def step_from_function_call(
         status="tool",
         tool_call=ProjectToolCallV1(name=name, arguments=arguments),
     )
+
+
+# Reads that may ride along with the first one in a single step. Bounded well
+# below what a model will offer: the point is to stop paying a round-trip for
+# "list, then read, then read", not to let one reply queue up the whole turn.
+_MAX_BATCHED_READS = 3
+
+
+def step_from_function_calls(
+    calls: list[tuple[Any, Any]], *, speaker: str
+) -> ProjectAgentStepV1:
+    """One step from every tool call a reply carried.
+
+    All three tool-calling transports used to loop over the returned calls and
+    ``return`` on the first, silently discarding the rest — so a hosted model
+    that answered "list the directory and read these two files" was billed a
+    full round-trip for each read it had already asked for. The extras are
+    kept now, but only where keeping them cannot change behaviour: every call
+    in the reply must be a read (see PROJECT_READ_TOOLS), because a batch runs
+    with no model step between its members and anything that stages, checks or
+    talks must be able to inform what comes next.
+
+    Anything else — a write first, a mixed reply, a completion — collapses to
+    the first call exactly as before.
+    """
+    if not calls:
+        raise ModelProviderError(f"{speaker} returned no project tool call")
+    step = step_from_function_call(calls[0][0], calls[0][1], speaker=speaker)
+    if step.status != "tool" or step.tool_call is None:
+        return step
+    if len(calls) == 1 or step.tool_call.name not in PROJECT_READ_TOOLS:
+        return step
+    extras: list[ProjectToolCallV1] = []
+    for name, arguments in calls[1:]:
+        if len(extras) >= _MAX_BATCHED_READS:
+            break
+        try:
+            follower = step_from_function_call(name, arguments, speaker=speaker)
+        except ModelProviderError:
+            # A malformed follower is not worth failing the step over: the
+            # first call is sound and the model can reissue this one. Dropping
+            # it is exactly what every provider did with all of them.
+            break
+        if follower.status != "tool" or follower.tool_call is None:
+            break
+        if follower.tool_call.name not in PROJECT_READ_TOOLS:
+            # A mixed reply. The reads before the write are still safe, but
+            # the write itself must be its own step, so stop here rather than
+            # reordering what the model asked for.
+            break
+        extras.append(follower.tool_call)
+    return step.model_copy(update={"extra_calls": extras})
 
 
 # Every contract the local path constrains a decode with. A test asserts each
@@ -2067,13 +2199,22 @@ class OllamaModelProvider:
             ),
         )
 
-    async def bootstrap_project(self, snapshot: dict[str, Any]) -> ProjectBootstrapV1:
+    async def bootstrap_project(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectBootstrapV1:
+        # Aliases are honoured here because this call became reachable as the
+        # fallback when no cloud key is configured. Without them the role
+        # resolves to settings.planner_model — a local 35B that is usually not
+        # loaded — instead of the model the user actually pinned.
         return await self._structured(
             ProjectBootstrapV1,
             system_prompt=PROJECT_BOOTSTRAP_SYSTEM,
             user_prompt=json.dumps(snapshot, ensure_ascii=False),
             role="planner",
-            model_aliases=None,
+            model_aliases=model_aliases,
             max_output_tokens=min(4096, self.settings.max_output_tokens),
         )
 
@@ -2139,10 +2280,18 @@ class OllamaModelProvider:
         stays available even then — withholding it was tried on the OCI path
         and measured worse, because a model with no legal move burns the whole
         budget; the host-side premature-finish guard is the defence, and it is
-        provider-independent. The three failure modes measured on real hosted
-        endpoints — prose instead of a call, arguments as a string, an unknown
-        tool name — all surface as ``ModelProviderError``, so the loop's
-        malformed-reply handling covers them.
+        provider-independent. The remaining failure modes measured on real
+        hosted endpoints — arguments as a string, an unknown tool name —
+        surface as ``ModelProviderError``, so the loop's malformed-reply
+        handling covers them.
+
+        Prose is NOT one of them, and treating it as one was a transport
+        inconsistency with teeth: the OCI and Cohere paths both offer a
+        text-only reply as a completion and let the loop's own premature-finish
+        guard judge it, while this path alone raised. A live deepseek-v4-pro
+        turn answering a plain project question in prose therefore burned three
+        malformed strikes and died, where the identical reply on Cohere would
+        have been published. All three transports now behave the same way.
         """
         model_name = self._model_name("coder", model_aliases)
         owed = (
@@ -2163,12 +2312,17 @@ class OllamaModelProvider:
             max_output_tokens=min(8192, self.settings.max_output_tokens),
         )
         speaker = f"hosted model {model_name}"
-        for name, arguments in _reply_tool_calls(reply):
-            return step_from_function_call(name, arguments, speaker=speaker)
+        if calls := _reply_tool_calls(reply):
+            return step_from_function_calls(calls, speaker=speaker)
         text = _message_text(getattr(reply, "content", reply)).strip()
+        if text:
+            # Mirror the OCI and Cohere transports exactly: prose is offered as
+            # a completion and judged by the loop's provider-independent
+            # premature-finish guard, which challenges an empty finish on a
+            # build turn and publishes a genuine answer on a question.
+            return ProjectAgentStepV1(status="complete", response=text)
         raise ModelProviderError(
-            f"{speaker} returned prose instead of a project tool call"
-            + (f": {text[:200]}" if text else "")
+            f"{speaker} returned neither a project tool call nor any text"
         )
 
     async def project_step(
@@ -2741,6 +2895,7 @@ class OCIResponsesModelProvider:
             max_output_tokens=self.settings.oci_responses_max_output_tokens,
             store=False,
         )
+        calls: list[tuple[Any, Any]] = []
         for item in list(getattr(response, "output", []) or []):
             item_type = getattr(item, "type", None)
             if item_type is None and isinstance(item, dict):
@@ -2752,7 +2907,9 @@ class OCIResponsesModelProvider:
             if isinstance(item, dict):
                 name = name or item.get("name")
                 arguments_raw = arguments_raw or item.get("arguments")
-            return step_from_function_call(name, arguments_raw, speaker="Grok")
+            calls.append((name, arguments_raw))
+        if calls:
+            return step_from_function_calls(calls, speaker="Grok")
         content = str(getattr(response, "output_text", "") or "").strip()
         if content:
             return ProjectAgentStepV1(status="complete", response=content)
@@ -3387,8 +3544,8 @@ class CohereModelProvider:
         )
         message = reply.get("message") or {}
         speaker = f"Cohere {self.settings.cohere_model}"
-        for name, arguments in _cohere_tool_calls(message):
-            return step_from_function_call(name, arguments, speaker=speaker)
+        if calls := _cohere_tool_calls(message):
+            return step_from_function_calls(calls, speaker=speaker)
         content = _cohere_message_text(message).strip()
         if content:
             # Mirror the OCI transport: prose from a frontier model is offered
@@ -3501,16 +3658,50 @@ class RoutedModelProvider:
             spec, model_aliases=model_aliases
         )
 
-    async def bootstrap_project(self, snapshot: dict[str, Any]) -> ProjectBootstrapV1:
-        # The map is one call with the whole repository snapshot in it, so it
-        # goes to a cloud provider regardless of which one leads the bounded
-        # loop afterwards. Grok keeps first refusal — it has the largest
-        # context and every existing manifest was written by it — and Cohere
-        # stands in only when OCI is not configured, so a Command A+ project
-        # does not need an OCI subscription just to get its first map.
-        if self.oci.available or self.cohere is None:
-            return await self.oci.bootstrap_project(snapshot)
-        return await self.cohere.bootstrap_project(snapshot)
+    async def bootstrap_project(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectBootstrapV1:
+        # The map is one call carrying the whole repository snapshot, so it
+        # wants the largest context available. Grok keeps first refusal — every
+        # existing manifest was written by it — then Cohere, so a Command A+
+        # project needs no OCI subscription just to get its first map.
+        #
+        # Each candidate is TRIED, not merely inspected, and a failure falls
+        # through to the next. `available` only reports that a key is
+        # configured, which is not the same as working: on this install Cohere
+        # is configured and its trial quota is spent, so an availability check
+        # sent every map to a provider that answers 429 — and opening any new
+        # project failed with a bare 500. A map is a single idempotent call
+        # with no side effects, so trying the next provider is free and is the
+        # only thing that makes this survive an outage.
+        #
+        # The Ollama lane is the final fallback and is not a lesser option: the
+        # hosted models on it measurably do this work, and a pinned LOCAL model
+        # keeps the snapshot on-device, which is strictly better for a call
+        # that ships the whole repository.
+        attempts: list[tuple[str, Any]] = []
+        if self.oci.available:
+            attempts.append(("oci", self.oci))
+        if self.cohere is not None and getattr(self.cohere, "available", False):
+            attempts.append(("cohere", self.cohere))
+        last: Exception | None = None
+        for _name, provider in attempts:
+            try:
+                return await provider.bootstrap_project(snapshot)
+            except Exception as exc:  # noqa: BLE001 - the next provider may answer
+                last = exc
+        try:
+            return await self.local.bootstrap_project(
+                snapshot, model_aliases=model_aliases
+            )
+        except Exception as exc:
+            # Nothing could write a map. Report the cloud failure when there
+            # was one — "Cohere returned HTTP 429" is the actionable cause,
+            # where the local error is just the last thing that also failed.
+            raise (last or exc) from exc
 
     async def harvest_memories(self, request: dict[str, Any]) -> MemoryHarvestV1:
         # Pinned local: harvesting reads the whole run, so it must not become a
