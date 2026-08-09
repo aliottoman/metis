@@ -353,6 +353,29 @@ _BUILD_PHRASE = re.compile(
     r"\b(from scratch|scaffold|build out|write the code|create the files|"
     r"one[- ]line comment|each file|every file)\b"
 )
+
+# Asking for existing code to CHANGE. The patterns above all describe making
+# something new — a path, an artifact, scaffolding language — so a request to
+# rework what already exists matched none of them, and that is not a corner
+# case: "rewire this app's UI onto appkit" and "revamp the UI here" both read
+# as conversation. The consequences compounded, because this one predicate
+# gates the plan call, the appkit scaffold, AND (through the plan's file
+# count) the exploration budget: a real revamp got no plan, no design system,
+# and the smallest budget in the system, then died at step five.
+#
+# The verb deliberately has no leading word boundary — a live prompt arrived
+# as "CompletelyRevamp the UI", and a prefilter that misses a typo costs the
+# whole turn. It is paired with a target noun so ordinary prose ("simplify
+# that explanation") stays out. This only decides whether to spend one small
+# plan call; the model still declares the real intent.
+_CHANGE_INTENT = re.compile(
+    r"(revamp|redesign|reskin|restyle|rework|rewire|overhaul|moderni[sz]|"
+    r"refactor|rewrit|convert|migrat|simplif|clean up|tidy|port)\w*"
+    r"[^.\n]{0,60}?\b(ui|ux|app|application|page|pages|screen|screens|site|"
+    r"website|frontend|front[- ]end|backend|back[- ]end|interface|layout|"
+    r"design|styling|styles?|theme|component|components|code|codebase|"
+    r"project|module|modules|file|files|route|routes|endpoint|endpoints)\b"
+)
 # Asking to SEE a system: the vocabulary of pictures, not of source trees.
 _DIAGRAM_INTENT = re.compile(r"\b(diagram|draw|sketch|chart|visuali[sz]e|render)\b")
 
@@ -380,13 +403,14 @@ _NEW_APPLICATION = re.compile(
 
 
 def is_project_build_request(prompt: str) -> bool:
-    """True when the user is asking for code files to be written."""
+    """True when the user is asking for code files to be written or changed."""
     lowered = prompt.lower()
     return bool(
         _SOURCE_PATH.search(lowered)
         or _BUILD_ARTIFACT.search(lowered)
         or _BUILD_PHRASE.search(lowered)
         or _NEW_APPLICATION.search(lowered)
+        or _CHANGE_INTENT.search(lowered)
     )
 
 
