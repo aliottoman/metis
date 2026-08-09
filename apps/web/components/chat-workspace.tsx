@@ -1,22 +1,28 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { ApprovalCard } from "@/components/approval-card";
+import { ElicitationCard } from "@/components/elicitation-card";
+import { ApplyCard } from "@/components/apply-card";
 import { ArtifactViewer } from "@/components/artifact-viewer";
 import { CommandPicker, type PickerOption } from "@/components/command-picker";
 import { CustomerDashboardSnippet } from "@/components/customer-dashboard-snippet";
 import { MarkdownContent } from "@/components/markdown-content";
 import { RunTimeline } from "@/components/run-timeline";
 import { MetisCompanion } from "@/components/metis-companion";
-import { MetisMark, MetisWordmark } from "@/components/metis-mark";
+import { MetisWordmark } from "@/components/metis-mark";
 import { ModelControl } from "@/components/model-control";
 import {
   ApiError,
+  answerElicitation,
   cancelRun,
   createConversation,
   createCorpusSource,
+  applyCustomerProposal,
   createCustomerNote,
+  createCustomerOutput,
   createProjectAsset,
   decideRun,
   getConversation,
@@ -37,6 +43,7 @@ import {
   setModelPreference,
   submitFeedback,
   uploadFile,
+  addDocumentToKnowledge,
 } from "@/lib/api";
 import { rememberConversation } from "@/lib/recent-conversations";
 import { freshToken } from "@/lib/token";
@@ -58,6 +65,10 @@ import {
   type FolderScan,
 } from "@/lib/folder-drop";
 import type { ArtifactRef, AttachmentRef, ChatMessage, CorpusSource, CustomerAccount, KnowledgeScope, LocalModelSession, ModelPreference, ProjectMode, ProjectWorkspace, RecoverableRun, RunEventV1 } from "@/lib/types";
+import { isCloudActive } from "@/lib/model";
+import { latestPendingApproval } from "@/lib/approvals";
+import { latestPendingElicitation } from "@/lib/elicitations";
+import { latestActionSuggestion } from "@/lib/suggestions";
 import { useRunEvents } from "@/hooks/use-run-events";
 import { useDictation } from "@/hooks/use-dictation";
 
@@ -102,10 +113,15 @@ function reasoningTail(reasoning: string): string {
  * expanding shows everything received so far.
  */
 function ReasoningPanel({ reasoning, live }: { reasoning: string; live: boolean }) {
-  const [open, setOpen] = useState(false);
+  // Until you touch it, the panel follows the run — open while Metis is
+  // thinking so you watch the reasoning form, then collapsed to a one-line
+  // "Thought process" once the answer lands, the way Claude does it. Your own
+  // click takes over from there for the rest of this message.
+  const [manual, setManual] = useState<boolean | null>(null);
+  const open = manual ?? live;
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Follow the newest thinking only while expanded and still streaming.
+  // Follow the newest thinking while it streams into an open panel.
   useEffect(() => {
     if (!open || !live) return;
     const body = bodyRef.current;
@@ -115,7 +131,7 @@ function ReasoningPanel({ reasoning, live }: { reasoning: string; live: boolean 
   const preview = live ? reasoningTail(reasoning) : `${reasoning.trim().split(/\s+/).length} words of thinking`;
   return (
     <section className={`reasoningPanel ${live ? "isLive" : ""} ${open ? "isOpen" : ""}`}>
-      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+      <button type="button" onClick={() => setManual(!open)} aria-expanded={open}>
         <span className="reasoningGlyph" aria-hidden="true"><i /><i /><i /></span>
         <span className="reasoningLabel">{live ? "Thinking" : "Thought process"}</span>
         <span className="reasoningPreview">{preview}</span>
@@ -200,6 +216,16 @@ export function ChatWorkspace() {
   const [timelineResizing, setTimelineResizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [decidedApprovals, setDecidedApprovals] = useState<Set<string>>(new Set());
+  // The ask_user twin of decidedApprovals: questions this browser has answered,
+  // so the card flips to "sent" the instant it is answered, before the resumed
+  // run's events arrive.
+  const [answeredElicitations, setAnsweredElicitations] = useState<Set<string>>(new Set());
+  const [answerBusy, setAnswerBusy] = useState<string | null>(null);
+  // The apply-card for a filed note's analysis: applied ones stay visible with a
+  // check, dismissed ones vanish, and nothing is written until Apply is tapped.
+  const [appliedProposals, setAppliedProposals] = useState<Set<string>>(new Set());
+  const [dismissedProposals, setDismissedProposals] = useState<Set<string>>(new Set());
+  const [applyingProposal, setApplyingProposal] = useState<string | null>(null);
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null);
   const [feedbackMode, setFeedbackMode] = useState<"idle" | "correcting" | "sent">("idle");
   const [feedbackBusy, setFeedbackBusy] = useState(false);
@@ -230,6 +256,9 @@ export function ChatWorkspace() {
   // rather than silently accepting the same answer twice.
   const [savedToAccount, setSavedToAccount] = useState<Set<string>>(new Set());
   const [savingToAccount, setSavingToAccount] = useState<string | null>(null);
+  // Generating the account's activity-tracker update straight into the thread.
+  const [trackerBusy, setTrackerBusy] = useState(false);
+  const [knowledgeAdds, setKnowledgeAdds] = useState<Record<string, "adding" | "added" | "error">>({});
   // A dropped folder is routed, never uploaded: the scan below is local, and
   // only the option the user picks does anything.
   const [folderDrop, setFolderDrop] = useState<{ scan: FolderScan; ignored: string[] } | null>(null);
@@ -256,6 +285,8 @@ export function ChatWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerWidthRef = useRef(0);
+  // A caret position to restore after a programmatic draft edit (list continue).
+  const pendingSelectionRef = useRef<number | null>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
@@ -267,6 +298,12 @@ export function ChatWorkspace() {
   // message is not, and treating the two the same is what made the activity
   // drawer open on every send.
   const selfStartedRunsRef = useRef<Set<string>>(new Set());
+  // Conversation id -> the run it currently has in flight (self-started). This
+  // survives navigating away and back, so returning to a still-working
+  // conversation restores its live activity bar and streaming reply — the
+  // streaming message isn't persisted yet, and the sidebar link drops the run
+  // id, so without this the "thinking" indicator vanishes on switch-and-return.
+  const liveRunsRef = useRef<Map<string, string>>(new Map());
   const handledNewRequestRef = useRef<string | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const timelineWidthRef = useRef(DEFAULT_ACTIVITY_WIDTH);
@@ -298,6 +335,8 @@ export function ChatWorkspace() {
     setFeedbackBusy(false);
     setCorrection("");
     setDecidedApprovals(new Set());
+    setAnsweredElicitations(new Set());
+    setAnswerBusy(null);
     setDecisionBusy(null);
     setStageLabel(null);
     setTimelineOpen(false);
@@ -335,7 +374,7 @@ export function ChatWorkspace() {
     const textarea = textareaRef.current;
     if (!textarea) return;
     textarea.style.height = "0";
-    textarea.style.height = textarea.value ? `${Math.min(textarea.scrollHeight, 180)}px` : "";
+    textarea.style.height = textarea.value ? `${Math.min(textarea.scrollHeight, 260)}px` : "";
     composerWidthRef.current = textarea.clientWidth;
   }, []);
 
@@ -346,6 +385,16 @@ export function ChatWorkspace() {
     const frame = requestAnimationFrame(resizeComposer);
     return () => cancelAnimationFrame(frame);
   }, [draft, resizeComposer]);
+
+  // After a programmatic draft edit (list auto-continue), a controlled textarea
+  // would drop the caret to the end; put it back where the edit intended.
+  useLayoutEffect(() => {
+    const pending = pendingSelectionRef.current;
+    if (pending == null) return;
+    pendingSelectionRef.current = null;
+    const textarea = textareaRef.current;
+    if (textarea) textarea.setSelectionRange(pending, pending);
+  }, [draft]);
 
   // Width changes rewrap the text, so the measured height is stale: the sidebar
   // collapsing, the activity drawer opening, or the window resizing all count.
@@ -596,13 +645,16 @@ export function ChatWorkspace() {
     setConversationTitle("Opening conversation…");
     setMessages([]);
     setArtifacts([]);
-    setActiveRunId(requestedRunId);
+    // Prefer the URL's run, then this conversation's own in-flight run, so
+    // returning to a still-working conversation re-subscribes at once.
+    setActiveRunId(requestedRunId ?? liveRunsRef.current.get(requestedConversationId) ?? null);
     // A run named in the URL of a conversation we are only now loading is a
     // deep link into that run — see selfStartedRunsRef.
     if (requestedRunId && !selfStartedRunsRef.current.has(requestedRunId)) setTimelineOpen(true);
     setFeedbackMode("idle");
     setCorrection("");
     setDecidedApprovals(new Set());
+    setAnsweredElicitations(new Set());
     setLoadingConversation(true);
     setError(null);
     void Promise.all([
@@ -613,7 +665,7 @@ export function ChatWorkspace() {
         if (!mounted) return;
         setMessages(conversation.messages);
         setConversationTitle(conversation.title || "Conversation");
-        const restoredRunId = requestedRunId ?? conversation.latest_run_id ?? null;
+        const restoredRunId = requestedRunId ?? liveRunsRef.current.get(requestedConversationId) ?? conversation.latest_run_id ?? null;
         latestRunRef.current = conversation.latest_run_id ?? null;
         setActiveRunId(restoredRunId);
         loadedConversationRef.current = requestedConversationId;
@@ -648,13 +700,14 @@ export function ChatWorkspace() {
     if (!requestedRunId) {
       if (loadedConversationRef.current === requestedConversationId) {
         setArtifacts([]);
-        setActiveRunId(latestRunRef.current);
+        setActiveRunId(liveRunsRef.current.get(requestedConversationId) ?? latestRunRef.current);
       }
       return;
     }
     setActiveRunId(requestedRunId);
     setArtifacts([]);
     setDecidedApprovals(new Set());
+    setAnsweredElicitations(new Set());
     setStageLabel(null);
     if (!selfStartedRunsRef.current.has(requestedRunId)) setTimelineOpen(true);
   }, [requestedConversationId, requestedRunId]);
@@ -680,10 +733,27 @@ export function ChatWorkspace() {
       return;
     }
 
+    // The agent resolved an account from an unscoped message ("add a note to
+    // MCIT") and is filing there — reflect it as the chat's scope, so the chip
+    // appears (showing which account it chose) and every follow-up stays on it.
+    if (type === "customer.scoped") {
+      const accountId = stringFrom(event.payload, "account_id");
+      if (accountId) setSelectedCustomerId(accountId);
+      return;
+    }
+
     if (type === "stage.entered") {
       setStageLabel(stringFrom(event.payload, "label") ?? null);
     } else if (type.includes("delta") || type.includes("failed") || type.includes("completed") || type.includes("cancelled")) {
       setStageLabel(null);
+    }
+
+    // A finished run is no longer "in flight" for its conversation, so stop
+    // counting it as a live run to restore when the conversation is reopened.
+    if (["run.completed", "run.failed", "run.cancelled", "completed", "cancelled"].includes(type)) {
+      liveRunsRef.current.forEach((runId, convId) => {
+        if (runId === event.run_id) liveRunsRef.current.delete(convId);
+      });
     }
 
     if (type.includes("delta") || type.includes("failed") || ["assistant.message", "message.completed", "run.completed", "completed"].includes(type)) {
@@ -695,6 +765,34 @@ export function ChatWorkspace() {
 
   const hasMessages = messages.length > 0 || loadingConversation;
   const runActive = Boolean(activeRunId) && !["closed", "error"].includes(connection);
+
+  // The relaunch offer only makes sense for a genuine on-device model. A cloud
+  // pin (Command A+, Grok, a hosted model) resumes with nothing to launch, so
+  // an approval never names a stale local model. Shared by the inline approval
+  // in the thread and the drawer timeline.
+  const approveLabel =
+    !isCloudActive(modelPreference)
+    && localModelSession
+    && localModelSession.state === "off"
+    && localModelSession.selected_model
+      ? `Approve & relaunch ${localModelSession.selected_model}`
+      : "Approve once";
+
+  // The one approval still waiting on you, surfaced inline in the thread so a
+  // decision never means opening the drawer. The drawer still lists the full
+  // history; this is only the open question.
+  const pendingApproval = latestPendingApproval(events, decidedApprovals);
+  // The one clarifying question still waiting on you (ask_user), surfaced inline
+  // the same way a pending approval is.
+  const pendingElicitation = latestPendingElicitation(events, answeredElicitations);
+  const pendingSuggestion = latestActionSuggestion(events, dismissedProposals);
+  const suggestionState: "idle" | "applying" | "applied" = !pendingSuggestion
+    ? "idle"
+    : appliedProposals.has(pendingSuggestion.proposal_id)
+      ? "applied"
+      : applyingProposal === pendingSuggestion.proposal_id
+        ? "applying"
+        : "idle";
 
   // Anything within this of the foot counts as "reading the newest message",
   // which is what a streaming answer is allowed to follow. Wide enough to
@@ -814,6 +912,21 @@ export function ChatWorkspace() {
         setUploading(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
+    }
+  }
+
+  // Persist an attached document into the knowledge base — the summary lives in
+  // chat; this keeps the source itself, retrievable later. Idempotent per file.
+  async function addToKnowledge(attachment: AttachmentRef) {
+    const state = knowledgeAdds[attachment.id];
+    if (state === "adding" || state === "added") return;
+    setKnowledgeAdds((current) => ({ ...current, [attachment.id]: "adding" }));
+    try {
+      await addDocumentToKnowledge(attachment.id);
+      setKnowledgeAdds((current) => ({ ...current, [attachment.id]: "added" }));
+    } catch (addError) {
+      setKnowledgeAdds((current) => ({ ...current, [attachment.id]: "error" }));
+      setError(addError instanceof ApiError ? addError.message : "That document could not be added to the knowledge base.");
     }
   }
 
@@ -956,6 +1069,11 @@ export function ChatWorkspace() {
       created_at: new Date().toISOString(),
     };
     setMessages((current) => [...current, userMessage]);
+    // Sending your own message always takes you to the foot, however far up you
+    // were reading — you want to see what you just said and the answer forming.
+    // Parking at the bottom also re-arms the follow-scroll, so the streaming
+    // reply is tracked instead of appearing off-screen below the fold.
+    setAtBottom(true);
     if (!usingOverride) {
       setDraft("");
       setAttachments([]);
@@ -998,7 +1116,9 @@ export function ChatWorkspace() {
         );
       }
       setDecidedApprovals(new Set());
+      setAnsweredElicitations(new Set());
       selfStartedRunsRef.current.add(run.run_id);
+      liveRunsRef.current.set(targetConversationId, run.run_id);
       setActiveRunId(run.run_id);
       latestRunRef.current = run.run_id;
       setFeedbackMode("idle");
@@ -1135,6 +1255,23 @@ export function ChatWorkspace() {
     }
   }
 
+  async function handleApplyProposal(proposalId: string) {
+    setApplyingProposal(proposalId);
+    setError(null);
+    try {
+      await applyCustomerProposal(proposalId);
+      setAppliedProposals((current) => new Set(current).add(proposalId));
+    } catch (applyError) {
+      setError(applyError instanceof Error ? applyError.message : "That extraction could not be applied.");
+    } finally {
+      setApplyingProposal(null);
+    }
+  }
+
+  function handleDismissProposal(proposalId: string) {
+    setDismissedProposals((current) => new Set(current).add(proposalId));
+  }
+
   async function handleDecision(approvalId: string, decision: "approve" | "reject") {
     if (!activeRunId) return;
     setDecisionBusy(approvalId);
@@ -1148,6 +1285,24 @@ export function ChatWorkspace() {
       setError(decisionError instanceof ApiError ? decisionError.message : "The decision could not be recorded.");
     } finally {
       setDecisionBusy(null);
+    }
+  }
+
+  async function handleAnswer(
+    elicitationId: string,
+    reply: { option?: string; text?: string },
+  ) {
+    if (!activeRunId) return;
+    setAnswerBusy(elicitationId);
+    setError(null);
+    try {
+      await answerElicitation(activeRunId, { ...reply, elicitationId });
+      setAnsweredElicitations((current) => new Set(current).add(elicitationId));
+      if (connection === "closed" || connection === "error") reconnect();
+    } catch (answerError) {
+      setError(answerError instanceof ApiError ? answerError.message : "The answer could not be sent.");
+    } finally {
+      setAnswerBusy(null);
     }
   }
 
@@ -1203,10 +1358,39 @@ export function ChatWorkspace() {
   }
 
   function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void submit();
+    if (event.key !== "Enter" || event.shiftKey) return;
+    // Enter continues a markdown list instead of sending, so bullets and numbers
+    // flow like they do in an editor. Only a collapsed caret sitting on a list
+    // line qualifies; an empty item exits the list; everything else sends.
+    const textarea = textareaRef.current;
+    if (textarea && textarea.selectionStart === textarea.selectionEnd) {
+      const value = textarea.value;
+      const caret = textarea.selectionStart;
+      const lineStart = value.lastIndexOf("\n", caret - 1) + 1;
+      const lineEnd = value.indexOf("\n", caret);
+      const line = value.slice(lineStart, lineEnd === -1 ? value.length : lineEnd);
+      const marker = line.match(/^(\s*)([-*+]|\d+[.)])(\s+)(.*)$/);
+      if (marker) {
+        event.preventDefault();
+        const [, indent, bullet, gap, content] = marker;
+        if (content.trim() === "") {
+          // Enter on an empty item leaves the list: strip the marker, keep the line.
+          const markerEnd = lineStart + indent.length + bullet.length + gap.length;
+          setDraft(value.slice(0, lineStart) + value.slice(markerEnd));
+          pendingSelectionRef.current = lineStart;
+          return;
+        }
+        const nextBullet = /^\d/.test(bullet)
+          ? `${Number.parseInt(bullet, 10) + 1}${bullet.replace(/^\d+/, "")}`
+          : bullet;
+        const insertion = `\n${indent}${nextBullet} `;
+        setDraft(value.slice(0, caret) + insertion + value.slice(caret));
+        pendingSelectionRef.current = caret + insertion.length;
+        return;
+      }
     }
+    event.preventDefault();
+    void submit();
   }
 
   function clearFailedResponse(messageId: string, runId?: string) {
@@ -1306,34 +1490,6 @@ export function ChatWorkspace() {
     ),
     [events],
   );
-  const compactActivity = useMemo(() => {
-    const type = latestRunEvent?.type ?? "";
-    const countLabel = `${events.length} ${events.length === 1 ? "step" : "steps"}`;
-    if (type.includes("approval") || type.includes("interrupt")) {
-      return { label: "Needs approval", detail: countLabel, tone: "attention", live: false };
-    }
-    if (type.includes("fail") || type.includes("error")) {
-      return { label: "Run interrupted", detail: countLabel, tone: "danger", live: false };
-    }
-    if (type.includes("cancel")) {
-      return { label: "Run stopped", detail: countLabel, tone: "neutral", live: false };
-    }
-    if (runActive) {
-      return {
-        label: stageLabel ?? "Metis is working on it",
-        detail: events.length ? `${countLabel} · live` : "Starting securely",
-        tone: "live",
-        live: true,
-      };
-    }
-    return {
-      label: type.includes("complete") ? "Completed" : "Activity",
-      detail: countLabel,
-      tone: "success",
-      live: false,
-    };
-  }, [events.length, latestRunEvent, runActive, stageLabel]);
-
   // What the companion is feeling. Derived from the same signals the run
   // timeline uses, so the creature can never contradict the activity panel.
   const companionMood = useMemo<"idle" | "listening" | "thinking" | "done" | "trouble">(() => {
@@ -1418,6 +1574,45 @@ export function ChatWorkspace() {
     }
   }
 
+  /** Drop the account's activity-tracker update into the thread.
+   *
+   *  This deliberately bypasses the model. The generator already exists on
+   *  the Customers page; it reads the account's real interactions server-side
+   *  — something the sandboxed tool factory can't reach — and it persists a
+   *  durable CustomerOutput on the account. So the record survives even though
+   *  the chat echo below is client-side: reload the thread and the message is
+   *  gone, but the output is still on the account. */
+  async function generateTrackerUpdate() {
+    if (!selectedCustomerId || !selectedCustomer || trackerBusy || runActive) return;
+    setTrackerBusy(true);
+    setError(null);
+    try {
+      const output = await createCustomerOutput(selectedCustomerId);
+      const body = output.content.trim();
+      if (!body) {
+        setError("The tracker update came back empty — this account has no interactions to summarise yet.");
+        return;
+      }
+      // Verbatim: the generator's Markdown already opens with its own
+      // "## {account} — Customer Activity" heading, so it reads as a titled
+      // section here and pastes into the tracker clean.
+      setMessages((current) => [
+        ...current,
+        {
+          id: `tracker-${freshToken()}`,
+          role: "assistant",
+          content: body,
+          kind: "tracker",
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    } catch (trackerError) {
+      setError(trackerError instanceof Error ? trackerError.message : "The tracker update could not be generated.");
+    } finally {
+      setTrackerBusy(false);
+    }
+  }
+
   return (
     <div
       className={`chatWorkspace ${!hasMessages ? "isEmpty" : ""} ${morphReady ? "morphReady" : ""} ${recoverableRuns.length ? "hasBanner" : ""} ${timelineOpen ? "timelineVisible" : ""} ${timelineResizing ? "timelineResizing" : ""}`}
@@ -1441,7 +1636,7 @@ export function ChatWorkspace() {
         <div className="paperSheet" aria-hidden="true" />
         <header className="chatHeader">
           <div className="chatTitle">
-            <span className="localStatus"><i />{selectedProject ? "Project" : modelPreference?.provider === "oci" ? "Cloud" : "Local"}</span>
+            <span className="localStatus"><i />{selectedProject ? "Project" : isCloudActive(modelPreference) ? "Cloud" : "Local"}</span>
             <strong title={conversationTitle}>{conversationTitle}</strong>
           </div>
           <div className="chatHeaderActions">
@@ -1642,15 +1837,21 @@ export function ChatWorkspace() {
               {loadingConversation ? <div className="messageLoading"><span /><span /><span /></div> : null}
               {messages.map((message, messageIndex) => (
                 <article className={`chatMessage message-${message.role} ${message.failed ? "message-failed" : ""} ${editingMessageId === message.id ? "isEditing" : ""}`} key={message.id}>
-                  {/* Only Metis gets a mark. Your own avatar told you nothing
-                      you did not already know and cost a whole gutter. */}
+                  {/* Metis's identity on each reply is the companion itself:
+                      expressive while it works, calm once the answer lands. It
+                      is the one place the creature appears in the thread. Your
+                      own avatar told you nothing and cost a gutter, so only
+                      Metis gets one. */}
                   {message.role === "assistant" ? (
                     <div className="messageAvatar metisAvatar">
-                      <MetisMark animated={message.streaming} />
+                      <MetisCompanion
+                        size={message.streaming ? 30 : 24}
+                        mood={message.failed ? "trouble" : message.streaming ? "thinking" : "done"}
+                      />
                     </div>
                   ) : null}
                   <div className="messageBody">
-                    <div className="messageAuthor"><strong>{message.role === "user" ? "You" : "Metis"}</strong>{message.streaming ? <span className="thinkingPulse"><i /><i /><i /></span> : null}</div>
+                    <div className="messageAuthor"><strong>{message.role === "user" ? "You" : "Metis"}</strong></div>
                     {message.reasoning ? <ReasoningPanel reasoning={message.reasoning} live={Boolean(message.streaming) && !message.content} /> : null}
                     {editingMessageId === message.id ? (
                       <div className="messageEditor">
@@ -1693,7 +1894,7 @@ export function ChatWorkspace() {
                           <button type="button" onClick={() => startEditing(message)} disabled={runActive || rewinding || !isPersisted(message)} title={runActive ? "Stop the active run first" : "Edit this message and rewind the conversation"}>
                             Edit
                           </button>
-                        ) : (
+                        ) : message.kind === "tracker" ? null : (
                           <button type="button" onClick={() => void retryAnswer(message)} disabled={runActive || rewinding} title={runActive ? "Stop the active run first" : "Ask again — useful after changing the model route"}>
                             {rewinding ? "Retrying…" : "Retry"}
                           </button>
@@ -1711,7 +1912,7 @@ export function ChatWorkspace() {
                       </div>
                     ) : null}
                     {message.attachments?.length ? <div className="inlineAttachments">{message.attachments.map((attachment) => <span key={attachment.id}><b>{attachmentBadge(attachment)}</b>{attachment.name}</span>)}</div> : null}
-                    {message.role === "assistant" && (messageBelongsToRun(message, activeRunId) || (!activeRunId && message.id === latestAssistant?.id)) ? <ArtifactViewer artifacts={artifacts} /> : null}
+                    {message.role === "assistant" && message.kind !== "tracker" && (messageBelongsToRun(message, activeRunId) || (!activeRunId && message.id === latestAssistant?.id)) ? <ArtifactViewer artifacts={artifacts} /> : null}
                     {messageBelongsToRun(message, activeRunId) && !message.streaming && !message.failed ? (
                       <section className="feedbackControls" aria-label="Response feedback">
                         {feedbackMode === "sent" ? (
@@ -1756,27 +1957,41 @@ export function ChatWorkspace() {
                       </section>
                     ) : null}
                   </div>
-                  {message.role === "user" && message.id === latestUser?.id && activeRunId ? (
-                    <button
-                      className={`compactRunActivity tone-${compactActivity.tone} ${compactActivity.live ? "isLive" : ""}`}
-                      type="button"
-                      onClick={() => setTimelineOpen((value) => !value)}
-                      aria-expanded={timelineOpen}
-                      aria-label={`${compactActivity.label}. ${compactActivity.detail}. ${timelineOpen ? "Close" : "Open"} full activity.`}
-                    >
-                      {/* The pearl itself, not a lookalike blob: one creature
-                          across the app, and its film is contained by design. */}
-                      <MetisCompanion
-                        className="compactActivityPearl"
-                        size={32}
-                        mood={compactActivity.live ? "thinking" : compactActivity.tone === "danger" ? "trouble" : compactActivity.tone === "attention" ? "listening" : "done"}
-                      />
-                      <span className="compactActivityCopy"><strong key={compactActivity.label}>{compactActivity.label}</strong><small>{compactActivity.detail}</small></span>
-                      <span className="compactActivityChevron" aria-hidden="true">⌄</span>
-                    </button>
-                  ) : null}
                 </article>
               ))}
+              {pendingApproval ? (
+                <div className="inlineApprovalDock">
+                  <ApprovalCard
+                    approval={pendingApproval}
+                    decided={decidedApprovals.has(pendingApproval.id)}
+                    decisionBusy={decisionBusy}
+                    onDecision={handleDecision}
+                    approveLabel={approveLabel}
+                    variant="inline"
+                  />
+                </div>
+              ) : null}
+              {pendingElicitation ? (
+                <div className="inlineApprovalDock">
+                  <ElicitationCard
+                    elicitation={pendingElicitation}
+                    answered={answeredElicitations.has(pendingElicitation.id)}
+                    answerBusy={answerBusy}
+                    onAnswer={handleAnswer}
+                    variant="inline"
+                  />
+                </div>
+              ) : null}
+              {pendingSuggestion ? (
+                <div className="inlineApprovalDock">
+                  <ApplyCard
+                    suggestion={pendingSuggestion}
+                    state={suggestionState}
+                    onApply={handleApplyProposal}
+                    onDismiss={handleDismissProposal}
+                  />
+                </div>
+              ) : null}
               <div ref={messageEndRef} />
             </div>
           )}
@@ -1787,7 +2002,7 @@ export function ChatWorkspace() {
           {attachments.length ? (
             <div className="attachmentTray">
               {attachments.map((attachment) => (
-                <span key={attachment.id}><b>{attachmentBadge(attachment)}</b><span><strong>{attachment.name}</strong><small>{attachment.size ? `${Math.ceil(attachment.size / 1024)} KB` : "Ready"}</small></span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}>×</button></span>
+                <span key={attachment.id}><b>{attachmentBadge(attachment)}</b><span><strong>{attachment.name}</strong><small>{attachment.size ? `${Math.ceil(attachment.size / 1024)} KB` : "Ready"}</small></span>{!attachment.media_type?.startsWith("image/") ? (<button type="button" className="attachmentKnowledge" disabled={knowledgeAdds[attachment.id] === "adding" || knowledgeAdds[attachment.id] === "added"} title="Add this document to your knowledge base" onClick={() => void addToKnowledge(attachment)}>{knowledgeAdds[attachment.id] === "added" ? "✓ Knowledge" : knowledgeAdds[attachment.id] === "adding" ? "Adding…" : "＋ Knowledge"}</button>) : null}<button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}>×</button></span>
               ))}
             </div>
           ) : null}
@@ -1799,6 +2014,20 @@ export function ChatWorkspace() {
                   <span>{selectedCustomer.name}</span>
                   <button type="button" aria-label={`Remove ${selectedCustomer.name}`} onClick={() => setSelectedCustomerId(null)}>×</button>
                 </span>
+              ) : null}
+              {/* The one actionable item in the scope row: a verb beside the
+                  account noun-chip. It runs the existing tracker generator and
+                  drops the Markdown into the thread. Scoped-customer only. */}
+              {selectedCustomer ? (
+                <button
+                  type="button"
+                  className="textButton trackerChipAction"
+                  disabled={trackerBusy || runActive}
+                  title={runActive ? "Wait for the active run to finish" : `Generate an activity-tracker update for ${selectedCustomer.name} and drop it into this thread`}
+                  onClick={() => void generateTrackerUpdate()}
+                >
+                  {trackerBusy ? "Building update…" : "⟳ Tracker update"}
+                </button>
               ) : null}
               {selectedProject ? (
                 <span className="contextChip" data-kind="project">
@@ -2046,14 +2275,7 @@ export function ChatWorkspace() {
           onDecision={handleDecision}
           decidedApprovals={decidedApprovals}
           decisionBusy={decisionBusy}
-          approveLabel={
-            modelPreference?.provider !== "oci"
-            && localModelSession
-            && localModelSession.state === "off"
-            && localModelSession.selected_model
-              ? `Approve & relaunch ${localModelSession.selected_model}`
-              : "Approve once"
-          }
+          approveLabel={approveLabel}
         />
       </aside>
     </div>

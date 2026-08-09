@@ -1,6 +1,7 @@
 """Customer-scoped capture, extraction, review, and Markdown output."""
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,7 +28,9 @@ from .contracts import (
 )
 from .database import Database
 from .local_model_session import LocalModelSessionManager
+from .model_preference import is_cloud_model
 from .model_provider import DeterministicModelProvider
+from .queue_update import candidate_accounts
 
 
 EXTRACTION_PROMPT_VERSION = "customer-extraction-v1"
@@ -110,6 +113,9 @@ class CustomerIntelligenceService:
         self.model = model
         self.model_session = model_session
         self.preference = preference
+        # One auto-analysis at a time: extraction on capture is a convenience,
+        # and a rate-limited free tier must not be hit by a burst of them.
+        self._auto_analyze_lock = asyncio.Semaphore(1)
 
     async def accounts(self) -> list[CustomerAccountV1]:
         return [
@@ -276,6 +282,78 @@ class CustomerIntelligenceService:
         )
         return _proposal(row)
 
+    def _cloud_pinned(self) -> bool:
+        """Whether the routed model runs in the cloud — the only case auto-
+        analysis should fire, since a local pin would force a weight load on
+        every capture (exactly what the manual Analyze gate avoids)."""
+        if self.preference is None:
+            return False
+        try:
+            aliases = self.preference.resolve_aliases()
+        except Exception:  # noqa: BLE001 - no readable preference means no auto-fire
+            return False
+        if aliases.get("_provider", "local") != "local":
+            return True
+        return is_cloud_model(aliases.get("planner", ""))
+
+    async def auto_analyze(self, source_id: str) -> None:
+        """Best-effort background extraction right after capture: a note you
+        file is already extracted and waiting for your review when you open the
+        record. It never blocks the capture, never writes facts on its own
+        (analyze leaves a review proposal), and is safe to call from anywhere.
+
+        Fires only on a pinned cloud model, serialised so a burst of captures
+        cannot trip a rate-limited free tier, idempotent (skips a source already
+        moved past 'waiting'), and swallows errors so a failure simply leaves
+        the note 'waiting' for the manual Analyze button."""
+        if not self._cloud_pinned():
+            return
+        async with self._auto_analyze_lock:
+            source = await self.database.get_customer_source(source_id)
+            if source is None or source.get("status") != "waiting":
+                return
+            try:
+                await self.analyze(source_id)
+            except Exception:  # noqa: BLE001 - a convenience, never fatal to the app
+                pass
+
+    async def ingest_notion_documents(self, documents: list[Any]) -> int:
+        """Map synced Notion pages onto customer accounts and file each as a
+        source, so a customer's Notion page flows into their record.
+
+        Deduped by content: an unchanged page on the next ~12h sync is a no-op
+        (the capture's content hash makes it a duplicate), so the same info is
+        never re-ingested. A genuinely-new or changed page is auto-analysed into
+        a review proposal — Notion never writes to a record without your
+        approval. Only an unambiguous single-account name match becomes a
+        proposal; a page that names no account, or several, stays knowledge-only
+        exactly as before. Returns how many pages produced a new proposal."""
+        if not documents or not self._cloud_pinned():
+            return 0
+        accounts = await self.database.list_customer_accounts()
+        filed = 0
+        for document in documents:
+            title = (getattr(document, "title", "") or "").strip()
+            content = (getattr(document, "markdown", "") or "").strip()
+            if not title or not content:
+                continue
+            matched = candidate_accounts(title, accounts)
+            if len(matched) != 1:
+                continue
+            row, duplicate = await self.database.capture_customer_source(
+                account_id=str(matched[0]["id"]),
+                source_kind="notion",
+                title=title,
+                content=content,
+                source_ref=str(getattr(document, "url", "") or getattr(document, "page_id", "")),
+                occurred_at=None,
+            )
+            if duplicate or row.get("status") != "waiting":
+                continue  # unchanged page → nothing new to review
+            await self.auto_analyze(str(row["id"]))
+            filed += 1
+        return filed
+
     def _deterministic_extraction(
         self, source: dict[str, Any]
     ) -> CustomerExtractionV1:
@@ -307,6 +385,23 @@ class CustomerIntelligenceService:
         )
         return _proposal(row) if row else None
 
+    async def open_proposal(self, source_id: str) -> CustomerUpdateProposalV1 | None:
+        """The pending review proposal for a source, if any — how the UI opens
+        an auto-analyzed note (or a Notion-derived one) for review."""
+        row = await self.database.get_open_proposal_for_source(source_id)
+        return _proposal(row) if row else None
+
+    async def apply_proposal(self, proposal_id: str) -> CustomerUpdateProposalV1 | None:
+        """Apply a pending proposal's own extraction to the record, unchanged —
+        the one-click path from the chat's analysis card. It is exactly a review
+        that accepted every proposed item: nothing is written until this is
+        called, and a proposal already decided (or missing) returns None so the
+        caller can say so rather than writing twice."""
+        row = await self.database.get_customer_proposal(proposal_id)
+        if row is None or row.get("status") != "review":
+            return None
+        return await self.save_proposal(proposal_id, _proposal(row).extraction)
+
     async def context(self, account_id: str) -> str:
         detail = await self.account(account_id)
         if detail is None:
@@ -332,7 +427,9 @@ class CustomerIntelligenceService:
             + (f"\nPinned account notes:\n{pinned}" if pinned else "")
         )[:16_000]
 
-    async def evidence(self, account_id: str) -> list[KnowledgeSnippetV1]:
+    async def evidence(
+        self, account_id: str, *, compact: bool = False
+    ) -> list[KnowledgeSnippetV1]:
         """The account's reviewed record as individually citable sources.
 
         `context()` returns the same material as one prose block, which is what
@@ -344,12 +441,21 @@ class CustomerIntelligenceService:
         Every returned snippet is one record the user themselves reviewed, so
         each carries the record's own identifier and a score of 1.0. They are
         not fuzzy retrieval hits; they are the account's ledger.
+
+        `compact` caps each kind for an *unscoped* chat, which merely mentioned
+        the account and still needs its memories, corpus and history alongside.
+        The cap is per kind rather than an overall head, so a ledger with forty
+        facts still shows its open actions — the whole point is that an account
+        with a record can never be answered as though it had none.
         """
         detail = await self.account(account_id)
         if detail is None:
             raise KeyError("customer account not found")
         name = detail.account.name
         snippets: list[KnowledgeSnippetV1] = []
+
+        def cap(items: list[Any], limit: int) -> list[Any]:
+            return items[:limit] if compact else items
 
         def add(label: str, symbol: str, text: str, record_id: str) -> None:
             snippets.append(
@@ -363,7 +469,7 @@ class CustomerIntelligenceService:
                 )
             )
 
-        for win in detail.wins:
+        for win in cap(detail.wins, 4):
             parts = [f"Win: {win.title}"]
             if win.yearly_arr is not None:
                 parts.append(f"Yearly ARR: ${win.yearly_arr:,.0f}")
@@ -377,15 +483,15 @@ class CustomerIntelligenceService:
                 parts.append(win.brief)
             add("Recorded win", win.title, ". ".join(parts), win.id)
 
-        for fact in detail.facts:
-            if fact.status not in {"active", "disputed"}:
-                continue
+        for fact in cap(
+            [item for item in detail.facts if item.status in {"active", "disputed"}], 10
+        ):
             label = "Disputed fact" if fact.status == "disputed" else "Reviewed fact"
             add(label, f"{fact.kind}", f"[{fact.kind}] {fact.content}", fact.id)
 
-        for action in detail.actions:
-            if action.status != "open":
-                continue
+        for action in cap(
+            [item for item in detail.actions if item.status == "open"], 8
+        ):
             owner = action.owner or "unassigned"
             due = f", due {action.due_at.date().isoformat()}" if action.due_at else ""
             add(
@@ -395,7 +501,7 @@ class CustomerIntelligenceService:
                 action.id,
             )
 
-        for person in detail.people:
+        for person in cap(detail.people, 4):
             descriptor = ", ".join(
                 part for part in (person.role, person.organization) if part
             )
@@ -406,9 +512,7 @@ class CustomerIntelligenceService:
                 person.id,
             )
 
-        for note in detail.notes:
-            if not note.pinned:
-                continue
+        for note in cap([item for item in detail.notes if item.pinned], 3):
             add(
                 "Pinned note",
                 note.title or "Note",
@@ -418,7 +522,7 @@ class CustomerIntelligenceService:
 
         # Newest first, bounded: an account with a long history must not crowd
         # the prompt with old interactions at the expense of its own ledger.
-        for interaction in detail.interactions[:8]:
+        for interaction in detail.interactions[: 3 if compact else 8]:
             when = (
                 interaction.occurred_at.date().isoformat()
                 if interaction.occurred_at

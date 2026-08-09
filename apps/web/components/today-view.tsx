@@ -1,5 +1,11 @@
 "use client";
 
+// The Today page — the front door. It answers "what needs me now" as a single
+// screen you don't scroll: a compact head, a rail of piles you can read at a
+// glance, and a deck of cards you roll through sideways. Each card is one pile
+// (Start here, a kind of work, deferred, or the day's recap); its items scroll
+// inside the card only when there are many, so the page itself never grows.
+
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -10,11 +16,11 @@ import {
   getMorningBrief,
   undeferAttention,
 } from "@/lib/api";
-import type { AttentionFeed, AttentionItem, MorningBrief } from "@/lib/types";
+import type { AttentionFeed, AttentionItem, AttentionKind, MorningBrief } from "@/lib/types";
 
-/** Order the groups appear in. Matches the queue's own weighting, so the page
- *  and the ranking can never tell different stories about what matters. */
-const GROUP_ORDER: AttentionItem["kind"][] = [
+/** Order the kinds appear in — matches the queue's own consequence weighting,
+ *  so the deck and the ranking never tell different stories about what matters. */
+const GROUP_ORDER: AttentionKind[] = [
   "run_approval",
   "customer_action",
   "customer_note",
@@ -24,24 +30,32 @@ const GROUP_ORDER: AttentionItem["kind"][] = [
   "stale_source",
 ];
 
-const GROUP_TITLE: Record<AttentionItem["kind"], string> = {
-  run_approval: "Runs waiting on a decision",
-  customer_action: "Commitments to customers",
-  customer_note: "Notes captured but not analyzed",
-  tool_proposal: "Tools awaiting review",
+/** Full titles for a card heading. */
+const GROUP_TITLE: Record<AttentionKind, string> = {
+  run_approval: "Runs waiting",
+  customer_action: "Commitments",
+  customer_note: "Notes to analyze",
+  tool_proposal: "Tools to review",
   memory: "Memory proposals",
-  asset_trust: "Assets awaiting trust",
+  asset_trust: "Assets to trust",
   stale_source: "Knowledge sources",
 };
 
-/** Kinds whose decision is genuinely one click. A batch control over
- *  anything that needs reading first would turn review into a rubber stamp,
- *  so the rest stay openable-only. */
-const BATCHABLE: ReadonlySet<AttentionItem["kind"]> = new Set([
-  "memory",
-  "customer_action",
-]);
+/** One-word labels for the rail chips, where the count leads. */
+const SHORT_LABEL: Record<AttentionKind, string> = {
+  run_approval: "Runs",
+  customer_action: "Commitments",
+  customer_note: "Notes",
+  tool_proposal: "Tools",
+  memory: "Memory",
+  asset_trust: "Assets",
+  stale_source: "Sources",
+};
 
+/** Kinds whose decision is genuinely one click, so a batch control is honest. */
+const BATCHABLE: ReadonlySet<AttentionKind> = new Set(["memory", "customer_action"]);
+
+/** A human "3 days ago" from a timestamp. */
 function relative(value: string | null): string {
   if (!value) return "";
   const then = new Date(value).getTime();
@@ -53,6 +67,7 @@ function relative(value: string | null): string {
   return `${Math.round(days / 30)} months ago`;
 }
 
+/** A short due phrase for an item that carries a deadline. */
 function dueLabel(item: AttentionItem): string {
   if (!item.due_at) return "";
   const days = Math.round((new Date(item.due_at).getTime() - Date.now()) / 86_400_000);
@@ -61,16 +76,106 @@ function dueLabel(item: AttentionItem): string {
   return `due in ${days}d`;
 }
 
+/** Today as "Sat · August 8" for the head. */
+function todayLabel(): string {
+  return new Date().toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+/** Join truthy class names. */
+function cx(...parts: Array<string | false | null | undefined>): string {
+  return parts.filter(Boolean).join(" ");
+}
+
+/** What a single deck card is about. */
+interface Slide {
+  id: string;
+  label: string;
+  count: number;
+  variant: "focus" | "group" | "deferred" | "recap";
+  kind?: AttentionKind;
+  items: AttentionItem[];
+  lede?: string;
+  batchable?: boolean;
+  changed?: string[];
+}
+
+interface CardHandlers {
+  busyKey: string | null;
+  selected: ReadonlySet<string>;
+  onDefer: (item: AttentionItem) => void;
+  onToggle: (key: string) => void;
+}
+
+/** One item row. `showKind` names the kind on an eyebrow — on inside the mixed
+ *  "Start here" card, off inside a single-kind card whose heading already says it. */
+function AttentionCard({
+  item,
+  showKind,
+  handlers,
+}: {
+  item: AttentionItem;
+  showKind: boolean;
+  handlers: CardHandlers;
+}) {
+  const batchable = BATCHABLE.has(item.kind);
+  const due = dueLabel(item);
+  const eyebrow = showKind ? `${item.kind_label}${due ? ` · ${due}` : ""}` : null;
+  const metaText = showKind
+    ? item.detail
+    : [item.detail, due, relative(item.created_at)].filter(Boolean).join(" · ");
+  const selected = handlers.selected.has(item.key);
+
+  return (
+    <li
+      className={cx("todayRow", batchable && "hasCheck", selected && "isSelected", item.overdue && "isOverdue")}
+      data-kind={item.kind}
+    >
+      {batchable ? (
+        <input
+          type="checkbox"
+          className="todayCheck"
+          checked={selected}
+          onChange={() => handlers.onToggle(item.key)}
+          aria-label={`Select: ${item.title}`}
+        />
+      ) : null}
+      <div className="todayRowBody">
+        {eyebrow ? <span className="todayRowKind">{eyebrow}</span> : null}
+        <span className="todayRowTitle">{item.title}</span>
+        {metaText ? <span className="todayRowMeta">{metaText}</span> : null}
+      </div>
+      <div className="todayRowActions">
+        <Link className="secondaryButton" href={item.href || "/"}>
+          Open
+        </Link>
+        <button
+          className="textButton"
+          type="button"
+          disabled={handlers.busyKey === item.key}
+          onClick={() => handlers.onDefer(item)}
+          title="Ask me again in a week"
+        >
+          Later
+        </button>
+      </div>
+    </li>
+  );
+}
+
 export function TodayView() {
   const [feed, setFeed] = useState<AttentionFeed | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [showDeferred, setShowDeferred] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [batchNote, setBatchNote] = useState<string | null>(null);
   const [brief, setBrief] = useState<MorningBrief | null>(null);
 
+  // Load the queue.
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -85,11 +190,12 @@ export function TodayView() {
 
   useEffect(() => {
     void refresh();
-    // The brief is a second, slower read: the queue must render immediately
-    // even when a model is cold or unreachable.
+    // The brief is a second, slower read: the deck must render immediately even
+    // when a model is cold or unreachable.
     void getMorningBrief().then(setBrief).catch(() => setBrief(null));
   }, [refresh]);
 
+  // Snooze one item for a week.
   async function defer(item: AttentionItem, days: number) {
     setBusyKey(item.key);
     try {
@@ -101,6 +207,7 @@ export function TodayView() {
     }
   }
 
+  // Add or drop one item from the current selection.
   function toggle(key: string) {
     setSelected((current) => {
       const next = new Set(current);
@@ -110,6 +217,7 @@ export function TodayView() {
     });
   }
 
+  // Apply one decision to everything selected.
   async function runBatch(decision: "approve" | "reject" | "defer") {
     const keys = [...selected];
     if (!keys.length) return;
@@ -121,7 +229,7 @@ export function TodayView() {
       setSelected(new Set());
       setBatchNote(
         result.skipped.length
-          ? `${result.applied.length} applied · ${result.skipped.length} skipped (no one-click decision for those)`
+          ? `${result.applied.length} applied · ${result.skipped.length} skipped`
           : `${result.applied.length} applied`,
       );
     } catch (batchError) {
@@ -131,6 +239,7 @@ export function TodayView() {
     }
   }
 
+  // Pull one deferred item back into the queue.
   async function restore(key: string) {
     setBusyKey(key);
     try {
@@ -142,67 +251,227 @@ export function TodayView() {
     }
   }
 
+  // Select or clear every item on one card.
+  function toggleGroup(items: AttentionItem[]) {
+    const keys = items.map((item) => item.key);
+    const all = keys.every((key) => selected.has(key));
+    setSelected((current) => {
+      const next = new Set(current);
+      keys.forEach((key) => (all ? next.delete(key) : next.add(key)));
+      return next;
+    });
+  }
+
   const total = feed?.total ?? 0;
+
+  // Top items lead in "Start here" and are pulled out of their kind cards, so
+  // the deck never shows the same thing twice.
+  const topItems = feed?.top ?? [];
+  const topKeys = new Set(topItems.map((item) => item.key));
+
+  // Build the deck: Start here, then each kind that has anything, then deferred,
+  // then the day's recap.
+  const slides: Slide[] = [];
+  if (topItems.length) {
+    slides.push({
+      id: "focus",
+      label: "Start here",
+      count: topItems.length,
+      variant: "focus",
+      items: topItems,
+      lede: brief?.recommendation,
+    });
+  }
+  for (const kind of GROUP_ORDER) {
+    const items = (feed?.items ?? []).filter((item) => item.kind === kind && !topKeys.has(item.key));
+    if (items.length) {
+      slides.push({
+        id: kind,
+        label: GROUP_TITLE[kind],
+        count: items.length,
+        variant: "group",
+        kind,
+        items,
+        batchable: BATCHABLE.has(kind),
+      });
+    }
+  }
+  if (feed?.deferred) {
+    slides.push({
+      id: "deferred",
+      label: "Deferred",
+      count: feed.deferred,
+      variant: "deferred",
+      items: feed.deferred_items,
+    });
+  }
+  if (brief && brief.changed.length) {
+    slides.push({
+      id: "recap",
+      label: "Since yesterday",
+      count: brief.changed.length,
+      variant: "recap",
+      items: [],
+      changed: brief.changed,
+    });
+  }
+
+  // A pile-per-kind count for the rail, so the whole day reads at a glance even
+  // before you roll.
+  const railCounts = new Map<string, number>();
+  slides.forEach((slide) => railCounts.set(slide.id, slide.count));
+
+  // Jump to a pile from the rail. Every pile is on screen at once now, so this
+  // just brings the named card into view instead of rolling a one-at-a-time deck.
+  const scrollToPile = useCallback((id: string) => {
+    document
+      .getElementById(`pile-${id}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
+
+  const handlers: CardHandlers = {
+    busyKey,
+    selected,
+    onDefer: (item) => void defer(item, 7),
+    onToggle: toggle,
+  };
+
   const headline =
     total === 0
-      ? "Nothing needs you"
+      ? "You're all clear"
       : total === 1
         ? "1 thing needs you"
         : `${total} things need you`;
 
-  const grouped = GROUP_ORDER.map((kind) => ({
-    kind,
-    items: (feed?.items ?? []).filter((item) => item.kind === kind),
-  })).filter((group) => group.items.length > 0);
-
   return (
-    <div className="workspacePage todayPage">
-      <header className="pageHeader">
-        <div>
-          <span className="eyebrow">Today</span>
+    <div className="workspacePage todayPage todayGridPage">
+      <header className="todayTopbar">
+        <div className="todayTopbarCopy">
+          <span className="eyebrow">{todayLabel()}</span>
           <h1>{loading && !feed ? "Checking what's waiting" : headline}</h1>
-          <p>
-            Everything waiting on you, from every workbench, ranked by what it costs
-            to leave it until tomorrow.
-          </p>
         </div>
-        <button className="secondaryButton" type="button" onClick={() => void refresh()} disabled={loading}>
+        <button className="secondaryButton todayRefresh" type="button" onClick={() => void refresh()} disabled={loading}>
           {loading ? "Checking…" : "Refresh"}
         </button>
       </header>
 
-      {error ? <div className="composerError" role="alert"><span>!</span><p>{error}</p></div> : null}
+      {error ? (
+        <div className="composerError todayError" role="alert">
+          <span>!</span>
+          <p>{error}</p>
+        </div>
+      ) : null}
 
-      {/* The batch bar exists only while something is selected, so the page
-          reads as a queue at rest and as a worksheet the moment you start
-          clearing it. Approve means "yes" for a memory and "done" for a
-          commitment — the verb each kind actually needs. */}
+      {total === 0 && !loading && !slides.length ? (
+        <section className="todayEmpty">
+          <div className="todayEmptyMark" aria-hidden="true" />
+          <h2>Nothing is waiting for a decision.</h2>
+          <p>New approvals, commitments, notes, and proposals collect here as they appear. Enjoy the quiet.</p>
+        </section>
+      ) : null}
+
+      {slides.length ? (
+        <>
+          {/* The rail: the whole day at a glance; each chip jumps to its pile. */}
+          <nav className="todayRail" aria-label="Piles">
+            {slides.map((slide) => (
+              <button
+                key={slide.id}
+                type="button"
+                className="todayRailChip"
+                data-kind={slide.kind}
+                data-variant={slide.variant}
+                onClick={() => scrollToPile(slide.id)}
+              >
+                <span className="todayRailCount">{railCounts.get(slide.id)}</span>
+                <span className="todayRailLabel">{slide.label}</span>
+              </button>
+            ))}
+          </nav>
+
+          {/* Every pile at once — a dense grid, Start here featured across the top. */}
+          <div className="todayGridWrap">
+            <div className="todayGrid">
+              {slides.map((slide) => (
+                <section
+                  key={slide.id}
+                  id={`pile-${slide.id}`}
+                  className={cx("todaySlide", `is-${slide.variant}`)}
+                  data-kind={slide.kind}
+                >
+                  <div className="todaySlideHead">
+                    <div className="todaySlideTitle">
+                      {slide.kind ? <span className="todaySlideDot" aria-hidden="true" /> : null}
+                      <h2>{slide.label}</h2>
+                      <span className="todaySlideCount">{slide.count}</span>
+                    </div>
+                    {slide.batchable ? (
+                      <button className="textButton" type="button" onClick={() => toggleGroup(slide.items)}>
+                        {slide.items.every((item) => selected.has(item.key)) ? "Clear" : "Select all"}
+                      </button>
+                    ) : null}
+                  </div>
+                  {slide.lede ? <p className="todaySlideLede">{slide.lede}</p> : null}
+
+                  {slide.variant === "recap" ? (
+                    <ul className="todayRecapList">
+                      {(slide.changed ?? []).map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  ) : slide.variant === "deferred" ? (
+                    <ul className="todayRows">
+                      {slide.items.map((item) => (
+                        <li key={item.key} className="todayRow isDeferred" data-kind={item.kind}>
+                          <div className="todayRowBody">
+                            <span className="todayRowTitle">{item.title}</span>
+                            <span className="todayRowMeta">
+                              returns {new Date(item.deferred_until as string).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <div className="todayRowActions">
+                            <button
+                              className="textButton"
+                              type="button"
+                              disabled={busyKey === item.key}
+                              onClick={() => void restore(item.key)}
+                            >
+                              Bring back
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <ul className="todayRows">
+                      {slide.items.map((item) => (
+                        <AttentionCard
+                          key={item.key}
+                          item={item}
+                          showKind={slide.variant === "focus"}
+                          handlers={handlers}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              ))}
+            </div>
+          </div>
+        </>
+      ) : null}
+
       {selected.size ? (
         <div className="todayBatchBar" role="region" aria-label="Selected items">
           <strong>{selected.size} selected</strong>
           <div>
-            <button
-              className="primaryButton"
-              type="button"
-              disabled={busyKey === "__batch__"}
-              onClick={() => void runBatch("approve")}
-            >
+            <button className="primaryButton" type="button" disabled={busyKey === "__batch__"} onClick={() => void runBatch("approve")}>
               Approve / complete
             </button>
-            <button
-              className="secondaryButton"
-              type="button"
-              disabled={busyKey === "__batch__"}
-              onClick={() => void runBatch("reject")}
-            >
+            <button className="secondaryButton" type="button" disabled={busyKey === "__batch__"} onClick={() => void runBatch("reject")}>
               Reject
             </button>
-            <button
-              className="secondaryButton"
-              type="button"
-              disabled={busyKey === "__batch__"}
-              onClick={() => void runBatch("defer")}
-            >
+            <button className="secondaryButton" type="button" disabled={busyKey === "__batch__"} onClick={() => void runBatch("defer")}>
               Later
             </button>
             <button className="textButton" type="button" onClick={() => setSelected(new Set())}>
@@ -211,162 +480,10 @@ export function TodayView() {
           </div>
         </div>
       ) : null}
-      {batchNote ? <p className="mutedMeta" role="status">{batchNote}</p> : null}
-
-      {/* What changed since yesterday, and what to do first. Every figure
-          here was counted from the records; only the sentences are written. */}
-      {brief && (brief.narrative || brief.changed.length) ? (
-        <section className="todayBrief" aria-label="Morning brief">
-          {brief.narrative ? <p className="todayNarrative">{brief.narrative}</p> : null}
-          {brief.recommendation ? (
-            <p className="todayRecommendation">{brief.recommendation}</p>
-          ) : null}
-          {brief.changed.length ? (
-            <>
-              <span className="todayKind">Since yesterday</span>
-              <ul>
-                {brief.changed.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            </>
-          ) : null}
-        </section>
-      ) : null}
-
-      {/* The headline three. If the page says three things need you, these are
-          them — ranked by consequence, so a promise due today outranks a
-          backlog that has waited months without anything breaking. */}
-      {feed?.top.length ? (
-        <section className="todayTop" aria-label="What needs you first">
-          {feed.top.map((item, index) => (
-            <article key={item.key} className={`todayTopCard ${item.overdue ? "isOverdue" : ""}`}>
-              <span className="todayRank">{index + 1}</span>
-              <div>
-                <span className="todayKind">{item.kind_label}{dueLabel(item) ? ` · ${dueLabel(item)}` : ""}</span>
-                <strong>{item.title}</strong>
-                {item.detail ? <small>{item.detail}</small> : null}
-              </div>
-              <div className="todayTopActions">
-                <Link className="primaryButton" href={item.href || "/"}>Open</Link>
-                <button
-                  className="textButton"
-                  type="button"
-                  disabled={busyKey === item.key}
-                  onClick={() => void defer(item, 7)}
-                >
-                  Later
-                </button>
-              </div>
-            </article>
-          ))}
-        </section>
-      ) : null}
-
-      {total === 0 && !loading ? (
-        <section className="settingsSection">
-          <p className="sectionLede">
-            Nothing is waiting for a decision. New approvals, customer actions, notes,
-            and memory proposals will collect here as they appear.
-          </p>
-        </section>
-      ) : null}
-
-      {grouped.map((group) => (
-        <section className="settingsSection" key={group.kind}>
-          <div className="sectionTitle">
-            <div><h2>{GROUP_TITLE[group.kind]}</h2></div>
-            {BATCHABLE.has(group.kind) ? (
-              <button
-                className="textButton"
-                type="button"
-                onClick={() => {
-                  const keys = group.items.map((item) => item.key);
-                  const all = keys.every((key) => selected.has(key));
-                  setSelected((current) => {
-                    const next = new Set(current);
-                    keys.forEach((key) => (all ? next.delete(key) : next.add(key)));
-                    return next;
-                  });
-                }}
-              >
-                {group.items.every((item) => selected.has(item.key)) ? "Clear" : "Select all"}
-              </button>
-            ) : null}
-            <span className="sectionBadge">{group.items.length}</span>
-          </div>
-          <ul className="todayList">
-            {group.items.map((item) => (
-              <li key={item.key} className={item.overdue ? "isOverdue" : ""}>
-                {BATCHABLE.has(item.kind) ? (
-                  <input
-                    type="checkbox"
-                    className="todayCheck"
-                    checked={selected.has(item.key)}
-                    onChange={() => toggle(item.key)}
-                    aria-label={`Select: ${item.title}`}
-                  />
-                ) : (
-                  <span className="todayCheck todayCheckSpacer" aria-hidden="true" />
-                )}
-                <div className="todayItemBody">
-                  <strong>{item.title}</strong>
-                  <small>
-                    {[item.detail, dueLabel(item), relative(item.created_at)]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </small>
-                </div>
-                <div className="todayItemActions">
-                  <Link className="secondaryButton" href={item.href || "/"}>Open</Link>
-                  <button
-                    className="textButton"
-                    type="button"
-                    disabled={busyKey === item.key}
-                    onClick={() => void defer(item, 7)}
-                    title="Ask me again in a week"
-                  >
-                    Later
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
-
-      {feed?.deferred ? (
-        <section className="settingsSection compactSection">
-          <div className="sectionTitle">
-            <div>
-              <h2>Deferred</h2>
-              <p>Snoozed, not dismissed — each returns on its own date.</p>
-            </div>
-            <button className="textButton" type="button" onClick={() => setShowDeferred((value) => !value)}>
-              {showDeferred ? "Hide" : `Show ${feed.deferred}`}
-            </button>
-          </div>
-          {showDeferred ? (
-            <ul className="todayList">
-              {feed.deferred_items.map((item) => (
-                  <li key={item.key}>
-                    <div className="todayItemBody">
-                      <strong>{item.title}</strong>
-                      <small>returns {new Date(item.deferred_until as string).toLocaleDateString()}</small>
-                    </div>
-                    <button
-                      className="textButton"
-                      type="button"
-                      disabled={busyKey === item.key}
-                      onClick={() => void restore(item.key)}
-                    >
-                      Bring back
-                    </button>
-                  </li>
-              ))}
-            </ul>
-          ) : null}
-        </section>
+      {batchNote ? (
+        <p className="mutedMeta todayBatchNote" role="status">
+          {batchNote}
+        </p>
       ) : null}
     </div>
   );

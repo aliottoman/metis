@@ -20,6 +20,7 @@ from typing import Any
 
 from .config import Settings
 from .contracts import ArchitectureSpecV1, EvalReportV1, EvalResultV1
+from .project_sandbox import podman_binary, podman_child_env
 from .diagram_source import (
     canonical_architecture_spec,
     canonical_diagram_source_for,
@@ -201,7 +202,9 @@ class ReferenceArchitectureRunner:
             return image_ref
         try:
             process = await asyncio.create_subprocess_exec(
-                "podman",
+                # Resolved, not bare: the launcher's PATH may not carry the
+                # installer's /opt/podman/bin (see project_sandbox.podman_binary).
+                podman_binary() or "podman",
                 "image",
                 "inspect",
                 "--format",
@@ -210,7 +213,7 @@ class ReferenceArchitectureRunner:
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env={"PATH": os.environ.get("PATH", "")},
+                env={"PATH": podman_child_env().get("PATH", "")},
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
         except (FileNotFoundError, TimeoutError) as exc:
@@ -414,7 +417,9 @@ class ReferenceArchitectureRunner:
                 stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env={"PATH": os.environ.get("PATH", "")},
+                # The wrapper resolves podman itself; this PATH guarantees it
+                # sees the same binary the host verified (or degrades cleanly).
+                env={"PATH": podman_child_env().get("PATH", "")},
                 start_new_session=True,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(

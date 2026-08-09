@@ -167,6 +167,10 @@ class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     AWAITING_APPROVAL = "awaiting_approval"
+    # The model paused the turn to ask the user a question (ask_user). Like
+    # AWAITING_APPROVAL this is NOT terminal: the SSE stream stays open across
+    # the pause so the answer resumes the same run on the same event stream.
+    AWAITING_INPUT = "awaiting_input"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -275,6 +279,7 @@ class AssetV1(Contract):
     launch_configured: bool = False
     launch_approved: bool = False
     launch_command: list[str] = Field(default_factory=list, max_length=32)
+    build_command: list[list[str]] = Field(default_factory=list, max_length=8)
     status: AssetStatus
     url: str | None = None
 
@@ -289,6 +294,7 @@ class AssetRecipeV1(Contract):
 
     entrypoint: str | None = Field(default=None, max_length=240)
     launch_command: list[str] = Field(min_length=1, max_length=32)
+    build_command: list[str] | None = Field(default=None, max_length=32)
     launch_path: str = Field(default="", max_length=240)
     env_keys: list[str] = Field(default_factory=list, max_length=64)
 
@@ -424,12 +430,18 @@ class PlanEnvelopeV1(Contract):
     summary: str
     route: Literal[
         "direct", "existing_tool", "tool_factory", "tool_definition", "document",
-        "queue_update",
+        "queue_update", "ask_user",
     ]
     tool_slug: str | None = None
     risk_level: RiskLevel = RiskLevel.R0
     steps: list[PlanStepV1] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
+    # Only for route == "ask_user": the single clarifying question the planner
+    # pauses the turn to ask, and up to eight offered choices. Empty options
+    # means the card is a pure free-text prompt. Both stay None/empty on every
+    # other route, so adding them changes no existing plan.
+    question: str | None = Field(default=None, max_length=2000)
+    options: list[str] = Field(default_factory=list, max_length=8)
 
 
 class ModelRequestV1(Contract):
@@ -519,6 +531,8 @@ class ProjectToolCallV1(Contract):
         "create_file",
         "run_check",
         "inspect_api",
+        "ask_user",
+        "respond",
     ]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
@@ -627,6 +641,11 @@ PROJECT_TOOL_ARGUMENT_PROPERTIES: dict[str, dict[str, Any]] = {
     "end_line": {"type": "integer"},
     "limit": {"type": "integer"},
     "expect": {"type": "string"},
+    # The talk channel (ask_user / respond). Flat like everything above: a
+    # nested per-tool model is the construct that collapsed MLX decode.
+    "question": {"type": "string"},
+    "options": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+    "message": {"type": "string"},
 }
 
 # What each tool actually needs, mirroring the host's own refusals so the
@@ -640,7 +659,22 @@ PROJECT_TOOL_REQUIRED_ARGUMENTS: dict[str, list[str]] = {
     "replace_lines": ["path", "start_line", "end_line", "replacement"],
     "run_check": ["name"],
     "inspect_api": ["module"],
+    # The talk channel. Before these, "speak to the user" and "the work is
+    # done" shared one exit (status=complete), so a model that wanted to ask a
+    # clarifying question could only fabricate a finish — the host then judged
+    # that finish by keyword-matching the USER'S prompt, and a "revamp"-phrased
+    # build read as conversation. ask_user pauses the turn on one question and
+    # resumes with the answer as this call's result; respond answers without
+    # claiming any build work happened.
+    "ask_user": ["question"],
+    "respond": ["message"],
 }
+
+# The roster's talk tools: host affordances the loop routes itself (a pause on
+# a question, an answer published as the turn's response). They are on the
+# roster so every transport can call them, and they must never reach the
+# workspace executor, which only knows files and checks.
+PROJECT_TALK_TOOLS: frozenset[str] = frozenset({"ask_user", "respond"})
 
 # Merged into the emitted schema for `arguments`, replacing the open
 # `additionalProperties: true` a dict[str, Any] would otherwise produce. The
@@ -665,6 +699,8 @@ PROJECT_TOOL_OPTIONAL_ARGUMENTS: dict[str, list[str]] = {
     "replace_lines": ["expect"],
     "run_check": [],
     "inspect_api": ["symbol"],
+    "ask_user": ["options"],
+    "respond": [],
 }
 
 # One line per tool saying what it is for, in the terms the model has to get
@@ -702,6 +738,19 @@ _PROJECT_TOOL_NOTES: dict[str, str] = {
         "argument that does not exist parses perfectly and fails at runtime. "
         "module is an import path such as \"openai\"; symbol is optional. It "
         "reads libraries, never this project's own files — use read_file for those."
+    ),
+    "ask_user": (
+        "Pause the turn to ask the user ONE clarifying question; their answer "
+        "comes back as this call's result and the same turn continues. Use it "
+        "when the request is genuinely ambiguous in a way that changes what you "
+        "would build, or when the user invited questions. Prefer sensible "
+        "defaults over asking; never ask more than once per turn. options may "
+        "offer up to 6 short choices."
+    ),
+    "respond": (
+        "Answer the user without claiming any build work happened. Use it for "
+        "questions about the project, explanations, and status — a respond turn "
+        "is complete in itself and stages nothing."
     ),
 }
 
@@ -810,6 +859,10 @@ class AcceptanceScenarioV1(Contract):
 
     name: str = Field(min_length=1, max_length=120)
     method: Literal["GET", "POST"] = "GET"
+    # The request line, query string included — the sandbox replays it verbatim.
+    # A route with required query parameters answers 422 to a bare path, so
+    # "/convert" where "/convert?value=0&direction=c-to-f" was meant reports a
+    # correct app as broken.
     path: str = Field(min_length=1, max_length=300)
     # What rides in the request: nothing, the JSON object in `body`, or the
     # verifier's real PNG fixture as a multipart upload.
@@ -878,7 +931,7 @@ class ProjectAgentStepWireV1(Contract):
     """
 
     status: Literal["tool", "complete"]
-    # "" is how a completion carries no tool; the seven real names are the
+    # "" is how a completion carries no tool; the real tool names are the
     # only other values the grammar will emit. A test pins this list to
     # PROJECT_TOOL_REQUIRED_ARGUMENTS — a tool present in one and not the
     # other is advertised-but-unusable, which is how inspect_api spent months
@@ -893,6 +946,8 @@ class ProjectAgentStepWireV1(Contract):
         "create_file",
         "run_check",
         "inspect_api",
+        "ask_user",
+        "respond",
     ] = ""
     arguments: dict[str, Any] = Field(
         default_factory=dict, json_schema_extra=_CLOSED_TOOL_ARGUMENTS
@@ -940,6 +995,9 @@ class ProjectBuildStepWireV1(Contract):
     """
 
     status: Literal["tool"] = "tool"
+    # ask_user is here — a mid-build model may genuinely be blocked on the
+    # user — but respond is deliberately NOT: a prose exit from a build turn
+    # is exactly the escape this narrowed grammar exists to close off.
     tool: Literal[
         "list_files",
         "search_code",
@@ -949,6 +1007,7 @@ class ProjectBuildStepWireV1(Contract):
         "create_file",
         "run_check",
         "inspect_api",
+        "ask_user",
     ]
     arguments: dict[str, Any] = Field(
         default_factory=dict, json_schema_extra=_CLOSED_TOOL_ARGUMENTS
@@ -1065,9 +1124,39 @@ class ApprovalDecisionV1(Contract):
     reason: str | None = Field(default=None, max_length=2000)
 
 
+class ElicitationRequestV1(Contract):
+    """A question the model paused the run to ask (ask_user), shown as the inline
+    card near the composer. Mirrors ApprovalRequestV1's lifecycle: persisted,
+    emitted as an `elicitation.requested` run event, and resolved through one
+    answer endpoint that resumes the same turn with the answer as the tool result.
+    """
+
+    id: str
+    run_id: str
+    question: str = Field(min_length=1, max_length=2000)
+    # The offered choices. Empty is allowed (a pure free-text prompt). The card
+    # renders one button per option.
+    options: list[str] = Field(default_factory=list, max_length=8)
+    # Whether the card also offers a free-text field ("Other…"). When there are
+    # no options this is forced on by the endpoint that builds the request.
+    allow_text: bool = True
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ElicitationAnswerV1(Contract):
+    """The user's reply to an ElicitationRequestV1. At least one of option/text
+    must be present; the resume endpoint enforces that and feeds it back as the
+    ask_user tool result."""
+
+    elicitation_id: str | None = None
+    option: str | None = Field(default=None, max_length=2000)
+    text: str | None = Field(default=None, max_length=4000)
+
+
 class RecoverableRunV1(Contract):
     run: RunV1
     approval: ApprovalRequestV1 | None = None
+    elicitation: ElicitationRequestV1 | None = None
 
 
 class RunEventV1(Contract):
@@ -2439,6 +2528,48 @@ class QueueUpdateV1(Contract):
     unmatched: list[str] = Field(default_factory=list, max_length=10)
 
 
+class CustomerToolCallV1(Contract):
+    """One call the customer agent chose from its catalog.
+
+    The fields are flat and typed on purpose. An earlier version carried a
+    free-form ``arguments: dict`` envelope; Cohere's tool validation cannot
+    schema-check an open dict and rejected every routed turn with
+    HALLUCINATED_ALL_TOOL_CALLS, so the router silently fell back to answering.
+    Naming the two metadata fields the tools actually take keeps the schema
+    fully defined for every provider. They are metadata the model may author —
+    a note title, which proposal to apply — never the user's evidence, which the
+    host supplies verbatim (see ``CapturedNoteV1``). A field is simply left blank
+    when the chosen tool has no use for it.
+    """
+
+    name: Literal[
+        "answer_about_account",
+        "file_note",
+        "apply_extraction",
+        "record_activity",
+        "record_win",
+        "generate_tracker",
+    ]
+    # file_note / record_win: a short label for the note or win.
+    title: str = Field(default="", max_length=240)
+    # apply_extraction: which pending proposal to commit.
+    proposal_id: str = Field(default="", max_length=80)
+
+
+class CustomerAgentStepV1(Contract):
+    """The customer agent's plan for one message: the ordered tools to run.
+
+    One planning call, not a multi-round loop — because every write the agent
+    can make is user-gated (an apply card, a filed-note confirmation), the model
+    never needs one write's result to choose the next. So it names every call a
+    message warrants at once ("file this note and log a win" is two calls, in
+    order) and the host runs them. An empty list means "just answer" — the safe
+    default when nothing actionable was asked.
+    """
+
+    calls: list[CustomerToolCallV1] = Field(default_factory=list, max_length=8)
+
+
 class AttentionBatchV1(Contract):
     """Decide several queued items in one call."""
 
@@ -2485,6 +2616,16 @@ class AnswerAtomV1(Contract):
     citations: list[str] = Field(default_factory=list, max_length=12)
     entities: list[str] = Field(default_factory=list, max_length=12)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class ToolInputRestatementV1(Contract):
+    """A request relabelled into the parameter names one tool declares.
+
+    Labels only. Every value in it is checked against the user's own message
+    before the tool sees it, so a restatement that changed a figure is thrown
+    away rather than run."""
+
+    lines: list[str] = Field(default_factory=list, max_length=12)
 
 
 class AnswerAtomHarvestV1(Contract):

@@ -283,7 +283,8 @@ async def test_a_machine_metis_did_not_start_is_never_stopped(tmp_path: Path) ->
     finally:
         monkey.undo()
 
-    assert [command[:2] for command in calls] == [["podman", "info"]]
+    # The binary is resolved to an absolute path now; the verb is what matters.
+    assert [[Path(c[0]).name, c[1]] for c in calls] == [["podman", "info"]]
 
 
 @pytest.mark.asyncio
@@ -294,7 +295,7 @@ async def test_a_machine_metis_started_is_stopped_when_it_goes_idle(tmp_path: Pa
     def record(command, **_kwargs):
         calls.append(list(command))
         # `podman info` fails, so the machine is down and Metis starts it.
-        returncode = 1 if command[:2] == ["podman", "info"] else 0
+        returncode = 1 if [Path(command[0]).name, command[1]] == ["podman", "info"] else 0
         return SimpleNamespace(returncode=returncode, stdout=b"", stderr=b"")
 
     monkey = pytest.MonkeyPatch()
@@ -312,8 +313,8 @@ async def test_a_machine_metis_started_is_stopped_when_it_goes_idle(tmp_path: Pa
     finally:
         monkey.undo()
 
-    assert ["podman", "machine", "stop"] in calls
-    assert len([c for c in calls if c[:3] == ["podman", "machine", "stop"]]) == 1
+    stops = [c for c in calls if [Path(c[0]).name, *c[1:3]] == ["podman", "machine", "stop"]]
+    assert len(stops) == 1
 
 
 # ── The real container, when it is available ─────────────────────────────────
@@ -402,3 +403,74 @@ def test_the_sandbox_runs_a_project_and_reports_a_failing_route(tmp_path: Path) 
     assert [check["name"] for check in failed] == ["GET /boom"]
     assert failed[0]["error_type"] == "ZeroDivisionError"
     assert failed[0]["where"] == "app/main.py line 5"
+
+
+def test_podman_resolution_survives_a_launcher_with_a_bare_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The API inherits PATH from its launcher, which need not carry the Podman
+    installer's directory. Resolution must find the binary in the known install
+    locations anyway — the exact gap that left every baseline build unverified
+    on a Mac with a perfectly working podman."""
+    from waqil_api import project_sandbox
+
+    fake_install = tmp_path / "opt-podman-bin"
+    fake_install.mkdir()
+    binary = fake_install / "podman"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")  # a launcher-shaped PATH
+    monkeypatch.setattr(project_sandbox, "_PODMAN_FALLBACK_DIRS", (str(fake_install),))
+
+    assert project_sandbox.podman_binary() == str(binary)
+    child_path = project_sandbox.podman_child_env()["PATH"]
+    assert child_path.split(":")[0] == str(fake_install)
+    assert "/usr/bin" in child_path  # the rest of the environment survives
+
+
+def test_podman_resolution_prefers_the_callers_path_when_it_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user who arranged their own podman on PATH keeps winning; the fallback
+    directories only answer when PATH is silent."""
+    from waqil_api import project_sandbox
+
+    on_path = tmp_path / "on-path"
+    on_path.mkdir()
+    chosen = on_path / "podman"
+    chosen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    chosen.chmod(0o755)
+    ignored = tmp_path / "fallback"
+    ignored.mkdir()
+    (ignored / "podman").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (ignored / "podman").chmod(0o755)
+
+    monkeypatch.setenv("PATH", f"{on_path}:/usr/bin:/bin")
+    monkeypatch.setattr(project_sandbox, "_PODMAN_FALLBACK_DIRS", (str(ignored),))
+
+    assert project_sandbox.podman_binary() == str(chosen)
+    # PATH already sees it, so the child environment gains no duplicate entry.
+    assert project_sandbox.podman_child_env()["PATH"].split(":")[0] == str(on_path)
+
+
+def test_a_machine_is_never_poked_when_podman_is_genuinely_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No binary anywhere: _ensure_machine must not attempt a start, and the
+    wrapper (not the host) stays the one who reports unavailable."""
+    from waqil_api import project_sandbox
+
+    monkeypatch.setenv("PATH", str(tmp_path))  # an empty directory
+    monkeypatch.setattr(project_sandbox, "_PODMAN_FALLBACK_DIRS", (str(tmp_path / "nowhere"),))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        project_sandbox.subprocess,
+        "run",
+        lambda argv, **_: calls.append(argv) or SimpleNamespace(returncode=1),
+    )
+
+    service = ProjectSandboxService(Settings(model_backend="deterministic"))
+    service._ensure_machine()
+
+    assert calls == []

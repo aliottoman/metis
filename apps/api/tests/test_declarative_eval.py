@@ -57,3 +57,54 @@ async def test_definition_without_fixtures_fails_closed() -> None:
     report = await ControlPlane._evaluate_declarative(cp, _STATE, orphan)
     assert report.passed is False
     assert report.results[0].case_id == "no-eval-cases"
+
+
+@pytest.mark.asyncio
+async def test_a_text_tool_with_no_text_says_so_instead_of_summarising_nothing() -> None:
+    """The deterministic fallback is written never to fail, so an empty input
+    produced a card reading "Untitled Project" for its title, its purpose and
+    its summary — a summary of nothing, rendered as a summary. Measured live on
+    the kimi lane from "build me a tool that summarises things"."""
+    definition = _definition()
+    cp = _cp()
+    cp.settings = types.SimpleNamespace(tool_disabled_slugs=[])
+    cp._prepare_tool_input = ControlPlane._prepare_tool_input.__get__(cp)
+
+    async def _guard(_state):
+        return None
+
+    async def _stage(*_args, **_kwargs):
+        return None
+
+    class _Policy:
+        def enforce(self) -> None:
+            return None
+
+    async def _policy_gate(*_args, **_kwargs):
+        return _Policy()
+
+    class _Database:
+        async def get_runnable_definition(self, _slug):
+            return definition
+
+    cp._guard = _guard
+    cp._stage = _stage
+    cp._policy_gate = _policy_gate
+    cp.database = _Database()
+
+    state = {
+        **_STATE,
+        "plan": {
+            "schema_version": "1",
+            "summary": "run it",
+            "route": "existing_tool",
+            "tool_slug": definition.slug,
+            "risk_level": "R2",
+        },
+        "attachment_text": "",
+    }
+    result = await ControlPlane._declarative_execute(cp, state)
+    assert "had none" in result["response_text"]
+    assert "tool.input_missing" in cp.events.events
+    # Nothing was produced, so nothing is offered as output.
+    assert "tool_output" not in result

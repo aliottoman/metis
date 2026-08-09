@@ -1324,9 +1324,18 @@ def test_a_build_that_never_writes_is_declined_a_bounded_number_of_times(
         assert events.count('"project.agent_step"') == _MAX_EMPTY_PROJECT_FINISHES + 1
 
 
-def test_a_non_build_completion_is_never_declined(tmp_path: Path) -> None:
-    """The guard is scoped to build instructions: a question that finishes with
-    nothing staged completes in a single step, with no nudge loop."""
+def test_a_bare_empty_completion_is_challenged_regardless_of_phrasing(
+    tmp_path: Path,
+) -> None:
+    """The claim-based contract: finishing is a work claim, so an empty one is
+    challenged — bounded, then allowed to stand with the footer — no matter how
+    the user phrased the request. The old guard keyed on build verbs in the
+    prompt, which read "revamp this asset…" as conversation and let a
+    fabricated finish stand; phrasing no longer plays any part. An actual
+    answer belongs on the respond tool, which completes in one step with no
+    footer (see test_project_respond_answers_without_the_stage_footer)."""
+    from waqil_api.control_plane import _MAX_EMPTY_PROJECT_FINISHES
+
     _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
@@ -1347,7 +1356,13 @@ def test_a_non_build_completion_is_never_declined(tmp_path: Path) -> None:
         run = _drive(client, run_id, {"completed", "failed"})
         assert run["status"] == "completed"
         events = client.get(f"/api/v1/runs/{run_id}/events?after=0").text
-        assert events.count('"project.agent_step"') == 1
+        # Two bounded declines, then the completion stands — same ceiling as
+        # the build-phrased case above, because the phrasing is irrelevant now.
+        assert events.count('"project.agent_step"') == _MAX_EMPTY_PROJECT_FINISHES + 1
+        messages = client.get(
+            f"/api/v1/conversations/{conversation_id}/messages"
+        ).json()
+        assert "No file changes were staged in this turn" in messages[-1]["content"]
 
 
 def test_premature_finish_records_evidence_and_loops_back() -> None:
@@ -1501,7 +1516,10 @@ def test_the_build_wire_schema_is_flat_and_forbids_completion() -> None:
 
     tool_enum = set(schema["properties"]["tool"]["enum"])
     assert "" not in tool_enum
-    assert tool_enum == set(PROJECT_TOOL_REQUIRED_ARGUMENTS)
+    # respond is excluded on purpose: a prose exit from a build turn is the
+    # escape this grammar exists to close. ask_user stays — a mid-build model
+    # can genuinely be blocked on the user.
+    assert tool_enum == set(PROJECT_TOOL_REQUIRED_ARGUMENTS) - {"respond"}
     # tool is required: there is no default to fall back on.
     assert "tool" in schema.get("required", [])
 
@@ -2330,3 +2348,46 @@ def test_annotate_summary_still_flags_a_genuinely_blocking_error() -> None:
     assert card.startswith("⚠️")
     assert "would stop this project working" in card
     assert _blocking_reason(verification) is not None
+
+
+def test_an_acceptance_failure_is_not_excused_as_an_environment_limit() -> None:
+    """Measured on a live Command A+ build. A scenario that ran and answered
+    HTTP 422 was filed under "could not be exercised in the sandbox … a limit of
+    the check, not a proven defect", and rendered as "2 modules could not import
+    — GET /convert returned HTTP 422". It was exercised; it answered; it
+    answered wrongly. That is the one rung that can say the app serves routes
+    without doing what was asked, and excusing it defeats the rung."""
+    verification = {
+        "errors": [
+            {
+                "path": "app/main.py",
+                "rung": "runtime",
+                "kind": "acceptance",
+                "error": (
+                    "acceptance: Celsius to Fahrenheit conversion failed: "
+                    "GET /convert returned HTTP 422, expected 2xx"
+                ),
+            },
+            {
+                "path": "app/config.py",
+                "rung": "runtime",
+                "kind": "import",
+                "error": (
+                    "import app.config failed: ValueError: OCI_COMPARTMENT_ID "
+                    "environment variable is required. (line 8)"
+                ),
+            },
+        ],
+        "warnings": [],
+        "notes": [],
+        "checks": [{"name": "import app.main", "kind": "import", "ok": True}],
+    }
+    card = _annotate_summary("staged files", verification)
+    assert "ran and answered, but not the way the plan said" in card
+    assert "GET /convert returned HTTP 422" in card
+    # The import failure keeps its own honest heading, and neither borrows the
+    # other's wording.
+    assert "Could not be exercised in the sandbox" in card
+    assert "modules could not import — GET /convert" not in card
+    # Neither is dressed up as a blocking defect: both are still advisory.
+    assert "would stop this project working" not in card

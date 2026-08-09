@@ -20,6 +20,9 @@ _README_LIMIT = 64 * 1024
 _MANIFEST_LIMIT = 32 * 1024
 _METADATA_LIMIT = 64 * 1024
 _LOG_LIMIT = 64 * 1024
+# A build step that outruns this is treated as hung and torn down, so a wedged
+# compile can never hold the launch — and the asset — open forever.
+_BUILD_STEP_TIMEOUT = 300.0
 _ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 # A folder name, never a path: no separators, no leading dot, bounded length.
 _PROJECT_FOLDER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$")
@@ -82,6 +85,7 @@ class AssetRecord:
     command: tuple[str, ...] | None
     launch_fingerprint: str | None = None
     launch_path: str = ""
+    build: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(slots=True)
@@ -95,6 +99,7 @@ class _ProcessRun:
     requested_stop: bool = False
     ready: bool = False
     startup_failed: bool = False
+    building: bool = False
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     reader_task: asyncio.Task[None] | None = None
     readiness_task: asyncio.Task[None] | None = None
@@ -118,6 +123,7 @@ class _ManifestMetadata:
     entrypoint: str | None = None
     command: tuple[str, ...] | None = None
     launch_path: str = ""
+    build: tuple[tuple[str, ...], ...] = ()
 
 
 def _is_reserved_env(key: str) -> bool:
@@ -265,6 +271,85 @@ def _manifest(project: Path) -> _ManifestMetadata:
     return manifest_metadata_from_body(body)
 
 
+_MAX_BUILD_STEPS = 8
+_MAX_BUILD_TOKENS = 128
+
+
+def _valid_argv(value: object) -> tuple[str, ...] | None:
+    """Return the argv as a tuple if it passes the launch token rules, else None.
+
+    One rule for every argv Metis will execute — the launch command and every
+    build step share it, so a build step can never slip past a check the launch
+    command enforces.
+    """
+    if (
+        not isinstance(value, list)
+        or not 1 <= len(value) <= 32
+        or not all(type(item) is str for item in value)
+        or any(
+            not item
+            or len(item) > 1_024
+            or any(character in item for character in ("\x00", "\r", "\n"))
+            for item in value
+        )
+        or sum(len(item) for item in value) > 8_192
+    ):
+        return None
+    return tuple(value)
+
+
+def _parse_build_steps(raw: object) -> tuple[tuple[tuple[str, ...], ...], bool]:
+    """Parse ``launch.build`` into argv steps; return ``(steps, invalid)``.
+
+    Accepts one argv (``["npm", "run", "build"]``) or a list of argv steps
+    (``[["npm", ...], ["node", ...]]``). A mix of the two shapes, or any
+    malformed step, is invalid — and an invalid-but-present build poisons the
+    launch command (see the caller), so a broken build can never silently serve
+    a stale, pre-built artifact. Absent build is valid and empty.
+    """
+    if raw is None:
+        return (), False
+    if not isinstance(raw, list):
+        return (), True
+    if not raw:
+        # An explicit empty list means "no build steps" — valid and empty, the
+        # same as absent. This is also what the catalog stores for a buildless
+        # asset, so its reloaded fingerprint must match its scanned one.
+        return (), False
+    if all(type(item) is str for item in raw):
+        steps_raw: list[object] = [raw]
+    elif all(isinstance(item, list) for item in raw):
+        steps_raw = list(raw)
+    else:
+        return (), True
+    if not 1 <= len(steps_raw) <= _MAX_BUILD_STEPS:
+        return (), True
+    steps: list[tuple[str, ...]] = []
+    for step in steps_raw:
+        argv = _valid_argv(step)
+        if argv is None:
+            return (), True
+        steps.append(argv)
+    if sum(len(step) for step in steps) > _MAX_BUILD_TOKENS:
+        return (), True
+    return tuple(steps), False
+
+
+def _substitute(argv: tuple[str, ...], *, port: int, python: str, uv: str) -> tuple[str, ...]:
+    """Fill the launch placeholders in one argv.
+
+    Shared by the launch command and every build step, so both resolve
+    ``{port}``/``{host}``/``{python}``/``{uv}`` identically.
+    """
+    return tuple(
+        item.replace("{port}", str(port))
+        .replace("{host}", "127.0.0.1")
+        .replace("{python}", python)
+        .replace("{uv}", uv)
+        for item in argv
+    )
+
+
 def manifest_metadata_from_body(body: dict) -> _ManifestMetadata:
     """Parse one asset.json body with the exact rules the scanner applies.
 
@@ -318,22 +403,12 @@ def manifest_metadata_from_body(body: dict) -> _ManifestMetadata:
     if not isinstance(launch, dict):
         return metadata
 
-    command = launch.get("command")
-    if (
-        invalid_env
-        or not isinstance(command, list)
-        or not 1 <= len(command) <= 32
-        or not all(type(item) is str for item in command)
-        or any(
-            not item
-            or len(item) > 1_024
-            or any(character in item for character in ("\x00", "\r", "\n"))
-            for item in command
-        )
-        or sum(len(item) for item in command) > 8_192
-    ):
+    command = _valid_argv(launch.get("command"))
+    build, invalid_build = _parse_build_steps(launch.get("build"))
+    if invalid_env or command is None or invalid_build:
         return metadata
-    metadata.command = tuple(command)
+    metadata.command = command
+    metadata.build = build
     launch_path = launch.get("path", launch.get("url_path", ""))
     if (
         isinstance(launch_path, str)
@@ -750,6 +825,7 @@ def _launch_fingerprint(
     command: tuple[str, ...],
     env_keys: list[str] | tuple[str, ...],
     launch_path: str,
+    build: tuple[tuple[str, ...], ...] = (),
 ) -> str:
     launch_payload = {
         "asset_path": str(project.resolve(strict=False)),
@@ -757,6 +833,11 @@ def _launch_fingerprint(
         "env_keys": list(env_keys)[:64],
         "launch_path": launch_path,
     }
+    # Only add the key when there is a build, so every asset trusted before
+    # builds existed keeps its exact hash and stays approved; an asset that
+    # gains (or edits) a build re-enters review, because that argv now runs.
+    if build:
+        launch_payload["build"] = [list(step) for step in build]
     return hashlib.sha256(
         json.dumps(
             launch_payload,
@@ -800,7 +881,9 @@ def _scan_record(project: Path) -> AssetRecord:
     asset_id = f"asset_{hashlib.sha256(stable_path).hexdigest()[:20]}"
     command = manifest.command
     launch_fingerprint = (
-        _launch_fingerprint(project, command, env_keys, manifest.launch_path)
+        _launch_fingerprint(
+            project, command, env_keys, manifest.launch_path, manifest.build
+        )
         if command is not None
         else None
     )
@@ -817,6 +900,7 @@ def _scan_record(project: Path) -> AssetRecord:
         command=command,
         launch_fingerprint=launch_fingerprint,
         launch_path=manifest.launch_path,
+        build=manifest.build,
     )
 
 
@@ -988,19 +1072,14 @@ class AssetManager:
                     "asset launch recipe must be explicitly reviewed and trusted before it can run"
                 )
             existing = self._runs.get(asset_id)
-            if existing is not None and existing.process.returncode is None:
+            if existing is not None and (
+                existing.building or existing.process.returncode is None
+            ):
                 raise AssetLibraryError("asset is already running")
             environment = self._validated_environment(record, provided_env)
             port = self._reserve_port()
             runtime_python = str(Path(sys.executable).resolve(strict=False))
             runtime_uv = str(Path(sys.executable).with_name("uv").resolve(strict=False))
-            argv = tuple(
-                item.replace("{port}", str(port))
-                .replace("{host}", "127.0.0.1")
-                .replace("{python}", runtime_python)
-                .replace("{uv}", runtime_uv)
-                for item in record.command
-            )
             # The project's own .env is the source of truth for runtime settings.
             # It sits under the request overrides and under the Metis pins, and
             # `_parse_env_file` has already dropped every reserved key, so a .env
@@ -1018,24 +1097,28 @@ class AssetManager:
                     "METIS_ASSET_ID": record.id,
                 }
             )
+            url = f"http://127.0.0.1:{port}{record.launch_path}"
+            first_argv = _substitute(
+                record.build[0] if record.build else record.command,
+                port=port,
+                python=runtime_python,
+                uv=runtime_uv,
+            )
+            # The first child spawns under the lock, so a registered run always
+            # owns a live process — that is what keeps the "already running" guard
+            # sound. When a build is declared, that first child is build step one;
+            # the build then runs OUTSIDE the lock (below) so its output streams to
+            # the Logs view and other asset operations aren't blocked for its
+            # whole duration.
             try:
-                process = await asyncio.create_subprocess_exec(
-                    *argv,
-                    cwd=record.path,
-                    env=child_env,
-                    stdin=asyncio.subprocess.DEVNULL,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                    close_fds=True,
-                    start_new_session=os.name == "posix",
-                )
+                first = await self._spawn(first_argv, cwd=record.path, env=child_env)
             except (OSError, ValueError) as exc:
                 raise AssetLibraryError(f"asset failed to start: {type(exc).__name__}") from exc
-            url = f"http://127.0.0.1:{port}{record.launch_path}"
             run = _ProcessRun(
-                process=process,
+                process=first,
                 port=port,
                 url=url,
+                building=bool(record.build),
                 # Only secret-looking .env values join the redaction set. Redacting
                 # every value would rewrite ordinary words out of the log stream.
                 secrets=tuple(
@@ -1051,13 +1134,24 @@ class AssetManager:
                     )
                 ),
             )
-            run.reader_task = asyncio.create_task(
-                self._capture_output(run), name=f"metis-asset-log-{asset_id}"
-            )
-            run.readiness_task = asyncio.create_task(
-                self._watch_readiness(run), name=f"metis-asset-ready-{asset_id}"
-            )
             self._runs[asset_id] = run
+            if not record.build:
+                run.reader_task = asyncio.create_task(
+                    self._capture_output(run), name=f"metis-asset-log-{asset_id}"
+                )
+                run.readiness_task = asyncio.create_task(
+                    self._watch_readiness(run), name=f"metis-asset-ready-{asset_id}"
+                )
+        if record.build:
+            await self._run_build_then_launch(
+                asset_id,
+                record,
+                run,
+                child_env,
+                port=port,
+                python=runtime_python,
+                uv=runtime_uv,
+            )
         # Fast apps bind within this window; slower ones stay `starting` until probed.
         try:
             await asyncio.wait_for(asyncio.shield(run.ready_event.wait()), timeout=2.0)
@@ -1065,6 +1159,110 @@ class AssetManager:
             pass
         async with self._lock:
             return self._view(record)
+
+    async def _spawn(
+        self, argv: tuple[str, ...], *, cwd: Path, env: dict[str, str]
+    ) -> asyncio.subprocess.Process:
+        """Spawn one host child with the asset launcher's fixed I/O discipline."""
+        return await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=cwd,
+            env=env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            close_fds=True,
+            start_new_session=os.name == "posix",
+        )
+
+    async def _run_build_then_launch(
+        self,
+        asset_id: str,
+        record: AssetRecord,
+        run: _ProcessRun,
+        child_env: dict[str, str],
+        *,
+        port: int,
+        python: str,
+        uv: str,
+    ) -> None:
+        """Run each declared build step to completion, then spawn the launch.
+
+        Runs after the lock is released. Build step one is already the run's live
+        process; each later step reuses `run.process`, and every step's output is
+        pumped through the same reader the launch uses, so a build streams to the
+        Logs view live. Any non-zero exit, timeout, or stop aborts BEFORE launch,
+        leaving the asset FAILED (or STOPPED) with the reason in its logs — the
+        launch never runs against a stale, un-rebuilt artifact.
+        """
+        total = len(record.build)
+        for index, step in enumerate(record.build):
+            if run.requested_stop:
+                run.building = False
+                run.ready_event.set()
+                return
+            resolved = _substitute(step, port=port, python=python, uv=uv)
+            if index > 0:
+                try:
+                    run.process = await self._spawn(
+                        resolved, cwd=record.path, env=child_env
+                    )
+                except (OSError, ValueError) as exc:
+                    self._fail_build(
+                        run,
+                        f"[Metis] build step {index + 1} could not start: {type(exc).__name__}\n",
+                    )
+                    return
+            run.append_logs(f"[Metis] build {index + 1}/{total} · {' '.join(resolved)}\n")
+            try:
+                await asyncio.wait_for(self._capture_output(run), timeout=_BUILD_STEP_TIMEOUT)
+            except TimeoutError:
+                self._terminate(run.process)
+                try:
+                    await asyncio.wait_for(run.process.wait(), timeout=3.0)
+                except TimeoutError:
+                    self._kill(run.process)
+                    await run.process.wait()
+                self._fail_build(
+                    run,
+                    f"[Metis] build step {index + 1} timed out after {int(_BUILD_STEP_TIMEOUT)}s\n",
+                )
+                return
+            if run.requested_stop:
+                run.building = False
+                run.ready_event.set()
+                return
+            if run.process.returncode != 0:
+                self._fail_build(
+                    run,
+                    f"[Metis] build step {index + 1} failed (exit {run.process.returncode})\n",
+                )
+                return
+        try:
+            run.process = await self._spawn(
+                _substitute(record.command, port=port, python=python, uv=uv),
+                cwd=record.path,
+                env=child_env,
+            )
+        except (OSError, ValueError) as exc:
+            self._fail_build(
+                run, f"[Metis] launch could not start after build: {type(exc).__name__}\n"
+            )
+            return
+        run.building = False
+        run.reader_task = asyncio.create_task(
+            self._capture_output(run), name=f"metis-asset-log-{asset_id}"
+        )
+        run.readiness_task = asyncio.create_task(
+            self._watch_readiness(run), name=f"metis-asset-ready-{asset_id}"
+        )
+
+    def _fail_build(self, run: _ProcessRun, message: str) -> None:
+        """Abort a build: record why, drop `building`, and release the ready wait."""
+        run.append_logs(message)
+        run.building = False
+        run.startup_failed = True
+        run.ready_event.set()
 
     async def approve(self, asset_id: str) -> AssetV1:
         """Trust the exact current launch fingerprint; any manifest drift revokes it."""
@@ -1091,8 +1289,13 @@ class AssetManager:
         async with self._lock:
             record = self._lookup(asset_id)
             run = self._runs.get(asset_id)
-            if run is None or run.process.returncode is not None:
+            if run is None or (
+                not run.building and run.process.returncode is not None
+            ):
                 return self._view(record)
+            # While building, `run.process` is the current build step (which may
+            # have just exited between steps); flag the stop so the build loop
+            # bails before launch, and tear down whatever step is live.
             run.requested_stop = True
             self._terminate(run.process)
         try:
@@ -1345,21 +1548,12 @@ class AssetManager:
             and not _is_reserved_env(item)
         }))[:64]
 
-        raw_command = raw.get("command")
-        command: tuple[str, ...] | None = None
-        if (
-            isinstance(raw_command, list)
-            and 1 <= len(raw_command) <= 32
-            and all(type(item) is str for item in raw_command)
-            and all(
-                item
-                and len(item) <= 1_024
-                and not any(character in item for character in ("\x00", "\r", "\n"))
-                for item in raw_command
-            )
-            and sum(len(item) for item in raw_command) <= 8_192
-        ):
-            command = tuple(raw_command)
+        command = _valid_argv(raw.get("command"))
+        build, invalid_build = _parse_build_steps(raw.get("build"))
+        if invalid_build:
+            # A corrupt cached build poisons the launch, exactly as a corrupt
+            # on-disk one does, so the cache can never resurrect a broken recipe.
+            command = None
         raw_launch_path = raw.get("launch_path", "")
         launch_path = (
             raw_launch_path
@@ -1372,7 +1566,7 @@ class AssetManager:
             else ""
         )
         fingerprint = (
-            _launch_fingerprint(project, command, env_keys, launch_path)
+            _launch_fingerprint(project, command, env_keys, launch_path, build)
             if command is not None
             else None
         )
@@ -1389,6 +1583,7 @@ class AssetManager:
             command=command,
             launch_fingerprint=fingerprint,
             launch_path=launch_path,
+            build=build,
         )
 
     def _save_catalog(self) -> None:
@@ -1414,6 +1609,7 @@ class AssetManager:
                     "env_keys": list(record.env_keys),
                     "command": list(record.command) if record.command is not None else None,
                     "launch_path": record.launch_path,
+                    "build": [list(step) for step in record.build],
                 }
                 for record in sorted(self._catalog.values(), key=lambda item: item.id)
             ],
@@ -1485,6 +1681,7 @@ class AssetManager:
             launch_configured=record.command is not None,
             launch_approved=launch_approved,
             launch_command=list(record.command or ()),
+            build_command=[list(step) for step in record.build],
             status=self._status(record),
             # The loopback route exists before the child binds, so the preview target is
             # stable while status communicates readiness.
@@ -1503,6 +1700,10 @@ class AssetManager:
             )
         if run.startup_failed:
             return AssetStatus.FAILED
+        if run.building:
+            # A build step between the ones that ran may have exited 0; without
+            # this the interlude would read as STOPPED. Build is still `starting`.
+            return AssetStatus.STARTING
         if run.process.returncode is None:
             return AssetStatus.RUNNING if run.ready else AssetStatus.STARTING
         if run.requested_stop or run.process.returncode == 0:

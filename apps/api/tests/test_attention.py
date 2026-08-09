@@ -358,3 +358,68 @@ def test_a_valid_note_is_kept_and_a_todo_inherits_its_account() -> None:
     # The todo had no account of its own; it inherits the note's.
     assert cleaned.new_actions[0].account_id == "cust_1"
     assert has_changes(cleaned)
+
+
+def test_an_open_action_does_not_make_its_account_a_place_to_file_a_note() -> None:
+    """The bug this pins: a note that named no account at all was filed against
+    whichever account happened to carry an open action. A live message about
+    Metis's own build coder landed on a Ukrainian bank's record that way, because
+    every open action's account counted as "offered"."""
+    from waqil_api.contracts import CapturedNoteV1, QueueUpdateV1
+    from waqil_api.queue_update import validate
+
+    actions = [
+        {"id": "act_1", "account_id": "cust_bank", "description": "Send the pricing"}
+    ]
+    proposal = QueueUpdateV1(
+        note=CapturedNoteV1(account_id="cust_bank", title="Build coder choice")
+    )
+    cleaned, _ = validate(proposal, actions, offered_accounts=[])
+    assert cleaned.note is None
+    assert any("unknown account" in item for item in cleaned.unmatched)
+
+
+def test_a_new_todo_may_still_attach_to_an_account_with_open_work() -> None:
+    """The narrowing is about notes only: closing and creating work on an
+    account the message reported on stays exactly as it was."""
+    from waqil_api.contracts import ActionResolutionV1, NewActionV1, QueueUpdateV1
+    from waqil_api.queue_update import validate
+
+    actions = [
+        {"id": "act_1", "account_id": "cust_bank", "description": "Send the pricing"}
+    ]
+    proposal = QueueUpdateV1(
+        completed=[ActionResolutionV1(action_id="act_1")],
+        new_actions=[NewActionV1(description="Book the follow-up")],
+    )
+    cleaned, _ = validate(proposal, actions, offered_accounts=[])
+    assert [item.action_id for item in cleaned.completed] == ["act_1"]
+    assert cleaned.new_actions[0].account_id == "cust_bank"
+
+
+def test_a_filing_request_is_told_apart_from_a_work_report() -> None:
+    from waqil_api.queue_update import is_queue_update_request, reports_work
+
+    keep_only = "File this in the answer bank: our build coder is kimi-k2.7-code."
+    assert is_queue_update_request(keep_only)
+    assert not reports_work(keep_only)
+
+    did_work = "I met with BAPCO and sent the sizing sheet — note: they want H200s."
+    assert reports_work(did_work)
+
+
+def test_the_filing_clause_is_stripped_and_the_statement_kept_verbatim() -> None:
+    from waqil_api.queue_update import statement_without_filing_verb
+
+    assert statement_without_filing_verb(
+        "File this in the answer bank: the coder is kimi-k2.7-code:cloud."
+    ) == "the coder is kimi-k2.7-code:cloud."
+    # No filing clause: the message is its own statement, untouched.
+    assert (
+        statement_without_filing_verb("Gemma4 needs 2xH200 for a DAC.")
+        == "Gemma4 needs 2xH200 for a DAC."
+    )
+    # A colon that is part of the statement is not a filing clause.
+    assert statement_without_filing_verb(
+        "The rule is simple: never write to a record you were not given."
+    ) == "The rule is simple: never write to a record you were not given."

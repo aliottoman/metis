@@ -321,3 +321,234 @@ def test_the_attention_queue_names_the_account_each_action_belongs_to(
     ]
     assert queue[0]["account_name"] == "Overdue Co"
     assert dashboard["overdue_actions"] == 1
+
+
+def test_a_self_authored_note_files_without_an_approval(client: TestClient) -> None:
+    """A note you wrote — a purely additive change, no closures — lands straight
+    away with no approval card. The approval is kept only for a change the model
+    inferred (a closure), not one you stated outright.
+    """
+    from waqil_api.contracts import CapturedNoteV1, QueueUpdateV1
+
+    account_id = _account(client, "Northwind Logistics")
+    control_plane = client.app.state.runtime.control_plane  # type: ignore[attr-defined]
+
+    async def only_a_note(_schema: object, **_kwargs: object) -> QueueUpdateV1:
+        return QueueUpdateV1(
+            note=CapturedNoteV1(account_id=account_id, title="DAC sizing verified"),
+        )
+
+    # Advisory stage/queue events would FK against a run row this unit test
+    # never creates; the record write under test emits none of its own.
+    async def _swallow(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    control_plane.model._structured = only_a_note  # type: ignore[attr-defined]
+    control_plane.events.emit = _swallow  # type: ignore[attr-defined]
+
+    result = client.portal.call(  # type: ignore[attr-defined]
+        control_plane._queue_update,
+        {
+            "run_id": "run_additive_note",
+            "conversation_id": "conv_additive_note",
+            "prompt": "Add a note to Northwind Logistics: DAC sizing verified for 2xH100.",
+            "model_aliases": {},
+        },
+    )
+
+    # Filed immediately: a confirmation, and nothing left to grant.
+    assert "approval_request" not in result
+    assert result["response_text"].startswith("Done")
+
+    # And it is on the record as a source waiting for analysis.
+    sources = client.get(f"/api/v1/customers/{account_id}").json()["sources"]
+    assert any(source["source_kind"] == "note" for source in sources)
+
+
+def _capture(client: TestClient, account_id: str, content: str) -> str:
+    created = client.post(
+        "/api/v1/customers/sources",
+        json={"account_id": account_id, "source_kind": "note", "title": "Note", "content": content},
+    )
+    assert created.status_code == 201, created.text
+    return str(created.json()["id"])
+
+
+def test_auto_analyze_extracts_a_fresh_note_on_a_cloud_pin(client: TestClient) -> None:
+    """On a cloud pin, a captured note is analyzed automatically into a review
+    proposal (waiting → review) — no manual Analyze click, no facts written."""
+    account_id = _account(client, "Aurora Systems")
+    source_id = _capture(client, account_id, "Agreed a 2xH100 DAC. Action: send pricing by Friday.")
+
+    service = client.app.state.runtime.customers  # type: ignore[attr-defined]
+    service._cloud_pinned = lambda: True  # pretend Command A+ is the pinned model
+
+    client.portal.call(service.auto_analyze, source_id)  # type: ignore[attr-defined]
+
+    source = next(s for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"] if s["id"] == source_id)
+    assert source["status"] == "review"  # analyzed, now awaiting your approval
+
+
+def test_auto_analyze_is_a_noop_without_a_cloud_pin(client: TestClient) -> None:
+    """A local pin leaves the note 'waiting' — auto-analysis must never force a
+    local weight load on capture; the manual Analyze button still applies."""
+    account_id = _account(client, "Borealis Freight")
+    source_id = _capture(client, account_id, "Some captured content.")
+
+    service = client.app.state.runtime.customers  # type: ignore[attr-defined]
+    service._cloud_pinned = lambda: False
+
+    client.portal.call(service.auto_analyze, source_id)  # type: ignore[attr-defined]
+
+    source = next(s for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"] if s["id"] == source_id)
+    assert source["status"] == "waiting"
+
+
+def test_note_capture_reads_update_with_this_note_phrasing() -> None:
+    """The phrasing that slipped through: a filing verb the detector did not know
+    ('update …'), with the note handed over after 'with this note'. It must read
+    as a note to file, while plain questions that merely mention notes must not —
+    or a scoped question would be misfiled instead of answered."""
+    from waqil_api import queue_update
+
+    assert queue_update.is_note_capture_request(
+        'Update customer information with this note "7.08.2026 - throttling matches the GPU shape".'
+    )
+    assert queue_update.is_note_capture_request("file it as the following note")
+    assert queue_update.is_note_capture_request("note: bring back the 1xH100 shape")
+    assert not queue_update.is_note_capture_request("what did we do about the throttling?")
+    assert not queue_update.is_note_capture_request("summarize the last meeting notes")
+
+
+def test_an_account_is_matched_by_its_acronym_not_only_its_full_name() -> None:
+    """The MCIT failure: people write 'MCIT', not 'Ministry of Communications and
+    Information Technology (MCIT)'. The matcher must find the account by acronym
+    and rank its OWN acronym above a name that merely mentions it, so the note
+    files to the ministry rather than nowhere."""
+    from waqil_api import queue_update
+
+    accounts = [
+        {"id": "mcit", "name": "Ministry of Communications and Information Technology (MCIT)"},
+        {"id": "shura", "name": "Shura Council (via MCIT)"},
+        {"id": "tasmu", "name": "TASMU (MCIT)"},
+        {"id": "qatar", "name": "Qatar Ministry of Communications"},
+    ]
+    got = queue_update.candidate_accounts("add a note to MCIT: kickoff done", accounts, "")
+    assert got and got[0]["id"] == "mcit", "the ministry's own acronym must rank first"
+    assert {a["id"] for a in got} == {"mcit", "shura", "tasmu"}
+    # A bare question names no account, and a scoped chat needs no naming.
+    assert queue_update.candidate_accounts("what is the DAC status?", accounts, "") == []
+    assert queue_update.candidate_accounts("kickoff done", accounts, "tasmu")[0]["id"] == "tasmu"
+
+
+def test_resolve_account_is_confident_on_a_clear_acronym_and_defers_when_vague() -> None:
+    """Routing an unscoped message needs one answer, not a list: a clear acronym
+    resolves to a single account (file it, auto-scope); a vague reference resolves
+    to nothing (the planner asks); a scoped id always wins."""
+    from waqil_api import queue_update
+
+    accounts = [
+        {"id": "mcit", "name": "Ministry of Communications and Information Technology (MCIT)"},
+        {"id": "shura", "name": "Shura Council (via MCIT)"},
+        {"id": "defense", "name": "Ministry of Defense (Saudi)"},
+    ]
+    resolved, tied = queue_update.resolve_account("add a note to MCIT", accounts, "")
+    assert resolved and resolved["id"] == "mcit" and tied == []
+
+    resolved, tied = queue_update.resolve_account("add a note somewhere", accounts, "")
+    assert resolved is None and tied == []
+
+    resolved, _ = queue_update.resolve_account("kickoff", accounts, "defense")
+    assert resolved and resolved["id"] == "defense"
+
+
+def test_a_scoped_note_files_instead_of_being_answered(client: TestClient) -> None:
+    """The bug this fixes: scoping a chat to the account you want to note against
+    used to black-hole the note into the evidence-gated answer path, which then
+    fact-checked the user's own words and refused them. Now the customer agent
+    routes the message — it picks file_note — and the note is filed with the
+    user's verbatim words: no fact-check, no refusal, no card."""
+    from waqil_api.contracts import CustomerAgentStepV1, CustomerToolCallV1
+
+    account_id = _account(client, "Wayfarer Freight")
+    control_plane = client.app.state.runtime.control_plane  # type: ignore[attr-defined]
+
+    async def _swallow(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    control_plane.events.emit = _swallow  # type: ignore[attr-defined]
+
+    # The agent reads the message and routes it to file_note.
+    async def route_to_file_note(_schema: object, **_kwargs: object) -> CustomerAgentStepV1:
+        return CustomerAgentStepV1(
+            calls=[CustomerToolCallV1(name="file_note", title="Throttling finding")]
+        )
+
+    control_plane.model._structured = route_to_file_note  # type: ignore[attr-defined]
+
+    scoped_state = {
+        "run_id": "run_scoped_note",
+        "conversation_id": "conv_scoped_note",
+        "prompt": 'Update customer information with this note "throttling matches the GPU shape".',
+        "model_aliases": {"_customer_id": account_id},
+    }
+
+    # Routing: a scoped message goes through the customer agent, which picks
+    # file_note, so it reaches the execute node — never the answer path.
+    plan_result = client.portal.call(control_plane._plan, scoped_state)  # type: ignore[attr-defined]
+    assert plan_result["route_kind"] == "customer_execute"
+    assert [call["name"] for call in plan_result["customer_calls"]] == ["file_note"]
+
+    # Filing: the note lands with the user's verbatim words, no card for the
+    # note itself (its analysis surfaces its own apply card separately).
+    file_result = client.portal.call(  # type: ignore[attr-defined]
+        control_plane._customer_execute,
+        {**scoped_state, "customer_calls": plan_result["customer_calls"]},
+    )
+    assert "approval_request" not in file_result
+    assert "Filed" in file_result["response_text"]
+
+    sources = client.get(f"/api/v1/customers/{account_id}").json()["sources"]
+    note_source = next((s for s in sources if s["source_kind"] == "note"), None)
+    assert note_source is not None
+    # Stored as the user's own words, not the model's title or a rewrite.
+    assert "throttling matches the GPU shape" in note_source["content"]
+
+
+def test_notion_pages_map_to_records_and_dedupe(client: TestClient) -> None:
+    """A Notion page whose title names one account is filed as a source and
+    auto-analyzed into a review proposal; re-syncing the unchanged page files
+    nothing new (content-hash dedup)."""
+    from types import SimpleNamespace
+
+    account_id = _account(client, "Helios Renewables")
+    service = client.app.state.runtime.customers  # type: ignore[attr-defined]
+    service._cloud_pinned = lambda: True
+
+    page = SimpleNamespace(
+        title="Helios Renewables — Q3 review",
+        markdown="Kickoff done. Action: send the DAC sizing by Friday.",
+        url="https://notion.so/helios",
+        page_id="page-1",
+    )
+    filed = client.portal.call(service.ingest_notion_documents, [page])  # type: ignore[attr-defined]
+    assert filed == 1
+    notion_sources = [s for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"] if s["source_kind"] == "notion"]
+    assert len(notion_sources) == 1 and notion_sources[0]["status"] == "review"
+
+    # The ~12h re-sync of an unchanged page must add nothing.
+    assert client.portal.call(service.ingest_notion_documents, [page]) == 0  # type: ignore[attr-defined]
+    notion_after = [s for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"] if s["source_kind"] == "notion"]
+    assert len(notion_after) == 1
+
+
+def test_notion_pages_without_a_clear_account_are_left_alone(client: TestClient) -> None:
+    """A page that names no account (or several) stays knowledge-only."""
+    from types import SimpleNamespace
+
+    _account(client, "Helios Renewables")
+    service = client.app.state.runtime.customers  # type: ignore[attr-defined]
+    service._cloud_pinned = lambda: True
+
+    generic = SimpleNamespace(title="Weekly planning notes", markdown="Some notes.", url="", page_id="p2")
+    assert client.portal.call(service.ingest_notion_documents, [generic]) == 0  # type: ignore[attr-defined]

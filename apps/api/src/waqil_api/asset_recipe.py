@@ -122,6 +122,8 @@ def write_recipe(project: Path, recipe: AssetRecipeV1) -> dict:
         body["entrypoint"] = recipe.entrypoint
     if recipe.launch_path:
         body["launch"]["path"] = recipe.launch_path
+    if recipe.build_command:
+        body["launch"]["build"] = [list(recipe.build_command)]
     if recipe.env_keys:
         body["env_keys"] = sorted(set(recipe.env_keys))
 

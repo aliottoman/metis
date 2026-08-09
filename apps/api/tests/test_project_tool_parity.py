@@ -42,7 +42,10 @@ def _literal_values(model: type, field: str) -> frozenset[str]:
 def test_every_enumeration_matches_the_canonical_roster() -> None:
     assert _literal_values(ProjectToolCallV1, "name") == ROSTER
     assert _literal_values(ProjectAgentStepWireV1, "tool") == ROSTER
-    assert _literal_values(ProjectBuildStepWireV1, "tool") == ROSTER
+    # The strict build grammar keeps ask_user — a mid-build model can be
+    # genuinely blocked on the user — but excludes respond: a prose exit from
+    # a build turn is exactly the escape that grammar exists to close.
+    assert _literal_values(ProjectBuildStepWireV1, "tool") == ROSTER - {"respond"}
     assert frozenset(_PROJECT_TOOL_NAMES) == ROSTER
     assert frozenset(PROJECT_TOOL_OPTIONAL_ARGUMENTS) == ROSTER
     assert {entry["name"] for entry in project_tool_catalog()} == ROSTER
@@ -131,3 +134,20 @@ async def test_every_roster_tool_dispatches_in_the_workspace(tmp_path: Path) -> 
             staged,
         )
     assert "unsupported project tool" not in str(refused.value)
+
+    # The talk tools are on the roster so every transport can call them, but
+    # they are host affordances: the loop pauses (ask_user) or publishes
+    # (respond) itself, and the workspace refuses them by name — never with
+    # "unsupported", which would mean they fell off the roster.
+    for name, arguments in (
+        ("ask_user", {"question": "Which database?"}),
+        ("respond", {"message": "It uses FastAPI."}),
+    ):
+        with pytest.raises(ProjectWorkspaceError) as talk:
+            await service.execute_staged(
+                asset_id,
+                ProjectToolCallV1(name=name, arguments=arguments),  # type: ignore[arg-type]
+                staged,
+            )
+        assert "talk tool" in str(talk.value)
+        assert "unsupported project tool" not in str(talk.value)

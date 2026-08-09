@@ -40,6 +40,19 @@ HOSTED_MODEL_TOOL_CALLING: dict[str, bool] = {
     "gpt-oss:20b-cloud": True,
     "gemma4:31b-cloud": True,
     "minimax-m3:cloud": False,
+    # Measured 2026-08-08 against the five-scenario project-step probe
+    # (first build step, mid-build, clarify-invited, plain question, finish):
+    # each returned 5/5 well-formed function calls with required arguments
+    # present, including correct use of the new respond talk tool. Their
+    # *judgment* differed — deepseek-v4-flash answered every scenario with
+    # list_files — but this record is about honouring tool calling, and the
+    # coder choice is made elsewhere.
+    # kimi-k3:cloud is deliberately absent: its probe was blocked by the
+    # plan's extra-usage gate (HTTP 402), and this record only holds measured
+    # results. Absent already means benefit of the doubt.
+    "kimi-k2.7-code:cloud": True,
+    "glm-5.2:cloud": True,
+    "deepseek-v4-flash:cloud": True,
 }
 
 
@@ -106,10 +119,9 @@ class ModelPreferenceStore:
 
     @property
     def oci_available(self) -> bool:
-        return bool(
-            self._settings.allow_oci_responses
-            and self._settings.oci_responses_project_id.strip()
-        )
+        # Settings owns the formula (grok_lane_available) so the provider and
+        # this store can never disagree about whether the lane exists.
+        return self._settings.grok_lane_available
 
     @property
     def cohere_available(self) -> bool:

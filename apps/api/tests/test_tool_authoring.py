@@ -250,3 +250,22 @@ def test_genuine_readme_summary_still_selects_text_summary() -> None:
         ).archetype
         == "text-summary"
     )
+
+
+def test_a_vague_summarise_request_is_not_a_project_card() -> None:
+    """Measured live on both hosted lanes: "build me a tool that summarises
+    things" was claimed by the README→project-card template on the bare
+    "summar" substring, built, run with no text at all, and answered
+    "Untitled Project" three times over. The template reads a document; a
+    request that names no document is not a request for it."""
+    vague = ToolDefinitionDraftV1(
+        name="Summarizer",
+        description="Summarises things.",
+        intent="Summarise things for me",
+    )
+    assert (
+        tool_authoring.harden_draft(
+            vague, slug="summarizer", max_broker_calls=4
+        ).archetype
+        == "code-authoring"
+    )

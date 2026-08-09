@@ -42,6 +42,9 @@ htmlcov/
 node_modules/
 .pnpm-store/
 .next/
+# The dev server's own build directory, so a dev run on 3001 cannot collide
+# with the production build on 3000 — 188MB of generated output either way.
+.next-dev/
 *.tsbuildinfo
 
 # Build output and generated archives

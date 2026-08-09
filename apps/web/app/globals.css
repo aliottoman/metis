@@ -1139,7 +1139,7 @@ code {
 .composerDisclaimer {
   margin-left: auto;
   margin-right: auto;
-  max-width: 810px;
+  max-width: 1040px;
 }
 .composer {
   background: rgba(255, 255, 255, 0.88);
@@ -1159,9 +1159,10 @@ code {
   display: block;
   font-size: 13px;
   line-height: 1.5;
-  max-height: 180px;
+  max-height: 260px;
   min-height: 27px;
   outline: 0;
+  overflow-y: auto;
   padding: 3px 5px 8px;
   resize: none;
   width: 100%;
@@ -1609,6 +1610,24 @@ code {
   font-size: 9px;
   font-weight: 700;
   margin-top: 8px;
+}
+/* ask_user's answer surface: the offered choices wrap into a row, and the
+   free-text field grows beside its Send button. Buttons and inputs are already
+   themed; only the layout is elicitation's own. */
+.elicitationOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.elicitationTextForm {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.elicitationTextForm input {
+  flex: 1;
+  min-width: 0;
 }
 
 /* A changeset the host proved cannot run. It reads as a refusal, not as a
@@ -9996,202 +10015,575 @@ body {
   .modelControlTrigger.state-busy > i { animation: none; }
 }
 
-/* ── Today: the attention queue ───────────────────────────────────────────
-   The front door. Its job is to answer one question — what needs me now —
-   so the top three are cards and everything else is a quiet list beneath
-   them, ordered by consequence rather than by which page produced it. */
-.todayTop {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 6px;
+/* ── Today: the deck ──────────────────────────────────────────────────────
+   The front door, as one screen you never scroll. A compact head, a rail of
+   piles you read at a glance, and a deck of cards you roll through sideways —
+   one card per pile (Start here, a kind of work, deferred, the day's recap).
+   Items scroll inside a card only when there are many, so the page itself
+   never grows. Colour keyed to kind carries meaning; order carries priority. */
+
+.todayGridPage {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(12px, 1.8vh, 18px);
+  min-height: 100%;
+  padding: clamp(20px, 2.8vh, 34px) clamp(24px, 4vw, 52px) clamp(30px, 3vh, 44px);
+  position: relative;
 }
-.todayTopCard {
+/* A faint purple/green field behind the day, so Today carries colour like the
+   rest of the app instead of sitting on flat paper. Subtle by design. */
+.todayGridPage::before {
+  background:
+    radial-gradient(130% 52% at 6% -8%, rgba(194, 156, 224, 0.16), transparent 56%),
+    radial-gradient(120% 48% at 100% 0%, rgba(57, 89, 77, 0.10), transparent 52%);
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+.todayGridPage > * { margin-inline: auto; max-width: 1180px; position: relative; width: 100%; z-index: 1; }
+
+/* Head — date and the count as a plain statement. No paragraph: the rail is
+   the summary, and it reads faster than prose. */
+.todayTopbar { align-items: flex-end; display: flex; flex: 0 0 auto; gap: 20px; justify-content: space-between; }
+.todayTopbarCopy { min-width: 0; }
+.appMain .todayGridPage h1 { font-size: clamp(24px, 2.6vw, 34px); line-height: 1.03; margin: 5px 0 0; }
+.todayTopbar .eyebrow::before {
+  background: var(--m-purple, #c29ce0);
+  border-radius: 50%;
+  content: "";
+  display: inline-block;
+  height: 6px;
+  margin-right: 7px;
+  vertical-align: 1px;
+  width: 6px;
+}
+.todayRefresh { flex: none; }
+.todayError { flex: 0 0 auto; margin: 0; }
+
+/* The rail — the whole day at a glance, and the deck's controls. A row of
+   chips: count leads, a hue dot ties each to its card. The active chip lifts. */
+.todayRail {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 4px;
+  scrollbar-width: none;
+}
+.todayRail::-webkit-scrollbar { display: none; }
+.todayRailChip {
   align-items: center;
-  background: var(--glass-bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid var(--m-line, #dfdacf);
+  border-radius: 999px;
+  color: var(--m-ink, #211f1d);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  gap: 8px;
+  padding: 8px 15px 8px 13px;
+  transition: background 160ms var(--m-ease, ease), border-color 160ms var(--m-ease, ease),
+    box-shadow 160ms var(--m-ease, ease), transform 160ms var(--m-ease, ease);
+}
+.todayRailChip[data-kind]::before {
+  background: var(--kind-hue, var(--m-ink-3, #7b7789));
+  border-radius: 50%;
+  content: "";
+  flex: none;
+  height: 8px;
+  width: 8px;
+}
+.todayRailChip:hover { border-color: #cdc7ba; transform: translateY(-1px); }
+.todayRailCount { font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: -0.01em; }
+.todayRailLabel { color: var(--m-ink-2, #5e5a54); font-size: 12.5px; white-space: nowrap; }
+.todayRailChip.isActive {
+  background: var(--m-paper-lift, #fcfaf6);
+  border-color: transparent;
+  box-shadow: 0 0 0 1.5px var(--kind-hue, #b9b2a3), 0 10px 22px -18px rgba(40, 30, 20, 0.5);
+}
+.todayRailChip.isActive .todayRailLabel { color: var(--m-ink, #211f1d); }
+
+/* The deck — roll sideways. Each card is capped and centre-snapped, so the
+   ends still centre and neighbours peek at the edges. */
+.todayGridWrap { flex: 0 0 auto; }
+.todayGrid {
+  align-items: start;
   display: grid;
   gap: 14px;
-  grid-template-columns: auto 1fr auto;
-  padding: 14px 16px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
 }
-.todayTopCard.isOverdue { border-color: rgba(194, 92, 59, 0.45); }
-.todayRank {
-  align-items: center;
-  background: var(--canvas-deep);
-  border-radius: 50%;
-  color: var(--muted);
+/* Start here leads, spanning the full width above the piles. */
+.todayGrid > .is-focus { grid-column: 1 / -1; }
+.todayGrid > .is-focus.todaySlide { max-height: none; }
+
+.todaySlide {
+  /* A purple/green tint so the card carries colour, not flat paper. Kept quiet,
+     but present enough to actually read as the Cohere family. */
+  background:
+    linear-gradient(158deg, rgba(194, 156, 224, 0.16), rgba(57, 89, 77, 0.10) 74%),
+    var(--m-paper-lift, #fcfaf6);
+  border: 1px solid var(--m-line, #dfdacf);
+  border-radius: 16px;
+  box-shadow: 0 12px 30px -28px rgba(40, 30, 20, 0.5);
   display: flex;
-  flex: 0 0 26px;
-  font-size: 11px;
-  font-weight: 700;
-  height: 26px;
-  justify-content: center;
+  flex-direction: column;
+  max-height: 380px;
+  overflow: hidden;
+  padding: 14px 16px 12px;
+  position: relative;
 }
-.todayTopCard > div:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
-.todayKind {
-  color: var(--muted);
+/* Grain over the tint, so each card reads as a grainy Cohere surface. Overlay
+   makes the noise visible on a light surface where soft-light washed it out. */
+.todaySlide::after {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'><filter id='tg'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='150' height='150' filter='url(%23tg)'/></svg>");
+  content: "";
+  inset: 0;
+  mix-blend-mode: overlay;
+  opacity: 0.5;
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+.todaySlide > * { position: relative; z-index: 1; }
+
+.todaySlideHead { align-items: center; display: flex; flex: 0 0 auto; gap: 10px; }
+.todaySlideTitle { align-items: baseline; display: flex; gap: 10px; min-width: 0; }
+.todaySlideDot { align-self: center; background: var(--kind-hue, var(--m-ink-3)); border-radius: 50%; flex: none; height: 9px; width: 9px; }
+.appMain .todaySlide h2 { font-size: 16px; letter-spacing: -0.01em; margin: 0; }
+.todaySlideCount {
+  color: var(--m-ink-3, #7b7789);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 9.5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.todaySlideHead .textButton { color: var(--m-green-ink, #00754e); font-size: 11.5px; margin-left: auto; min-height: 0; }
+.todaySlideLede {
+  color: var(--m-ink-2, #5e5a54);
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 10px 0 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Rows inside a card — a quiet hairline list. It scrolls within the card only
+   when the pile is long, faded top and bottom so it dissolves rather than cuts. */
+.todayRows {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  list-style: none;
+  margin: 12px -6px 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px;
+  scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 16px), transparent 100%);
+}
+.todayRow {
+  align-items: center;
+  border-bottom: 1px solid var(--m-line, #dfdacf);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr auto;
+  padding: 8px 6px 8px 3px;
+  position: relative;
+}
+.todayRow.hasCheck { grid-template-columns: auto 1fr auto; }
+.todayRow:last-child { border-bottom: 0; }
+.todayRowBody { display: grid; gap: 3px; min-width: 0; }
+.todayRowKind {
+  color: var(--m-ink-3, #7b7789);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.todayTopCard strong { font-size: 14px; line-height: 1.4; }
-.todayTopCard small { color: var(--muted); font-size: 11.5px; }
-.todayTopActions { align-items: center; display: flex; gap: 8px; }
+.todayRowTitle {
+  -webkit-box-orient: vertical;
+  color: var(--m-ink, #211f1d);
+  display: -webkit-box;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.38;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.todayRowMeta {
+  color: var(--m-ink-3, #7b7789);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.todayRowActions { align-items: center; display: flex; flex: none; gap: 4px; }
+.todayRowActions .secondaryButton { min-height: 30px; padding: 0 13px; }
+.todayRowActions .textButton { color: var(--m-ink-3, #7b7789); }
+.todayRowActions .textButton:hover:not(:disabled) { color: var(--m-ink, #211f1d); }
+.todayCheck { accent-color: var(--m-forest, #39594d); flex: none; height: 16px; margin: 0; width: 16px; }
+.todayRow.isSelected { background: var(--m-mint-surface, #e5f4ef); border-radius: 10px; }
+.todayRow.isOverdue .todayRowTitle { color: var(--coral-ink, #cf4023); }
 
-.todayList { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
-.todayList li {
-  align-items: center;
-  border-top: 1px solid var(--line);
+/* A colour spine only on the mixed "Start here" card, where a row's kind isn't
+   otherwise named. Single-kind cards carry the hue on their heading dot. */
+.todaySlide.is-focus .todayRow[data-kind] { padding-left: 14px; }
+.todaySlide.is-focus .todayRow[data-kind]::before {
+  background: var(--kind-hue, transparent);
+  border-radius: 3px;
+  bottom: 13px;
+  content: "";
+  left: 0;
+  position: absolute;
+  top: 13px;
+  width: 3px;
+}
+
+/* The recap card — the day behind you, quiet and bulleted. */
+.todayRecapList {
   display: flex;
-  gap: 14px;
-  justify-content: space-between;
-  padding: 11px 2px;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 9px;
+  list-style: none;
+  margin: 14px 0 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
 }
-.todayList li:first-child { border-top: 0; }
-.todayList li.isOverdue .todayItemBody strong { color: var(--terracotta); }
-.todayItemBody { display: grid; gap: 2px; min-width: 0; }
-.todayItemBody strong { font-size: 13px; font-weight: 550; line-height: 1.4; }
-.todayItemBody small { color: var(--muted); font-size: 11px; }
-.todayItemActions { align-items: center; display: flex; flex: none; gap: 8px; }
-
-@media (max-width: 760px) {
-  .todayTopCard { grid-template-columns: auto 1fr; }
-  .todayTopActions { grid-column: 2; justify-content: flex-start; }
-  .todayList li { align-items: flex-start; flex-direction: column; gap: 8px; }
+.todayRecapList li {
+  color: var(--m-ink-2, #5e5a54);
+  font-size: 13px;
+  line-height: 1.45;
+  padding-left: 16px;
+  position: relative;
+}
+.todayRecapList li::before {
+  background: var(--m-ink-3, #7b7789);
+  border-radius: 50%;
+  content: "";
+  height: 4px;
+  left: 2px;
+  opacity: 0.5;
+  position: absolute;
+  top: 0.6em;
+  width: 4px;
 }
 
-/* The batch bar appears only with a selection, so the page is a queue at
-   rest and a worksheet while you clear it. */
+/* Roll controls — arrows flanking a row of dots; the active dot stretches into
+   its kind's colour. */
+.todayDeckNav { align-items: center; display: flex; flex: 0 0 auto; gap: 14px; justify-content: center; }
+.todayArrow {
+  align-items: center;
+  background: var(--m-paper-lift, #fcfaf6);
+  border: 1px solid var(--m-line, #dfdacf);
+  border-radius: 50%;
+  color: var(--m-ink-2, #5e5a54);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 18px;
+  height: 34px;
+  justify-content: center;
+  line-height: 1;
+  padding-bottom: 2px;
+  transition: border-color 150ms var(--m-ease, ease), color 150ms var(--m-ease, ease), transform 150ms var(--m-ease, ease);
+  width: 34px;
+}
+.todayArrow:hover:not(:disabled) { border-color: #cdc7ba; color: var(--m-ink, #211f1d); transform: translateY(-1px); }
+.todayArrow:disabled { cursor: default; opacity: 0.4; }
+.todayDots { align-items: center; display: flex; gap: 7px; }
+.todayDot {
+  background: var(--m-ink-3, #7b7789);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  height: 7px;
+  opacity: 0.35;
+  padding: 0;
+  transition: opacity 200ms var(--m-ease, ease), width 200ms var(--m-ease, ease), background 200ms var(--m-ease, ease);
+  width: 7px;
+}
+.todayDot:hover { opacity: 0.7; }
+.todayDot.isOn { background: var(--kind-hue, var(--m-ink, #211f1d)); opacity: 1; width: 22px; }
+
+/* Empty — a calm all-clear filling the space the deck would take. */
+.todayEmpty {
+  align-content: center;
+  border: 1px dashed var(--m-line, #dfdacf);
+  border-radius: 22px;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 12px;
+  justify-items: center;
+  padding: 40px 32px;
+  text-align: center;
+}
+.todayEmptyMark {
+  background: var(--m-bloom, linear-gradient(270deg, #d18ee2, #ff7759));
+  border-radius: 50%;
+  box-shadow: 0 12px 30px -12px rgba(209, 142, 226, 0.7);
+  height: 54px;
+  opacity: 0.9;
+  width: 54px;
+}
+.appMain .todayEmpty h2 { font-size: 20px; margin: 4px 0 0; }
+.todayEmpty p { color: var(--m-ink-2, #5e5a54); font-size: 14px; line-height: 1.6; margin: 0 auto; max-width: 46ch; }
+
+/* The batch bar floats over the deck while a selection is live, then vanishes. */
 .todayBatchBar {
   align-items: center;
-  background: var(--ink);
-  border-radius: var(--radius-md);
-  color: var(--canvas);
+  background: var(--m-ink-btn, #1a1815);
+  border-radius: 16px;
+  bottom: 78px;
+  box-shadow: 0 20px 40px -18px rgba(26, 24, 21, 0.7);
+  color: #f7f4ef;
   display: flex;
   gap: 16px;
-  justify-content: space-between;
-  padding: 10px 12px 10px 16px;
-  position: sticky;
-  top: 8px;
-  z-index: 3;
+  left: 50%;
+  padding: 9px 12px 9px 18px;
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 6;
 }
-.todayBatchBar strong { font-size: 12.5px; }
+.todayBatchBar strong { font-size: 12.5px; font-weight: 600; }
 .todayBatchBar > div { display: flex; gap: 8px; }
 .todayBatchBar .textButton { color: rgba(255, 255, 255, 0.72); }
+.todayBatchBar .textButton:hover:not(:disabled) { color: #fff; }
 .todayBatchBar .secondaryButton {
   background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.22);
-  color: var(--canvas);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #f7f4ef;
 }
-.todayCheck {
-  accent-color: var(--forest, #2f5d50);
-  flex: none;
-  height: 15px;
-  margin: 0;
-  width: 15px;
+.todayBatchBar .secondaryButton:hover:not(:disabled) { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.36); }
+.todayBatchNote {
+  bottom: 130px;
+  color: var(--m-ink-3, #7b7789);
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 6;
 }
-.todayCheckSpacer { visibility: hidden; }
-.todayList li { align-items: center; }
 
-/* The brief opens the day: prose over facts the host counted, never over
-   figures a model produced. */
-.todayBrief {
-  background: var(--glass-bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  display: grid;
-  gap: 8px;
-  padding: 16px 18px;
+@media (max-width: 760px) {
+  .todayRow.hasCheck { grid-template-columns: auto 1fr; }
+  .todayRowActions { grid-column: 1 / -1; justify-content: flex-start; }
+  .todayRow.hasCheck .todayRowActions { padding-left: 28px; }
 }
-.todayNarrative { font-size: 14.5px; line-height: 1.6; margin: 0; }
-.todayRecommendation {
-  border-left: 2px solid var(--terracotta, #c25c3b);
-  color: var(--ink);
-  font-size: 13.5px;
-  font-weight: 550;
-  line-height: 1.55;
-  margin: 2px 0 0;
-  padding-left: 10px;
-}
-.todayBrief ul { display: grid; gap: 3px; list-style: none; margin: 0; padding: 0; }
-.todayBrief li { color: var(--muted); font-size: 12px; }
-.todayBrief li::before { content: "· "; }
 
 /* ── Answer bank ──────────────────────────────────────────────────────────
-   A reading surface first: the answer is the point, and the controls sit
-   under it rather than competing with it. */
-.answerTabs { display: flex; gap: 4px; }
+   A reading surface: the question and its answer lead, and the provenance —
+   how else it was phrased, what it is about, what it stands on — sits in a
+   quiet footer under a hairline, supporting the answer without crowding it. */
+.answerTabs { display: flex; gap: 6px; margin: 4px 0 22px; }
 .answerTabs button {
+  align-items: center;
   background: none;
   border: 1px solid transparent;
   border-radius: 999px;
-  color: var(--muted);
-  font-size: 12px;
-  min-height: 30px;
-  padding: 0 13px;
+  color: var(--m-ink-3, #7b7789);
+  display: inline-flex;
+  font-size: 12.5px;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 15px;
+  transition: background 140ms var(--m-ease, ease), color 140ms var(--m-ease, ease);
 }
+.answerTabs button:hover { color: var(--m-ink, #211f1d); }
 .answerTabs button.selected {
-  background: var(--glass-bg);
-  border-color: var(--line);
-  color: var(--ink);
+  background: var(--m-paper-lift, #fcfaf6);
+  border-color: var(--m-line, #dfdacf);
+  color: var(--m-ink, #211f1d);
 }
-.answerEntities { display: flex; flex-wrap: wrap; gap: 5px; }
+.answerEntities { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 30px; }
 .answerEntities button {
-  background: var(--canvas-deep);
+  align-items: center;
+  background: var(--m-surface, #ede9e1);
   border: 1px solid transparent;
   border-radius: 999px;
-  color: var(--muted);
+  color: var(--m-ink-2, #5e5a54);
   display: inline-flex;
-  font-size: 11px;
-  gap: 6px;
-  min-height: 26px;
-  padding: 0 10px;
+  font-size: 11.5px;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 13px;
+  transition: background 140ms var(--m-ease, ease), border-color 140ms var(--m-ease, ease), transform 140ms var(--m-ease, ease);
 }
-.answerEntities button.selected { background: var(--glass-bg); border-color: var(--line-2); color: var(--ink); }
-.answerEntities b { color: var(--faint); font-weight: 600; }
+.answerEntities button:hover { border-color: var(--m-line, #dfdacf); }
+.answerEntities button.selected {
+  background: var(--m-lav-surface, #f0dff3);
+  border-color: var(--m-lav-edge, #e0c8ea);
+  color: var(--m-ink, #211f1d);
+}
+.answerEntities b { color: var(--m-ink-3, #7b7789); font-weight: 600; }
+
+/* Cards — generous internal rhythm, grouped by meaning rather than one flat
+   stack of same-gap lines. */
 .answerCard {
-  background: var(--glass-bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  background: var(--m-paper-lift, #fcfaf6);
+  border: 1px solid var(--m-line, #dfdacf);
+  border-radius: 16px;
   display: grid;
-  gap: 8px;
-  padding: 18px 20px;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 22px 24px;
 }
-.answerHead { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; }
-.answerHead h2 { font-size: 15px; font-weight: 550; line-height: 1.45; margin: 0; }
+.answerHead { align-items: baseline; display: flex; gap: 14px; justify-content: space-between; }
+.answerHead h2 { color: var(--m-ink, #211f1d); font-size: 16px; line-height: 1.45; margin: 0; }
 .answerStatus {
+  align-self: center;
   border-radius: 999px;
   flex: none;
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 9.5px;
-  letter-spacing: 0.05em;
-  padding: 3px 8px;
+  letter-spacing: 0.06em;
+  padding: 3px 9px;
   text-transform: uppercase;
 }
-.answerStatus.is-active { background: var(--sage-light); color: var(--sage); }
-.answerStatus.is-superseded { background: var(--canvas-deep); color: var(--faint); }
-.answerBody { font-size: 13.5px; line-height: 1.65; margin: 0; }
-.answerMeta { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin: 0; }
-.answerMeta span {
-  color: var(--faint);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 9.5px;
-  letter-spacing: 0.05em;
-  margin-right: 6px;
-  text-transform: uppercase;
-}
-.answerConflicts {
-  background: var(--terracotta-light);
-  border-radius: var(--radius-sm);
+.answerStatus.is-active { background: var(--m-mint-surface, #e5f4ef); color: var(--m-green-ink, #00754e); }
+.answerStatus.is-superseded { background: var(--m-surface, #ede9e1); color: var(--m-ink-3, #7b7789); }
+.answerBody { color: var(--m-ink, #211f1d); font-size: 14.5px; line-height: 1.66; margin: 0; }
+
+/* Provenance footer — one hairline, a fixed label column, room to breathe. */
+.answerMetaGrid {
+  border-top: 1px solid var(--m-line, #dfdacf);
   display: grid;
-  gap: 6px;
-  margin-top: 4px;
-  padding: 11px 13px;
+  gap: 11px;
+  margin: 4px 0 0;
+  padding-top: 15px;
 }
-.answerConflicts strong { font-size: 12px; }
-.answerConflicts label { align-items: flex-start; display: flex; font-size: 12.5px; gap: 8px; line-height: 1.45; }
-.answerConflicts input { accent-color: var(--terracotta); margin-top: 2px; }
-.answerConflicts small { color: var(--muted); font-size: 11px; }
-.answerActions { display: flex; gap: 8px; margin-top: 4px; }
+.answerMetaRow { display: grid; gap: 4px 16px; grid-template-columns: 104px minmax(0, 1fr); }
+.answerMetaRow dt {
+  color: var(--m-ink-3, #7b7789);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  line-height: 1.7;
+  text-transform: uppercase;
+}
+.answerMetaRow dd {
+  color: var(--m-ink-2, #5e5a54);
+  font-size: 12.5px;
+  line-height: 1.55;
+  margin: 0;
+  min-width: 0;
+}
+.answerChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.answerChip {
+  background: var(--m-surface, #ede9e1);
+  border-radius: 7px;
+  color: var(--m-ink-2, #5e5a54);
+  font-size: 11.5px;
+  line-height: 1.4;
+  padding: 3px 9px;
+}
+.answerChip.isCite {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Supersession is a caution — keep the warm tint so "this replaces what you
+   keep" reads as a decision, not a note. */
+.answerConflicts {
+  background: var(--terracotta-light, #ffe6de);
+  border: 1px solid var(--m-coral-soft, #ffad9b);
+  border-radius: 12px;
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 13px 15px;
+}
+.answerConflicts strong { color: var(--m-ink, #211f1d); font-size: 12.5px; }
+.answerConflicts label {
+  align-items: flex-start;
+  color: var(--m-ink-2, #5e5a54);
+  display: flex;
+  font-size: 12.5px;
+  gap: 9px;
+  line-height: 1.5;
+}
+.answerConflicts input { accent-color: var(--m-coral, #ff7759); margin-top: 2px; }
+.answerConflicts small { color: var(--m-ink-3, #7b7789); font-size: 11px; }
+.answerActions { display: flex; gap: 8px; margin-top: 6px; }
+
+@media (max-width: 640px) {
+  .answerMetaRow { gap: 4px; grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── Side-page life: colour by meaning, motion from the front door ─────────
+   The operated pages stay quiet, but quiet is not empty. Two moves, both on
+   the system's own terms: the companion's hues used as *accents keyed to
+   meaning* (never saturated fills), and the home controls' soft bloom lent to
+   the buttons you actually press here. */
+
+/* Each attention kind carries one of the companion's hues. The map lives once;
+   both the row spine and the section dot read `--kind-hue` off it. */
+.todayPage [data-kind="run_approval"]  { --kind-hue: var(--m-coral, #ff7759); }
+.todayPage [data-kind="customer_action"] { --kind-hue: var(--m-gold, #ffe08a); }
+.todayPage [data-kind="customer_note"] { --kind-hue: var(--m-violet, #d18ee2); }
+.todayPage [data-kind="tool_proposal"] { --kind-hue: var(--m-mint, #7be3d8); }
+.todayPage [data-kind="memory"]        { --kind-hue: var(--m-blue, #9cb8ec); }
+.todayPage [data-kind="asset_trust"]   { --kind-hue: var(--m-coral, #ff7759); }
+.todayPage [data-kind="stale_source"]  { --kind-hue: var(--m-violet, #d18ee2); }
+.todayPage .todayRow.isOverdue         { --kind-hue: var(--m-coral, #ff7759); }
+/* The deck's own hue visuals (rail dot, slide dot, focus-row spine, active
+   dot) live in the Today block above; this region only maps kind → --kind-hue. */
+
+/* Answer entities take a pale wash of their hashed hue — pale surface, dark
+   type, the Cohere selection pattern — so a subject reads the same across the
+   filter row and every card. Citations stay neutral: they are paths, not
+   subjects. */
+.answerEntities button[data-tone="mint"],  .answerChip[data-tone="mint"]  { background: var(--m-mint-surface, #e5f4ef); color: var(--m-green-ink, #00754e); }
+.answerEntities button[data-tone="coral"], .answerChip[data-tone="coral"] { background: var(--terracotta-light, #ffe6de); color: var(--coral-ink, #cf4023); }
+.answerEntities button[data-tone="violet"],.answerChip[data-tone="violet"]{ background: var(--m-lav-surface, #f0dff3); color: #7a3f96; }
+.answerEntities button[data-tone="blue"],  .answerChip[data-tone="blue"]  { background: #e7ecfb; color: #3a53c0; }
+.answerEntities button[data-tone="gold"],  .answerChip[data-tone="gold"]  { background: #f8efd6; color: #876717; }
+.answerEntities button[data-tone] b { color: currentColor; opacity: 0.6; }
+.answerEntities button { transition: transform 140ms var(--m-ease, ease), box-shadow 140ms var(--m-ease, ease), background 140ms var(--m-ease, ease); }
+.answerEntities button:hover { transform: translateY(-1px); }
+/* Selected keeps its tone and rings itself in its own ink, rather than
+   flattening to one grey. */
+.answerEntities button.selected { border-color: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+
+/* The soft lilac→coral bloom the primary pill and the home controls light up
+   with, lent to the secondary buttons you press on these pages — an "Open" or
+   "Retire" now answers the pointer like the front door. Page bodies only: the
+   header's buttons sit on the purple field and keep their ink-glass. */
+.workspacePage .secondaryButton { position: relative; z-index: 0; }
+.workspacePage .secondaryButton::before {
+  background: var(--m-bloom, linear-gradient(270deg, #d18ee2, #ff7759));
+  border-radius: inherit;
+  content: "";
+  filter: blur(8px);
+  inset: -3px;
+  opacity: 0;
+  position: absolute;
+  transform: scale(0.94);
+  transition: transform 0.34s var(--m-ease, ease), opacity 0.34s var(--m-ease, ease);
+  z-index: -1;
+}
+.workspacePage .secondaryButton:hover:not(:disabled)::before { opacity: 0.8; transform: scale(1); }
+.pageHeader .secondaryButton::before,
+.customerWorkbenchHeader .secondaryButton::before { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .todayRailChip,
+  .todaySlide,
+  .todayArrow,
+  .todayDot,
+  .workspacePage .secondaryButton::before,
+  .answerEntities button { transition: none; }
+  .todayRailChip:hover,
+  .todayArrow:hover:not(:disabled) { transform: none; }
+  /* Non-active cards still recede, just without the animated ease. */
+  .answerEntities button:hover { transform: none; }
+}

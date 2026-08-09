@@ -178,6 +178,14 @@ class Settings(BaseSettings):
 
     # Per-run cloud provider. Metis keeps memory authoritative via store=False.
     allow_oci_responses: bool = False
+    # Kill-switch for the Grok reasoning lane (OCI Responses as a Metis
+    # provider), independent of allow_oci_responses on purpose: that flag also
+    # governs whether *generated apps* may be handed OCI Responses credentials
+    # (project_env.py), a different product surface with a different owner.
+    # Off, the lane disables cleanly everywhere — preference collapses to
+    # local, the web controls grey out, project modes 409 with a named reason
+    # — and turning it back on is this one flag, no migration.
+    grok_lane_enabled: bool = True
     oci_responses_project_id: str = ""
     oci_responses_base_url: str = (
         "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/openai/v1"
@@ -408,6 +416,12 @@ class Settings(BaseSettings):
         return self.data_dir / "runs"
 
     @property
+    def uploads_mirror_dir(self) -> Path:
+        # Documents added to the knowledge base from chat land here as one
+        # managed corpus source, mirroring how Notion pages are mirrored.
+        return self.data_dir / "corpus" / "uploads"
+
+    @property
     def asset_approval_path(self) -> Path:
         return self.data_dir / "asset-launch-approvals.json"
 
@@ -459,6 +473,21 @@ class Settings(BaseSettings):
     def profile_path(self) -> Path:
         """The Tier-0 always-on personal profile (local, user-owned markdown)."""
         return self.data_dir / "profile.md"
+
+    @property
+    def grok_lane_available(self) -> bool:
+        """The one formula for "may Metis call Grok over OCI Responses".
+
+        Written once, here, because it used to exist twice — the preference
+        store and the provider each hand-rolled the same conjunction — and a
+        new conjunct (the lane kill-switch) landing in one copy but not the
+        other would disagree about reality in the worst possible place.
+        """
+        return bool(
+            self.grok_lane_enabled
+            and self.allow_oci_responses
+            and self.oci_responses_project_id.strip()
+        )
 
     @property
     def model_preference_path(self) -> Path:

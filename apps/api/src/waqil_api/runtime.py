@@ -211,6 +211,14 @@ class AppRuntime:
                 if status.connected:
                     result = await self.notion.sync()
                     logger.info("notion refresh: %s", result.message)
+                    if self.customers is not None:
+                        filed = await self.customers.ingest_notion_documents(
+                            self.notion.last_synced_documents()
+                        )
+                        if filed:
+                            logger.info(
+                                "notion → customer records: %d new proposal(s)", filed
+                            )
             except Exception as error:  # noqa: BLE001 - retrieval quality only
                 logger.info("notion refresh skipped: %s", str(error)[:200])
             await asyncio.sleep(every * 3600)

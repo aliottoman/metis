@@ -266,3 +266,28 @@ def test_parse_json_output_names_a_missing_await() -> None:
 
     with pytest.raises(ExtractionError, match="got dict"):
         parse_json_output({"already": "parsed"})
+
+
+def test_the_page_helper_always_carries_the_theme_and_the_wrapper() -> None:
+    """The parts a build reliably gets wrong — charset, viewport, the theme
+    link, the .page wrapper — are the parts it should not be writing by hand."""
+    from waqil_api.scaffold.appkit import web
+
+    html = web.page("Blueprint", "<h1>Hello</h1>")
+    assert html.startswith("<!DOCTYPE html>")
+    assert web.THEME_HREF in html
+    assert 'class="page"' in html
+    assert "<h1>Hello</h1>" in html
+    assert 'charset="utf-8"' in html
+    assert "initial-scale=1" in html
+    assert "<title>Blueprint</title>" in html
+
+
+def test_the_theme_is_mounted_away_from_the_projects_own_static() -> None:
+    """A build keeps writing its own /static assets; the theme must not be
+    overwritable by, or collide with, anything the model puts there."""
+    from waqil_api.scaffold.appkit import web
+
+    assert web.MOUNT_PATH == "/appkit"
+    assert not web.THEME_HREF.startswith("/static")
+    assert (web.STATIC_DIR / "theme.css").is_file()

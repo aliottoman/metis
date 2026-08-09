@@ -51,6 +51,11 @@ _NEW_WORK = re.compile(
 _NOTE_CAPTURE = re.compile(
     r"\b(?:add|save|put|append|attach)\b[^.?!\n]{0,40}\bnotes?\b"
     r"|\bnote\s+(?:for|on|about|against)\b"
+    # "update the account with this note", "file it as the following note" — the
+    # note arrives attached to a filing verb rather than after one.
+    r"|\b(?:with|as)\s+(?:this|the\s+following|a)\s+notes?\b"
+    # "note:" / "note —" introduce a body the user is handing over to store.
+    r"|\bnotes?\s*[:—]"
     r"|\b(?:capture|record|log|file|jot)\s+(?:this|that|the\s+following|it)\b",
     re.IGNORECASE,
 )
@@ -72,14 +77,36 @@ def wants_cleanup(prompt: str) -> bool:
     return bool(_CLEANUP.search(prompt))
 
 
+# "File this in the answer bank:", "Note for later —", "Remember this:". The
+# clause is an instruction about where to put the statement, not part of it.
+_FILING_PREFIX = re.compile(
+    r"^\s*(?:please\s+)?"
+    r"(?:file|save|capture|record|log|note|jot|remember|keep|store)\b"
+    r"[^:—\n]{0,60}[:—]\s*",
+    re.IGNORECASE,
+)
+
+
+def statement_without_filing_verb(prompt: str) -> str:
+    """The statement a filing request carries, with the filing clause removed.
+
+    Only a leading "…:" or "…—" clause goes, and only when it opens with a
+    filing verb: everything after it is the user's own words, untouched. A
+    message with no such clause is returned exactly as written."""
+    return _FILING_PREFIX.sub("", prompt, count=1).strip() or prompt.strip()
+
+
+def reports_work(prompt: str) -> bool:
+    """True when a message settles or creates work — as opposed to only asking
+    for something to be kept. A note-capture that reports no work has nothing
+    to match against the action list, so it needs an account of its own."""
+    return bool(_COMPLETION.search(prompt) or _NEW_WORK.search(prompt))
+
+
 def is_queue_update_request(prompt: str) -> bool:
     """True when a message reports finished work, tracks new work, or files a
     note against an account."""
-    return bool(
-        _COMPLETION.search(prompt)
-        or _NEW_WORK.search(prompt)
-        or _NOTE_CAPTURE.search(prompt)
-    )
+    return bool(reports_work(prompt) or _NOTE_CAPTURE.search(prompt))
 
 
 def _normalize(text: str) -> str:
@@ -109,27 +136,91 @@ def identifiers_preserved(tidied: str, original: str) -> bool:
     return True
 
 
+_ALIAS_STOPWORDS = {"of", "and", "the", "for", "via", "in", "a", "an"}
+
+
+def _account_match_keys(name: str) -> tuple[set[str], str]:
+    """The acronyms an account can be named by, and the initials of its base
+    name. "Ministry of Communications and Information Technology (MCIT)" yields
+    acronyms {"mcit"} and initials "mcit" — so its own short form ranks above an
+    account that merely mentions "(via MCIT)"."""
+    acronyms = {a.lower() for a in re.findall(r"\b[A-Z]{2,}\b", name)}
+    base = re.split(r"[(\[]", name, maxsplit=1)[0]
+    initials = "".join(
+        word[0]
+        for word in re.findall(r"[A-Za-z]+", base)
+        if word.lower() not in _ALIAS_STOPWORDS
+    ).lower()
+    return acronyms, initials
+
+
+def _score_accounts(prompt: str, accounts: list[dict]) -> list[tuple[int, dict]]:
+    """Every account the message plausibly names, scored and ranked. Full formal
+    name typed out = 100; an account's own acronym (equal to its initials) = 70;
+    a passing mention of another org's acronym in the name = 40. Shared by the
+    "offer candidates" and "resolve one" callers so they agree."""
+    haystack = _normalize(prompt)
+    prompt_tokens = set(re.findall(r"[a-z0-9]{2,}", prompt.lower()))
+    scored: list[tuple[int, dict]] = []
+    for account in accounts:
+        name = str(account.get("name", ""))
+        if len(_normalize(name)) < 3:
+            continue
+        score = 0
+        if _normalize(name) in haystack:
+            score = 100  # the full formal name was typed out
+        else:
+            acronyms, initials = _account_match_keys(name)
+            hit = acronyms & prompt_tokens
+            if hit:
+                # Its own acronym (equal to its initials) beats a name that only
+                # mentions another org's acronym in parentheses.
+                score = 70 if initials and initials in hit else 40
+        if score:
+            scored.append((score, account))
+    scored.sort(key=lambda item: -item[0])
+    return scored
+
+
 def candidate_accounts(
     prompt: str, accounts: list[dict], scoped_id: str = ""
 ) -> list[dict]:
-    """The accounts a note could be filed against, narrowed to those the
-    message actually names.
+    """The accounts a note could be filed against, narrowed to those the message
+    refers to — by full name, or by a short form the user actually types.
 
-    108 accounts cannot all go in the prompt, and should not: the model must
-    choose from the ones the user referred to, not the whole book. A
-    conversation already scoped to an account needs no naming at all."""
+    People write "MCIT", not "Ministry of Communications and Information
+    Technology (MCIT)"; requiring the full formal name matched nothing and
+    dropped the note. So an account also matches by acronym, its OWN acronym
+    ranked first. A conversation already scoped to an account needs no naming."""
     if scoped_id:
         scoped = [a for a in accounts if str(a.get("id")) == scoped_id]
         if scoped:
             return scoped
-    haystack = _normalize(prompt)
-    named = [
-        account
-        for account in accounts
-        if len(_normalize(str(account.get("name", "")))) >= 3
-        and _normalize(str(account.get("name", ""))) in haystack
-    ]
-    return named[:8]
+    return [account for _, account in _score_accounts(prompt, accounts)[:8]]
+
+
+def resolve_account(
+    prompt: str, accounts: list[dict], scoped_id: str = ""
+) -> tuple[dict | None, list[dict]]:
+    """Which single account an *unscoped* message is about, so it can run through
+    the customer agent as if it had been scoped.
+
+    Returns ``(account, [])`` when one match is clearly ahead (confident — file
+    it and auto-scope), ``(None, [a, b, …])`` when several tie at the top
+    (ambiguous — ask which one), and ``(None, [])`` when nothing is named. A
+    scoped conversation always resolves to its own account."""
+    if scoped_id:
+        scoped = [a for a in accounts if str(a.get("id")) == scoped_id]
+        if scoped:
+            return scoped[0], []
+    scored = _score_accounts(prompt, accounts)
+    if not scored:
+        return None, []
+    top_score = scored[0][0]
+    tied = [account for score, account in scored if score == top_score]
+    if len(tied) == 1:
+        return tied[0], []
+    return None, tied[:5]
 
 
 def accounts_block(accounts: list[dict]) -> str:
@@ -164,17 +255,21 @@ def validate(
     renders its approval card from validated records rather than from anything
     the model wrote."""
     by_id = {str(action["id"]): action for action in actions}
-    # Accounts a new action or note may touch: those carrying an open action,
-    # plus any the host explicitly offered for a note-capture.
-    accounts = {str(action.get("account_id") or "") for action in actions}
-    accounts |= {str(a.get("id") or "") for a in (offered_accounts or [])}
+    # Accounts a new action may touch: those carrying an open action, plus any
+    # the host explicitly offered for a note-capture.
+    offered = {str(a.get("id") or "") for a in (offered_accounts or [])}
+    accounts = {str(action.get("account_id") or "") for action in actions} | offered
 
     unmatched = list(proposal.unmatched)
 
-    # The note. Its account must be one the host offered — a model cannot file
-    # a note against an account this message never named.
+    # The note. Its account must be one the host OFFERED — one the message
+    # actually named, or the account the conversation is scoped to. Merely
+    # carrying an open action is not being named: every open action's account
+    # used to qualify, so a note that named no account at all was filed against
+    # whichever account the model happened to see in the action list. A note
+    # about Metis's own build coder landed on a Ukrainian bank that way.
     note = proposal.note
-    if note is not None and note.account_id not in accounts:
+    if note is not None and note.account_id not in offered:
         unmatched.append(f"note for unknown account {note.account_id}")
         note = None
     # A new action with no account of its own inherits the note's account when

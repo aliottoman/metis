@@ -430,3 +430,122 @@ def test_staged_syntax_gate_skips_languages_it_cannot_safely_parse() -> None:
         }
     )
     assert staged_syntax_errors(unparseable_but_skipped) == []
+
+
+def test_project_ask_user_pauses_the_build_and_resumes_with_the_answer(
+    tmp_path: Path,
+) -> None:
+    """The loop's talk channel: a scoped turn pauses on the model's question,
+    the user answers on the same endpoint the planner path uses, and the SAME
+    turn continues with the answer as the ask_user call's result. Before this
+    channel existed, a model that wanted to clarify could only fabricate a
+    completion — the original live failure this guards against."""
+    projects_root = tmp_path / "Projects"
+    project = projects_root / "demo"
+    project.mkdir(parents=True)
+    (project / "README.md").write_text("# Demo\n", encoding="utf-8")
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        repo_root=tmp_path,
+        asset_roots=[projects_root],
+        model_backend="deterministic",
+        reference_runner_mode="deterministic",
+        allow_test_backends=True,
+    )
+    with TestClient(create_app(settings)) as client:
+        project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
+        assert client.post(
+            f"/api/v1/projects/{project_id}/open",
+            json={"mode": "grok_bootstrap_local"},
+        ).status_code == 200
+        conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
+        run_id = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages",
+            json={
+                "content": "[project-ask-test]",
+                "project_id": project_id,
+                "project_mode": "grok_bootstrap_local",
+            },
+        ).json()["run_id"]
+        for _ in range(200):
+            run = client.get(f"/api/v1/runs/{run_id}").json()
+            if run["status"] in {"awaiting_input", "completed", "failed"}:
+                break
+            time.sleep(0.01)
+        assert run["status"] == "awaiting_input", run
+
+        # The question is recoverable exactly like a planner-path pause.
+        recoverable = client.get("/api/v1/runs?status=awaiting_input").json()
+        pending = next(
+            item["elicitation"] for item in recoverable if item["run"]["id"] == run_id
+        )
+        assert pending["question"] == "Which option would you like?"
+        assert pending["options"] == ["Option A", "Option B"]
+
+        answered = client.post(
+            f"/api/v1/runs/{run_id}/answers", json={"option": "Option A"}
+        )
+        assert answered.status_code == 200, answered.text
+        for _ in range(200):
+            run = client.get(f"/api/v1/runs/{run_id}").json()
+            if run["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.01)
+        assert run["status"] == "completed", run
+
+        messages = client.get(
+            f"/api/v1/conversations/{conversation_id}/messages"
+        ).json()
+        final = messages[-1]
+        assert final["role"] == "assistant"
+        # The answer flowed back into the loop and out through respond…
+        assert "They answered: Option A" in final["content"]
+        # …and a talk turn never wears the empty-build footer.
+        assert "No file changes were staged" not in final["content"]
+
+
+def test_project_respond_answers_without_the_stage_footer(tmp_path: Path) -> None:
+    """respond is an answer, not a completion claim: no staged files, no
+    footer, no premature-finish pushback."""
+    projects_root = tmp_path / "Projects"
+    project = projects_root / "demo"
+    project.mkdir(parents=True)
+    (project / "README.md").write_text("# Demo\n", encoding="utf-8")
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        repo_root=tmp_path,
+        asset_roots=[projects_root],
+        model_backend="deterministic",
+        reference_runner_mode="deterministic",
+        allow_test_backends=True,
+    )
+    with TestClient(create_app(settings)) as client:
+        project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
+        assert client.post(
+            f"/api/v1/projects/{project_id}/open",
+            json={"mode": "grok_bootstrap_local"},
+        ).status_code == 200
+        conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
+        run_id = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages",
+            json={
+                "content": "[project-respond-test]",
+                "project_id": project_id,
+                "project_mode": "grok_bootstrap_local",
+            },
+        ).json()["run_id"]
+        for _ in range(200):
+            run = client.get(f"/api/v1/runs/{run_id}").json()
+            if run["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.01)
+        assert run["status"] == "completed", run
+        messages = client.get(
+            f"/api/v1/conversations/{conversation_id}/messages"
+        ).json()
+        final = messages[-1]
+        assert final["role"] == "assistant"
+        assert "This project uses FastAPI" in final["content"]
+        assert "No file changes were staged" not in final["content"]
