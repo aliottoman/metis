@@ -3067,7 +3067,8 @@ def test_reads_are_weighted_by_whether_they_learned_anything() -> None:
     # The real numbers: GLM's longest fresh run survives, kimi's loop does not.
     budget = _explore_budget({"project_planned_files": ["a", "b", "c", "d"]})
     assert 18 < budget, "GLM's 18 consecutive fresh reads must not be cut off"
-    assert 6 * _UNPRODUCTIVE_READ_WEIGHT > budget, "kimi's loop must trip quickly"
+    # kimi made 36 consecutive repeats; ending well inside that is the job.
+    assert 8 * _UNPRODUCTIVE_READ_WEIGHT >= budget, "kimi's loop must still trip"
 
 
 @pytest.mark.asyncio
@@ -3312,3 +3313,54 @@ async def test_the_explore_act_arc_is_emitted_as_phase_events() -> None:
     })
     assert planned["project_phase"] == "building"
     assert [p["phase"] for k, p in events if k == "project.phase"] == ["building"]
+
+
+def test_a_request_to_change_existing_code_is_recognised_as_project_work() -> None:
+    """The predicate gates three things at once, so missing a phrasing is not
+    one bug but three: no plan, no appkit scaffold, and — because the budget
+    scales with the plan's file count — the smallest exploration budget in the
+    system. A live "CompletelyRevamp the UI here" hit all three and died at
+    step five having productively read eleven files.
+
+    The build patterns all describe making something NEW, so every request to
+    rework what exists fell through. The verb tolerates being glued to the
+    word before it (that live prompt had no space) and is paired with a target
+    noun so ordinary prose stays out."""
+    from waqil_api.model_provider import is_project_build_request
+
+    for prompt in (
+        "CompletelyRevamp the UI here and simplify so its not super busy",
+        "Revamp the UI here",
+        "redesign the interface",
+        "reskin the app",
+        "refactor this module",
+        "Rewire this app's entire UI onto the Metis design language",
+        "convert this streamlit app to fastapi",
+    ):
+        assert is_project_build_request(prompt) is True, prompt
+
+    # A change verb without a code target is still just conversation.
+    for prompt in (
+        "Thanks, that all looks good.",
+        "simplify that explanation for me",
+        "what does app.py do in this project?",
+    ):
+        assert is_project_build_request(prompt) is False, prompt
+
+
+def test_two_early_repeat_reads_cannot_end_a_turn() -> None:
+    """The repeat weight is for a SUSTAINED loop, not a stumble.
+
+    Calibrated against a 48-step doom loop, a weight of five was sharp enough
+    that on an unplanned turn two repeats reached the ceiling alone — which is
+    exactly how a healthy revamp died at step five. The guard must still catch
+    the loop, in a handful of repeats rather than two."""
+    from waqil_api.control_plane import _UNPRODUCTIVE_READ_WEIGHT, _explore_budget
+
+    unplanned = _explore_budget({"project_planned_files": []})
+    # The live failure: three fresh reads and two repeats must survive.
+    assert 3 + 2 * _UNPRODUCTIVE_READ_WEIGHT < unplanned
+    # The live doom loop (36 repeats) must still end quickly.
+    assert 5 * _UNPRODUCTIVE_READ_WEIGHT >= unplanned
+    # And wide, honest exploration under a real plan is untouched.
+    assert 18 < _explore_budget({"project_planned_files": ["a", "b", "c", "d"]})

@@ -7475,7 +7475,7 @@ _MAX_REFUSED_STEPS = 5
 # model to write or finish; the ceiling ends the turn and offers whatever was
 # staged. Both sit far above honest exploration — a real build interleaves a
 # write within a handful of reads, which resets the count.
-_EXPLORE_BASE_STEPS = 10
+_EXPLORE_BASE_STEPS = 12
 _EXPLORE_STEPS_PER_PLANNED_FILE = 3
 _EXPLORE_CEILING = 28
 
@@ -7526,9 +7526,15 @@ _FOCUSED_READ_ALLOWANCE = 2
 # the model asked for something already in its own trace, so the step bought
 # no information. Weighting it is what separates the two live 48-step turns
 # that otherwise look identical from the outside — 42 fresh reads that
-# produced three files, against 36 repeats that produced none. Five means a
-# genuine loop ends in a few steps while a model reading widely is left alone.
-_UNPRODUCTIVE_READ_WEIGHT = 5
+# produced three files, against 36 repeats that produced none.
+#
+# Three, not five. Five was calibrated against a 48-step doom loop and was far
+# too sharp at the other end: on an unplanned turn (budget 12) two early
+# repeats reached the ceiling on their own, and a live UI revamp died at step
+# FIVE having productively read eleven files through batching. A doom loop is
+# a sustained pattern, so the guard only needs to catch it within a handful of
+# repeats — four here — not within two.
+_UNPRODUCTIVE_READ_WEIGHT = 3
 
 
 # Steps of looking around before the turn's file manifest is taken. The plan
