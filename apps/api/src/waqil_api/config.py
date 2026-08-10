@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     cline_base_url: str = "https://api.cline.bot/api/v1"
     cline_orchestrator_model: str = "anthropic/claude-opus-4.5"
     cline_coder_model: str = "cline-pass/deepseek-v4-pro"
-    cline_max_output_tokens: int = Field(default=8192, ge=256, le=64000)
+    cline_max_output_tokens: int = Field(default=32_768, ge=256, le=200_000)
 
     # Speech to text, on the same key. Dictation is the one place a cloud call
     # is hard to argue with even in a local-first app: the audio is a few
@@ -265,6 +265,15 @@ class Settings(BaseSettings):
     # file is written next and what it must contain; another (the `coder` role)
     # writes exactly that file with reads closed. Off returns the loop to the
     # single-model arc, which is also the control for measuring this.
+    # A write step's own output ceiling, separate from chat's. A whole-file
+    # rewrite has to EMIT the file: measured, a 28,819-character stylesheet needs
+    # roughly 8-10k tokens of output, so the 8,192 shared with chat made the
+    # write physically inexpressible — and the model that could not emit it had
+    # no way to say so, which reads exactly like a model that would not try.
+    # The ClinePass models allow 131k-384k output; this is not the binding
+    # constraint it was pretending to be.
+    project_write_max_output_tokens: int = Field(default=32_768, ge=1_024, le=200_000)
+
     project_orchestrator_enabled: bool = True
     # How many times one file may be directed before the host stops asking. A
     # repair is the orchestrator naming the same path again, which is right and

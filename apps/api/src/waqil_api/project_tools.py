@@ -351,6 +351,40 @@ def narrowed_project_tools(owed: list[str] | None = None) -> list[dict[str, Any]
     return narrowed
 
 
+# What a coder may do on a step the orchestrator directed. Everything else is
+# either refused by the host anyway (the reads) or belongs to a seat this one
+# does not hold (run_check, ask_user, respond).
+DIRECTED_TOOLS = frozenset(
+    {"create_file", "apply_patch", "replace_lines", "revise_plan", FINISH_TOOL_NAME}
+)
+
+
+def directed_project_tools(owed: list[str] | None = None) -> list[dict[str, Any]]:
+    """The roster for a directed step: write the one file, or say you cannot.
+
+    On a directed step the host refuses reads outright — the orchestrator has
+    already said what this file needs and the host has already fetched it — but
+    the model was still being *shown* read_file, list_files, search_code and
+    inspect_api. Telling it in prose that reads are closed while handing it four
+    read tools is not a narrow subtask; it is an invitation, and it was taken:
+    in a live revamp the coder answered a directed step with read_file and then
+    spent twenty-three more steps reading.
+
+    So the illegal tools are removed rather than merely refused. Twelve becomes
+    five, and every one of the five is something the step can actually do.
+
+    finish_project_task stays, for the same reason it stays in the narrowed
+    roster: a model with no legal move does not stop, it stalls. revise_plan
+    stays because "this instruction cannot be carried out" is a real answer and
+    the only alternative is writing something wrong.
+    """
+    return [
+        tool
+        for tool in narrowed_project_tools(owed)
+        if tool.get("name") in DIRECTED_TOOLS
+    ]
+
+
 def chat_tool_format(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The same definitions in the nested shape the Ollama chat API expects.
 

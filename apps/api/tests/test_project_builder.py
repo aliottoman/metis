@@ -2228,10 +2228,29 @@ async def test_a_run_of_reads_without_a_write_ends_the_turn() -> None:
     from waqil_api.control_plane import ControlPlane, _explore_budget
 
     plane = object.__new__(ControlPlane)
-    plane.projects = SimpleNamespace(context=_empty_context)
+
+    async def _unavailable(*args: object, **kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(available=False, reason="", checks=[], findings=[])
+
+    async def _clean(*args: object, **kwargs: object) -> list[object]:
+        # The ceiling exit now verifies before it offers, so the fake has to
+        # answer that question. Clean, so this test still owns the ceiling and
+        # test_staged_verification owns the repair loop.
+        return []
+
+    plane.projects = SimpleNamespace(
+        context=_empty_context,
+        verify_staged_syntax=_clean,
+        verify_staged_wiring=_clean,
+        verify_staged_types=_clean,
+        verify_staged_conformance=_clean,
+        # The runtime rung answers with an outcome object, not a list.
+        verify_staged_runtime=_unavailable,
+    )
     plane.events = SimpleNamespace(emit=_noop_emit)
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48, project_verify_bonus_steps=0,
+        project_verify_enabled=False, project_typecheck_enabled=False,
     )
     plane._guard = _noop_emit
     plane._stage = _noop_emit
