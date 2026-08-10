@@ -436,3 +436,55 @@ narrow file at a time, a real map so neither has to guess, and the human
 checkpoints Metis already has at the approval card. The measurable claim is that
 the **4-file interdependent conversion completes in one turn** — the exact task
 that is on record as failing on every lane today.
+
+---
+
+## O7 — what the Argus revamp exposed, fixed 2026-08-10
+
+A UI revamp rewrote eleven React components in one turn, never wrote the
+stylesheet they were written for, and reached the user's disk with the approval
+card reporting "static checks pass". On disk: 121 of 187 CSS classes defined
+nowhere. Four defects, all host-side.
+
+**1. Twelve tools on a step where four were legal.** A directed step refuses
+reads — and was still advertising `read_file`, `list_files`, `search_code` and
+`inspect_api`. Prose said reads were closed; the roster said otherwise, and the
+coder believed the roster: it answered a directed step with `read_file` and then
+spent twenty-three more steps reading. Now `directed_project_tools` /
+`project_roster` cut the roster to five (three writes, `revise_plan`, `finish`),
+and `project_directed_schema` makes a read ungrammatical on the local lane too.
+This is the research's "narrow, tightly-scoped subtasks" lever, which we had
+been violating.
+
+**2. The orchestrator could not see what failed.** When `styles.css` hit the
+attempt cap it simply vanished from `available_files` — no signal separated
+"already written" from "we gave up". So the orchestrator, reasonably, directed
+the eleven files that depend on it. It now receives `blocked_files` (path,
+attempts, reason) and `last_direction` (what it asked for, and whether it
+landed), and its prompt says a blocked foundation means stop or re-scope — never
+direct a file whose correctness requires the hole. Its trace budget went 12k →
+40k: it had been the least-informed participant in a loop it was directing.
+
+**3. Twenty-three steps of drift.** With only capped files left, the turn
+returned to the undirected loop and read to the ceiling. It now ends immediately,
+naming the file it could not write and warning that the staged work depends on it.
+
+**4. The card could not see a broken contract between files.** New
+`project_contracts.py`, wired into the conformance rung — all checks of one
+shape, *referenced in a staged file and defined nowhere*:
+- CSS classes and custom properties used in JSX/HTML that no stylesheet defines
+- relative JS/JSX imports that resolve to no file (`posixpath.normpath`, because
+  `Path` keeps `..` literal and every import out of a subdirectory looked missing)
+- staged `.json` that does not parse — Python had a stage-time parse gate,
+  presets and fixtures had nothing
+- packages `package.json` does not declare (advisory, like the Python twin)
+
+False-positive guards that are load-bearing: a project with no stylesheet is not
+judged; a utility framework (`@tailwind`, `@apply`) suppresses the class check
+entirely, since its vocabulary does not exist until the build runs; and a small
+share of unknown classes advises rather than blocks — only an undeclared custom
+property or a majority of the file's vocabulary is unambiguous enough to block.
+
+**Verified against the real changeset:** replayed through
+`verify_staged_conformance`, the twelve files that were approved now produce
+**10 blocking findings**. The Approve button would not have been offered.

@@ -30,6 +30,7 @@ from .contracts import (
     ProjectWorkspaceV1,
 )
 from .project_conformance import staged_conformance_errors
+from .project_contracts import cross_file_findings, is_stylesheet, style_gaps
 from .project_lookup import LookupError_, inspect_installed_api
 from .project_env import CAPABILITY_VARS, capabilities_of_tree
 from .project_patch import EXACT, PatchProblem, locate_patch
@@ -1360,13 +1361,43 @@ class ProjectWorkspaceService:
         """
         if not staged:
             return []
-        paths, _, _ = await self._static_context(asset_id, staged)
-        return await asyncio.to_thread(
-            staged_conformance_errors,
-            staged,
-            planned=list(planned or []),
-            on_disk=paths,
-        )
+        paths, sources, _ = await self._static_context(asset_id, staged)
+
+        def check() -> list[dict[str, str]]:
+            return [
+                *staged_conformance_errors(
+                    staged, planned=list(planned or []), on_disk=paths
+                ),
+                # Contracts BETWEEN files: the defects where every file is
+                # individually well-formed and the changeset is still broken.
+                *cross_file_findings(staged, on_disk=paths, disk_sources=sources),
+            ]
+
+        return await asyncio.to_thread(check)
+
+    async def style_gaps(
+        self, asset_id: str, staged: dict[str, dict[str, Any]]
+    ) -> dict[str, list[str]]:
+        """The classes and custom properties this project's markup needs and lacks.
+
+        Given to the coder when it has been directed at a stylesheet, so writing
+        one is a list to satisfy rather than a repository to re-read.
+        """
+        _, sources, _ = await self._static_context(asset_id, staged)
+        sheets = {
+            path: text for path, text in sources.items() if is_stylesheet(path)
+        }
+        for path, entry in staged.items():
+            if is_stylesheet(path):
+                sheets[path] = str(entry.get("content", ""))
+        markup = {
+            path: text
+            for path, text in sources.items()
+            if Path(path).suffix.lower() in {".jsx", ".tsx", ".vue", ".svelte", ".html", ".htm"}
+        }
+        if not sheets or not markup:
+            return {"classes": [], "variables": []}
+        return await asyncio.to_thread(style_gaps, sheets, markup)
 
     async def verify_staged_runtime(
         self,
@@ -1424,7 +1455,21 @@ class ProjectWorkspaceService:
             for path, relative in self._iter_files(root):
                 text_path = relative.as_posix()
                 paths.append(text_path)
-                if not with_sources or path.suffix.lower() not in {".py", ".pyi"}:
+                # Python for the wiring gate; stylesheets and package
+                # manifests for the cross-file contracts, which cannot answer
+                # "does this class exist" from the overlay alone.
+                # Python for the wiring gate; stylesheets, markup and package
+                # manifests for the cross-file contracts. Markup is read because
+                # the check runs BOTH ways: a turn that stages only a stylesheet
+                # has to be judged against the components already on disk, which
+                # are the ones about to render against it.
+                if not with_sources or (
+                    path.suffix.lower() not in {
+                        ".py", ".pyi", ".css", ".scss", ".sass", ".less",
+                        ".jsx", ".tsx", ".vue", ".svelte", ".html", ".htm",
+                    }
+                    and path.name != "package.json"
+                ):
                     continue
                 try:
                     size = path.stat().st_size

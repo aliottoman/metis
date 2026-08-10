@@ -236,3 +236,21 @@ async def test_a_missing_key_names_the_variable() -> None:
     provider = ClineModelProvider(Settings(_env_file=None, cline_api_key=""))
     with pytest.raises(ModelProviderError, match="WAQIL_CLINE_API_KEY"):
         await provider._client()
+
+
+@pytest.mark.asyncio
+async def test_no_credits_names_the_subscription_boundary() -> None:
+    """The failure that silently stalled a live turn. ClinePass covers the
+    cline-pass/* models; Anthropic and xAI bill against credits, and an empty
+    balance is a configuration fact, not a model failing."""
+    client = _Client(
+        _Response(402, {"error": {"code": "insufficient_credits", "message": "Insufficient balance."}})
+    )
+    with pytest.raises(ModelProviderError) as caught:
+        await _provider(client).project_direction({})
+    message = str(caught.value)
+    assert "credits" in message
+    assert "cline-pass/*" in message
+    assert "app.cline.bot/credits" in message
+    # Not retried: an empty balance does not fill itself in one second.
+    assert len(client.sent) == 1

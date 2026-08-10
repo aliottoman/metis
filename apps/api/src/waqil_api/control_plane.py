@@ -93,6 +93,7 @@ from .project_scaffold import (
     scaffold_prompt,
     wants_web_ui,
 )
+from .project_contracts import is_stylesheet
 from .project_workspace import ProjectWorkspaceError, VerificationNotApprovedError
 from .run_history import changes_from_trace
 from .policy import (
@@ -133,6 +134,69 @@ def _bounded_check_name(call: ProjectToolCallV1) -> str:
 _REPEATABLE_PROJECT_READS = frozenset({"list_files", "search_code", "read_file"})
 
 
+def _has_own_frontend(project_context: Mapping[str, Any]) -> bool:
+    """Whether this project already builds a web UI of its own.
+
+    appkit exists to give a project the Metis design language and the verified
+    FastAPI plumbing to serve it — which is exactly right for a project that has
+    no frontend, and exactly wrong for one that does. A live revamp of a
+    Vite/React app seeded six Python scaffold files into it, produced eleven
+    verification errors that were entirely the scaffold's, and put a directory
+    the project references nowhere onto the user's disk on approval.
+
+    Read from the manifest's own file tree, so it costs no model call and
+    cannot disagree with what the project actually contains. Deliberately NOT
+    satisfied by a bare index.html: a static page is what a Streamlit app being
+    converted onto appkit legitimately lacks, and that conversion is the case
+    seeding was built for.
+    """
+    manifest = project_context.get("manifest")
+    tree = list((manifest or {}).get("file_tree") or []) if isinstance(manifest, dict) else []
+    if not tree:
+        return False
+    paths = [str(path) for path in tree if not str(path).startswith("appkit/")]
+    has_manifest = any(path.endswith("package.json") for path in paths)
+    has_bundler = any(
+        path.endswith(
+            ("vite.config.js", "vite.config.ts", "next.config.mjs", "next.config.js",
+             "webpack.config.js", "svelte.config.js", "angular.json")
+        )
+        for path in paths
+    )
+    has_components = any(path.endswith((".jsx", ".tsx", ".vue", ".svelte")) for path in paths)
+    return has_manifest and (has_bundler or has_components)
+
+
+def _gaps_from_findings(errors: list[dict[str, str]]) -> dict[str, list[str]]:
+    """The class and property names a style finding names, back as a list.
+
+    The finding is written for a person ("3 class(es) still undefined (a, b, c…)")
+    and the brief wants the names. Parsing our own message is not elegant, but the
+    alternative is recomputing the gaps at a point that has no project handle,
+    and the message is generated a dozen lines above by code we own.
+    """
+    classes: list[str] = []
+    variables: list[str] = []
+    for item in errors:
+        text = str(item.get("error", ""))
+        for match in re.findall(r"\(([^)]*)…?\)", text):
+            # "class(es)" and "variable(s)" are parenthesised too; the
+            # pluralisation is not a symbol name.
+            if match.strip() in ("es", "s"):
+                continue
+            for name in (part.strip().strip("…").lstrip(".") for part in match.split(",")):
+                if not name:
+                    continue
+                if name.startswith("--"):
+                    variables.append(name)
+                elif re.fullmatch(r"[A-Za-z_][\w-]*", name):
+                    classes.append(name)
+    return {
+        "classes": list(dict.fromkeys(classes)),
+        "variables": list(dict.fromkeys(variables)),
+    }
+
+
 def _directed_attention(directed: dict[str, Any]) -> str:
     """The coder's entire brief for one file: the orchestrator's words, framed.
 
@@ -155,6 +219,31 @@ def _directed_attention(directed: dict[str, Any]) -> str:
             "",
             "This project already has these — compose them, do not write your own:",
             *(f"- {item}" for item in reuse[:12]),
+        ]
+    gaps = directed.get("style_gaps") or {}
+    classes = [str(item) for item in (gaps.get("classes") or [])]
+    variables = [str(item) for item in (gaps.get("variables") or [])]
+    if classes or variables:
+        # The exact job, computed by the host from the markup already in the
+        # project. Every name here is used by a component and defined by no
+        # stylesheet, so this is not advice — it is the acceptance criterion,
+        # and the conformance gate will check the file against the same list.
+        lines += ["", "This file MUST define every one of the following."]
+        if classes:
+            lines += [
+                f"{len(classes)} CSS class(es) the components use and no stylesheet "
+                "defines:",
+                ", ".join(f".{name}" for name in classes),
+            ]
+        if variables:
+            lines += [
+                f"{len(variables)} custom propert(ies) used via var() and never "
+                "declared:",
+                ", ".join(variables),
+            ]
+        lines += [
+            "Leaving any of them out leaves that part of the interface unstyled, "
+            "and the change will be refused for it.",
         ]
     lines += [
         "",
@@ -1068,6 +1157,9 @@ class AgentState(TypedDict):
     # correcting a falsified plan is the point, re-planning instead of writing
     # is the failure mode next door.
     project_plan_revisions: int
+    # Every revise_plan CALL, including the no-ops a revision counter ignores.
+    # Without it the tool could be asked forever at one step apiece.
+    project_plan_revision_calls: int
     # Read-only calls that came in the same reply as the pending one and run in
     # the same step. Only ever set when the whole reply was reads, so nothing
     # here can stage, check, or change what the call after it would have been.
@@ -1109,6 +1201,11 @@ class AgentState(TypedDict):
     # naming the same path again, which is the mechanism working; a cap is what
     # stops it being a loop.
     project_direction_attempts: dict[str, int]
+    # Why the orchestrator stopped answering, when it did. Carried so the
+    # turn's ending can name the cause instead of reporting a model that
+    # "stopped making progress" — which is what a lost orchestrator looks like
+    # from the inside, and is not what happened.
+    project_direction_error: str
     # The acceptance scenarios named alongside the manifest: the spec's own
     # claims made checkable, replayed by the sandbox rung against the finished
     # app. Plain dicts (AcceptanceScenarioV1 shape) so checkpoints stay JSON.
@@ -2252,6 +2349,17 @@ class ControlPlane:
                 "project_consecutive_reads": 0,
                 "project_pending_call": {},
             }
+        # When the orchestrator died mid-turn, the drift that follows is a
+        # CONSEQUENCE, not the model's failure. Naming the cause is the whole
+        # difference between "your model stopped making progress" and "the
+        # lane directing it ran out of credits".
+        directed_off = str(state.get("project_direction_error") or "")
+        undirected_note = (
+            f" The orchestrator stopped answering partway through ({directed_off}), "
+            "so the rest of this turn ran undirected."
+            if directed_off
+            else ""
+        )
         ceiling = _FOCUSED_EXPLORE_STEPS if focused else _explore_budget(state)
         if explored >= ceiling:
             # Either it was narrowed to one file and still would not write it,
@@ -2259,12 +2367,40 @@ class ControlPlane:
             # there is no smaller question left to ask, so the turn ends
             # honestly — whatever was staged before is still a coherent offer.
             if _model_has_written(staged):
+                # Before offering the work: does it hold up? The completion path
+                # and the step-cap path both hand verification's findings back
+                # for repair; this exit did not, and a live run showed exactly
+                # what that costs. A stylesheet repair wrote 35,890 bytes and
+                # left three classes undefined out of a hundred and seven — a
+                # near-miss the model could have closed in one step, offered
+                # instead as a blocked changeset for the user to chase.
+                verify_retries = int(state.get("project_syntax_retries", 0))
+                if verify_retries < _MAX_STAGED_VERIFY_RETRIES:
+                    verification = await self._verify_staged_changeset(
+                        project_id,
+                        staged,
+                        planned=state.get("project_planned_files") or [],
+                        scenarios=state.get("project_planned_scenarios") or [],
+                    )
+                    if verification["errors"]:
+                        await self._emit_staged_verification(state, verification)
+                        update = self._staged_verify_retry(
+                            state, iterations, verify_retries, verification["errors"]
+                        )
+                        # The same bonus the step-cap path grants: the fix budget
+                        # is separate from the exploration budget, or a turn that
+                        # drifted could never afford to repair itself.
+                        update["project_verify_bonus_steps"] = (
+                            int(state.get("project_verify_bonus_steps", 0)) + 2
+                        )
+                        update["project_consecutive_reads"] = 0
+                        return update
                 return {
                     "response_text": (
                         f"I stopped after inspecting {explored} files in a row without "
-                        "writing — the loop was no longer making progress. The file "
-                        "change(s) staged before that are ready to review below; a "
-                        "follow-up message continues the work."
+                        "writing — the loop was no longer making progress."
+                        f"{undirected_note} The file change(s) staged before that are "
+                        "ready to review below; a follow-up message continues the work."
                     ),
                     "project_pending_call": {},
                     "project_consecutive_reads": 0,
@@ -2272,7 +2408,8 @@ class ControlPlane:
             return {
                 "response_text": (
                     f"I read {explored} files in a row without writing anything and was "
-                    "not converging on a change. No change was applied; send a narrower, "
+                    f"not converging on a change.{undirected_note} No change was "
+                    "applied; send a narrower, "
                     "more specific instruction — which file, and what to change — or "
                     "switch to the cloud builder."
                 ),
@@ -2420,7 +2557,7 @@ class ControlPlane:
         # post-plan branch remains as a backstop for a whole-app build the
         # prompt regex missed. Seeding appkit does NOT count as model progress
         # (see _model_has_written), so plan-after-exploration is unaffected.
-        wants_web = wants_web_ui(state["prompt"])
+        wants_web = wants_web_ui(state["prompt"]) and not _has_own_frontend(prompt_context)
         wants_scaffold = (
             not iterations
             and not _has_seeded_scaffold(staged)
@@ -2461,7 +2598,62 @@ class ControlPlane:
                 cast(AgentState, {**state, **carry}),
                 prompt_context, staged, planned_now, iterations, spec_text=spec_text,
             )
-            if direction.get("done"):
+            if direction.get("exhausted"):
+                missing = ", ".join(
+                    f"`{item['path']}`" for item in direction["exhausted"][:6]
+                )
+                await self.events.emit(
+                    state["run_id"], state["conversation_id"],
+                    "project.direction",
+                    {"step": iterations + 1, "exhausted": [
+                        item["path"] for item in direction["exhausted"]
+                    ]},
+                )
+                staged_now = _model_has_written(staged)
+                return {
+                    **carry,
+                    "response_text": (
+                        f"I could not write {missing} — each was attempted the "
+                        "maximum number of times and never produced a file, so I "
+                        "stopped rather than keep trying."
+                        + (
+                            "\n\n**The changes below depend on it.** Review them "
+                            "against what is missing before approving: work that "
+                            "composes against a file this turn failed to write "
+                            "will not behave as intended until that file exists."
+                            if staged_now
+                            else " Nothing was written."
+                        )
+                        + "\n\nA follow-up message scoped to just that file is the "
+                        "way through — a smaller ask usually succeeds where the "
+                        "whole-file rewrite did not."
+                    ),
+                    "project_pending_call": {},
+                    "project_direction": {},
+                }
+            if direction.get("failed"):
+                # Recorded where the model and the user both see it. The turn
+                # continues undirected — that is the designed degrade — but its
+                # ending now has the cause in hand instead of reporting a model
+                # that "stopped making progress".
+                carry["project_direction"] = {}
+                carry["project_direction_error"] = str(direction["failed"])
+                trace = [
+                    *trace,
+                    {
+                        "tool": "orchestrator",
+                        "arguments": {},
+                        "result": {
+                            "ok": False,
+                            "error": (
+                                "The orchestrator could not be reached, so this "
+                                "turn is no longer being directed one file at a "
+                                f"time: {direction['failed']}"
+                            ),
+                        },
+                    },
+                ]
+            elif direction.get("done"):
                 # The orchestrator says the plan is satisfied or cannot go
                 # further. The turn is NOT ended here — it returns to the
                 # ordinary loop, which owns finishing honestly (the finish
@@ -2482,6 +2674,16 @@ class ControlPlane:
                 # growing a second mechanism that could disagree with it.
                 carry["project_focus_path"] = direction["path"]
                 carry["project_consecutive_reads"] = 0
+                # A stylesheet is the one target where the host can state the
+                # whole job as a list. Asking the model to derive it instead —
+                # "read the components and collect every className" — is asking
+                # it to re-do, inside one output budget, work two regexes finish
+                # in milliseconds, and a live repair turn answered that with a
+                # fifty-one byte edit.
+                if is_stylesheet(direction["path"]):
+                    gaps = await self._style_gaps(project_id, staged)
+                    if gaps.get("classes") or gaps.get("variables"):
+                        carry["project_direction"]["style_gaps"] = gaps
                 trace = await self._prefetch_for_coder(
                     state, project_id, staged, direction, trace
                 )
@@ -2836,8 +3038,34 @@ class ControlPlane:
             for path in owed
             if attempts.get(path, 0) < self.settings.project_orchestrator_max_attempts
         ]
+        # What the host has GIVEN UP on, named rather than merely withheld.
+        #
+        # This is the defect that broke a live revamp. The stylesheet everything
+        # composed against failed three times, hit the cap, and simply vanished
+        # from `available_files` — leaving no signal that distinguished "already
+        # written" from "we stopped trying". The orchestrator, reasonably, went
+        # on directing the eleven files that depend on it, and every one was
+        # written against a design system that does not exist.
+        #
+        # An orchestrator told a foundation failed can repair it, re-scope it to
+        # a patch, or stop. An orchestrator told nothing can only carry on.
+        blocked = [
+            {
+                "path": path,
+                "attempts": attempts.get(path, 0),
+                "reason": "directed to the attempt limit and never written",
+            }
+            for path in owed
+            if path not in available
+        ]
         if not available:
-            return {}
+            # Nothing left this turn can be directed at, and what remains is
+            # what the host stopped trying. Returning to the undirected loop
+            # here bought exactly nothing on the live run it was measured on:
+            # twenty-three further steps reading a file no path could reach,
+            # ending at the ceiling with the same work staged. Ending now says
+            # the same thing sooner and names what is missing.
+            return {"exhausted": blocked} if blocked else {}
         request = {
             "user_request": spec_text or state["prompt"],
             "project_context": prompt_context,
@@ -2847,12 +3075,34 @@ class ControlPlane:
                 {"path": path, "bytes": int(entry.get("bytes", 0))}
                 for path, entry in sorted(staged.items())
             ],
+            # Files this turn will not produce, and why. Empty on a healthy turn.
+            "blocked_files": blocked,
+            # What was asked for last and whether it landed. The orchestrator was
+            # otherwise being asked to review work it had no record of ordering:
+            # it could see that a path was staged, never that the path was the
+            # one IT named, nor that a direction had failed outright.
+            "last_direction": (
+                {
+                    "path": str((state.get("project_direction") or {}).get("path", "")),
+                    "instruction": str(
+                        (state.get("project_direction") or {}).get("instruction", "")
+                    )[:600],
+                    "written": str(
+                        (state.get("project_direction") or {}).get("path", "")
+                    ) in staged,
+                }
+                if (state.get("project_direction") or {}).get("path")
+                else {}
+            ),
             # The trace carries what verification said — `_staged_verify_retry`
             # records each defect as a `verify_staged` entry — so the review
             # half of the split needs no separate channel. Naming the same path
             # again after reading those findings IS the repair instruction.
+            # 12k was the least context of anyone in the loop — the coder gets
+            # 36k local and 180k cloud — for the participant expected to judge
+            # the whole turn. One live run produced 132 tool results against it.
             "tool_trace": _bounded_project_trace(
-                list(state.get("project_trace", [])), max_characters=12_000
+                list(state.get("project_trace", [])), max_characters=40_000
             ),
             "step": iterations + 1,
         }
@@ -2865,8 +3115,25 @@ class ControlPlane:
                 # thing this whole arc exists to stop.
                 model_aliases=_planner_aliases(state.get("model_aliases", {})),
             )
-        except Exception:  # noqa: BLE001 - a lost direction falls back to the old loop
-            return {}
+        except Exception as error:  # noqa: BLE001 - falls back, but never quietly
+            # Falling back to the undirected loop is right. Doing it SILENTLY
+            # was not, and a live run proved why: the orchestrator's credits ran
+            # out mid-turn, every later direction failed, and the turn degraded
+            # into exactly the read-to-the-ceiling behaviour the split exists to
+            # remove — with nothing anywhere saying the orchestrator had died.
+            # A split that switches itself off is a fact about the turn.
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.direction_failed",
+                {
+                    "step": iterations + 1,
+                    "error": str(error)[:400],
+                    "backend": bool(classify_backend_unavailable(error))
+                    or isinstance(error, PermanentModelError),
+                },
+            )
+            return {"failed": str(error)[:400]}
         if getattr(direction, "done", False):
             await self.events.emit(
                 state["run_id"],
@@ -2902,6 +3169,23 @@ class ControlPlane:
             "read": [str(item) for item in getattr(direction, "read", [])][:6],
             "attempts": attempts,
         }
+
+    async def _style_gaps(
+        self, project_id: str, staged: dict[str, Any]
+    ) -> dict[str, list[str]]:
+        """What this project's markup still needs from its stylesheets, or {}.
+
+        Never fatal, and never a reason to hold a file back: a project that
+        cannot be read simply gets no list, and the turn proceeds as it did
+        before this existed.
+        """
+        reader = getattr(getattr(self, "projects", None), "style_gaps", None)
+        if reader is None:
+            return {}
+        try:
+            return await reader(project_id, staged)
+        except Exception:  # noqa: BLE001 - a lost list is not a lost turn
+            return {}
 
     async def _prefetch_for_coder(
         self,
@@ -2998,6 +3282,20 @@ class ControlPlane:
         spec_text: str = "",
     ) -> dict[str, Any]:
         remaining = [path for path in (planned or []) if path not in staged]
+        # A tool whose every future call will be refused should not be offered.
+        # Measured: a turn spent seven consecutive steps calling revise_plan
+        # past its bound, collecting the same refusal each time — the roster was
+        # still advertising it, so the model kept reaching for the one move that
+        # looked like an escape.
+        # Counted by ATTEMPTS, not by successful revisions. A no-op revision was
+        # deliberately free — so it would not burn the budget — and that made it
+        # free forever: a live turn spent fourteen consecutive steps re-proposing
+        # the same file list, each one refused, each one costing nothing it could
+        # run out of. Whatever a call achieves, asking is what costs.
+        revisions_spent = (
+            int(state.get("project_plan_revisions", 0)) >= _MAX_PLAN_REVISIONS
+            or int(state.get("project_plan_revision_calls", 0)) > _MAX_PLAN_REVISIONS
+        )
         # A turn that drifted has been narrowed to one file. Offering only that
         # path is the whole mechanism: `files_still_to_write` is what narrows
         # create_file's enum on the tool-calling lanes and what the local
@@ -3084,6 +3382,7 @@ class ControlPlane:
             "build_turn": _writes_files(state)
             and (not _model_has_written(staged) or bool(remaining))
             and not stalled,
+            "plan_revisions_spent": revisions_spent,
             # Set only when the previous step was refused for the *shape* of its
             # arguments, which is the one failure resending the same tool can
             # fix. A semantic refusal must never land here: narrowing the
@@ -3118,6 +3417,18 @@ class ControlPlane:
                     # Reads are closed, and the request says so rather than
                     # leaving the model to discover it through a refusal.
                     "reads_closed": True,
+                    # Whether the target already exists, so the roster can drop
+                    # the write tool that cannot apply to it. Measured: directed
+                    # at an existing 29KB stylesheet, a coder called create_file
+                    # three times, was refused three times for aiming at a path
+                    # that exists, and the turn ended having written nothing —
+                    # while apply_patch and replace_lines sat unused beside it.
+                    "target_exists": bool(
+                        directed["path"] in staged
+                        or directed["path"] in set(
+                            (prompt_context.get("manifest") or {}).get("file_tree") or []
+                        )
+                    ),
                 }
                 if directed.get("path")
                 else {
@@ -3335,13 +3646,40 @@ class ControlPlane:
                 },
             }
         )
+        # A repair step is the clearest case in the whole loop: the host knows
+        # what is wrong and which file is wrong, and the only useful move is a
+        # patch. Handing back the full twelve-tool roster invited the drift it
+        # was meant to end — measured, a stylesheet repair was told three times
+        # which classes were missing and answered with fifteen reads. So the
+        # repair is DIRECTED, exactly like a step the orchestrator ordered:
+        # reads closed, the target pinned to the files that failed.
+        failing = list(dict.fromkeys(str(item.get("path", "")) for item in errors if item.get("path")))
+        directed: dict[str, Any] = {}
+        if failing:
+            directed = {
+                "path": failing[0],
+                "instruction": (
+                    f"Fix {failing[0]}. Verification found: {detail}. Patch it with "
+                    "apply_patch or replace_lines — the current staged text is in "
+                    "the tool trace above. Change nothing else."
+                ),
+                "reuse": [],
+                "read": [],
+                # The finding already names what is missing, and the brief quotes
+                # it verbatim, so the residual list rides along rather than being
+                # something the model has to re-derive from the error text.
+                "style_gaps": _gaps_from_findings(errors),
+            }
         return {
             "project_trace": trace[-24:],
             "project_iterations": iterations + 1,
             "project_syntax_retries": retries + 1,
             "project_pending_call": {},
             "project_retry_tool": "",
-            "project_write_pin": [],
+            "project_write_pin": failing[:1],
+            "project_direction": directed,
+            "project_focus_path": failing[0] if failing else "",
+            "project_consecutive_reads": 0,
         }
 
     async def _emit_staged_verification(
@@ -3712,6 +4050,9 @@ class ControlPlane:
             return {
                 "project_context": project_context,
                 "project_iterations": iterations + 1,
+                "project_plan_revision_calls": int(
+                    state.get("project_plan_revision_calls", 0)
+                ) + 1,
                 "project_malformed_streak": 0,
                 **self._project_evidence(
                     state, call, result, int(state.get("project_checks_run", 0))
@@ -3732,6 +4073,9 @@ class ControlPlane:
             return {
                 "project_context": project_context,
                 "project_iterations": iterations + 1,
+                "project_plan_revision_calls": int(
+                    state.get("project_plan_revision_calls", 0)
+                ) + 1,
                 "project_malformed_streak": 0,
                 **self._project_evidence(
                     state,
@@ -3761,6 +4105,9 @@ class ControlPlane:
             return {
                 "project_context": project_context,
                 "project_iterations": iterations + 1,
+                "project_plan_revision_calls": int(
+                    state.get("project_plan_revision_calls", 0)
+                ) + 1,
                 "project_malformed_streak": 0,
                 **self._project_evidence(
                     state, call, result, int(state.get("project_checks_run", 0))
@@ -3810,6 +4157,9 @@ class ControlPlane:
         return {
             "project_context": project_context,
             "project_iterations": iterations + 1,
+                "project_plan_revision_calls": int(
+                    state.get("project_plan_revision_calls", 0)
+                ) + 1,
             "project_malformed_streak": 0,
             "project_empty_finish_streak": 0,
             **evidence,
@@ -3986,6 +4336,36 @@ class ControlPlane:
                 },
                 checks_run,
             )
+        # A turn writes what it planned. Once every planned file is staged the
+        # write target was unconstrained — create_file's path enum only narrows
+        # while files are still owed — and a stylesheet repair used that freedom
+        # to edit config.py and break an import three files away. The plan is
+        # the turn's own statement of scope, so stepping outside it is a
+        # revise_plan away, never a silent extra file.
+        planned_scope = [
+            str(path) for path in (state.get("project_planned_files") or [])
+        ]
+        if (
+            planned_scope
+            and call.name in ("create_file", "apply_patch", "replace_lines")
+            and str(call.arguments.get("path", "")) not in planned_scope
+            and str(call.arguments.get("path", "")) not in staged
+            and not _has_seeded_scaffold({str(call.arguments.get("path", "")): {}})
+        ):
+            return self._project_evidence(
+                state,
+                call,
+                {
+                    "ok": False,
+                    "error": (
+                        f"{call.arguments.get('path')} is not in this turn's plan "
+                        f"({', '.join(planned_scope[:6])}). If it genuinely has to "
+                        "change, call revise_plan with the corrected file list and "
+                        "what you found; otherwise write only the planned files."
+                    ),
+                },
+                checks_run,
+            )
         if not is_check and blocked.get(target, 0) >= _MAX_TARGET_REFUSALS:
             # The same call failing over and over is not progress the loop can
             # wait out: a model that kept re-creating one already-staged file
@@ -4099,6 +4479,29 @@ class ControlPlane:
             # instruction that has already been carried out. Nothing here ends
             # the turn — the ordinary finish path still owns that.
             evidence["project_direction"] = {}
+            # Except when the file is a stylesheet whose contract still fails.
+            # The check is two regexes, so it can run the moment the file is
+            # staged rather than waiting for the turn to end — and waiting was
+            # expensive: each round of "three classes still undefined" cost a
+            # full drift cycle, because verification only spoke at the finish.
+            # Releasing focus here and re-acquiring it later is how a near-miss
+            # became a blocked changeset instead of a fixed one.
+            if is_stylesheet(focus):
+                gaps = await self._style_gaps(project_id, staged_update)
+                if gaps.get("classes") or gaps.get("variables"):
+                    evidence["project_focus_path"] = focus
+                    evidence["project_direction"] = {
+                        "path": focus,
+                        "instruction": (
+                            f"{focus} is staged but still incomplete. Add the "
+                            "definitions listed below with apply_patch or "
+                            "replace_lines. Change nothing else."
+                        ),
+                        "reuse": [],
+                        "read": [],
+                        "style_gaps": gaps,
+                    }
+                    evidence["project_consecutive_reads"] = 0
         if changed and state.get("project_phase") != "building":
             # A small edit writes before any plan exists; the first staged
             # byte is its act transition.
@@ -7728,6 +8131,7 @@ def initial_state(
         project_build_intent="",
         project_build_scope="",
         project_plan_revisions=0,
+        project_plan_revision_calls=0,
         project_pending_reads=[],
         project_consecutive_reads=0,
         project_chain_index=0,
@@ -7735,6 +8139,7 @@ def initial_state(
         project_focus_path="",
         project_direction={},
         project_direction_attempts={},
+        project_direction_error="",
         project_focus_rounds=0,
         project_spec={},
         project_stall_steps=0,

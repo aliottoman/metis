@@ -41,6 +41,7 @@ from .contracts import (
     PROJECT_TOOL_REQUIRED_ARGUMENTS,
     grammar_schema,
     project_step_retry_schema,
+    project_directed_schema,
     project_write_schema,
 )
 from . import tool_repair
@@ -50,6 +51,7 @@ from .model_preference import is_cloud_model
 from .queue_update import is_queue_update_request
 from .web_research import is_explicit_web_request
 from .project_tools import (
+    directed_project_tools,
     FINISH_TOOL_NAME,
     chat_tool_format,
     narrowed_project_tools,
@@ -1431,6 +1433,24 @@ read: files the host should fetch and hand to the coder, when it genuinely
 cannot write correctly without seeing them. Keep this small. Every file here is
 paid for once; the coder cannot ask for more.
 
+blocked_files lists what the host has GIVEN UP on: files directed to the attempt
+limit and never written. Read it before anything else. A blocked file is not a
+file that got done — it is a hole, and it stays a hole. If other planned files
+depend on it, saying nothing and directing them anyway produces work built on
+something that does not exist: a stylesheet that was never written, and eleven
+components composed against its classes. When a blocked file is FOUNDATIONAL —
+the stylesheet, the module others import, the schema others read — your options
+are to set done with reason naming what is missing, or to direct a remaining
+file in a way that does not depend on the hole. Never direct a file whose
+correctness requires a blocked file to exist.
+
+last_direction is what you asked for on the previous step and whether it landed
+(written: true/false). false means the coder could not carry out your last
+instruction. Repeating it unchanged will fail the same way: make the next one
+SMALLER — a patch to one section instead of a whole-file rewrite, or one part of
+the file rather than all of it. A 30KB file rewritten whole is the instruction
+most likely to come back unwritten.
+
 done: true only when the plan is satisfied, or when it cannot be carried
 further — and then say why in reason. Do not set done merely because the work is
 hard. Do not set done while a planned file is still unwritten and repairable.
@@ -1446,6 +1466,75 @@ against what you assume a project of this kind usually has."""
 # advertised to Grok, implemented in the workspace, and still impossible to
 # call — the local copy of this set silently lagged one tool behind.
 _PROJECT_TOOL_NAMES = frozenset(PROJECT_TOOL_REQUIRED_ARGUMENTS)
+
+
+DIRECTED_OVERRIDE = """
+THIS STEP IS DIFFERENT. Ignore everything above about reading, searching,
+inspecting or checking: none of those tools exist on this step. You have been
+given one file and an instruction, and everything needed to carry it out is
+already in the tool trace.
+
+Your only legal moves are create_file, apply_patch, replace_lines (write the
+file), revise_plan (say the instruction cannot be carried out and why), and
+finish_project_task. Choosing anything else wastes the step.
+
+Write the file now."""
+
+
+def project_system_prompt(request: dict[str, Any]) -> str:
+    """The agent instructions for this step, overridden when it is directed.
+
+    Narrowing the tool ROSTER was not enough. The instructions above it still
+    describe reads at length — "Reads execute immediately", read_file, search_code
+    — and a live directed run followed the prose over the roster: three
+    directions, seven reads, nothing written. A model told in one place that
+    reads are closed and in another that they are how you work will believe the
+    longer passage.
+    """
+    if request.get("reads_closed"):
+        return f"{PROJECT_AGENT_SYSTEM}\n{DIRECTED_OVERRIDE}"
+    return PROJECT_AGENT_SYSTEM
+
+
+def project_roster(request: dict[str, Any]) -> list[dict[str, Any]]:
+    """The tools this step may actually use, for every transport alike.
+
+    A directed step gets the write-only roster: the host refuses reads on such a
+    step, and advertising a tool the host will refuse is how a live revamp spent
+    twenty-three steps calling read_file after being told reads were closed.
+    """
+    owed = (
+        [str(path) for path in request.get("files_still_to_write") or []]
+        if request.get("build_turn")
+        else []
+    )
+    tools = (
+        # The directed roster narrows on the owed list too, so create_file's
+        # path enum still points at the one file the orchestrator named.
+        directed_project_tools(
+            owed or [str(path) for path in request.get("files_still_to_write") or []]
+        )
+        if request.get("reads_closed")
+        else narrowed_project_tools(owed)
+    )
+    if request.get("reads_closed") and "target_exists" in request:
+        # A tool that cannot apply to this target is not a choice, it is a trap:
+        # create_file is refused on a path that exists, and apply_patch has
+        # nothing to match against on a path that does not.
+        exists = bool(request["target_exists"])
+        drop = {"create_file"} if exists else {"apply_patch", "replace_lines"}
+        kept = [tool for tool in tools if tool.get("name") not in drop]
+        # Never strip the roster down to no way of writing at all.
+        if any(
+            tool.get("name") in {"create_file", "apply_patch", "replace_lines"}
+            for tool in kept
+        ):
+            tools = kept
+    if request.get("plan_revisions_spent"):
+        # Its bound is spent, so every further call returns the same refusal.
+        # Offering it anyway is how a turn spent seven consecutive steps asking.
+        tools = [tool for tool in tools if tool.get("name") != "revise_plan"]
+    return tools
 
 
 def step_from_function_call(
@@ -1621,6 +1710,13 @@ def local_decode_grammars() -> tuple[tuple[str, type[BaseModel], dict[str, Any]]
             f"{ProjectAgentStepWireV1.__name__}[write-pin]",
             ProjectAgentStepWireV1,
             project_write_schema(["app/main.py", "app/agents/base.py"]),
+        )
+    )
+    derived.append(
+        (
+            f"{ProjectAgentStepWireV1.__name__}[directed]",
+            ProjectAgentStepWireV1,
+            project_directed_schema(["app/main.py"]),
         )
     )
     return (
@@ -2442,22 +2538,17 @@ class OllamaModelProvider:
         have been published. All three transports now behave the same way.
         """
         model_name = self._model_name("coder", model_aliases)
-        owed = (
-            [str(path) for path in request.get("files_still_to_write") or []]
-            if request.get("build_turn")
-            else []
-        )
         reply = await self._hosted_model_call(
             role="coder",
             model_aliases=model_aliases,
             system_prompt=(
-                f"{PROJECT_AGENT_SYSTEM}\n"
+                f"{project_system_prompt(request)}\n"
                 "Call exactly one project function. Use finish_project_task "
                 "only when the work is complete."
             ),
             user_prompt=json.dumps(request, ensure_ascii=False),
-            tools=chat_tool_format(narrowed_project_tools(owed)),
-            max_output_tokens=min(8192, self.settings.max_output_tokens),
+            tools=chat_tool_format(project_roster(request)),
+            max_output_tokens=self.settings.project_write_max_output_tokens,
         )
         speaker = f"hosted model {model_name}"
         if calls := _reply_tool_calls(reply):
@@ -2524,6 +2615,33 @@ class OllamaModelProvider:
                 f"{retry_tool} again with exactly these argument keys: {required}. "
                 "Read the refusal in the tool trace first — it says what was wrong."
             )
+        elif request.get("reads_closed") and (
+            request.get("write_pin") or request.get("files_still_to_write")
+        ):
+            # A directed step. The orchestrator named this file and said what it
+            # must contain; the host has already fetched everything it needs and
+            # will refuse a read. So reads are not merely discouraged here, they
+            # are ungrammatical — the same narrowing the tool-calling lanes get
+            # as a five-tool roster.
+            schema = ProjectAgentStepWireV1
+            pinned = [
+                str(path)
+                for path in (request.get("write_pin") or request["files_still_to_write"])
+            ]
+            constraint = project_directed_schema(
+                pinned,
+                target_exists=(
+                    bool(request["target_exists"])
+                    if "target_exists" in request
+                    else None
+                ),
+            )
+            usage = (
+                f"\nWrite {pinned[0]} now. Reads are closed for this step and "
+                "everything you need is already in the tool trace. If the "
+                "instruction genuinely cannot be carried out, say so with "
+                "revise_plan rather than writing something else."
+            )
         elif request.get("write_pin"):
             # The host just refused a create_file for a path that already
             # exists, and it knows which files the build still owes. Pinning the
@@ -2587,11 +2705,11 @@ class OllamaModelProvider:
                 )
         wire = await self._structured(
             schema,
-            system_prompt=PROJECT_AGENT_SYSTEM + usage,
+            system_prompt=project_system_prompt(request) + usage,
             user_prompt=json.dumps(request, ensure_ascii=False),
             role="coder",
             model_aliases=model_aliases,
-            max_output_tokens=min(8192, self.settings.max_output_tokens),
+            max_output_tokens=self.settings.project_write_max_output_tokens,
             constraint=constraint,
         )
         # The grammar constrains what may be GENERATED; it does not stop a model
@@ -3051,19 +3169,16 @@ class OCIResponsesModelProvider:
         response = await self._create_response(
             model=self.settings.oci_grok_model,
             instructions=(
-                f"{OCI_GROK_PREAMBLE}\n\n{PROJECT_AGENT_SYSTEM}\n"
+                f"{OCI_GROK_PREAMBLE}\n\n{project_system_prompt(request)}\n"
                 "Call exactly one project function. Use finish_project_task only when the work is complete."
             ),
             input=json.dumps(request, ensure_ascii=False),
             tools=[
                 *self._native_tools("planner", model_aliases),
                 # Same signal the local provider narrows its grammar on, so the
-                # manifest binds every provider rather than only the small ones.
-                *self._project_tools(
-                    [str(path) for path in request.get("files_still_to_write") or []]
-                    if request.get("build_turn")
-                    else []
-                ),
+                # manifest binds every provider rather than only the small ones
+                # — and the same write-only roster on a directed step.
+                *project_roster(request),
             ],
             tool_choice="auto",
             max_output_tokens=self.settings.oci_responses_max_output_tokens,
@@ -3714,25 +3829,20 @@ class CohereModelProvider:
         *,
         model_aliases: dict[str, str] | None = None,
     ) -> ProjectAgentStepV1:
-        owed = (
-            [str(path) for path in request.get("files_still_to_write") or []]
-            if request.get("build_turn")
-            else []
-        )
         reply = await self._chat(
             {
                 "messages": [
                     {
                         "role": "system",
                         "content": (
-                            f"{COHERE_PREAMBLE}\n\n{PROJECT_AGENT_SYSTEM}\n"
+                            f"{COHERE_PREAMBLE}\n\n{project_system_prompt(request)}\n"
                             "Call exactly one project function. Use "
                             "finish_project_task only when the work is complete."
                         ),
                     },
                     {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
                 ],
-                "tools": chat_tool_format(narrowed_project_tools(owed)),
+                "tools": chat_tool_format(project_roster(request)),
                 "max_tokens": min(8192, self.settings.cohere_max_output_tokens),
             }
         )
@@ -3864,14 +3974,31 @@ class ClineModelProvider:
             if response.status_code in (429, 500, 502, 503, 504) and not last:
                 await asyncio.sleep(1.0 + attempt * 2)
                 continue
+            if response.status_code == 402:
+                # The distinction that matters, and the one a live run turned
+                # into a silent stall: the ClinePass subscription covers the
+                # `cline-pass/*` models, while the Anthropic and xAI models
+                # behind the same key bill against pay-as-you-go credits. An
+                # empty balance is not a model failing, and saying "HTTP 402"
+                # would leave the user to work that out from a status code.
+                raise PermanentModelError(
+                    f"Cline has no credits left for {payload.get('model')}. The "
+                    "ClinePass subscription covers the cline-pass/* models; "
+                    "Anthropic and xAI models bill against credits, which are "
+                    "spent. Top up at https://app.cline.bot/credits, or move "
+                    "this role to a cline-pass/* model.",
+                    reason="out_of_credits",
+                )
             if response.status_code == 403:
-                raise ModelProviderError(
+                raise PermanentModelError(
                     f"Cline refused {payload.get('model')}: the subscription does "
-                    "not cover this model (HTTP 403)"
+                    "not cover this model (HTTP 403)",
+                    reason="not_subscribed",
                 )
             if response.status_code == 401:
-                raise ModelProviderError(
-                    "Cline rejected the API key (HTTP 401) — check WAQIL_CLINE_API_KEY"
+                raise PermanentModelError(
+                    "Cline rejected the API key (HTTP 401) — check WAQIL_CLINE_API_KEY",
+                    reason="bad_credentials",
                 )
             if response.status_code >= 400:
                 raise ModelProviderError(
@@ -4010,11 +4137,6 @@ class ClineModelProvider:
         *,
         model_aliases: dict[str, str] | None = None,
     ) -> ProjectAgentStepV1:
-        owed = (
-            [str(path) for path in request.get("files_still_to_write") or []]
-            if request.get("build_turn")
-            else []
-        )
         reply = await self._chat(
             {
                 # The CODER seat: this is the model that writes files, and it is
@@ -4024,13 +4146,13 @@ class ClineModelProvider:
                     {
                         "role": "system",
                         "content": (
-                            f"{CLINE_PREAMBLE}\n\n{PROJECT_AGENT_SYSTEM}\n"
+                            f"{CLINE_PREAMBLE}\n\n{project_system_prompt(request)}\n"
                             "Call exactly one project function."
                         ),
                     },
                     {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
                 ],
-                "tools": chat_tool_format(narrowed_project_tools(owed)),
+                "tools": chat_tool_format(project_roster(request)),
                 "max_completion_tokens": self.settings.cline_max_output_tokens,
             }
         )
@@ -4060,7 +4182,8 @@ class ClineModelProvider:
             user_prompt=json.dumps(request, ensure_ascii=False),
             role="planner",
             model_aliases=model_aliases,
-            max_output_tokens=min(2048, self.settings.cline_max_output_tokens),
+            # Same reasoning-eats-the-budget exposure as project_direction.
+            max_output_tokens=self.settings.cline_max_output_tokens,
         )
 
     async def project_direction(
@@ -4075,7 +4198,14 @@ class ClineModelProvider:
             user_prompt=json.dumps(request, ensure_ascii=False),
             role="planner",
             model_aliases=model_aliases,
-            max_output_tokens=min(2048, self.settings.cline_max_output_tokens),
+            # NOT capped at 2k. The direction itself is small, but the models on
+            # this gateway reason before they answer and that reasoning is
+            # charged against the same budget: measured against a real 4.3k
+            # repo map, a 2,048 cap made five of eight ClinePass models return
+            # an empty message or prose instead of the tool call — a harness
+            # constraint that reads exactly like a model that cannot follow a
+            # schema.
+            max_output_tokens=self.settings.cline_max_output_tokens,
         )
 
     async def project_spec(

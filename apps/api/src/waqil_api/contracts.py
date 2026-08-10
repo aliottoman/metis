@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, ValidationInfo
 
 
 def utc_now() -> datetime:
@@ -842,6 +842,42 @@ def project_step_retry_schema(tool: str) -> dict[str, Any]:
     return {**schema, "properties": properties, "required": ["status", "tool", "arguments"]}
 
 
+def project_directed_schema(
+    paths: list[str], *, target_exists: bool | None = None
+) -> dict[str, Any]:
+    """The grammar for a step the orchestrator directed: write it, or say why.
+
+    The tool-calling lanes get this narrowing as a smaller roster; the local
+    lane gets it as a grammar, so both are asked the same small question. What
+    is unexpressible here is every read — which the host refuses on a directed
+    step anyway, so the model was previously free to generate a call whose only
+    possible outcome was a refusal, and a live run showed it doing exactly that.
+
+    revise_plan stays legal. "This instruction cannot be carried out" is a real
+    answer, and the alternative to letting the model say it is watching it write
+    something wrong.
+    """
+    schema = project_write_schema(paths)
+    properties = dict(schema["properties"])
+    writes = ["create_file", "apply_patch", "replace_lines"]
+    if target_exists is True:
+        # create_file is refused on a path that exists; making it unexpressible
+        # is the difference between three wasted steps and a patch.
+        writes = ["apply_patch", "replace_lines"]
+    elif target_exists is False:
+        writes = ["create_file"]
+    properties["tool"] = {"type": "string", "enum": [*writes, "revise_plan"]}
+    arguments = dict(properties["arguments"])
+    argument_properties = dict(arguments["properties"])
+    # revise_plan's own arguments, or naming it in the enum would make it
+    # grammatically legal and semantically impossible to fill in.
+    argument_properties["files"] = PROJECT_TOOL_ARGUMENT_PROPERTIES["files"]
+    argument_properties["reason"] = PROJECT_TOOL_ARGUMENT_PROPERTIES["reason"]
+    arguments["properties"] = argument_properties
+    properties["arguments"] = arguments
+    return {**schema, "properties": properties}
+
+
 def project_write_schema(paths: list[str]) -> dict[str, Any]:
     """A flat step schema whose write target must be a file the build still owes.
 
@@ -1007,7 +1043,12 @@ class ProjectDirectionV1(Contract):
     # What to write, imperatively. This replaces the fixed sentence the host
     # used to send, which could say "write this file" and never what it should
     # contain.
-    instruction: str = Field(default="", max_length=6_000)
+    # Measured, not guessed: real orchestrators write 3,500–6,000 characters
+    # here, so a 6,000 cap sat exactly on the distribution and rejected the
+    # longest — and a rejected direction is indistinguishable from a model that
+    # cannot follow the schema. The brief IS the coder's entire knowledge of the
+    # work, so headroom is cheaper than truncation.
+    instruction: str = Field(default="", max_length=16_000)
     # Symbols and modules the project already has that this file must compose
     # rather than reinvent — the repo map's whole purpose, made specific.
     reuse: list[str] = Field(default_factory=list, max_length=12)
@@ -1021,6 +1062,24 @@ class ProjectDirectionV1(Contract):
     # Why — shown in the timeline, and the reason a `done` before the plan is
     # complete is legible rather than mysterious.
     reason: str = Field(default="", max_length=2_000)
+
+    @field_validator("reuse", "read", mode="before")
+    @classmethod
+    def bound_lists(cls, value: Any, info: ValidationInfo) -> Any:
+        """Trim an over-long list instead of rejecting the whole direction.
+
+        The bounds exist so one reply cannot flood the coder's brief, and the
+        thirteenth item is genuinely not worth a step. But `max_length` REJECTS,
+        and a rejected direction is indistinguishable from a model that cannot
+        follow the schema — measured, when a model listed thirteen things to
+        reuse and lost the entire instruction along with the thirteenth. Trim
+        what is over the line; keep everything the bound was protecting.
+        """
+        if isinstance(value, list):
+            # Each field's own bound, so trimming can never itself trip the
+            # limit it is protecting.
+            return value[:12 if info.field_name == "reuse" else 6]
+        return value
 
     @field_validator("path")
     @classmethod

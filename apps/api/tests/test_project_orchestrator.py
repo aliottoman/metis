@@ -133,14 +133,15 @@ async def test_naming_the_same_path_again_is_a_repair_until_the_cap() -> None:
         assert direction["path"] == "app/main.py"
         assert direction["attempts"]["app/main.py"] == expected
         attempts = direction["attempts"]
-    # Past the cap the host stops offering it, and the turn returns to the
-    # ordinary loop rather than repairing one file forever.
+    # Past the cap the host stops offering it — and says what it gave up on,
+    # rather than letting the file quietly vanish from the menu.
     exhausted = await ControlPlane._project_direct(
         _plane(Repairer()),
         _state(project_direction_attempts=attempts),
         {}, {}, ["app/main.py"], 3,
     )
-    assert exhausted == {}
+    assert "path" not in exhausted
+    assert [item["path"] for item in exhausted["exhausted"]] == ["app/main.py"]
 
 
 @pytest.mark.asyncio
@@ -176,7 +177,8 @@ async def test_a_staged_file_is_not_directed_again() -> None:
 @pytest.mark.asyncio
 async def test_a_lost_direction_falls_back_to_the_undirected_loop() -> None:
     """The split is an improvement, never a dependency: a lane that cannot
-    answer must degrade to the loop that worked before it existed."""
+    answer must degrade to the loop that worked before it existed — while
+    saying so, which is what the credits-exhausted run showed it must."""
     class Broken:
         async def project_direction(self, request, *, model_aliases=None):
             raise RuntimeError("the planner lane is down")
@@ -184,7 +186,8 @@ async def test_a_lost_direction_falls_back_to_the_undirected_loop() -> None:
     direction = await ControlPlane._project_direct(
         _plane(Broken()), _state(), {}, {}, ["app/main.py"], 3
     )
-    assert direction == {}
+    assert "path" not in direction          # nothing is directed …
+    assert direction["failed"] == "the planner lane is down"   # … and why is on the record
 
 
 @pytest.mark.asyncio
@@ -367,3 +370,295 @@ def test_no_planner_chain_leaves_the_run_s_lane_alone() -> None:
 
     aliases = {"_provider": "cohere", "coder": "x"}
     assert _planner_aliases(aliases) == {"_provider": "cohere", "coder": "x"}
+
+
+# ── What the live Argus revamp exposed ─────────────────────────────────────
+
+
+def test_a_project_with_its_own_frontend_is_not_given_appkit() -> None:
+    """A Vite/React project got six Python scaffold files seeded into it, and
+    on approval they landed on disk referenced by nothing."""
+    from waqil_api.control_plane import _has_own_frontend
+
+    argus = {
+        "manifest": {
+            "file_tree": [
+                "app.py", "requirements.txt",
+                "web/package.json", "web/vite.config.js",
+                "web/src/App.jsx", "web/src/styles.css",
+            ]
+        }
+    }
+    assert _has_own_frontend(argus) is True
+
+
+def test_a_project_without_a_frontend_still_gets_appkit() -> None:
+    """The Streamlit-onto-appkit conversion is the case seeding was built for,
+    and a bare index.html must not be mistaken for a frontend toolchain."""
+    from waqil_api.control_plane import _has_own_frontend
+
+    streamlit = {"manifest": {"file_tree": ["app.py", "requirements.txt"]}}
+    assert _has_own_frontend(streamlit) is False
+    static_only = {"manifest": {"file_tree": ["app.py", "static/index.html"]}}
+    assert _has_own_frontend(static_only) is False
+    # A tree Metis itself seeded does not count as the project's own.
+    seeded = {"manifest": {"file_tree": ["app.py", "appkit/web.py", "appkit/static/theme.css"]}}
+    assert _has_own_frontend(seeded) is False
+    assert _has_own_frontend({}) is False
+
+
+@pytest.mark.asyncio
+async def test_a_dead_orchestrator_is_reported_not_silently_dropped() -> None:
+    """The credits ran out mid-turn, every later direction failed, and the turn
+    degraded into exactly the drift the split removes — saying nothing."""
+    emitted: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(run_id, conversation_id, kind, payload):
+        emitted.append((kind, payload))
+
+    class Broke:
+        async def project_direction(self, request, *, model_aliases=None):
+            raise RuntimeError("Cline has no credits left for anthropic/claude-opus-4.5")
+
+    plane = _plane(Broke())
+    plane.events = SimpleNamespace(emit=emit)
+    direction = await ControlPlane._project_direct(
+        plane, _state(), {}, {}, ["app/main.py"], 3
+    )
+    # The fallback still happens — but it is now a fact on the record.
+    assert direction["failed"].startswith("Cline has no credits")
+    assert [kind for kind, _ in emitted] == ["project.direction_failed"]
+    assert "no credits" in emitted[0][1]["error"]
+
+
+def test_an_over_long_reuse_list_is_trimmed_not_rejected() -> None:
+    """A model listed thirteen things to reuse and lost the entire direction —
+    instruction included — to the thirteenth. The bound protects the brief from
+    flooding; it should never cost the brief."""
+    direction = ProjectDirectionV1(
+        path="app/main.py",
+        instruction="Define create_app().",
+        reuse=[f"symbol_{index}" for index in range(20)],
+        read=[f"file_{index}.py" for index in range(9)],
+    )
+    assert direction.path == "app/main.py"
+    assert direction.instruction == "Define create_app()."
+    assert len(direction.reuse) == 12    # each field's own bound …
+    assert len(direction.read) == 6      # … so trimming cannot trip the limit
+
+
+def test_a_long_instruction_survives() -> None:
+    """Real orchestrators write 3,500-6,000 characters here, so the old 6,000
+    cap sat exactly on the distribution and rejected the longest."""
+    brief = "Define create_app(). " * 400          # ~8,400 characters
+    assert len(ProjectDirectionV1(path="a.py", instruction=brief).instruction) == len(brief)
+
+
+# ── What the Argus revamp exposed: visibility and tool count ───────────────
+
+
+def test_a_directed_step_advertises_only_what_it_may_do() -> None:
+    """Twelve tools were offered on a step where four were legal, and four of
+    the eight illegal ones were read tools the host refuses. The coder answered
+    with read_file and then spent twenty-three more steps reading."""
+    from waqil_api.model_provider import project_roster
+
+    directed = project_roster(
+        {"build_turn": True, "files_still_to_write": ["web/src/styles.css"], "reads_closed": True}
+    )
+    names = {tool["name"] for tool in directed}
+    assert names == {
+        "create_file", "apply_patch", "replace_lines", "revise_plan", "finish_project_task",
+    }
+    # No read is even expressible.
+    assert not names & {"read_file", "list_files", "search_code", "inspect_api"}
+    # An ordinary step keeps the full roster.
+    ordinary = project_roster({"build_turn": True, "files_still_to_write": ["a.py"]})
+    assert len(ordinary) > len(directed)
+    assert "read_file" in {tool["name"] for tool in ordinary}
+
+
+def test_the_local_grammar_makes_a_read_unexpressible_too() -> None:
+    """Both lanes must be asked the same small question."""
+    from waqil_api.contracts import project_directed_schema
+
+    schema = project_directed_schema(["web/src/styles.css"])
+    tools = schema["properties"]["tool"]["enum"]
+    assert set(tools) == {"create_file", "apply_patch", "replace_lines", "revise_plan"}
+    assert schema["properties"]["arguments"]["properties"]["path"]["enum"] == [
+        "web/src/styles.css"
+    ]
+    # revise_plan's own arguments are expressible, or naming it would be a trap.
+    assert "reason" in schema["properties"]["arguments"]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_the_orchestrator_is_told_what_the_host_gave_up_on() -> None:
+    """The stylesheet everything composed against failed three times and simply
+    vanished from `available_files` — no signal distinguished "already written"
+    from "we stopped trying", so eleven dependents were directed anyway."""
+    seen: dict[str, Any] = {}
+
+    class Model:
+        async def project_direction(self, request, *, model_aliases=None):
+            seen.update(request)
+            return ProjectDirectionV1(path="web/src/App.jsx", instruction="write it")
+
+    attempts = {"web/src/styles.css": 3}
+    await ControlPlane._project_direct(
+        _plane(Model()),
+        _state(
+            project_direction_attempts=attempts,
+            project_direction={"path": "web/src/styles.css", "instruction": "rewrite it"},
+        ),
+        {}, {},
+        ["web/src/styles.css", "web/src/App.jsx"],
+        6,
+    )
+    blocked = seen["blocked_files"]
+    assert [item["path"] for item in blocked] == ["web/src/styles.css"]
+    assert blocked[0]["attempts"] == 3
+    # And what it asked for last, and whether that landed.
+    assert seen["last_direction"]["path"] == "web/src/styles.css"
+    assert seen["last_direction"]["written"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_turn_with_only_failed_files_left_ends_instead_of_drifting() -> None:
+    """Twenty-three steps were spent reading a file no path could reach."""
+    class MustNotRun:
+        async def project_direction(self, request, *, model_aliases=None):
+            raise AssertionError("nothing is directable; the orchestrator must not be asked")
+
+    direction = await ControlPlane._project_direct(
+        _plane(MustNotRun()),
+        _state(project_direction_attempts={"web/src/styles.css": 3}),
+        {}, {}, ["web/src/styles.css"], 20,
+    )
+    assert [item["path"] for item in direction["exhausted"]] == ["web/src/styles.css"]
+
+
+# ── Three defects the styles.css runs exposed ──────────────────────────────
+
+
+def test_a_directed_step_is_told_reads_do_not_exist() -> None:
+    """Narrowing the roster was not enough. The instructions above it describe
+    reads at length, and a live directed run followed the prose over the
+    roster: three directions, seven reads, nothing written."""
+    from waqil_api.model_provider import PROJECT_AGENT_SYSTEM, project_system_prompt
+
+    directed = project_system_prompt({"reads_closed": True})
+    assert "THIS STEP IS DIFFERENT" in directed
+    assert "none of those tools exist on this step" in directed
+    # And an ordinary step is untouched — reads are how it works.
+    assert project_system_prompt({}) == PROJECT_AGENT_SYSTEM
+
+
+def test_a_tool_whose_bound_is_spent_is_no_longer_offered() -> None:
+    """A turn spent seven consecutive steps calling revise_plan past its limit,
+    collecting the same refusal each time, because the roster kept offering it."""
+    from waqil_api.model_provider import project_roster
+
+    live = {tool["name"] for tool in project_roster(
+        {"build_turn": True, "files_still_to_write": ["a.css"], "reads_closed": True}
+    )}
+    spent = {tool["name"] for tool in project_roster(
+        {"build_turn": True, "files_still_to_write": ["a.css"], "reads_closed": True,
+         "plan_revisions_spent": True}
+    )}
+    assert "revise_plan" in live
+    assert "revise_plan" not in spent
+    # Writing is still possible; only the spent escape is gone.
+    assert {"create_file", "apply_patch", "replace_lines"} <= spent
+
+
+@pytest.mark.asyncio
+async def test_a_write_outside_the_plan_is_refused() -> None:
+    """Once every planned file was staged the write target was unconstrained,
+    and a stylesheet repair used that freedom to edit config.py and break an
+    import three files away."""
+    plane = _plane(object())
+
+    async def must_not_write(*args: object, **kwargs: object):
+        raise AssertionError("a write outside the plan must never reach the workspace")
+
+    plane.projects = SimpleNamespace(context=_empty_context, execute_staged=must_not_write)
+    state = _state(
+        project_planned_files=["web/src/styles.css"],
+        project_trace=[],
+        project_pending_call={
+            "name": "apply_patch",
+            "arguments": {"path": "config.py", "original": "a", "replacement": "b"},
+        },
+    )
+    evidence = await ControlPlane._project_execute(plane, state)  # type: ignore[arg-type]
+    result = evidence["project_trace"][-1]["result"]
+    assert result["ok"] is False
+    assert "not in this turn's plan" in result["error"]
+    assert "revise_plan" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_planned_file_is_still_writable() -> None:
+    """The scope gate must not become a gate on the work itself."""
+    plane = _plane(object())
+    written: list[str] = []
+
+    async def execute_staged(project_id, call, staged, extra):
+        written.append(call.arguments["path"])
+        return {"ok": True}, {"web/src/styles.css": {"bytes": 10}}
+
+    plane.projects = SimpleNamespace(context=_empty_context, execute_staged=execute_staged,
+                                     style_gaps=None)
+    state = _state(
+        project_planned_files=["web/src/styles.css"],
+        project_trace=[],
+        project_pending_call={
+            "name": "create_file",
+            "arguments": {"path": "web/src/styles.css", "content": ".a{}"},
+        },
+    )
+    await ControlPlane._project_execute(plane, state)  # type: ignore[arg-type]
+    assert written == ["web/src/styles.css"]
+
+
+def test_a_write_tool_that_cannot_apply_is_not_offered() -> None:
+    """Directed at an existing 29KB stylesheet, a coder called create_file three
+    times, was refused three times for aiming at a path that exists, and the
+    turn ended having written nothing — with apply_patch unused beside it."""
+    from waqil_api.contracts import project_directed_schema
+    from waqil_api.model_provider import project_roster
+
+    base = {"build_turn": True, "files_still_to_write": ["web/src/styles.css"],
+            "reads_closed": True}
+    existing = {t["name"] for t in project_roster({**base, "target_exists": True})}
+    fresh = {t["name"] for t in project_roster({**base, "target_exists": False})}
+    assert "create_file" not in existing and {"apply_patch", "replace_lines"} <= existing
+    assert "create_file" in fresh and not {"apply_patch", "replace_lines"} & fresh
+    # Writing is always possible one way or the other.
+    for roster in (existing, fresh):
+        assert roster & {"create_file", "apply_patch", "replace_lines"}
+    # The local grammar narrows identically, or the two lanes disagree.
+    assert set(project_directed_schema(["a.css"], target_exists=True)["properties"]["tool"]["enum"]) == {
+        "apply_patch", "replace_lines", "revise_plan"
+    }
+    assert set(project_directed_schema(["a.css"], target_exists=False)["properties"]["tool"]["enum"]) == {
+        "create_file", "revise_plan"
+    }
+    # Unknown (an undirected or legacy request) keeps every write tool legal.
+    assert "create_file" in project_directed_schema(["a.css"])["properties"]["tool"]["enum"]
+
+
+def test_revise_plan_is_bounded_by_attempts_not_by_successes() -> None:
+    """A no-op revision was free so it would not burn the budget — which made it
+    free forever. A live turn spent fourteen consecutive steps re-proposing the
+    same file list, refused every time, costing nothing it could run out of."""
+    from waqil_api.model_provider import project_roster
+
+    base = {"build_turn": True, "files_still_to_write": ["a.css"], "reads_closed": True,
+            "target_exists": True}
+    assert "revise_plan" in {t["name"] for t in project_roster(base)}
+    # Spent by attempts, even when no revision ever succeeded.
+    spent = {t["name"] for t in project_roster({**base, "plan_revisions_spent": True})}
+    assert "revise_plan" not in spent
+    assert {"apply_patch", "replace_lines"} <= spent
