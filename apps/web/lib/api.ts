@@ -1205,6 +1205,7 @@ function normalizeRoleChains(value: unknown): ModelPreference["role_chains"] {
         provider:
           entry.provider === "oci" ? ("oci" as const)
           : entry.provider === "cohere" ? ("cohere" as const)
+          : entry.provider === "cline" ? ("cline" as const)
           : ("local" as const),
         model: entry.model == null ? null : stringValue(entry.model),
       }));
@@ -1218,13 +1219,18 @@ function normalizeModelPreference(value: unknown): ModelPreference {
   return {
     mode: item.mode === "pinned" ? "pinned" : "split",
     model: item.model == null ? null : stringValue(item.model),
-    provider: item.provider === "oci" ? "oci" : item.provider === "cohere" ? "cohere" : "local",
+    provider:
+      item.provider === "oci" ? "oci"
+      : item.provider === "cohere" ? "cohere"
+      : item.provider === "cline" ? "cline"
+      : "local",
     oci_tools: listFrom(item.oci_tools)
       .map((entry) => stringValue(entry))
       .filter((entry): entry is "x_search" | "code_interpreter" => entry === "x_search" || entry === "code_interpreter"),
     role_chains: normalizeRoleChains(item.role_chains),
     oci_available: item.oci_available === true,
     cohere_available: item.cohere_available === true,
+    cline_available: item.cline_available === true,
   };
 }
 
@@ -1235,7 +1241,7 @@ export async function getModelPreference(): Promise<ModelPreference> {
 export async function setModelPreference(
   mode: "split" | "pinned",
   model: string | null,
-  provider: "local" | "oci" | "cohere" = "local",
+  provider: "local" | "oci" | "cohere" | "cline" = "local",
   ociTools: Array<"x_search" | "code_interpreter"> = ["code_interpreter"],
   // undefined leaves the stored chains untouched, so every existing call
   // site keeps its behavior; {} clears them.

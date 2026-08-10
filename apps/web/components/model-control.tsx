@@ -35,6 +35,18 @@ const CONTEXT_OPTIONS: Array<[LocalModelSession["context_window"], string]> = [
 
 // The three routing roles a preference may ladder, with the words a user
 // should see. Order matters: coder first, because its ladder steers builds.
+// The Cline gateway serves both seats from one key. Measured on the same
+// planning question: Opus answered correctly in 17 output tokens where the
+// open-weight models spent 186 to 1,129 — so the orchestrator seat leads with
+// it, and the coders are the ones the subscription covers.
+const CLINE_MODELS = [
+  "anthropic/claude-opus-4.5",
+  "cline-pass/deepseek-v4-pro",
+  "cline-pass/glm-5.2",
+  "cline-pass/kimi-k2.7-code",
+  "x-ai/grok-4.3",
+];
+
 const ROLE_ROWS: Array<[ModelRole, string, string]> = [
   ["coder", "Coder", "Writes project builds — the ladder that matters most"],
   ["planner", "Planner", "Routes requests and plans work"],
@@ -45,6 +57,10 @@ const ROLE_ROWS: Array<[ModelRole, string, string]> = [
 function encodeRung(entry: RoleChainEntry | undefined): string {
   if (!entry) return "";
   if (entry.provider === "local") return entry.model ? `local:${entry.model}` : "";
+  // Cline serves both seats from one key, so a rung names the model as well as
+  // the lane — that is the whole point of putting a strong model in the
+  // orchestrator seat and a cheap one in the coder's.
+  if (entry.provider === "cline") return `cline:${entry.model ?? ""}`;
   return `${entry.provider}:`;
 }
 
@@ -53,7 +69,30 @@ function decodeRung(value: string): RoleChainEntry | null {
   if (value === "cohere:") return { provider: "cohere", model: null };
   if (value === "oci:") return { provider: "oci", model: null };
   if (value.startsWith("local:")) return { provider: "local", model: value.slice(6) };
+  if (value.startsWith("cline:")) return { provider: "cline", model: value.slice(6) || null };
   return null;
+}
+
+/** One rung as the few words a collapsed row can afford. */
+function rungLabel(entry: RoleChainEntry | undefined): string {
+  if (!entry) return "";
+  if (entry.provider === "cohere") return "Command A+";
+  if (entry.provider === "oci") return "Grok";
+  if (entry.provider === "cline") return shortModel(entry.model?.split("/").pop() ?? "Cline");
+  return shortModel(entry.model);
+}
+
+/**
+ * A whole ladder as one sentence: "deepseek-v4-pro → qwen3-coder".
+ *
+ * This is the collapsed row's entire content, so it has to carry the fact that
+ * matters — what runs first, and what catches it — without the three selects
+ * that made the panel taller than the window.
+ */
+function chainSummary(ladder: RoleChainEntry[] | undefined): string {
+  const rungs = (ladder ?? []).map(rungLabel).filter(Boolean);
+  if (!rungs.length) return "Current selection";
+  return rungs.join(" → ");
 }
 
 function gigabytes(bytes: number): string {
@@ -93,7 +132,7 @@ function localStateLabel(session: LocalModelSession | null, now: number): string
 
 type ModelControlProps = {
   preference: ModelPreference | null;
-  onChooseProvider: (provider: "local" | "oci" | "cohere") => void;
+  onChooseProvider: (provider: "local" | "oci" | "cohere" | "cline") => void;
   onPreferenceChange?: (preference: ModelPreference) => void;
   providerSaving: boolean;
   project: ProjectWorkspace | null;
@@ -142,10 +181,15 @@ export function ModelControl({
   // half-built chain, so the store only follows the server while untouched.
   const [chains, setChains] = useState<ModelPreference["role_chains"]>({});
   const [chainsDirty, setChainsDirty] = useState(false);
+  // At most one ladder is open at a time. Three roles × three selects was the
+  // block that pushed the panel past the bottom of the window; a ladder is
+  // read far more often than it is edited, so reading is the default state.
+  const [openRole, setOpenRole] = useState<ModelRole | null>(null);
 
   const provider = preference?.provider ?? "local";
   const ociAvailable = preference?.oci_available === true;
   const cohereAvailable = preference?.cohere_available === true;
+  const clineAvailable = preference?.cline_available === true;
 
   useEffect(() => {
     if (!chainsDirty) setChains(preference?.role_chains ?? {});
@@ -241,6 +285,7 @@ export function ModelControl({
   useEffect(() => {
     if (!open) return;
     formTouched.current = false;
+    setOpenRole(null);
     const live = sessionRef.current;
     if (live) {
       setIdle(live.idle_timeout_seconds);
@@ -444,6 +489,124 @@ export function ModelControl({
 
   const showLocalSession = !project || projectMode === "grok_bootstrap_local";
 
+  /**
+   * The routes as data, so each one is a single compact row instead of a card.
+   *
+   * The prose that used to sit under every option now appears once, for the
+   * route that is actually selected: four paragraphs to describe four choices
+   * is what made this panel a form. An unavailable route still says so — as a
+   * short state word in the row, and in full in its title — because "why is
+   * this greyed out" is the one question the panel must always answer.
+   */
+  const routes = useMemo(() => {
+    if (project) {
+      return [
+        {
+          key: "grok_bootstrap_local",
+          label: "Ollama lane",
+          state: ollamaLaneModel ? shortModel(ollamaLaneModel) : "local",
+          note: `A cloud model maps the repo once; ${
+            ollamaLaneModel ? shortModel(ollamaLaneModel) : "your Ollama model"
+          } runs each project step.`,
+          disabled: false,
+          title: undefined as string | undefined,
+          selected: projectMode === "grok_bootstrap_local",
+          choose: () => onChooseProjectMode("grok_bootstrap_local"),
+        },
+        {
+          key: "grok_continuous",
+          label: "Grok",
+          state: ociAvailable ? "ready" : "off",
+          note: ociAvailable
+            ? "Grok leads every bounded project step — largest context."
+            : "Off — needs the Grok lane enabled and OCI Responses configured.",
+          disabled: !ociAvailable,
+          title: ociAvailable
+            ? undefined
+            : "Enable the Grok lane (WAQIL_GROK_LANE_ENABLED) and configure OCI Responses first",
+          selected: projectMode === "grok_continuous",
+          choose: () => onChooseProjectMode("grok_continuous"),
+        },
+        {
+          key: "cohere_continuous",
+          label: "Command A+",
+          state: cohereAvailable ? "ready" : "off",
+          note: cohereAvailable
+            ? "Cohere Command A+ leads every bounded step."
+            : "Needs a Cohere API key configured.",
+          disabled: !cohereAvailable,
+          title: cohereAvailable ? undefined : "Add WAQIL_COHERE_API_KEY first",
+          selected: projectMode === "cohere_continuous",
+          choose: () => onChooseProjectMode("cohere_continuous"),
+        },
+      ];
+    }
+    return [
+      {
+        key: "local",
+        label: "Local",
+        state: localStateLabel(session, now),
+        note: "On-device weights. Nothing leaves this machine.",
+        disabled: false,
+        title: undefined as string | undefined,
+        selected: route === "local",
+        choose: () => void chooseRoute("local"),
+      },
+      {
+        key: "ollama_cloud",
+        label: "Ollama Cloud",
+        state: cloudModels.length ? `${cloudModels.length} hosted` : "off",
+        note: cloudModels.length
+          ? `${cloudModels.length} hosted model${cloudModels.length === 1 ? "" : "s"} on your subscription — no local memory used.`
+          : "No hosted models are available to this Ollama.",
+        disabled: !cloudModels.length,
+        title: cloudModels.length ? undefined : "Sign in to Ollama Cloud, then refresh",
+        selected: route === "ollama_cloud",
+        choose: () => void chooseRoute("ollama_cloud"),
+      },
+      {
+        key: "oci",
+        label: "Cloud · Grok",
+        state: ociAvailable ? "ready" : "off",
+        note: ociAvailable
+          ? "Grok 4.3 through OCI, for the largest context."
+          : "Needs OCI configured in Settings.",
+        disabled: !ociAvailable,
+        title: ociAvailable ? undefined : "Configure OCI in Settings first",
+        selected: route === "oci",
+        choose: () => void chooseRoute("oci"),
+      },
+      {
+        key: "cohere",
+        label: "Cloud · Command A+",
+        state: cohereAvailable ? "ready" : "off",
+        note: cohereAvailable
+          ? "Cohere Command A+ through your Cohere key."
+          : "Needs a Cohere API key configured.",
+        disabled: !cohereAvailable,
+        title: cohereAvailable ? undefined : "Add WAQIL_COHERE_API_KEY first",
+        selected: route === "cohere",
+        choose: () => void chooseRoute("cohere"),
+      },
+    ];
+    // `chooseRoute` is a stable declaration in this render scope; the routes
+    // depend on what the panel is showing, not on its identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    project,
+    projectMode,
+    onChooseProjectMode,
+    ollamaLaneModel,
+    ociAvailable,
+    cohereAvailable,
+    route,
+    session,
+    now,
+    cloudModels.length,
+  ]);
+
+  const selectedNote = routes.find((item) => item.selected)?.note ?? "";
+
   return (
     <div className="modelControl" ref={rootRef}>
       <button
@@ -461,117 +624,38 @@ export function ModelControl({
 
       {open ? (
         <section className="modelControlPanel" aria-label="Model for this conversation">
+          <div className="modelControlBody">
           {project ? (
-            <>
-              <div className="modelControlEyebrow">
-                <span className="eyebrow">Whole-project mode</span>
-                <p>A cloud model creates the first local map. These choose who leads each bounded, approval-gated step after that.</p>
-              </div>
-              <div className="modelControlChoice" role="radiogroup" aria-label="Project reasoning mode">
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={projectMode === "grok_bootstrap_local"}
-                  className={projectMode === "grok_bootstrap_local" ? "selected" : ""}
-                  disabled={disabled || projectBusy}
-                  onClick={() => onChooseProjectMode("grok_bootstrap_local")}
-                >
-                  <strong>Ollama lane</strong>
-                  <small>
-                    {`A cloud model maps the repo once; ${
-                      ollamaLaneModel ? shortModel(ollamaLaneModel) : "your Ollama model"
-                    } runs each project step.`}
-                  </small>
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={projectMode === "grok_continuous"}
-                  className={projectMode === "grok_continuous" ? "selected" : ""}
-                  disabled={disabled || projectBusy || !ociAvailable}
-                  title={
-                    ociAvailable
-                      ? undefined
-                      : "Enable the Grok lane (WAQIL_GROK_LANE_ENABLED) and configure OCI Responses first"
-                  }
-                  onClick={() => onChooseProjectMode("grok_continuous")}
-                >
-                  <strong>Grok</strong>
-                  <small>
-                    {ociAvailable
-                      ? "Grok leads every bounded project step — largest context."
-                      : "Off — needs the Grok lane enabled and OCI Responses configured."}
-                  </small>
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={projectMode === "cohere_continuous"}
-                  className={projectMode === "cohere_continuous" ? "selected" : ""}
-                  disabled={disabled || projectBusy || !cohereAvailable}
-                  title={cohereAvailable ? undefined : "Add WAQIL_COHERE_API_KEY first"}
-                  onClick={() => onChooseProjectMode("cohere_continuous")}
-                >
-                  <strong>Command A+</strong>
-                  <small>{cohereAvailable ? "Cohere Command A+ leads every bounded step." : "Needs a Cohere API key configured."}</small>
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="modelControlChoice" role="radiogroup" aria-label="Reasoning model">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={route === "local"}
-                className={route === "local" ? "selected" : ""}
-                disabled={disabled || providerSaving || busy}
-                onClick={() => void chooseRoute("local")}
-              >
-                <strong>Local</strong>
-                <small>On-device weights. Nothing leaves this machine.</small>
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={route === "ollama_cloud"}
-                className={route === "ollama_cloud" ? "selected" : ""}
-                disabled={disabled || providerSaving || busy || !cloudModels.length}
-                title={cloudModels.length ? undefined : "Sign in to Ollama Cloud, then refresh"}
-                onClick={() => void chooseRoute("ollama_cloud")}
-              >
-                <strong>Ollama Cloud</strong>
-                <small>
-                  {cloudModels.length
-                    ? `${cloudModels.length} hosted model${cloudModels.length === 1 ? "" : "s"} on your subscription — no local memory used.`
-                    : "No hosted models are available to this Ollama."}
-                </small>
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={route === "oci"}
-                className={route === "oci" ? "selected" : ""}
-                disabled={disabled || providerSaving || busy || !ociAvailable}
-                title={ociAvailable ? undefined : "Configure OCI in Settings first"}
-                onClick={() => void chooseRoute("oci")}
-              >
-                <strong>Cloud · Grok</strong>
-                <small>{ociAvailable ? "Grok 4.3 through OCI, for the largest context." : "Needs OCI configured in Settings."}</small>
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={route === "cohere"}
-                className={route === "cohere" ? "selected" : ""}
-                disabled={disabled || providerSaving || busy || !cohereAvailable}
-                title={cohereAvailable ? undefined : "Add WAQIL_COHERE_API_KEY first"}
-                onClick={() => void chooseRoute("cohere")}
-              >
-                <strong>Cloud · Command A+</strong>
-                <small>{cohereAvailable ? "Cohere Command A+ through your Cohere key." : "Needs a Cohere API key configured."}</small>
-              </button>
+            <div className="modelControlEyebrow">
+              <span className="eyebrow">Whole-project mode</span>
             </div>
-          )}
+          ) : null}
+          <div
+            className="modelControlRoutes"
+            role="radiogroup"
+            aria-label={project ? "Project reasoning mode" : "Reasoning model"}
+          >
+            {routes.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                role="radio"
+                aria-checked={item.selected}
+                className={`modelControlRoute${item.selected ? " selected" : ""}`}
+                disabled={
+                  disabled
+                  || item.disabled
+                  || (project ? projectBusy : providerSaving || busy)
+                }
+                title={item.title}
+                onClick={item.choose}
+              >
+                <strong>{item.label}</strong>
+                <em>{item.state}</em>
+              </button>
+            ))}
+          </div>
+          {selectedNote ? <p className="modelControlAdvice">{selectedNote}</p> : null}
 
           {/* Hosted models have no weights to place, so this route carries a
               model list and nothing else — no idle window, no context size,
@@ -683,46 +767,83 @@ export function ModelControl({
             </div>
           ) : null}
 
+          {/* Each role reads as a sentence and opens only when you ask it to.
+              Collapsed, a ladder is "Coder · deepseek-v4-pro → qwen3-coder" —
+              the two facts worth knowing at a glance — and the three selects
+              that state them appear for one role at a time. */}
           <div className="modelControlSession">
             <div className="modelControlSessionHead">
               <span className="eyebrow">Roles &amp; backups</span>
-              {chainsDirty ? (
-                <button
-                  type="button"
-                  className="modelControlStop"
-                  onClick={() => void saveChains()}
-                  disabled={busy || providerSaving}
-                >
-                  {busy ? "Saving…" : "Save ladder"}
-                </button>
-              ) : null}
             </div>
-            {ROLE_ROWS.map(([role, label, hint]) => (
-              <div key={role} className="modelControlRoleRow">
-                <span className="modelControlRoleName" title={hint}>{label}</span>
-                {[0, 1, 2].map((slot) => (
-                  <select
-                    key={slot}
-                    aria-label={`${label} ${slot === 0 ? "primary" : `backup ${slot}`}`}
-                    value={encodeRung(chains[role]?.[slot])}
-                    onChange={(event) => setRung(role, slot, event.target.value)}
-                    disabled={busy || providerSaving}
+            {ROLE_ROWS.map(([role, label, hint]) => {
+              const expanded = openRole === role;
+              return (
+                <div key={role} className={`modelControlRole${expanded ? " open" : ""}`}>
+                  <button
+                    type="button"
+                    className="modelControlRoleHead"
+                    aria-expanded={expanded}
+                    title={hint}
+                    onClick={() => setOpenRole(expanded ? null : role)}
                   >
-                    <option value="">{slot === 0 ? "Current selection" : "— none —"}</option>
-                    {(session?.models ?? []).map((item) => (
-                      <option key={item.id} value={`local:${item.id}`}>{item.name}</option>
-                    ))}
-                    {cohereAvailable ? <option value="cohere:">Command A+ (Cohere)</option> : null}
-                    {ociAvailable ? <option value="oci:">Grok (OCI)</option> : null}
-                  </select>
-                ))}
-              </div>
-            ))}
+                    <span className="modelControlRoleName">{label}</span>
+                    <span className="modelControlRoleChain">{chainSummary(chains[role])}</span>
+                    <b aria-hidden="true">⌄</b>
+                  </button>
+                  {expanded ? (
+                    <div className="modelControlRoleRungs">
+                      {[0, 1, 2].map((slot) => (
+                        <label key={slot}>
+                          <span>{slot === 0 ? "Primary" : `Backup ${slot}`}</span>
+                          <select
+                            aria-label={`${label} ${slot === 0 ? "primary" : `backup ${slot}`}`}
+                            value={encodeRung(chains[role]?.[slot])}
+                            onChange={(event) => setRung(role, slot, event.target.value)}
+                            disabled={busy || providerSaving}
+                          >
+                            <option value="">{slot === 0 ? "Current selection" : "— none —"}</option>
+                            {(session?.models ?? []).map((item) => (
+                              <option key={item.id} value={`local:${item.id}`}>{item.name}</option>
+                            ))}
+                            {cohereAvailable ? <option value="cohere:">Command A+ (Cohere)</option> : null}
+                            {ociAvailable ? <option value="oci:">Grok (OCI)</option> : null}
+                            {clineAvailable
+                              ? CLINE_MODELS.map((item) => (
+                                  <option key={item} value={`cline:${item}`}>
+                                    {item.split("/").pop()} (Cline)
+                                  </option>
+                                ))
+                              : null}
+                          </select>
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
             <p className="modelControlAdvice">
               First rung is the primary; a lane that stops answering falls to the
               next rung mid-run. The coder ladder steers project builds.
             </p>
           </div>
+          </div>
+
+          {/* Pinned outside the scrolling body: an unsaved ladder was exactly
+              the control that used to fall off the bottom of the window. */}
+          {chainsDirty ? (
+            <div className="modelControlFoot">
+              <span>Ladder not saved</span>
+              <button
+                type="button"
+                className="modelControlLaunch"
+                onClick={() => void saveChains()}
+                disabled={busy || providerSaving}
+              >
+                {busy ? "Saving…" : "Save"}
+              </button>
+            </div>
+          ) : null}
 
           {(session?.state === "error" && showLocalSession) || error ? (
             <p className="modelControlError" role="alert">{error || session?.error}</p>

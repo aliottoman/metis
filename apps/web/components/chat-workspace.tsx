@@ -559,7 +559,8 @@ export function ChatWorkspace() {
     }
   }
 
-  async function chooseChatProvider(provider: "local" | "oci" | "cohere") {
+  async function chooseChatProvider(
+    provider: "local" | "oci" | "cohere" | "cline") {
     if (providerSaving || modelPreference?.provider === provider) return;
     if (provider === "oci" && !modelPreference?.oci_available) {
       setError("Cloud reasoning is not configured yet. Add the OCI project settings before selecting it.");

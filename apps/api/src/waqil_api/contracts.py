@@ -983,6 +983,56 @@ class ProjectBuildPlanV1(Contract):
         return seen
 
 
+class ProjectDirectionV1(Contract):
+    """One file's instruction, written by the orchestrator for the coder.
+
+    This is the hard gate between deciding scope and writing code, expressed as
+    a contract. The orchestrator answers here and has no tools at all, so it
+    *cannot* write; the coder receives this and is given one path with reads
+    closed, so it cannot decide what the turn is about. Measured on the case
+    that motivated it: a model handed the whole four-file conversion planned it
+    correctly, was narrowed to one file, and still read to the ceiling without
+    writing — it was never short of context, it was free to keep choosing to
+    look. Nothing here gives it that choice.
+
+    Flat on purpose, like every other locally-decoded contract: no ``$ref``, no
+    ``anyOf``, because the nested forms are what collapse MLX decode.
+    """
+
+    # Which file the coder must write next. The host checks it against the plan
+    # and against a per-file attempt cap, so naming the same path twice is a
+    # repair rather than an escape — and naming a path outside the plan is
+    # refused rather than obeyed.
+    path: str = ""
+    # What to write, imperatively. This replaces the fixed sentence the host
+    # used to send, which could say "write this file" and never what it should
+    # contain.
+    instruction: str = Field(default="", max_length=6_000)
+    # Symbols and modules the project already has that this file must compose
+    # rather than reinvent — the repo map's whole purpose, made specific.
+    reuse: list[str] = Field(default_factory=list, max_length=12)
+    # Files the HOST should fetch and hand to the coder. The point of the split
+    # is that the coder does not spend steps looking: if something must be read,
+    # the orchestrator says so and the host pays for it once.
+    read: list[str] = Field(default_factory=list, max_length=6)
+    # The plan is satisfied, or cannot be carried further. Ends the directed
+    # arc and hands the turn back to the ordinary loop to finish honestly.
+    done: bool = False
+    # Why — shown in the timeline, and the reason a `done` before the plan is
+    # complete is legible rather than mysterious.
+    reason: str = Field(default="", max_length=2_000)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        path = " ".join(str(value or "").split())[:400]
+        while path.startswith("./"):
+            path = path[2:]
+        if path.startswith("/") or ".." in path:
+            return ""
+        return path
+
+
 class ProjectAgentStepWireV1(Contract):
     """The flat wire form of a project step, shaped for grammar-constrained decode.
 
@@ -1526,13 +1576,14 @@ class PersonalProfileUpdateV1(Contract):
 class RoleChainEntryV1(Contract):
     """One rung of a role's model ladder: a lane, and the model on it.
 
-    ``model`` matters only on the local (Ollama) lane, which serves many
-    models; the OCI and Cohere lanes each run their configured model and
+    ``model`` matters on the local (Ollama) lane, which serves many models,
+    and on the Cline lane, where naming one overrides that seat's configured
+    default; the OCI and Cohere lanes each run their configured model and
     ignore it. Kept as two fields rather than a parsed string so the UI can
     render lanes and models as separate controls.
     """
 
-    provider: Literal["local", "oci", "cohere"] = "local"
+    provider: Literal["local", "oci", "cohere", "cline"] = "local"
     model: str | None = Field(default=None, max_length=200)
 
 
@@ -1544,7 +1595,7 @@ MODEL_ROLES: tuple[str, ...] = ("planner", "coder", "quality")
 class ModelPreferenceV1(Contract):
     mode: Literal["split", "pinned"] = "split"
     model: str | None = None
-    provider: Literal["local", "oci", "cohere"] = "local"
+    provider: Literal["local", "oci", "cohere", "cline"] = "local"
     oci_tools: list[Literal["x_search", "code_interpreter"]] = Field(
         default_factory=lambda: ["code_interpreter"], max_length=2
     )
@@ -1555,6 +1606,7 @@ class ModelPreferenceV1(Contract):
     role_chains: dict[str, list[RoleChainEntryV1]] = Field(default_factory=dict)
     oci_available: bool = False
     cohere_available: bool = False
+    cline_available: bool = False
 
     @field_validator("role_chains")
     @classmethod
@@ -1572,7 +1624,7 @@ class ModelPreferenceV1(Contract):
 class ModelPreferenceUpdateV1(Contract):
     mode: Literal["split", "pinned"]
     model: str | None = Field(default=None, max_length=200)
-    provider: Literal["local", "oci", "cohere"] = "local"
+    provider: Literal["local", "oci", "cohere", "cline"] = "local"
     oci_tools: list[Literal["x_search", "code_interpreter"]] = Field(
         default_factory=lambda: ["code_interpreter"], max_length=2
     )

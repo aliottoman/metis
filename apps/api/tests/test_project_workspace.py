@@ -696,3 +696,60 @@ async def test_the_plan_is_written_to_the_project_and_survives_revision(tmp_path
     )
     notes = (project / ".metis" / "METIS.md").read_text(encoding="utf-8")
     assert "- [x] `app.py`" in notes
+
+
+@pytest.mark.asyncio
+async def test_repo_map_ranks_the_real_tree_and_follows_the_request(tmp_path: Path) -> None:
+    """The map a build step is handed, built from a real project on disk."""
+    projects_root = tmp_path / "Projects"
+    project = projects_root / "shop"
+    (project / "app").mkdir(parents=True)
+    (project / "README.md").write_text("# Shop\n", encoding="utf-8")
+    (project / "app" / "models.py").write_text(
+        "class Order:\n    pass\n\n\nclass Customer:\n    pass\n", encoding="utf-8"
+    )
+    (project / "app" / "billing.py").write_text(
+        "from app.models import Order\n\n\ndef charge(order: Order) -> int:\n    return 1\n",
+        encoding="utf-8",
+    )
+    (project / "app" / "shipping.py").write_text(
+        "from app.models import Order\n\n\ndef dispatch(order: Order) -> None:\n    return None\n",
+        encoding="utf-8",
+    )
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        repo_root=tmp_path,
+        asset_roots=[projects_root],
+        model_backend="deterministic",
+        allow_test_backends=True,
+    )
+    assets = AssetManager(
+        settings.asset_roots,
+        approval_path=settings.asset_approval_path,
+        catalog_path=settings.asset_catalog_path,
+    )
+    discovered = await assets.scan()
+    service = ProjectWorkspaceService(settings, assets, DeterministicModelProvider())
+    opened = await service.open(discovered[0].id)
+
+    text = await service.repo_map(opened.id, request="charge the order", max_chars=4_000)
+    # Definitions, with the line numbers that let the model verify them.
+    assert "app/models.py" in text
+    assert "class Order" in text
+    assert "def charge" in text
+    # models.py is what both other modules import, so it leads on structure;
+    # billing.py is what the request named, so it outranks its sibling.
+    assert text.index("app/billing.py") < text.index("app/shipping.py")
+    # A file that declares nothing is still named — one line beats a read.
+    assert "README.md" in text
+
+    # Extraction is cached per file by (mtime, size); a changed file is re-read
+    # and a deleted one stops contributing symbols that no longer exist.
+    (project / "app" / "shipping.py").unlink()
+    again = await service.repo_map(opened.id, request="charge the order", max_chars=4_000)
+    assert "app/shipping.py" not in again
+    assert "def charge" in again
+
+    # A budget of zero sends no map at all — the before-side of the measurement.
+    assert await service.repo_map(opened.id, request="charge", max_chars=0) == ""

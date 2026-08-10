@@ -37,6 +37,8 @@ def _plane(model: object) -> ControlPlane:
         # manifest and the guards, not the rewrite (test_spec_rewrite owns that).
         project_spec_rewrite=False,
         project_spec_rewrite_max_chars=1800,
+        # Likewise the repo map: these tests own the manifest and the guards.
+        project_repo_map_enabled=False, project_orchestrator_enabled=False,
     )
     plane._guard = _noop
     plane._stage = _noop

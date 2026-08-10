@@ -1301,6 +1301,17 @@ select,
   border-color: var(--m-ink-2);
 }
 .modelControlChoice > button.selected > strong { color: var(--m-ink); }
+/* Route rows and role rows: ink selection on paper, no green tint. */
+.modelControlRoute:hover:not(:disabled),
+.modelControlRoleHead:hover { background: var(--m-surface); }
+.modelControlRoute.selected { background: var(--m-surface); }
+.modelControlRoute.selected > strong { color: var(--m-ink); }
+.modelControlRoute > strong,
+.modelControlRoleName { color: var(--m-ink); }
+.modelControlRoute > em,
+.modelControlRoleChain { color: var(--m-ink-2); }
+.modelControlFoot { border-top: 1px solid var(--m-line); }
+.modelControlFoot > span { color: var(--m-ink-2); }
 .modelControlSession select,
 .modelControlSession label > span { color: var(--m-ink); }
 .modelControlSession select {
