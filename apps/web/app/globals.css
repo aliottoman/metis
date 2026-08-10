@@ -9909,14 +9909,69 @@ body {
   color: var(--ink);
   z-index: 130;
   animation: modelControlIn 160ms var(--ease);
+  /* The panel is a column with a scrolling middle: whatever it grows, it can
+     never again push a control past the bottom of the window. */
+  display: flex;
+  flex-direction: column;
+  max-height: min(72vh, 620px);
 }
+.modelControlBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The sticky answer to the bug that started this: an unsaved ladder. */
+.modelControlFoot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.modelControlFoot > span { color: var(--muted); font-size: 10.5px; font-weight: 640; }
+.modelControlFoot > .modelControlLaunch { height: 32px; padding: 0 18px; }
 @keyframes modelControlIn {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-.modelControlEyebrow { margin-bottom: 12px; }
+.modelControlEyebrow { margin-bottom: 10px; }
 .modelControlEyebrow > p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+/* One line per route. The prose that used to live in every card now appears
+   once, below, for the route that is actually selected. */
+.modelControlRoutes { display: grid; gap: 2px; }
+.modelControlRoute {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background 140ms var(--ease);
+}
+.modelControlRoute > strong { font-size: 12.5px; font-weight: 600; }
+.modelControlRoute > em {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.modelControlRoute:hover:not(:disabled) { background: rgba(108, 138, 118, 0.08); }
+.modelControlRoute.selected { background: var(--green-tint); }
+.modelControlRoute.selected > strong { color: var(--green-ink); font-weight: 680; }
+.modelControlRoute:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .modelControlChoice { display: grid; gap: 8px; }
 .modelControlChoice > button {
@@ -9966,19 +10021,41 @@ body {
 .modelControlSession label { display: grid; gap: 5px; }
 .modelControlSession label > span { color: var(--muted); font-size: 10.5px; font-weight: 640; }
 .modelControlRow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-/* One role's ladder: name, then primary → backup → backup. */
-.modelControlRoleRow {
-  display: grid;
-  grid-template-columns: 58px 1fr 1fr 1fr;
-  gap: 6px;
-  align-items: center;
+/* One role, collapsed to a sentence; the three selects open on request. */
+.modelControlRole { display: grid; gap: 8px; }
+.modelControlRoleHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background 140ms var(--ease);
 }
-.modelControlRoleRow .modelControlRoleName {
+.modelControlRoleHead:hover { background: rgba(108, 138, 118, 0.08); }
+.modelControlRoleHead > b {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  transition: transform 140ms var(--ease);
+}
+.modelControlRole.open .modelControlRoleHead > b { transform: rotate(180deg); }
+.modelControlRoleName { font-size: 12px; font-weight: 620; }
+.modelControlRoleChain {
   color: var(--muted);
   font-size: 10.5px;
-  font-weight: 640;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.modelControlRoleRow select { height: 30px; font-size: 11px; }
+.modelControlRoleRungs { display: grid; gap: 8px; padding: 0 8px 4px; }
+.modelControlRoleRungs select { height: 32px; font-size: 11.5px; }
 .modelControlSession select {
   width: 100%;
   height: 36px;

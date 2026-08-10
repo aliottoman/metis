@@ -107,6 +107,18 @@ class Settings(BaseSettings):
     cohere_model: str = "command-a-plus-05-2026"
     cohere_max_output_tokens: int = Field(default=8192, ge=256, le=32768)
 
+    # The Cline gateway: one key reaching both the ClinePass open-weight coding
+    # models and the Anthropic/xAI models behind the same endpoint. The split
+    # of defaults is the measured one — asked the same planning question, Opus
+    # answered correctly in 17 output tokens where the open-weight models spent
+    # 186 to 1,129 — so the orchestrator seat takes the model that thinks in few
+    # tokens and the coder seat takes the one on the subscription.
+    cline_api_key: str = ""
+    cline_base_url: str = "https://api.cline.bot/api/v1"
+    cline_orchestrator_model: str = "anthropic/claude-opus-4.5"
+    cline_coder_model: str = "cline-pass/deepseek-v4-pro"
+    cline_max_output_tokens: int = Field(default=8192, ge=256, le=64000)
+
     # Speech to text, on the same key. Dictation is the one place a cloud call
     # is hard to argue with even in a local-first app: the audio is a few
     # seconds of the user's own voice, not the conversation, and the local
@@ -239,6 +251,25 @@ class Settings(BaseSettings):
     project_reference_enabled: bool = True
     project_reference_max_chars: int = Field(default=40_000, ge=0, le=120_000)
     project_reference_max_chars_local: int = Field(default=9_000, ge=0, le=60_000)
+
+    # The ranked symbol map sent with every project step. It replaces reads the
+    # model would otherwise have to spend steps on, so it earns its budget only
+    # if it is measured doing that — see docs/orchestration-plan.md. Set the
+    # budget to 0 to send no map at all, which is also the before-side of that
+    # measurement.
+    project_repo_map_enabled: bool = True
+    project_repo_map_max_chars: int = Field(default=12_000, ge=0, le=80_000)
+    project_repo_map_max_chars_local: int = Field(default=5_000, ge=0, le=40_000)
+
+    # The orchestrator/coder split. One model (the `planner` role) decides which
+    # file is written next and what it must contain; another (the `coder` role)
+    # writes exactly that file with reads closed. Off returns the loop to the
+    # single-model arc, which is also the control for measuring this.
+    project_orchestrator_enabled: bool = True
+    # How many times one file may be directed before the host stops asking. A
+    # repair is the orchestrator naming the same path again, which is right and
+    # necessary — and without a cap it is also an infinite loop.
+    project_orchestrator_max_attempts: int = Field(default=3, ge=1, le=8)
 
     # The build loop's own checks on a staged changeset, before the user is ever
     # offered it. The wiring gate is pure AST and always runs; the sandbox

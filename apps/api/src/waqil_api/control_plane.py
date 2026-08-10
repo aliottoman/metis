@@ -79,6 +79,7 @@ from .model_provider import (
     build_planning_attachment_evidence,
     classify_backend_unavailable,
     default_routing_catalog,
+    drain_repairs,
     is_explicit_toolify_request,
     is_new_application_request,
     is_project_build_instruction,
@@ -130,6 +131,40 @@ def _bounded_check_name(call: ProjectToolCallV1) -> str:
 # Read-only tools only: a repeated write is refused on its own merits, and a
 # repeated check may legitimately re-run after a change.
 _REPEATABLE_PROJECT_READS = frozenset({"list_files", "search_code", "read_file"})
+
+
+def _directed_attention(directed: dict[str, Any]) -> str:
+    """The coder's entire brief for one file: the orchestrator's words, framed.
+
+    The framing is the host's (which tool, that reads are closed, what to do if
+    the instruction cannot be carried out); the *content* is the orchestrator's
+    and is passed through whole. Summarising it here would put the host back in
+    the business of deciding what a file should contain, which is the seat this
+    split just took it out of.
+    """
+    path = str(directed.get("path", ""))
+    instruction = str(directed.get("instruction", "")).strip()
+    reuse = [str(item) for item in (directed.get("reuse") or [])]
+    lines = [
+        f"Write ONLY {path} in this step, and nothing else.",
+        "",
+        instruction or f"Write {path} as the plan describes.",
+    ]
+    if reuse:
+        lines += [
+            "",
+            "This project already has these — compose them, do not write your own:",
+            *(f"- {item}" for item in reuse[:12]),
+        ]
+    lines += [
+        "",
+        f"Everything you need has already been read for you and is in the tool "
+        f"trace. Reads are closed for this step. Send the complete contents of "
+        f"{path} with create_file, or apply_patch/replace_lines if it already "
+        "exists. If this instruction genuinely cannot be carried out, say so "
+        "with revise_plan rather than writing something else.",
+    ]
+    return "\n".join(lines)
 
 
 def _writes_files(state: AgentState) -> bool:
@@ -200,6 +235,31 @@ def _coder_chain(aliases: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _planner_aliases(aliases: Mapping[str, Any]) -> dict[str, str]:
+    """The run's aliases routed to the ORCHESTRATOR's seat, for one call.
+
+    `_provider` is global to a run — it is what chat itself reads — so without
+    this the orchestrator ran on whatever lane the conversation was pinned to
+    and the planner ladder was decorative. The split is only real if the two
+    seats can hold different models, and this is where that becomes true.
+
+    Only the FIRST planner rung is applied: a direction that cannot be produced
+    falls back to the undirected loop, which is a better failure than walking a
+    ladder inside a call whose result is optional.
+    """
+    patched = {str(k): str(v) for k, v in aliases.items()}
+    explicit = str(aliases.get("_chain_planner") or "")
+    if not explicit:
+        return patched
+    try:
+        entries = json.loads(explicit)
+    except ValueError:
+        return patched
+    if not (isinstance(entries, list) and entries and isinstance(entries[0], dict)):
+        return patched
+    return _chain_step_aliases(patched, entries[0])
+
+
 def _chain_step_aliases(
     aliases: Mapping[str, Any], entry: Mapping[str, Any]
 ) -> dict[str, str]:
@@ -209,10 +269,15 @@ def _chain_step_aliases(
     too), so a rung routes the CALL without rewriting the run.
     """
     patched = {str(k): str(v) for k, v in aliases.items()}
-    patched["_provider"] = str(entry.get("provider") or "local")
+    provider = str(entry.get("provider") or "local")
+    patched["_provider"] = provider
     model = entry.get("model")
     if model:
-        patched["coder"] = str(model)
+        # The Cline lane resolves its own model per ROLE, so a rung that names
+        # one is overriding that seat rather than setting the coder alias the
+        # Ollama lane reads. Writing it into `coder` here would have silently
+        # sent the orchestrator's model name to a lane that never reads it.
+        patched["_cline_model" if provider == "cline" else "coder"] = str(model)
     return patched
 
 
@@ -221,6 +286,8 @@ def _chain_entry_label(entry: Mapping[str, Any], aliases: Mapping[str, Any]) -> 
     provider = str(entry.get("provider") or "local")
     if provider == "cohere":
         return "Cohere Command A+"
+    if provider == "cline":
+        return f"Cline ({entry.get('model') or 'default'})"
     if provider == "oci":
         return "Grok (OCI)"
     return str(entry.get("model") or aliases.get("coder") or "local model")
@@ -334,7 +401,7 @@ def _repeated_project_call(
 # resume safely, so reconcile_startup fails them instead. Bumped to 6 for the
 # ask_user pause: the plan node now branches to ask_user_prepare/ask_user_interrupt
 # before synthesize, a topology an in-flight version-5 checkpoint cannot resume.
-GRAPH_SCHEMA_VERSION = "6"
+GRAPH_SCHEMA_VERSION = "7"
 
 
 def _extract_python_source(raw: str) -> str:
@@ -1032,6 +1099,16 @@ class AgentState(TypedDict):
     # file or ends the turn, so this cannot grow without bound; it is carried
     # for the record and for the event stream.
     project_focus_rounds: int
+    # ── The orchestrator/coder split ───────────────────────────────────────
+    # The direction the orchestrator gave for the file being written now:
+    # {path, instruction, reuse, read, done, reason}. Empty when the turn is
+    # not directed — a question, a plan the orchestrator declared done, or the
+    # split switched off, all of which return the ordinary single-model loop.
+    project_direction: dict[str, Any]
+    # How many times each path has been directed. A repair is the orchestrator
+    # naming the same path again, which is the mechanism working; a cap is what
+    # stops it being a loop.
+    project_direction_attempts: dict[str, int]
     # The acceptance scenarios named alongside the manifest: the spec's own
     # claims made checkable, replayed by the sandbox rung against the finished
     # app. Plain dicts (AcceptanceScenarioV1 shape) so checkpoints stay JSON.
@@ -2221,6 +2298,16 @@ class ControlPlane:
             manifest = dict(project_context.get("manifest", {}))
             manifest["file_tree"] = list(manifest.get("file_tree", []))[:500]
             prompt_context["manifest"] = manifest
+        # The ranked symbol map, biased toward what THIS turn is about. Built
+        # here rather than in `context()` because the ranking is only worth
+        # doing against a request, and rebuilt each step because the trace
+        # narrows what the turn is about as it goes — a step that has been
+        # focused on one file should get a map ranked around that file.
+        repo_map_text = await self._project_repo_map(state, project_id, cloud_context)
+        if repo_map_text:
+            if prompt_context is project_context:
+                prompt_context = dict(project_context)
+            prompt_context["repo_map"] = repo_map_text
         trace = _bounded_project_trace(
             list(state.get("project_trace", [])),
             max_characters=180_000 if cloud_context else 36_000,
@@ -2361,6 +2448,42 @@ class ControlPlane:
                     state["conversation_id"],
                     "project.scaffold_staged",
                     {"files": seeded, "version": SCAFFOLD_VERSION},
+                )
+        # ── The orchestrator's turn, before the coder's ────────────────────
+        # Taken only once there is a plan to direct against and the turn is one
+        # that writes. A question is never directed: there is no file to name.
+        directed_intent = (carry.get("project_build_intent") or state.get("project_build_intent") or "")
+        planned_now = list(carry.get("project_planned_files") or state.get("project_planned_files") or planned or [])
+        if planned_now and directed_intent != "question" and _writes_files(
+            cast(AgentState, {**state, **carry})
+        ):
+            direction = await self._project_direct(
+                cast(AgentState, {**state, **carry}),
+                prompt_context, staged, planned_now, iterations, spec_text=spec_text,
+            )
+            if direction.get("done"):
+                # The orchestrator says the plan is satisfied or cannot go
+                # further. The turn is NOT ended here — it returns to the
+                # ordinary loop, which owns finishing honestly (the finish
+                # guards, the verification ladder, the approval card). An
+                # orchestrator that could end a turn by saying so would be
+                # deciding scope AND completion, which is the thing this split
+                # exists to prevent.
+                carry["project_direction"] = {}
+            elif direction.get("path"):
+                carry["project_direction"] = {
+                    key: direction[key] for key in ("path", "instruction", "reuse", "read")
+                }
+                carry["project_direction_attempts"] = direction["attempts"]
+                # The existing narrowing machinery IS the coder's half of the
+                # gate: focus narrows files_still_to_write to one path, which
+                # is what pins create_file's enum on the tool-calling lanes and
+                # the grammar on the local one. The split reuses it rather than
+                # growing a second mechanism that could disagree with it.
+                carry["project_focus_path"] = direction["path"]
+                carry["project_consecutive_reads"] = 0
+                trace = await self._prefetch_for_coder(
+                    state, project_id, staged, direction, trace
                 )
         # The coder ladder for this run: [primary, backup, ...]. A lane that
         # fails to ANSWER (rate limit, quota, 5xx, timeout, a grammar the
@@ -2679,6 +2802,191 @@ class ControlPlane:
             "files": [], "scenarios": [], "intent": intent, "scope": scope, "taken": True
         }
 
+    async def _project_direct(
+        self,
+        state: AgentState,
+        prompt_context: dict[str, Any],
+        staged: dict[str, Any],
+        planned: list[str],
+        iterations: int,
+        spec_text: str = "",
+    ) -> dict[str, Any]:
+        """Ask the ORCHESTRATOR which file is written next, and what it must say.
+
+        The controller around this is ordinary code and stays that way: it picks
+        nothing and writes nothing, it validates what the orchestrator names
+        against the plan and against an attempt cap, and it refuses a direction
+        it cannot honour rather than improvising one. Every judgement belongs to
+        the orchestrator; every rule belongs here.
+
+        Returns {} when the turn is not directed, which is the signal to run the
+        loop exactly as it ran before this existed.
+        """
+        if not self.settings.project_orchestrator_enabled:
+            return {}
+        owed = [path for path in planned if path not in staged]
+        if not owed:
+            return {}
+        attempts = dict(state.get("project_direction_attempts") or {})
+        # A path that has had its attempts is not offered again: the
+        # orchestrator can only choose among files the host is still willing to
+        # spend a step on, so a cap cannot be argued with.
+        available = [
+            path
+            for path in owed
+            if attempts.get(path, 0) < self.settings.project_orchestrator_max_attempts
+        ]
+        if not available:
+            return {}
+        request = {
+            "user_request": spec_text or state["prompt"],
+            "project_context": prompt_context,
+            "planned_files": planned,
+            "available_files": available,
+            "staged_changes": [
+                {"path": path, "bytes": int(entry.get("bytes", 0))}
+                for path, entry in sorted(staged.items())
+            ],
+            # The trace carries what verification said — `_staged_verify_retry`
+            # records each defect as a `verify_staged` entry — so the review
+            # half of the split needs no separate channel. Naming the same path
+            # again after reading those findings IS the repair instruction.
+            "tool_trace": _bounded_project_trace(
+                list(state.get("project_trace", [])), max_characters=12_000
+            ),
+            "step": iterations + 1,
+        }
+        try:
+            direction = await self.model.project_direction(
+                request,
+                # The orchestrator's own seat, not the run's lane. Sending the
+                # run's aliases here would have quietly run the orchestrator on
+                # whatever the conversation was pinned to, which is the one
+                # thing this whole arc exists to stop.
+                model_aliases=_planner_aliases(state.get("model_aliases", {})),
+            )
+        except Exception:  # noqa: BLE001 - a lost direction falls back to the old loop
+            return {}
+        if getattr(direction, "done", False):
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.direction",
+                {"step": iterations + 1, "done": True, "reason": str(direction.reason or "")[:400]},
+            )
+            return {"done": True, "reason": str(direction.reason or "")}
+        path = str(getattr(direction, "path", "") or "")
+        if path not in available:
+            # Directing a file that is not owed, or one the host has stopped
+            # spending steps on, is not a decision the controller may follow.
+            # The first owed file is not a guess about intent — it is the plan's
+            # own order, which the orchestrator itself produced.
+            path = available[0]
+        attempts[path] = attempts.get(path, 0) + 1
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.direction",
+            {
+                "step": iterations + 1,
+                "path": path,
+                "attempt": attempts[path],
+                "reuse": [str(item) for item in getattr(direction, "reuse", [])][:12],
+                "read": [str(item) for item in getattr(direction, "read", [])][:6],
+            },
+        )
+        return {
+            "path": path,
+            "instruction": str(getattr(direction, "instruction", "") or ""),
+            "reuse": [str(item) for item in getattr(direction, "reuse", [])][:12],
+            "read": [str(item) for item in getattr(direction, "read", [])][:6],
+            "attempts": attempts,
+        }
+
+    async def _prefetch_for_coder(
+        self,
+        state: AgentState,
+        project_id: str,
+        staged: dict[str, Any],
+        direction: dict[str, Any],
+        trace: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Read, on the coder's behalf, what the orchestrator said it needs.
+
+        This is the half of the split that makes closing reads fair rather than
+        cruel. The coder is about to be told it may not look around; that is
+        only reasonable if what it needs is already in front of it. The target
+        file's current contents come first — a repair or an edit is impossible
+        without them — then whatever the orchestrator named, bounded.
+
+        A read that fails is recorded as evidence exactly like the model's own
+        would be, never raised: the direction is a plan, and a plan naming a
+        file that does not exist is information, not an error.
+        """
+        wanted = [direction["path"], *direction.get("read", [])]
+        fetched = list(trace)
+        seen: set[str] = set()
+        for path in wanted:
+            path = str(path or "")
+            if not path or path in seen or len(seen) >= 6:
+                continue
+            seen.add(path)
+            call = ProjectToolCallV1(name="read_file", arguments={"path": path})
+            try:
+                output, _ = await self.projects.execute_staged(
+                    project_id, call, staged, []
+                )
+                result: dict[str, Any] = {"ok": True, "output": output}
+            except Exception as exc:  # noqa: BLE001 - a missing file is evidence
+                result = {"ok": False, "error": str(exc)[:600]}
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.tool_result",
+                {"tool": "read_file", "ok": result["ok"], "staged": False, "prefetched": True},
+            )
+            fetched.append(
+                {"tool": "read_file", "arguments": {"path": path}, "result": result}
+            )
+        return _bounded_project_trace(fetched, max_characters=60_000)
+
+    async def _project_repo_map(
+        self, state: AgentState, project_id: str, cloud_context: bool
+    ) -> str:
+        """The ranked symbol map for this step, or "" when it is off or fails.
+
+        Ranked against the request, the compiled spec and the file this turn has
+        been narrowed to, because those are the three things that say what the
+        step is about. Never fatal: a project whose tree cannot be walked loses
+        the map and keeps its build, which is the same bargain every other piece
+        of injected context here makes.
+        """
+        if not self.settings.project_repo_map_enabled:
+            return ""
+        budget = (
+            self.settings.project_repo_map_max_chars
+            if cloud_context
+            else self.settings.project_repo_map_max_chars_local
+        )
+        if budget <= 0:
+            return ""
+        request = " ".join(
+            part
+            for part in (
+                str(state.get("prompt", "")),
+                str((state.get("project_spec") or {}).get("spec") or ""),
+                str(state.get("project_focus_path", "") or ""),
+                " ".join(state.get("project_planned_files") or []),
+            )
+            if part
+        )
+        try:
+            return await self.projects.repo_map(
+                project_id, request=request, max_chars=budget
+            )
+        except Exception:  # noqa: BLE001 - the map is context, never a gate
+            return ""
+
     def _project_step_request(
         self,
         state: AgentState,
@@ -2698,6 +3006,12 @@ class ControlPlane:
         focus = str(state.get("project_focus_path", "") or "")
         if focus and focus in remaining:
             remaining = [focus]
+        # The orchestrator's direction for this step, when the turn is directed.
+        # It outranks the drift-triggered narrowing above: both narrow to one
+        # file, but only this one knows what that file should contain.
+        directed = dict(state.get("project_direction") or {})
+        if directed.get("path"):
+            remaining = [str(directed["path"])]
         # A gate the model cannot pass is worse than no gate. Once the overlay
         # has not changed for this many steps the manifest stops withholding
         # `complete`, so a stuck turn ends with an honest account of what it
@@ -2790,6 +3104,23 @@ class ControlPlane:
             # than merely stern.
             **(
                 {
+                    # The ORCHESTRATOR's instruction, in place of the fixed
+                    # sentence below. That sentence could only ever say "write
+                    # this file"; it could never say what the file should
+                    # contain, which is the thing a model narrowed to one file
+                    # still got wrong. Everything the coder is told about the
+                    # work is here, so it is quoted whole.
+                    "attention": _directed_attention(directed),
+                    # Named separately as well as inside the instruction: the
+                    # coder cannot see the repository, so anything not listed
+                    # here it will write from scratch.
+                    "reuse_existing": list(directed.get("reuse") or []),
+                    # Reads are closed, and the request says so rather than
+                    # leaving the model to discover it through a refusal.
+                    "reads_closed": True,
+                }
+                if directed.get("path")
+                else {
                     # The narrowed instruction, word for word what the live
                     # chunked test used when the same model completed the same
                     # conversion a file at a time.
@@ -3169,6 +3500,11 @@ class ControlPlane:
         planned: list[str] | None = None,
     ) -> dict[str, Any]:
         project_id = state.get("model_aliases", {}).get("_project_id", "")
+        # What the decode layer silently fixed to make this call usable. On the
+        # record deliberately: a repair that never fires should be deleted, and
+        # one that fires on every step is describing a prompt bug rather than a
+        # model one. Neither question can be answered by a repair that is quiet.
+        repairs = drain_repairs()
         await self.events.emit(
             state["run_id"],
             state["conversation_id"],
@@ -3178,6 +3514,7 @@ class ControlPlane:
                 "status": step.status,
                 "tool": step.tool_call.name if step.tool_call else None,
                 "provider": state.get("model_aliases", {}).get("_provider", "local"),
+                **({"repaired": repairs} if repairs else {}),
             },
         )
         if step.status == "complete":
@@ -3617,10 +3954,17 @@ class ControlPlane:
                 unproductive=True,
             )
         focus_gate = str(state.get("project_focus_path", "") or "")
+        # On a DIRECTED step the allowance is zero, not two. The orchestrator
+        # already named what this file needs and the host already fetched it, so
+        # a read here is not the coder discovering something the host withheld —
+        # it is the exact drift the split exists to remove, and it is the whole
+        # reason the four-file conversion never wrote anything.
+        directed_now = bool((state.get("project_direction") or {}).get("path"))
+        allowance = 0 if directed_now else _FOCUSED_READ_ALLOWANCE
         if (
             focus_gate
             and call.name in PROJECT_READ_TOOLS
-            and int(state.get("project_consecutive_reads", 0)) >= _FOCUSED_READ_ALLOWANCE
+            and int(state.get("project_consecutive_reads", 0)) >= allowance
         ):
             # The structural half of the act phase. A narrowed turn was already
             # TOLD to write; a model that keeps reading past its allowance now
@@ -3750,6 +4094,11 @@ class ControlPlane:
         focus = str(state.get("project_focus_path", "") or "")
         if focus and staged_update is not None and focus in staged_update:
             evidence["project_focus_path"] = ""
+            # And the direction with it: this file is written, so the next step
+            # asks the orchestrator what comes next rather than re-sending an
+            # instruction that has already been carried out. Nothing here ends
+            # the turn — the ordinary finish path still owns that.
+            evidence["project_direction"] = {}
         if changed and state.get("project_phase") != "building":
             # A small edit writes before any plan exists; the first staged
             # byte is its act transition.
@@ -7384,6 +7733,8 @@ def initial_state(
         project_chain_index=0,
         project_phase="",
         project_focus_path="",
+        project_direction={},
+        project_direction_attempts={},
         project_focus_rounds=0,
         project_spec={},
         project_stall_steps=0,

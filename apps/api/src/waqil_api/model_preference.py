@@ -95,12 +95,14 @@ class ModelPreferenceStore:
             mode = "split"
         provider = (
             raw.get("provider")
-            if raw.get("provider") in ("local", "oci", "cohere")
+            if raw.get("provider") in ("local", "oci", "cohere", "cline")
             else "local"
         )
         if provider == "oci" and not self.oci_available:
             provider = "local"
         if provider == "cohere" and not self.cohere_available:
+            provider = "local"
+        if provider == "cline" and not self.cline_available:
             provider = "local"
         raw_tools = raw.get("oci_tools")
         oci_tools = (
@@ -116,6 +118,7 @@ class ModelPreferenceStore:
             role_chains=self._parse_chains(raw.get("role_chains")),
             oci_available=self.oci_available,
             cohere_available=self.cohere_available,
+            cline_available=self.cline_available,
         )
 
     @staticmethod
@@ -151,6 +154,12 @@ class ModelPreferenceStore:
     def cohere_available(self) -> bool:
         return bool(self._settings.cohere_api_key.strip())
 
+    @property
+    def cline_available(self) -> bool:
+        # One key covers both seats — the ClinePass coding models and the
+        # Anthropic/xAI models behind the same gateway — so there is one flag.
+        return bool(self._settings.cline_api_key.strip())
+
     def save(
         self,
         mode: str,
@@ -171,8 +180,8 @@ class ModelPreferenceStore:
             capability_error = hosted_model_capability_error(model)
             if capability_error:
                 raise ValueError(capability_error)
-        if provider not in ("local", "oci", "cohere"):
-            raise ValueError("provider must be 'local', 'oci' or 'cohere'")
+        if provider not in ("local", "oci", "cohere", "cline"):
+            raise ValueError("provider must be 'local', 'oci', 'cohere' or 'cline'")
         if provider == "oci" and not self.oci_available:
             raise ValueError(
                 "OCI Responses requires WAQIL_ALLOW_OCI_RESPONSES=true and "
@@ -180,6 +189,8 @@ class ModelPreferenceStore:
             )
         if provider == "cohere" and not self.cohere_available:
             raise ValueError("Cohere requires WAQIL_COHERE_API_KEY")
+        if provider == "cline" and not self.cline_available:
+            raise ValueError("the Cline lane requires WAQIL_CLINE_API_KEY")
         selected_tools = list(dict.fromkeys(oci_tools or []))
         if any(item not in ("x_search", "code_interpreter") for item in selected_tools):
             raise ValueError("unsupported OCI native tool")
@@ -231,6 +242,10 @@ class ModelPreferenceStore:
                 if entry.provider == "cohere" and not self.cohere_available:
                     raise ValueError(
                         f"the {role} chain names Cohere, which is not configured"
+                    )
+                if entry.provider == "cline" and not self.cline_available:
+                    raise ValueError(
+                        f"the {role} chain names Cline, which is not configured"
                     )
                 if entry.provider == "local" and entry.model:
                     capability_error = hosted_model_capability_error(entry.model)

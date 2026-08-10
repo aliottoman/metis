@@ -28,6 +28,7 @@ from .contracts import (
     AssetRecipeV1,
     ProjectAgentStepV1,
     ProjectBuildPlanV1,
+    ProjectDirectionV1,
     ProjectAgentStepWireV1,
     ProjectBuildStepWireV1,
     ProjectBootstrapV1,
@@ -42,6 +43,7 @@ from .contracts import (
     project_step_retry_schema,
     project_write_schema,
 )
+from . import tool_repair
 from .diagram_source import validate_diagram_source
 from .document_factory import is_explicit_document_request
 from .model_preference import is_cloud_model
@@ -1031,6 +1033,13 @@ class ModelProvider(Protocol):
         model_aliases: dict[str, str] | None = None,
     ) -> "ProjectBuildPlanV1 | list[str]": ...
 
+    async def project_direction(
+        self,
+        request: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectDirectionV1: ...
+
     async def project_spec(
         self,
         request: dict[str, Any],
@@ -1275,6 +1284,15 @@ Every file you stage must parse. A write that does not is refused and costs you
 the step, so finish the file you are writing — do not stop mid-string, mid-block
 or mid-function, and do not paste a second draft on top of a first.
 
+project_context.repo_map is a ranked map of what this project already defines:
+each file, then the line number and name of each definition it holds, ordered
+with the most depended-upon files first and biased toward this request. Use it
+before you read. A symbol it names exists — import and reuse it rather than
+writing a second one, and read a file only when you need the body of something
+the map has already told you is there. The map is partial by design and states
+how much it omitted; its line numbers are exact, so read_file with a range is
+the cheap way to confirm any single entry.
+
 Verification: project_context.verification lists the checks this project declared
 and whether they are available. run_check executes against the real files on disk,
 so it is only meaningful while nothing is staged — check before you start writing,
@@ -1329,6 +1347,12 @@ PROJECT_PLAN_SYSTEM = """You are planning one coding task: what kind of task it
 is, the files it requires, and the acceptance scenarios that will prove the
 finished app does what was asked.
 
+project_context.repo_map is a ranked map of this project's actual definitions —
+each file, then the line number and name of what it declares, most depended-upon
+first. Plan against it: a file it lists already exists, and a symbol it names is
+one to reuse rather than reinvent. It is a map, not the code — the line numbers
+are exact, the map is partial, and it always says how much it left out.
+
 project_context.manifest.file_tree and the tool_trace are what this project
 ACTUALLY contains, and they outrank the request's own wording. A request that
 names app/static/index.html for a project whose tree holds only app.py and a
@@ -1378,6 +1402,45 @@ live external call should expect "2xx_or_4xx", which passes when the route is
 alive and validating rather than crashed."""
 
 
+PROJECT_DIRECT_SYSTEM = """You are the ORCHESTRATOR of a build. You do not write
+code. You decide which single file is written next and you say exactly what it
+must contain; a separate coder model receives your instruction, is given that one
+file and nothing else to do, and cannot look around or change the plan.
+
+Answer with one ProjectDirectionV1.
+
+path: the ONE file to write next. Choose from planned_files. Prefer the file
+others will import — a module everything depends on written first means the rest
+compose against something real. If the previous file came back with findings
+that make it wrong, name that SAME path again: repeating a path is how a repair
+is requested, and the coder will be told what to fix.
+
+instruction: what that file must contain, imperatively and specifically. Name
+the functions, classes, routes, or elements it must define and what each does.
+Name the imports it must make. This is the only thing the coder is told about
+the work, so vagueness here becomes a wrong file: "implement the API" is a
+failure, "define create_app() returning FastAPI, mount appkit static at /static,
+and add POST /extract taking an UploadFile" is an instruction.
+
+reuse: symbols and modules that ALREADY EXIST in this project — from repo_map
+and the trace — that this file must compose instead of reinventing. This is the
+single highest-value field you fill in: the coder cannot see the repository, so
+anything you do not name here, it will write again from scratch.
+
+read: files the host should fetch and hand to the coder, when it genuinely
+cannot write correctly without seeing them. Keep this small. Every file here is
+paid for once; the coder cannot ask for more.
+
+done: true only when the plan is satisfied, or when it cannot be carried
+further — and then say why in reason. Do not set done merely because the work is
+hard. Do not set done while a planned file is still unwritten and repairable.
+
+You are answering against the repository as it actually is: repo_map lists what
+exists, staged_changes lists what this turn has already written, and findings
+holds what verification said about the last file. Direct against those, never
+against what you assume a project of this kind usually has."""
+
+
 # Derived, not restated: the required-arguments table in contracts.py is the
 # canonical roster of project tools. Restating it here is how inspect_api was
 # advertised to Grok, implemented in the workspace, and still impossible to
@@ -1398,6 +1461,7 @@ def step_from_function_call(
     is refused rather than dispatched. ``speaker`` names the model in the
     error, because "the model" means two different endpoints here.
     """
+    repairs: list[str] = []
     try:
         arguments = (
             json.loads(arguments_raw)
@@ -1405,7 +1469,21 @@ def step_from_function_call(
             else dict(arguments_raw or {})
         )
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ModelProviderError(f"{speaker} returned invalid project tool arguments") from exc
+        # A fenced or prose-wrapped payload is not a model that failed the task;
+        # it is one that answered in the wrong envelope. Try the repair, and if
+        # it still will not parse, fail exactly where this always failed.
+        if not isinstance(arguments_raw, str):
+            raise ModelProviderError(
+                f"{speaker} returned invalid project tool arguments"
+            ) from exc
+        candidate, notes = tool_repair.repair_json_text(arguments_raw)
+        try:
+            arguments = json.loads(candidate)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise ModelProviderError(
+                f"{speaker} returned invalid project tool arguments"
+            ) from exc
+        repairs.extend(notes)
     if not isinstance(arguments, dict):
         raise ModelProviderError(f"{speaker} returned invalid project tool arguments")
     if name == FINISH_TOOL_NAME:
@@ -1416,10 +1494,33 @@ def step_from_function_call(
         )
     if name not in _PROJECT_TOOL_NAMES:
         raise ModelProviderError(f"{speaker} requested an unsupported project tool: {name}")
+    arguments, notes = tool_repair.repair_arguments(str(name), arguments)
+    _record_repairs(str(name), repairs + notes)
     return ProjectAgentStepV1(
         status="tool",
         tool_call=ProjectToolCallV1(name=name, arguments=arguments),
     )
+
+
+# What the repair layer fixed on the most recent decode, for the loop to emit.
+# A module-level buffer rather than a return value because `step_from_function
+# _call` is a shared chokepoint with a fixed signature that four transports
+# call; threading a second return through all of them to carry a diagnostic
+# would be a worse trade than one drained buffer.
+_LAST_REPAIRS: list[dict[str, Any]] = []
+
+
+def _record_repairs(tool: str, notes: list[str]) -> None:
+    if notes:
+        _LAST_REPAIRS.append({"tool": tool, "repairs": notes})
+        del _LAST_REPAIRS[:-8]
+
+
+def drain_repairs() -> list[dict[str, Any]]:
+    """Take the repairs recorded since the last drain, and forget them."""
+    drained = list(_LAST_REPAIRS)
+    _LAST_REPAIRS.clear()
+    return drained
 
 
 # Reads that may ride along with the first one in a single step. Bounded well
@@ -1492,6 +1593,7 @@ LOCAL_DECODE_SCHEMAS: tuple[type[BaseModel], ...] = (
     MemoryHarvestV1,
     CustomerExtractionV1,
     ProjectBuildPlanV1,
+    ProjectDirectionV1,
     ProjectAgentStepWireV1,
     ProjectBuildStepWireV1,
 )
@@ -2291,6 +2393,28 @@ class OllamaModelProvider:
         )
         return plan
 
+    async def project_direction(
+        self,
+        request: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectDirectionV1:
+        """The next file to write and what it must contain, from the ORCHESTRATOR.
+
+        Deliberately `role="planner"`: this is the seat the role ladders always
+        had and builds never used — every project call ran as the coder. The
+        split only means anything if the two seats can hold different models.
+        """
+        return await self._structured(
+            ProjectDirectionV1,
+            system_prompt=PROJECT_DIRECT_SYSTEM,
+            user_prompt=json.dumps(request, ensure_ascii=False),
+            role="planner",
+            model_aliases=model_aliases,
+            max_output_tokens=min(2048, self.settings.max_output_tokens),
+        )
+
+
     async def _project_step_hosted(
         self,
         request: dict[str, Any],
@@ -2470,6 +2594,12 @@ class OllamaModelProvider:
             max_output_tokens=min(8192, self.settings.max_output_tokens),
             constraint=constraint,
         )
+        # The grammar constrains what may be GENERATED; it does not stop a model
+        # putting "12" where an integer belongs or backticks around a path. Both
+        # decode paths repair through the same table.
+        if wire.tool:
+            wire.arguments, notes = tool_repair.repair_arguments(wire.tool, wire.arguments)
+            _record_repairs(wire.tool, notes)
         return wire.to_step()
 
     async def health(self) -> dict[str, Any]:
@@ -2891,6 +3021,26 @@ class OCIResponsesModelProvider:
             max_output_tokens=min(1024, self.settings.oci_responses_max_output_tokens),
         )
         return plan
+
+    async def project_direction(
+        self,
+        request: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectDirectionV1:
+        """The next file to write and what it must contain, from the ORCHESTRATOR.
+
+        Deliberately `role="planner"`: this is the seat the role ladders always
+        had and builds never used — every project call ran as the coder. The
+        split only means anything if the two seats can hold different models.
+        """
+        return await self._structured(
+            ProjectDirectionV1,
+            system_prompt=PROJECT_DIRECT_SYSTEM,
+            user_prompt=json.dumps(request, ensure_ascii=False),
+            max_output_tokens=min(2048, self.settings.oci_responses_max_output_tokens),
+        )
+
 
     async def project_step(
         self,
@@ -3538,6 +3688,26 @@ class CohereModelProvider:
         )
         return plan
 
+    async def project_direction(
+        self,
+        request: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectDirectionV1:
+        """The next file to write and what it must contain, from the ORCHESTRATOR.
+
+        Deliberately `role="planner"`: this is the seat the role ladders always
+        had and builds never used — every project call ran as the coder. The
+        split only means anything if the two seats can hold different models.
+        """
+        return await self._structured(
+            ProjectDirectionV1,
+            system_prompt=PROJECT_DIRECT_SYSTEM,
+            user_prompt=json.dumps(request, ensure_ascii=False),
+            max_output_tokens=min(2048, self.settings.cohere_max_output_tokens),
+        )
+
+
     async def project_step(
         self,
         request: dict[str, Any],
@@ -3589,6 +3759,378 @@ class CohereModelProvider:
         }
 
 
+CLINE_PREAMBLE = """You are a cloud reasoning provider for Metis, a local-first
+assistant. Answer only from the bounded context on this request. Never invent a
+fact about the user's project, files or data that the context does not contain."""
+
+
+class ClineModelProvider:
+    """The Cline gateway: one key, two seats, an OpenAI-compatible endpoint.
+
+    This is the lane the orchestrator/coder split was built for. It is the only
+    transport here that serves the two roles from *different* models by design:
+    ``planner`` (the orchestrator) resolves to a strong closed model, ``coder``
+    to an open-weight model on the ClinePass subscription. Every other provider
+    is single-model or lets the preference decide; this one carries the measured
+    default in its own configuration.
+
+    Three quirks of the gateway, each verified live against the real endpoint
+    rather than taken from documentation:
+
+    * The reply is **wrapped in ``data``** — ``{"data": {"choices": [...]}}`` —
+      which is not the OpenAI envelope an OpenAI-compatible client expects.
+    * It wants **``max_completion_tokens``**. With ``max_tokens`` the reasoning
+      trace is charged against the budget and the content comes back empty with
+      ``finish_reason: length``, which reads exactly like a model that failed.
+    * There is **no ``/models`` endpoint** (404), so availability is a key
+      check and a model's usability is proven by calling it.
+    """
+
+    name = "cline"
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self._client_instance: Any | None = None
+        self._client_lock = asyncio.Lock()
+
+    @property
+    def available(self) -> bool:
+        return bool(self.settings.cline_api_key.strip())
+
+    def _model_for(self, role: str, model_aliases: dict[str, str] | None = None) -> str:
+        """Which model answers for this role.
+
+        A ladder rung may name an explicit model; otherwise the role's own
+        default applies. `quality` reviews, so it sits with the orchestrator —
+        judging a change is the same kind of work as directing one.
+        """
+        pinned = str((model_aliases or {}).get("_cline_model", "") or "")
+        if pinned:
+            return pinned
+        if role == "coder":
+            return self.settings.cline_coder_model
+        return self.settings.cline_orchestrator_model
+
+    async def _client(self) -> Any:
+        if self._client_instance is not None:
+            return self._client_instance
+        async with self._client_lock:
+            if self._client_instance is not None:
+                return self._client_instance
+            if not self.available:
+                raise ModelProviderError("the Cline lane requires WAQIL_CLINE_API_KEY")
+            try:
+                import httpx
+            except ImportError as exc:
+                raise ModelProviderError(
+                    "the Cline lane requires the optional cloud dependencies"
+                ) from exc
+            self._client_instance = httpx.AsyncClient(
+                base_url=self.settings.cline_base_url.rstrip("/"),
+                headers={
+                    "Authorization": f"Bearer {self.settings.cline_api_key.strip()}"
+                },
+                timeout=self.settings.model_call_timeout_seconds,
+            )
+            return self._client_instance
+
+    async def close(self) -> None:
+        if self._client_instance is not None:
+            await self._client_instance.aclose()
+            self._client_instance = None
+
+    async def _chat(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """One chat-completions call, unwrapped, with bounded retries.
+
+        429 and 5xx are the service's problem and clear on a second try; a 403
+        is an unsubscribed model and a 401 an expired key, and neither is worth
+        retrying — they are configuration, and saying so plainly is more use
+        than three identical failures.
+        """
+        client = await self._client()
+        attempts = 3
+        for attempt in range(attempts):
+            last = attempt == attempts - 1
+            try:
+                async with asyncio.timeout(self.settings.model_call_timeout_seconds):
+                    response = await client.post("/chat/completions", json=payload)
+            except TimeoutError as exc:
+                raise ModelProviderError(
+                    "Cline call timed out after "
+                    f"{self.settings.model_call_timeout_seconds:g} seconds"
+                ) from exc
+            except Exception as exc:  # noqa: BLE001 - network errors become model errors
+                raise ModelProviderError(f"Cline call failed: {str(exc)[:400]}") from exc
+            if response.status_code in (429, 500, 502, 503, 504) and not last:
+                await asyncio.sleep(1.0 + attempt * 2)
+                continue
+            if response.status_code == 403:
+                raise ModelProviderError(
+                    f"Cline refused {payload.get('model')}: the subscription does "
+                    "not cover this model (HTTP 403)"
+                )
+            if response.status_code == 401:
+                raise ModelProviderError(
+                    "Cline rejected the API key (HTTP 401) — check WAQIL_CLINE_API_KEY"
+                )
+            if response.status_code >= 400:
+                raise ModelProviderError(
+                    f"Cline returned HTTP {response.status_code}: {response.text[:400]}"
+                )
+            try:
+                body = response.json()
+            except ValueError as exc:
+                raise ModelProviderError("Cline returned a non-JSON reply") from exc
+            # The envelope, unwrapped once here so nothing above this line has
+            # to know the gateway wraps what it proxies.
+            inner = body.get("data") if isinstance(body, dict) else None
+            return inner if isinstance(inner, dict) else (body if isinstance(body, dict) else {})
+        raise ModelProviderError(f"Cline kept failing after {attempts} attempts")
+
+    def _message(self, reply: dict[str, Any]) -> dict[str, Any]:
+        choices = reply.get("choices") or []
+        if not choices:
+            return {}
+        message = (choices[0] or {}).get("message")
+        return message if isinstance(message, dict) else {}
+
+    def _tool_calls(self, message: dict[str, Any]) -> list[tuple[Any, Any]]:
+        calls: list[tuple[Any, Any]] = []
+        for item in message.get("tool_calls") or []:
+            function = (item or {}).get("function") or {}
+            name = function.get("name")
+            if name:
+                calls.append((name, function.get("arguments")))
+        return calls
+
+    async def _structured(
+        self,
+        schema: type[SchemaT],
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        role: str = "planner",
+        model_aliases: dict[str, str] | None = None,
+        max_output_tokens: int | None = None,
+    ) -> SchemaT:
+        """Structured decode through one advertised function, repaired once.
+
+        Same rule as every other tool-calling transport here: the contract
+        becomes the single function's parameters, and a model that answers in
+        prose instead is judged on that text's one JSON object rather than
+        failed for the envelope it chose.
+        """
+        function_name = f"return_{schema.__name__.lower()}"
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": function_name,
+                    "description": (
+                        "Return your complete answer as this function's "
+                        "arguments. Call it exactly once."
+                    ),
+                    "parameters": schema.model_json_schema(),
+                },
+            }
+        ]
+        error: BaseException | None = None
+        prompt = user_prompt
+        for attempt in range(2):
+            if attempt:
+                prompt = (
+                    f"{user_prompt}\n\nThe prior response failed validation: "
+                    f"{type(error).__name__}: {str(error)[:1000]}. Call "
+                    f"{function_name} again with a corrected object."
+                )
+            reply = await self._chat(
+                {
+                    "model": self._model_for(role, model_aliases),
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                f"{CLINE_PREAMBLE}\n\n{system_prompt}\n"
+                                f"Answer only by calling {function_name} once."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    "tools": tools,
+                    "max_completion_tokens": max_output_tokens
+                    or self.settings.cline_max_output_tokens,
+                }
+            )
+            message = self._message(reply)
+            try:
+                candidate: dict[str, Any] | None = None
+                for _, arguments in self._tool_calls(message):
+                    if isinstance(arguments, str):
+                        arguments, _ = tool_repair.repair_json_text(arguments)
+                        arguments = json.loads(arguments)
+                    if isinstance(arguments, dict):
+                        candidate = arguments
+                        break
+                if candidate is None:
+                    text = str(message.get("content") or "").strip()
+                    if not text:
+                        raise ModelProviderError(
+                            "Cline returned neither a tool call nor any text"
+                        )
+                    candidate = _parse_json_object(text)
+                return schema.model_validate(candidate)
+            except Exception as exc:  # noqa: BLE001 - one bounded repair, then fail
+                error = exc
+        raise ModelProviderError(
+            f"Cline could not produce a valid {schema.__name__}: "
+            f"{type(error).__name__}: {str(error)[:400]}"
+        )
+
+    async def generate(
+        self, request: ModelRequestV1, on_token=None, *, model_aliases=None, on_reasoning=None
+    ) -> ModelResultV1:
+        reply = await self._chat(
+            {
+                "model": self._model_for(request.role, model_aliases),
+                "messages": [
+                    {"role": "system", "content": f"{CLINE_PREAMBLE}\n\n{request.system_prompt}"},
+                    {"role": "user", "content": request.user_prompt},
+                ],
+                "max_completion_tokens": self.settings.cline_max_output_tokens,
+            }
+        )
+        content = str(self._message(reply).get("content") or "")
+        if on_token is not None and content:
+            await on_token(content)
+        return ModelResultV1(content=content, model=self._model_for(request.role, model_aliases))
+
+    async def project_step(
+        self,
+        request: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectAgentStepV1:
+        owed = (
+            [str(path) for path in request.get("files_still_to_write") or []]
+            if request.get("build_turn")
+            else []
+        )
+        reply = await self._chat(
+            {
+                # The CODER seat: this is the model that writes files, and it is
+                # deliberately not the one that decided they should be written.
+                "model": self._model_for("coder", model_aliases),
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            f"{CLINE_PREAMBLE}\n\n{PROJECT_AGENT_SYSTEM}\n"
+                            "Call exactly one project function."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
+                ],
+                "tools": chat_tool_format(narrowed_project_tools(owed)),
+                "max_completion_tokens": self.settings.cline_max_output_tokens,
+            }
+        )
+        message = self._message(reply)
+        calls = self._tool_calls(message)
+        if calls:
+            return step_from_function_calls(calls, speaker="the Cline model")
+        text = str(message.get("content") or "").strip()
+        if text:
+            # Prose is a completion on every other transport here; a lane that
+            # raised instead spent three malformed strikes on a model that had
+            # simply answered the question.
+            return ProjectAgentStepV1(status="complete", response=text)
+        raise ModelProviderError(
+            "the Cline model returned neither a project tool call nor a response"
+        )
+
+    async def project_plan_files(
+        self,
+        request: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectBuildPlanV1:
+        return await self._structured(
+            ProjectBuildPlanV1,
+            system_prompt=PROJECT_PLAN_SYSTEM,
+            user_prompt=json.dumps(request, ensure_ascii=False),
+            role="planner",
+            model_aliases=model_aliases,
+            max_output_tokens=min(2048, self.settings.cline_max_output_tokens),
+        )
+
+    async def project_direction(
+        self,
+        request: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectDirectionV1:
+        return await self._structured(
+            ProjectDirectionV1,
+            system_prompt=PROJECT_DIRECT_SYSTEM,
+            user_prompt=json.dumps(request, ensure_ascii=False),
+            role="planner",
+            model_aliases=model_aliases,
+            max_output_tokens=min(2048, self.settings.cline_max_output_tokens),
+        )
+
+    async def project_spec(
+        self,
+        request: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectSpecV1:
+        return await self._structured(
+            ProjectSpecV1,
+            system_prompt=PROJECT_SPEC_SYSTEM,
+            user_prompt=json.dumps(request, ensure_ascii=False),
+            role="planner",
+            model_aliases=model_aliases,
+            max_output_tokens=min(4096, self.settings.cline_max_output_tokens),
+        )
+
+    async def bootstrap_project(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectBootstrapV1:
+        return await self._structured(
+            ProjectBootstrapV1,
+            system_prompt=PROJECT_BOOTSTRAP_SYSTEM,
+            user_prompt=json.dumps(snapshot, ensure_ascii=False),
+            role="planner",
+            model_aliases=model_aliases,
+            max_output_tokens=min(4096, self.settings.cline_max_output_tokens),
+        )
+
+    async def plan(self, request: PlanningRequestV1, *, model_aliases=None, catalog=None):
+        envelope = await self._structured(
+            PlanEnvelopeV1,
+            system_prompt=PLANNER_SYSTEM,
+            user_prompt=(
+                "<planning-input>\n"
+                + json.dumps(request.model_dump(mode="json"), ensure_ascii=False)
+                + "\n</planning-input>"
+            ),
+            role="planner",
+            model_aliases=model_aliases,
+            max_output_tokens=min(2048, self.settings.cline_max_output_tokens),
+        )
+        return normalize_plan_semantics(envelope, request, catalog=catalog)
+
+    async def health(self) -> dict[str, Any]:
+        return {
+            "reachable": self.available,
+            "orchestrator": self.settings.cline_orchestrator_model,
+            "coder": self.settings.cline_coder_model,
+        }
+
+
 class RoutedModelProvider:
     """Pins each run to its provider based on the run's persisted model aliases."""
 
@@ -3599,10 +4141,12 @@ class RoutedModelProvider:
         local: ModelProvider,
         oci: OCIResponsesModelProvider,
         cohere: CohereModelProvider | None = None,
+        cline: "ClineModelProvider | None" = None,
     ) -> None:
         self.local = local
         self.oci = oci
         self.cohere = cohere
+        self.cline = cline
 
     def _selected(self, model_aliases: dict[str, str] | None) -> ModelProvider:
         provider = (model_aliases or {}).get("_provider")
@@ -3623,6 +4167,13 @@ class RoutedModelProvider:
             return self.local
         if provider == "cohere" and self.cohere is not None:
             return self.cohere
+        if provider == "cline" and self.cline is not None:
+            if getattr(self.cline, "available", True):
+                return self.cline
+            # Same degrade the OCI branch makes: aliases are frozen into the run
+            # row, so a queued or replayed run can still name a lane that has
+            # since lost its key. Falling through beats failing the run.
+            return self.local
         return self.local
 
     async def generate(
@@ -3739,6 +4290,11 @@ class RoutedModelProvider:
 
     async def project_plan_files(self, request: dict[str, Any], *, model_aliases=None):
         return await self._selected(model_aliases).project_plan_files(
+            request, model_aliases=model_aliases
+        )
+
+    async def project_direction(self, request: dict[str, Any], *, model_aliases=None):
+        return await self._selected(model_aliases).project_direction(
             request, model_aliases=model_aliases
         )
 
@@ -4006,6 +4562,33 @@ class DeterministicModelProvider:
         if "[project-manifest-test]" in prompt:
             return ["alpha.txt", "beta.txt"]
         return []
+
+    async def project_direction(
+        self,
+        request: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ProjectDirectionV1:
+        """Direct the next owed file, deterministically.
+
+        The scripted orchestrator is the whole directed arc without a model:
+        take the first planned file the overlay does not hold, instruct it in
+        one line, and declare done when none are left. That is exactly the
+        control flow the real orchestrator drives, so the tests exercise the
+        host's half of the gate rather than a model's mood.
+        """
+        staged = {str(item.get("path", "")) for item in request.get("staged_changes") or []}
+        owed = [
+            str(path)
+            for path in (request.get("planned_files") or [])
+            if str(path) not in staged
+        ]
+        if not owed:
+            return ProjectDirectionV1(done=True, reason="every planned file is staged")
+        return ProjectDirectionV1(
+            path=owed[0],
+            instruction=f"Write {owed[0]} as the plan describes.",
+        )
 
     async def project_step(
         self,
@@ -4365,6 +4948,7 @@ def build_model_provider(
                 local,
                 OCIResponsesModelProvider(settings),
                 cohere=CohereModelProvider(settings),
+                cline=ClineModelProvider(settings),
             )
         except ModelProviderError:
             if settings.model_backend == "auto" and settings.allow_test_backends:

@@ -513,9 +513,10 @@ export interface PersonalProfile {
 }
 
 export interface RoleChainEntry {
-  provider: "local" | "oci" | "cohere";
-  // The Ollama model for a local rung; the OCI and Cohere lanes run their
-  // configured model and leave this null.
+  provider: "local" | "oci" | "cohere" | "cline";
+  // The Ollama model for a local rung, or the Cline model overriding that
+  // seat's default; the OCI and Cohere lanes run their configured model and
+  // leave this null.
   model: string | null;
 }
 
@@ -524,13 +525,14 @@ export type ModelRole = "planner" | "coder" | "quality";
 export interface ModelPreference {
   mode: "split" | "pinned";
   model: string | null;
-  provider: "local" | "oci" | "cohere";
+  provider: "local" | "oci" | "cohere" | "cline";
   oci_tools: Array<"x_search" | "code_interpreter">;
   // Per-role fallback ladders, first entry primary. Empty = no explicit
   // chain: the role runs exactly as it always has.
   role_chains: Partial<Record<ModelRole, RoleChainEntry[]>>;
   oci_available: boolean;
   cohere_available: boolean;
+  cline_available: boolean;
 }
 
 export interface LocalModelOption {

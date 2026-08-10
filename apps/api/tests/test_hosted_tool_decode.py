@@ -509,7 +509,7 @@ async def test_a_hosted_fabricated_completion_is_declined_by_the_guard(
         # manifest and the guards, not the rewrite (test_spec_rewrite owns that).
         project_spec_rewrite=False,
         project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=True,
+        project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
         project_reference_dir=Path("/nonexistent-reference"),
         project_reference_max_chars=14_000,
         project_reference_max_chars_local=6_000,

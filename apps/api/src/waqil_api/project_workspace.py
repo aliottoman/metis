@@ -43,6 +43,7 @@ from .project_verification import (
     explain_recipe,
 )
 from .project_wiring import staged_wiring_errors
+from . import repo_map
 
 
 _IGNORE_DIRS = frozenset(
@@ -411,6 +412,9 @@ class ProjectWorkspaceService:
         # Optional: a service built without one behaves exactly as before.
         self.preference = preference
         self._lock = asyncio.Lock()
+        # Repo-map extraction, per project, keyed by (mtime_ns, size) so a
+        # multi-step build turn parses each file exactly once.
+        self._repo_map_cache: dict[str, dict[str, tuple[tuple[int, int], repo_map.FileFacts]]] = {}
 
     async def list(self) -> list[ProjectWorkspaceV1]:
         projects: list[ProjectWorkspaceV1] = []
@@ -573,6 +577,59 @@ class ProjectWorkspaceService:
             "metis_md": notes,
             "verification": await self._verification_context(asset_id, root),
         }
+
+    async def repo_map(
+        self, asset_id: str, *, request: str = "", max_chars: int = 6_000
+    ) -> str:
+        """A ranked symbol map of this project, biased toward `request`.
+
+        Separate from `context()` on purpose: the map is only worth ranking if
+        it knows what is being asked, and `context()` is called in places where
+        no request exists yet. Extraction is cached per file by (mtime, size),
+        so a build turn re-parses only what actually changed between steps —
+        ranking and rendering are pure and cost microseconds.
+        """
+        if max_chars <= 0:
+            return ""
+        root = await self.assets.project_path(asset_id)
+        return await asyncio.to_thread(self._repo_map_sync, asset_id, root, request, max_chars)
+
+    def _repo_map_sync(
+        self, asset_id: str, root: Path, request: str, max_chars: int
+    ) -> str:
+        cache = self._repo_map_cache.setdefault(asset_id, {})
+        facts: list[repo_map.FileFacts] = []
+        seen: set[str] = set()
+        for path, relative in self._iter_files(root):
+            rel = relative.as_posix()
+            if not _is_text_file(path):
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            seen.add(rel)
+            key = (stat.st_mtime_ns, stat.st_size)
+            cached = cache.get(rel)
+            if cached is not None and cached[0] == key:
+                facts.append(cached[1])
+                continue
+            try:
+                source = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            entry = repo_map.extract(rel, source)
+            cache[rel] = (key, entry)
+            facts.append(entry)
+        # A deleted file must not keep contributing symbols that no longer
+        # exist — a map that names a path the model then cannot read is exactly
+        # the confidently-wrong map this is supposed to replace.
+        for stale in set(cache) - seen:
+            cache.pop(stale, None)
+        if not facts:
+            return ""
+        scores = repo_map.rank(facts, repo_map.focus_terms(request))
+        return repo_map.render(facts, scores, max_chars=max_chars)
 
     async def _verification_context(self, asset_id: str, root: Path) -> dict[str, Any]:
         """What the agent is allowed to know about `run_check`.

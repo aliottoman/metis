@@ -1660,7 +1660,7 @@ def test_build_turn_stays_on_while_the_build_is_demonstrably_unfinished() -> Non
             # The reference is read from disk on every build step; these
             # unit stubs point it at a directory that does not exist, so
             # the request carries an empty list rather than real files.
-            project_reference_enabled=True,
+            project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
             project_reference_dir=Path("/nonexistent-reference"),
             project_reference_max_chars=14_000,
             project_reference_max_chars_local=6_000,
@@ -1826,7 +1826,7 @@ async def test_a_stalled_turn_gets_its_honest_exit_back() -> None:
             # The reference is read from disk on every build step; these
             # unit stubs point it at a directory that does not exist, so
             # the request carries an empty list rather than real files.
-            project_reference_enabled=True,
+            project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
             project_reference_dir=Path("/nonexistent-reference"),
             project_reference_max_chars=14_000,
             project_reference_max_chars_local=6_000,
@@ -1961,7 +1961,7 @@ def test_the_step_request_carries_the_tool_catalog_the_local_model_needs() -> No
             # The reference is read from disk on every build step; these
             # unit stubs point it at a directory that does not exist, so
             # the request carries an empty list rather than real files.
-            project_reference_enabled=True,
+            project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
             project_reference_dir=Path("/nonexistent-reference"),
             project_reference_max_chars=14_000,
             project_reference_max_chars_local=6_000,
@@ -2200,7 +2200,7 @@ async def test_a_backend_outage_ends_the_turn_honestly_not_as_malformed() -> Non
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48, project_staged_max_files=48,
         project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
         project_reference_max_chars=0, project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
@@ -2327,7 +2327,7 @@ async def test_a_web_reskin_seeds_appkit_on_step_one_without_the_plan() -> None:
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48, project_staged_max_files=48,
         project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
         project_reference_max_chars=0, project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
@@ -2411,7 +2411,7 @@ async def test_planning_the_build_does_not_spend_one_of_the_models_steps() -> No
         project_spec_rewrite_max_chars=1800,
         # Reference lookup is part of every build step; point it at nothing so
         # these manifest tests stay about the manifest.
-        project_reference_enabled=True,
+        project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
         project_reference_dir=Path("/nonexistent-reference"),
         project_reference_max_chars=14_000,
         project_reference_max_chars_local=6_000,
@@ -2467,7 +2467,7 @@ async def test_the_manifest_survives_an_unreadable_reply_on_the_step_it_lands() 
         project_spec_rewrite_max_chars=1800,
         # Reference lookup is part of every build step; point it at nothing so
         # these manifest tests stay about the manifest.
-        project_reference_enabled=True,
+        project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
         project_reference_dir=Path("/nonexistent-reference"),
         project_reference_max_chars=14_000,
         project_reference_max_chars_local=6_000,
@@ -2556,7 +2556,7 @@ async def test_a_plan_taken_this_step_reaches_this_steps_request() -> None:
         project_staged_max_files=48,
         project_spec_rewrite=False,
         project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False,
+        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False,
         project_reference_dir=Path("/nonexistent-reference"),
         project_reference_max_chars=0,
         project_reference_max_chars_local=0,
@@ -2952,7 +2952,7 @@ async def test_a_drifting_turn_is_narrowed_to_one_file_before_it_is_ended() -> N
     # The step request now offers ONLY that file — which is what narrows
     # create_file's enum on the tool-calling lanes — and says so in words.
     plane.settings = SimpleNamespace(
-        project_agent_max_steps=48, project_reference_enabled=False,
+        project_agent_max_steps=48, project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False,
         project_reference_dir=Path("/none"), project_reference_max_chars=0,
         project_reference_max_chars_local=0,
     )
@@ -3003,7 +3003,7 @@ async def test_a_model_that_keeps_writing_is_never_narrowed() -> None:
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48, project_verify_bonus_steps=0,
         project_staged_max_files=48, project_spec_rewrite=False,
-        project_spec_rewrite_max_chars=1800, project_reference_enabled=False,
+        project_spec_rewrite_max_chars=1800, project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False,
         project_reference_dir=Path("/none"), project_reference_max_chars=0,
         project_reference_max_chars_local=0,
     )
@@ -3110,7 +3110,7 @@ async def test_a_dead_coder_lane_falls_down_the_ladder_mid_turn() -> None:
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48, project_staged_max_files=48,
         project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
         project_reference_max_chars=0, project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
@@ -3189,7 +3189,7 @@ async def test_an_exhausted_ladder_ends_the_turn_naming_the_cause() -> None:
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48, project_staged_max_files=48,
         project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
         project_reference_max_chars=0, project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
@@ -3290,7 +3290,7 @@ async def test_the_explore_act_arc_is_emitted_as_phase_events() -> None:
     plane.settings = SimpleNamespace(
         project_agent_max_steps=48, project_staged_max_files=48,
         project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_reference_dir=Path("/none"),
+        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
         project_reference_max_chars=0, project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
