@@ -407,14 +407,14 @@ meetings without hunting for a literal.
 
 ### A.2 Voice identity — §3.2
 
-`WAQIL_ELEVENLABS_VOICE_ID` — **still owed.** The owner supplied
-`WAQIL_ELEVENLABS_API_KEY` instead; that is a different setting and does not
-substitute. Per §3, stub the setting empty and proceed; it blocks only actual
-TTS playback.
+**Decided: `WAQIL_ELEVENLABS_VOICE_ID=r1KmysJdVYZjJCm4mL3b`.** A stock
+English voice, per §3 — no Voice Design in this build. The id names a public
+voice rather than authenticating anything, so it is a safe default to ship in
+`.env.example` alongside the empty `WAQIL_ELEVENLABS_API_KEY`.
 
-No key value belongs in this repository. `.env.example` carries the empty key
-in the `WAQIL_COHERE_API_KEY` pattern; the real value lives in `.env`, which
-is gitignored.
+`WAQIL_ELEVENLABS_API_KEY` is the credential, and no key value belongs in this
+repository. `.env.example` carries it empty in the `WAQIL_COHERE_API_KEY`
+pattern; the real value lives in `.env`, which is gitignored.
 
 ### A.3 Corporate device and tunnel — §3.3
 
