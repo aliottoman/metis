@@ -16,6 +16,7 @@ accepted trade-off for a zero-cost, exact-by-construction graph.
 Pure and dependency-free (stdlib ``ast`` only) so it unit-tests without a model,
 mirroring ``chunking.py``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -159,8 +160,11 @@ def extract(source: str, rel_path: str) -> tuple[list[GraphNode], list[GraphEdge
                 kind = "method" if parent_kind == "class" else "function"
                 nodes.append(
                     GraphNode(
-                        kind, node.name, qualname,
-                        _def_start(node), getattr(node, "end_lineno", node.lineno),
+                        kind,
+                        node.name,
+                        qualname,
+                        _def_start(node),
+                        getattr(node, "end_lineno", node.lineno),
                     )
                 )
                 edges.append(
@@ -170,15 +174,20 @@ def extract(source: str, rel_path: str) -> tuple[list[GraphNode], list[GraphEdge
                     resolved = _callee(call)
                     if resolved is not None:
                         edges.append(
-                            GraphEdge("calls", qualname, resolved[0], resolved[1], call.lineno)
+                            GraphEdge(
+                                "calls", qualname, resolved[0], resolved[1], call.lineno
+                            )
                         )
                 walk(node.body, qualname, kind)
             elif isinstance(node, ast.ClassDef):
                 qualname = f"{parent_qn}.{node.name}"
                 nodes.append(
                     GraphNode(
-                        "class", node.name, qualname,
-                        _def_start(node), getattr(node, "end_lineno", node.lineno),
+                        "class",
+                        node.name,
+                        qualname,
+                        _def_start(node),
+                        getattr(node, "end_lineno", node.lineno),
                     )
                 )
                 edges.append(

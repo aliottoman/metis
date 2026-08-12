@@ -1,4 +1,5 @@
 """Customer-scoped capture, extraction, review, and Markdown output."""
+
 from __future__ import annotations
 
 import asyncio
@@ -65,6 +66,7 @@ def _source(row: dict[str, Any]) -> CustomerSourceV1:
 def _evidence(value: Any) -> CustomerEvidenceV1:
     if isinstance(value, str):
         import json
+
         try:
             value = json.loads(value)
         except ValueError:
@@ -88,13 +90,18 @@ def _snippet(text: str, needle: str, *, width: int = 180) -> str:
         return f"{flat[:width].rstrip()}…"
     start = max(0, found - width // 3)
     end = min(len(flat), start + width)
-    return ("…" if start else "") + flat[start:end].strip() + ("…" if end < len(flat) else "")
+    return (
+        ("…" if start else "")
+        + flat[start:end].strip()
+        + ("…" if end < len(flat) else "")
+    )
 
 
 def _proposal(row: dict[str, Any]) -> CustomerUpdateProposalV1:
     value = dict(row)
     if "extraction" not in value:
         import json
+
         value["extraction"] = json.loads(value.pop("extraction_json"))
     return CustomerUpdateProposalV1.model_validate(value)
 
@@ -345,7 +352,9 @@ class CustomerIntelligenceService:
                 source_kind="notion",
                 title=title,
                 content=content,
-                source_ref=str(getattr(document, "url", "") or getattr(document, "page_id", "")),
+                source_ref=str(
+                    getattr(document, "url", "") or getattr(document, "page_id", "")
+                ),
                 occurred_at=None,
             )
             if duplicate or row.get("status") != "waiting":
@@ -354,10 +363,10 @@ class CustomerIntelligenceService:
             filed += 1
         return filed
 
-    def _deterministic_extraction(
-        self, source: dict[str, Any]
-    ) -> CustomerExtractionV1:
-        lines = [line.strip() for line in source["content"].splitlines() if line.strip()]
+    def _deterministic_extraction(self, source: dict[str, Any]) -> CustomerExtractionV1:
+        lines = [
+            line.strip() for line in source["content"].splitlines() if line.strip()
+        ]
         actions: list[CustomerActionExtractV1] = []
         for index, line in enumerate(lines, start=1):
             lowered = line.lower().lstrip("-* ")
@@ -366,8 +375,10 @@ class CustomerIntelligenceService:
                     CustomerActionExtractV1(
                         description=line.split(":", 1)[-1].strip(),
                         evidence=CustomerEvidenceV1(
-                            quote=line[:1000], source_id=source["id"],
-                            line_start=index, line_end=index,
+                            quote=line[:1000],
+                            source_id=source["id"],
+                            line_start=index,
+                            line_end=index,
                         ),
                     )
                 )
@@ -406,20 +417,29 @@ class CustomerIntelligenceService:
         detail = await self.account(account_id)
         if detail is None:
             raise KeyError("customer account not found")
-        facts = "\n".join(
-            f"- [{item.kind}] {item.content}" for item in detail.facts
-            if item.status in {"active", "disputed"}
-        ) or "- No saved facts"
-        actions = "\n".join(
-            f"- {item.description} (owner: {item.owner or 'unassigned'})"
-            for item in detail.actions if item.status == "open"
-        ) or "- No open actions"
+        facts = (
+            "\n".join(
+                f"- [{item.kind}] {item.content}"
+                for item in detail.facts
+                if item.status in {"active", "disputed"}
+            )
+            or "- No saved facts"
+        )
+        actions = (
+            "\n".join(
+                f"- {item.description} (owner: {item.owner or 'unassigned'})"
+                for item in detail.actions
+                if item.status == "open"
+            )
+            or "- No open actions"
+        )
         # Pinned notes only. A note is pinned precisely because the user decided
         # it is standing context for the account, so the pin is the consent to
         # spend conversation context on it.
         pinned = "\n".join(
             f"- {item.title or 'Note'}: {' '.join(item.body.split())[:600]}"
-            for item in detail.notes if item.pinned
+            for item in detail.notes
+            if item.pinned
         )
         return (
             f"Selected customer: {detail.account.name} ({detail.account.id})\n"
@@ -545,31 +565,45 @@ class CustomerIntelligenceService:
         detail = await self.account(account_id)
         if detail is None:
             raise KeyError("customer account not found")
-        selected = next(
-            (item for item in detail.interactions if item.id == interaction_id), None
-        ) if interaction_id else (detail.interactions[0] if detail.interactions else None)
+        selected = (
+            next(
+                (item for item in detail.interactions if item.id == interaction_id),
+                None,
+            )
+            if interaction_id
+            else (detail.interactions[0] if detail.interactions else None)
+        )
         if kind != "activity_tracker":
-            raise ValueError("Only the activity tracker output is available in this version.")
+            raise ValueError(
+                "Only the activity tracker output is available in this version."
+            )
         settings = CustomerSettingsV1.model_validate(
             await self.database.customer_settings()
         )
         facts = [
-            item for item in detail.facts
+            item
+            for item in detail.facts
             if selected is None or item.interaction_id == selected.id
         ]
         actions = [
-            item for item in detail.actions
+            item
+            for item in detail.actions
             if selected is None or item.interaction_id == selected.id
         ]
         source = next(
-            (item for item in detail.sources if selected and item.id == selected.source_id),
+            (
+                item
+                for item in detail.sources
+                if selected and item.id == selected.source_id
+            ),
             None,
         )
         values = {
             "account_name": detail.account.name,
             "date": (
                 selected.occurred_at.astimezone(UTC).date().isoformat()
-                if selected else datetime.now(UTC).date().isoformat()
+                if selected
+                else datetime.now(UTC).date().isoformat()
             ),
             "title": selected.title if selected else "Account update",
             "summary": selected.summary if selected else "No saved interaction yet.",
@@ -579,15 +613,20 @@ class CustomerIntelligenceService:
                 f"- [ ] {item.description}"
                 + (f" — {item.owner}" if item.owner else "")
                 + (f" — due {item.due_at.date().isoformat()}" if item.due_at else "")
-                for item in actions if item.status == "open"
-            ) or "- [ ] No open actions",
+                for item in actions
+                if item.status == "open"
+            )
+            or "- [ ] No open actions",
             "people": "\n".join(
                 f"- {item.name}" + (f" — {item.role}" if item.role else "")
                 for item in detail.people
-            ) or "- None captured",
+            )
+            or "- None captured",
             "source": (
-                f"{source.title}" + (f" — {source.source_ref}" if source.source_ref else "")
-                if source else "Saved customer record"
+                f"{source.title}"
+                + (f" — {source.source_ref}" if source.source_ref else "")
+                if source
+                else "Saved customer record"
             ),
         }
         template = settings.activity_template or DEFAULT_ACTIVITY_TEMPLATE
@@ -598,6 +637,4 @@ class CustomerIntelligenceService:
         row = await self.database.create_customer_output(
             account_id, selected.id if selected else None, kind, content
         )
-        return CustomerOutputV1(
-            **row, tracker_url=settings.tracker_url
-        )
+        return CustomerOutputV1(**row, tracker_url=settings.tracker_url)

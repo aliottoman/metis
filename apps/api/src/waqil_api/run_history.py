@@ -15,6 +15,7 @@ say" — a file's text may hold credentials that the user never intended to send
 anywhere, and consent to index their own notes should not quietly become consent
 to index their secrets.
 """
+
 from __future__ import annotations
 
 import re
@@ -118,7 +119,16 @@ class RunHistoryService:
         ]
         if project_name:
             lines.append(f"- Project: {project_name}")
-        lines += ["", "## Request", "", prompt[:limit], "", "## Outcome", "", response[:limit]]
+        lines += [
+            "",
+            "## Request",
+            "",
+            prompt[:limit],
+            "",
+            "## Outcome",
+            "",
+            response[:limit],
+        ]
 
         if changes:
             lines += ["", "## Files changed", ""]

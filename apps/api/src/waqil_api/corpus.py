@@ -16,6 +16,7 @@ Two invariants matter:
 `numpy` is imported lazily so this module imports in a base install without the
 optional `cloud` extra; retrieval simply reports itself unavailable there.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,9 +47,26 @@ from .embeddings import CohereRetrieval, CohereUnavailable
 _PROSE_LANGS = {"markdown", "rst", "text"}
 
 _SKIP_DIRS = {
-    ".git", ".venv", "venv", "node_modules", "__pycache__", ".wakil", ".data",
-    ".idea", ".vscode", "dist", "build", ".next", ".mypy_cache", ".pytest_cache",
-    ".uv-cache", ".pnpm-store", ".ruff_cache", ".turbo", "target", ".gradle",
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".wakil",
+    ".data",
+    ".idea",
+    ".vscode",
+    "dist",
+    "build",
+    ".next",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".uv-cache",
+    ".pnpm-store",
+    ".ruff_cache",
+    ".turbo",
+    "target",
+    ".gradle",
 }
 
 # Folded into every file's content hash. Bump it whenever chunking changes, so
@@ -172,10 +190,14 @@ class CorpusService:
         source = await self._ensure_uploads_source()
         mirror = self._settings.uploads_mirror_dir
         mirror.mkdir(parents=True, exist_ok=True)
-        stem = re.sub(r"[^a-z0-9]+", "-", Path(str(upload["filename"])).stem.lower()).strip("-")
+        stem = re.sub(
+            r"[^a-z0-9]+", "-", Path(str(upload["filename"])).stem.lower()
+        ).strip("-")
         name = f"{stem or 'document'}--{str(upload['sha256'])[:16]}.md"
         header = f"# {upload['filename']}\n\nUploaded document, added to the knowledge base.\n\n"
-        await asyncio.to_thread((mirror / name).write_text, header + text, encoding="utf-8")
+        await asyncio.to_thread(
+            (mirror / name).write_text, header + text, encoding="utf-8"
+        )
         # The user asking to add it is the consent for cloud embedding.
         if not source.consent:
             source = await self.set_consent(
@@ -193,9 +215,7 @@ class CorpusService:
         if source is None:
             raise KeyError("corpus source not found")
         if not source.consent:
-            raise PermissionError(
-                "source has not been granted cloud-embedding consent"
-            )
+            raise PermissionError("source has not been granted cloud-embedding consent")
         if not self._retrieval.available():
             raise CohereUnavailable("cloud embeddings are not available")
 
@@ -235,7 +255,9 @@ class CorpusService:
                 rows: list[dict] = []
                 if chunks:
                     vectors = await asyncio.to_thread(
-                        self._retrieval.embed, [c.text for c in chunks], "search_document"
+                        self._retrieval.embed,
+                        [c.text for c in chunks],
+                        "search_document",
                     )
                     rows = [
                         self._chunk_row(chunk, vector)
@@ -244,9 +266,15 @@ class CorpusService:
                 graph_nodes, graph_edges = self._extract_graph(lang, text, rel_path)
                 entity_nodes, entity_edges = await self._extract_entities(lang, text)
                 await self._db.upsert_corpus_file(
-                    source_id, rel_path, content_hash, lang, rows,
-                    graph_nodes=graph_nodes, graph_edges=graph_edges,
-                    entity_nodes=entity_nodes, entity_edges=entity_edges,
+                    source_id,
+                    rel_path,
+                    content_hash,
+                    lang,
+                    rows,
+                    graph_nodes=graph_nodes,
+                    graph_edges=graph_edges,
+                    entity_nodes=entity_nodes,
+                    entity_edges=entity_edges,
                 )
                 indexed += 1
             removed = await self._db.remove_corpus_files(
@@ -359,7 +387,9 @@ class CorpusService:
         settings = self._settings
         pages = settings.corpus_page_expand_pages
         per_query = settings.corpus_page_expand_k
-        if not (settings.corpus_page_expand and ranked_items) or not (pages and per_query):
+        if not (settings.corpus_page_expand and ranked_items) or not (
+            pages and per_query
+        ):
             return []
         anchors: dict[tuple[str, str], float] = {}
         for item, score in ranked_items:
@@ -400,18 +430,14 @@ class CorpusService:
 
     async def graph_lookup(self, name: str) -> CodeGraphLookupV1:
         """Resolve a symbol name to its definitions, callers, and callees."""
-        return CodeGraphLookupV1.model_validate(
-            await self._db.code_graph_lookup(name)
-        )
+        return CodeGraphLookupV1.model_validate(await self._db.code_graph_lookup(name))
 
     # ── Entity graph (Graph-RAG Stage 2) ─────────────────────────────────────
 
     async def entity_stats(self) -> EntityGraphStatsV1:
         """Entity node/edge counts. Local read; empty unless entity extraction
         has been enabled and a prose source indexed."""
-        return EntityGraphStatsV1.model_validate(
-            await self._db.entity_graph_stats()
-        )
+        return EntityGraphStatsV1.model_validate(await self._db.entity_graph_stats())
 
     async def entity_lookup(self, name: str) -> EntityGraphLookupV1:
         """Resolve an entity name to its kinds and relationships (both directions)."""
@@ -428,8 +454,7 @@ class CorpusService:
         survives, so an off-topic neighbour simply loses — expansion widens recall
         without polluting the final top-k."""
         if provider == "notion" or not (
-            self._settings.corpus_graph_expand
-            and self._settings.corpus_graph_expand_k
+            self._settings.corpus_graph_expand and self._settings.corpus_graph_expand_k
         ):
             return candidates
         seeds = [
@@ -501,19 +526,19 @@ class CorpusService:
         except Exception:  # noqa: BLE001 - a bad extraction never fails the run
             return [], []
         entity_nodes = [
-            {"name": entity.name, "kind": entity.kind}
-            for entity in extraction.entities
+            {"name": entity.name, "kind": entity.kind} for entity in extraction.entities
         ]
         entity_edges = [
-            {"src_name": relation.source, "relation": relation.relation,
-             "dst_name": relation.target}
+            {
+                "src_name": relation.source,
+                "relation": relation.relation,
+                "dst_name": relation.target,
+            }
             for relation in extraction.relations
         ]
         return entity_nodes, entity_edges
 
-    def _scan(
-        self, root: Path
-    ) -> tuple[list[tuple[str, str, str, Path]], _ScanReport]:
+    def _scan(self, root: Path) -> tuple[list[tuple[str, str, str, Path]], _ScanReport]:
         """Walk `root`, returning (rel_path, content_hash, lang, path) for each
         indexable text file under the size cap, plus a report of what was
         rejected and why.

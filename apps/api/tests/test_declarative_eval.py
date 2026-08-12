@@ -5,6 +5,7 @@ eval passes. These tests exercise the real `ControlPlane._evaluate_declarative`
 directly: a valid archetype passes through the host-owned scripted fixtures; a
 definition with no fixtures fails closed (never activatable).
 """
+
 from __future__ import annotations
 
 import types
@@ -20,7 +21,9 @@ class _Events:
     def __init__(self) -> None:
         self.events: list[str] = []
 
-    async def emit(self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None):
+    async def emit(
+        self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None
+    ):
         self.events.append(event_type)
 
 
@@ -31,7 +34,9 @@ def _cp() -> types.SimpleNamespace:
 
 
 def _definition():
-    draft = ToolDefinitionDraftV1(name="Readme Summary", description="summarize a readme")
+    draft = ToolDefinitionDraftV1(
+        name="Readme Summary", description="summarize a readme"
+    )
     return tool_authoring.harden_draft(draft, slug="readme-summary", max_broker_calls=4)
 
 
@@ -44,7 +49,9 @@ async def test_valid_archetype_passes_eval() -> None:
     report = await ControlPlane._evaluate_declarative(cp, _STATE, _definition())
     assert report.passed is True
     assert report.score == 1.0
-    assert len(report.results) == len(tool_authoring.get_archetype("text-summary").eval_fixtures)
+    assert len(report.results) == len(
+        tool_authoring.get_archetype("text-summary").eval_fixtures
+    )
     # The scripted broker calls during eval were audited.
     assert cp.events.events.count("run.broker_call") >= 1
 
@@ -60,7 +67,9 @@ async def test_definition_without_fixtures_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_text_tool_with_no_text_says_so_instead_of_summarising_nothing() -> None:
+async def test_a_text_tool_with_no_text_says_so_instead_of_summarising_nothing() -> (
+    None
+):
     """The deterministic fallback is written never to fail, so an empty input
     produced a card reading "Untitled Project" for its title, its purpose and
     its summary — a summary of nothing, rendered as a summary. Measured live on

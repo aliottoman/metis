@@ -2,6 +2,8 @@
 
 Metis is a local-first, single-user agent platform. It runs on your own machine, keeps your data in local SQLite and a content-addressed blob store, and executes generated code inside a rootless Podman boundary that has no network and no route to your models.
 
+Project builds, and any project edit large enough to need its own file plan, run on **ClineCore**, a local coding harness embedded in the Metis process. The file-editing loop — reading, writing, patching, repairing — runs entirely on your machine as a Node child Metis supervises; only the model inference calls you explicitly select (ClinePass or a local Ollama endpoint) leave it. Metis retains ownership of workspace isolation, exact write scope, verification, approval, and the final write to your project — ClineCore only ever edits a disposable, host-diffed mirror.
+
 Its distinguishing property is that it extends itself under review. When no existing capability fits a request, Metis can define a new tool, have a model author that tool's implementation, gate the implementation through a static-analysis allowlist, evaluate it, and store it as an immutable versioned record. Two explicit human approvals stand between a proposal and an active capability. Nothing is trained, and no model weights are ever changed.
 
 ## Reference architecture
@@ -93,6 +95,7 @@ graph LR
 | --- | --- |
 | `apps/api` | FastAPI service, versioned contracts, LangGraph orchestration, SQLite stores, model broker, policy gates, tool registry |
 | `apps/web` | Next.js client with streamed run events, approvals, artifacts, tool versions, memory proposals, and model health |
+| `apps/cline-sidecar` | Local Node child embedding `@cline/sdk`: a fail-closed, workspace-scoped, stdio-only bridge for ClineCore coding sessions |
 | `apps/mac` | Native macOS window (SwiftPM, no Xcode): starts the servers on open, stops them and releases the model on quit |
 | `apps/api/src/waqil_api/scaffold` | The `appkit` runtime Metis vendors into the applications it builds |
 | `skills` | Immutable AgentSkills-compatible capability bundles |
@@ -104,8 +107,8 @@ graph LR
 ## Prerequisites
 
 - Python 3.13. The locked backend environment intentionally excludes Python 3.14.
-- Node.js 24 or newer and pnpm 11.
-- Ollama with `qwen3.6:35b-mlx` and `north-mini-code-1.0:mlx-nvfp4` available.
+- Node.js 24 or newer and pnpm 11. The `apps/cline-sidecar` coding harness needs Node 22 or newer at minimum.
+- Ollama with `qwen3.6:35b-mlx` and `north-mini-code-1.0:mlx-nvfp4` available, and/or a ClinePass API key for `WAQIL_CLINE_API_KEY` — either can drive project builds; see [Model routing for project builds](#model-routing-for-project-builds).
 - Podman for generated-code execution. Graphviz ships inside the sandbox image.
 - Poppler's `pdftotext` utility for extracting text from PDF chat attachments.
 
@@ -115,10 +118,11 @@ graph LR
 cp .env.example .env
 podman machine start
 make setup
+make build
 make sandbox-image
 ```
 
-`make setup` bootstraps the pinned `uv` release into `.venv` and performs a frozen sync from `apps/api/uv.lock`. It fails rather than silently rewriting the lock. Frontend installation likewise uses the frozen pnpm lockfile.
+`make setup` bootstraps the pinned `uv` release into `.venv`, performs a frozen sync from `apps/api/uv.lock`, and installs the pnpm workspace (`apps/web` and `apps/cline-sidecar`) from the frozen lockfile. It fails rather than silently rewriting either lock. `make build` compiles the Cline sidecar and the web app; the sidecar will not start without its compiled `dist/` output, and `WAQIL_PROJECT_CODING_ENGINE=clinecore` (the default) reports project coding as unavailable, with the rest of Metis staying usable, until it has.
 
 Start the API and web app in separate terminals:
 
@@ -285,6 +289,8 @@ The chat header can open any project already present in the manually refreshed A
 
 Three run-pinned modes are available. **Grok to Local** spends the cloud call on the initial map and then uses the configured local model for the bounded project loop. **Keep Grok** continues using Grok and OCI Responses function calling. **Command A+** hands every bounded step to Cohere instead, which needs `WAQIL_COHERE_API_KEY` and no OCI subscription — if OCI is not configured at all, Cohere also writes the initial map. All three expose the same host-owned tools: bounded file listing, exact-text search, ranged reads, exact-block replacement, new-file creation, installed-library introspection, and reviewed verification checks. Reads run immediately. Secret files, `.git`, `.metis`, `appkit`, symlinks, paths outside the selected project, arbitrary shell commands, and host networking are never exposed.
 
+A request large enough to need its own file plan — a fresh application or a multi-file edit to one already open — hands that plan to ClineCore's vertical-slice loop instead, described next; a small single-file change stays on the bounded tool loop above.
+
 ### Building a whole application
 
 Writes never touch your disk while the agent works. They land in a private overlay that the loop reads back like a real filesystem, so the agent can write a file, re-read it, and revise it across as many steps as the work needs. At the end you get **one** approval for the whole changeset — approve it and everything applies, decline it and nothing was ever written.
@@ -294,7 +300,7 @@ graph TD
     REQ["Build request<br/>classified as a whole application"]
     SCAF["1 · Scaffold<br/>Metis writes appkit/ into the overlay<br/>before the model's first step"]
     PLAN["2 · Plan<br/>the model names every file it owes;<br/>an empty plan ends the turn"]
-    LOOP["3 · Agent loop<br/>staged writes, reads, patches<br/>bounded steps, fail-fast on refusal streaks"]
+    SLICE["3 · Vertical slices<br/>the planner partitions the frozen file plan;<br/>each slice runs its own local ClineCore session,<br/>verified before the next slice starts"]
 
     subgraph gates["4 · Verification gates, run on the staged changeset"]
         direction TB
@@ -311,22 +317,24 @@ graph TD
     APPLY["6 · Apply<br/>files written, .metis/asset.json generated"]
     REPAIR["Follow-up message<br/>overlay carries forward, repair continues"]
 
-    REQ --> SCAF --> PLAN --> LOOP --> gates --> CARD
+    REQ --> SCAF --> PLAN --> SLICE --> gates --> CARD
     CARD -->|provable defect| BLOCK
     CARD -->|clean| APPLY
-    BLOCK --> REPAIR --> LOOP
+    BLOCK --> REPAIR --> SLICE
 
     classDef host fill:#e8effc,stroke:#5669df,color:#16213e
     classDef gate fill:#fdecea,stroke:#d9573f,color:#3d1710
     classDef human fill:#eef6ee,stroke:#4a7c4a,color:#1d331d
-    class SCAF,PLAN,LOOP,APPLY host
+    class SCAF,PLAN,SLICE,APPLY host
     class G1,G2,G3,G4,G5 gate
     class CARD,BLOCK,REPAIR human
 ```
 
 **The scaffold.** Ten reconstructed builds established that every model — frontier and local alike — reinvents the same infrastructure differently, and mostly wrongly. So Metis writes it instead. Before the first model step, a whole-application build receives a version-stamped `appkit/` package: lazy configuration that fails features rather than imports, `Decimal` money helpers where a missing value stays missing instead of becoming zero, upload handling that sniffs real MIME types and cleans up on every path, and a tested OCI Responses adapter. The model imports these and spends its budget on the domain. Writes under `appkit/` are refused exactly like `.metis`.
 
-**The gates.** A changeset is checked before you are ever asked about it. The four static rungs read the staged text; the runtime rung imports the project inside the network-less Podman sandbox and exercises what it declares — parameterless GETs, POST bodies synthesized from the app's own schema, multipart uploads, and parameterized routes. A generated application that imports cleanly but 500s on its central workflow no longer passes.
+**The vertical slices.** Once the plan is frozen, Metis's planner partitions its files into an exact, contiguous run of vertical slices — every planned file in exactly one slice, none missing, none duplicated, none extra, with declared-plan mismatches falling back to a safe deterministic chunking rather than dropping or widening scope. Each slice names a concrete outcome and covers at most six files. Metis opens a private disposable mirror and hands it to a fresh, isolated **ClineCore** session — a local Node child embedding the pinned `@cline/sdk`, supervised over stdio — with that slice's causal read/edit/repair conversation. Metis independently re-diffs the mirror against exactly that slice's files after every round; a change outside them, including a file an earlier, already-verified slice staged, is refused and the whole round is discarded rather than partially accepted. A slice is verified before the next one starts, and when verification fails, the repair conversation stays confined to the failing slice — it cannot reopen or rewrite a slice that already passed. A clean slice starts the next one in a brand-new session while carrying its verified bytes forward; nothing from a finished slice is re-sent to a model. See [`docs/cline-coding-engine.md`](docs/cline-coding-engine.md) for the full mechanics, including crash recovery.
+
+**The gates.** A changeset is checked before you are ever asked about it. The four static rungs read the staged text; the runtime rung imports the project inside the network-less Podman sandbox and exercises what it declares — parameterless GETs, POST bodies synthesized from the app's own schema, multipart uploads, and parameterized routes — plus a bounded pytest slice when the overlay changes Python. A generated application that imports cleanly but 500s on its central workflow no longer passes. These gates run after every vertical slice on that slice's own scope; the complete acceptance pass, across every planned file and every declared scenario, runs once, at the final slice.
 
 **Blocked approvals.** When a rung proves a defect the environment cannot excuse — a name that does not exist, a call the callee will not accept, configuration read at import time, a page referencing a file nobody wrote — the Approve button is withheld and the card names the file and line. The staged work is not lost: send a follow-up and the exact verified overlay carries into the next run, so the repair edits what verification actually inspected rather than starting again from disk.
 
@@ -335,6 +343,20 @@ A repair can also make things worse, and the card says so. It carries the count 
 **Launchability.** Models may not write `.metis`, so Metis writes the launch manifest itself after you approve an applied build, deriving the entry point, dependency file, and environment contract from what actually reached disk. Launching still requires the separate fingerprint approval described under **Asset library**.
 
 **Configuration.** Generated applications never see your secrets. Capabilities detected in their code select an allowlist of variable *names*, which are documented in the project's `.env.example` and shown to the model; the values are injected only into the launched child process, and the OCI private key never leaves `~/.oci`.
+
+### Model routing for project builds
+
+The outer planner and the ClineCore coding model are separate roles, each independently routable. The current ClinePass ladder is Qwen3.7 Plus for planning, GLM 5.2 as planner fallback, DeepSeek V4 Pro for the broad implementation, then Kimi K3 and Kimi K2.7 Code for verifier-guided repair — set with `WAQIL_CLINE_ORCHESTRATOR_MODEL`, `WAQIL_CLINE_CODER_MODEL`, and `WAQIL_CLINE_API_KEY`. Without a ClinePass key, route through your configured Ollama endpoint instead; `WAQIL_OLLAMA_BASE_URL` still applies, including to hosted Ollama Cloud model tags. These are routing defaults, not a claim that every project will pass — see [`docs/cline-coding-engine.md`](docs/cline-coding-engine.md) for the qualification gate a routing change should clear before it becomes the default.
+
+### ClineCore security boundaries
+
+- `.env`, credentials, key material, `.git`, `.cline`, `.metis`, `appkit/`, symlinks, hard links, and non-regular files are excluded from the coding mirror and refused wherever the sidecar or Metis touches the filesystem — path containment is checked segment-by-segment, including for a symlinked intermediate directory.
+- The sidecar has no network listener; it speaks a closed, schema-validated NDJSON protocol over stdio only, and only three tools are enabled — read, search, and edit, all workspace-scoped. Shell execution, web access, MCP, skills, subagents, and any tool the SDK adds later are denied by a fail-closed default, not an allowlist that has to keep up.
+- The model's provider credential is supplied to one local request and is never written into Metis's durable session record; sidecar-owned artifacts are scanned for the exact credential value on every session close, and a match deletes the session.
+- Metis computes the coding-mirror diff itself byte-for-byte — it never trusts a self-reported diff. Deletions, renames, disk drift since staging, protected paths, and any change outside the active slice's exact planned files are rejected before bytes reach the ordinary staged overlay.
+- The model can never approve its own output. The same networkless verification and the same one-approval-card gate described above are mandatory regardless of which coding engine produced the changeset.
+
+**Production status.** ClineCore is the only coding engine available for new project builds — the former loop is retired from selection and kept only so a checkpoint frozen before this migration can finish (see [Legacy checkpoint transition](docs/cline-coding-engine.md#legacy-checkpoint-transition)). It is exercised by the full backend, sidecar, and web test suites on every change (`make test`). It has not yet cleared the live, multi-run qualification gate described in [`docs/cline-coding-engine.md`](docs/cline-coding-engine.md) — this README does not claim a measured pass rate for real project builds, and you should run `scripts/project_capability_eval.py` against your own routing before depending on it for unattended or high-stakes work.
 
 ### Verification checks
 
@@ -404,7 +426,7 @@ make test
 make build
 ```
 
-That covers 755 backend and skill-bundle tests plus 68 web tests. The backend suite uses a deterministic model provider, so it needs neither Ollama nor Podman.
+That covers 1,455 backend and skill-bundle tests, 33 Cline sidecar tests, and 85 web tests. The backend suite uses a deterministic model provider and the sidecar suite a mocked SDK transport, so neither needs Ollama, ClinePass, or Podman.
 
 Optional live checks require local model and container runtimes:
 
@@ -453,11 +475,14 @@ Metis refuses to follow symlinks or to overwrite an existing export. Keep the ar
 - Inputs are uploads and explicitly granted project folders. Arbitrary persistent host-folder grants and archive traversal stay disabled.
 - Approving corrective feedback queues an immutable revision request and its regression case. A later factory run must build and evaluate that revision, and no unattended background process silently changes an active version.
 - Generated tools cannot install dependencies at runtime or modify the Metis core.
+- The former, non-ClineCore coding loop cannot be selected for a new project build; it exists only so a checkpoint frozen before this migration can finish, and only with `WAQIL_ALLOW_TEST_BACKENDS=true` set for an explicit test backend.
 - Channel adapters, multi-user authentication, and autonomous internet access remain later phases.
 
 ## Further reading
 
 - [Architecture and invariants](docs/architecture.md)
+- [ClineCore coding engine](docs/cline-coding-engine.md)
+- [Project capability evaluation](docs/project-capability-evaluation.md)
 - [Offline packaging](docs/offline-packaging.md)
 - [Backend service notes](apps/api/README.md)
 - [Web client notes](apps/web/README.md)

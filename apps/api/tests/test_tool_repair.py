@@ -1,10 +1,15 @@
 """The deterministic repairs that stop a shape mistake costing a step."""
+
 from __future__ import annotations
 
 import pytest
 
 from waqil_api import tool_repair
-from waqil_api.model_provider import ModelProviderError, drain_repairs, step_from_function_call
+from waqil_api.model_provider import (
+    ModelProviderError,
+    drain_repairs,
+    step_from_function_call,
+)
 
 
 # ── Argument keys ──────────────────────────────────────────────────────────
@@ -58,7 +63,9 @@ def test_an_ambiguous_key_is_never_guessed() -> None:
     A repair that is right most of the time is worse than a refusal that is
     right every time — the refusal is visible and a wrong repair is not.
     """
-    repaired, notes = tool_repair.repair_arguments("apply_patch", {"path": "a.py", "patch": "..."})
+    repaired, notes = tool_repair.repair_arguments(
+        "apply_patch", {"path": "a.py", "patch": "..."}
+    )
     assert "patch" in repaired
     assert "original" not in repaired and "replacement" not in repaired
     assert notes == []
@@ -72,7 +79,9 @@ def test_a_repair_never_overwrites_a_correctly_named_value() -> None:
 
 
 def test_an_unknown_key_is_kept_so_the_workspace_can_refuse_it_by_name() -> None:
-    repaired, _ = tool_repair.repair_arguments("read_file", {"path": "a.py", "wibble": 1})
+    repaired, _ = tool_repair.repair_arguments(
+        "read_file", {"path": "a.py", "wibble": 1}
+    )
     assert repaired["wibble"] == 1
 
 
@@ -185,7 +194,9 @@ def test_a_payload_holding_code_is_not_rewritten() -> None:
 def test_a_fenced_argument_string_now_decodes_instead_of_failing() -> None:
     drain_repairs()
     step = step_from_function_call(
-        "read_file", '```json\n{"filepath": "./app/main.py"}\n```', speaker="a hosted model"
+        "read_file",
+        '```json\n{"filepath": "./app/main.py"}\n```',
+        speaker="a hosted model",
     )
     assert step.tool_call is not None
     assert step.tool_call.name == "read_file"
@@ -196,7 +207,9 @@ def test_a_fenced_argument_string_now_decodes_instead_of_failing() -> None:
 
 def test_genuinely_unparseable_arguments_still_fail() -> None:
     with pytest.raises(ModelProviderError):
-        step_from_function_call("read_file", "not json at all {{{", speaker="a hosted model")
+        step_from_function_call(
+            "read_file", "not json at all {{{", speaker="a hosted model"
+        )
 
 
 def test_an_unsupported_tool_is_still_refused() -> None:

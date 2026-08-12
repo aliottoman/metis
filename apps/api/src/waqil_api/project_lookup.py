@@ -16,6 +16,7 @@ Introspection runs in a subprocess. Importing any module runs its top-level
 code, and a package that hangs or crashes on import must cost one tool call
 rather than the API.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -130,11 +131,15 @@ async def inspect_installed_api(
         env={**os.environ, "PYTHONPATH": "", "PYTHONSTARTUP": ""},
     )
     try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=_TIMEOUT_SECONDS)
+        stdout, _ = await asyncio.wait_for(
+            process.communicate(), timeout=_TIMEOUT_SECONDS
+        )
     except TimeoutError:
         process.kill()
         await process.wait()
-        raise LookupError_(f"importing {module} took too long and was stopped") from None
+        raise LookupError_(
+            f"importing {module} took too long and was stopped"
+        ) from None
 
     try:
         result: dict[str, Any] = json.loads(stdout.decode("utf-8", "replace") or "{}")

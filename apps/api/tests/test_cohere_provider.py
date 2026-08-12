@@ -60,7 +60,9 @@ def _tool_reply(name: str, arguments) -> dict:
 async def test_a_project_step_sends_the_shared_roster_and_converts(tmp_path) -> None:
     provider = ScriptedCohere(
         _settings(tmp_path),
-        _tool_reply("create_file", json.dumps({"path": "app/main.py", "content": "x\n"})),
+        _tool_reply(
+            "create_file", json.dumps({"path": "app/main.py", "content": "x\n"})
+        ),
     )
     step = await provider.project_step(
         {"build_turn": True, "files_still_to_write": ["app/main.py", ".env.example"]}
@@ -71,7 +73,9 @@ async def test_a_project_step_sends_the_shared_roster_and_converts(tmp_path) -> 
     names = [tool["function"]["name"] for tool in sent["tools"]]
     assert set(names) == set(PROJECT_TOOL_REQUIRED_ARGUMENTS) | {FINISH_TOOL_NAME}
     create = next(
-        tool["function"] for tool in sent["tools"] if tool["function"]["name"] == "create_file"
+        tool["function"]
+        for tool in sent["tools"]
+        if tool["function"]["name"] == "create_file"
     )
     assert create["parameters"]["properties"]["path"]["enum"] == [
         "app/main.py",
@@ -80,7 +84,9 @@ async def test_a_project_step_sends_the_shared_roster_and_converts(tmp_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_tool_is_refused_and_prose_becomes_a_completion(tmp_path) -> None:
+async def test_an_unknown_tool_is_refused_and_prose_becomes_a_completion(
+    tmp_path,
+) -> None:
     provider = ScriptedCohere(_settings(tmp_path), _tool_reply("rm_rf", "{}"))
     with pytest.raises(ModelProviderError, match="unsupported project tool"):
         await provider.project_step({})
@@ -104,7 +110,9 @@ async def test_an_unknown_tool_is_refused_and_prose_becomes_a_completion(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_structured_decode_rides_one_function_with_a_bounded_repair(tmp_path) -> None:
+async def test_structured_decode_rides_one_function_with_a_bounded_repair(
+    tmp_path,
+) -> None:
     provider = ScriptedCohere(
         _settings(tmp_path),
         _tool_reply("return_projectbuildplanv1", {"files": 12}),  # wrong type → repair
@@ -154,11 +162,15 @@ async def test_the_router_selects_cohere_only_by_the_runs_aliases(tmp_path) -> N
         def __init__(self, name: str) -> None:
             self.name = name
 
-        async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+        async def generate(
+            self, request, on_token=None, *, model_aliases=None, on_reasoning=None
+        ):
             return self.name
 
     routed = RoutedModelProvider(Named("local"), Named("oci"), cohere=Named("cohere"))  # type: ignore[arg-type]
-    assert await routed.generate(None, model_aliases={"_provider": "cohere"}) == "cohere"
+    assert (
+        await routed.generate(None, model_aliases={"_provider": "cohere"}) == "cohere"
+    )
     assert await routed.generate(None, model_aliases={"_provider": "oci"}) == "oci"
     assert await routed.generate(None, model_aliases={}) == "local"
     # Without a Cohere instance the alias degrades to local instead of crashing.
@@ -166,7 +178,9 @@ async def test_the_router_selects_cohere_only_by_the_runs_aliases(tmp_path) -> N
     assert await bare.generate(None, model_aliases={"_provider": "cohere"}) == "local"
 
 
-def test_cohere_continuous_pins_its_own_provider_and_is_gated_on_the_key(tmp_path) -> None:
+def test_cohere_continuous_pins_its_own_provider_and_is_gated_on_the_key(
+    tmp_path,
+) -> None:
     """The third project mode: Command A+ leads every bounded step.
 
     Two things have to hold together — the mode names the provider the run
@@ -320,7 +334,9 @@ def test_citation_markup_is_cleaned_after_json_decoding() -> None:
 
     from waqil_api.model_provider import _clean_cohere_payload, _strip_cohere_citations
 
-    wire = '{"body": "gives \\u003cco\\u003efull isolation\\u003c/co: 0:[0]\\u003e today"}'
+    wire = (
+        '{"body": "gives \\u003cco\\u003efull isolation\\u003c/co: 0:[0]\\u003e today"}'
+    )
     assert "<co>" not in wire  # escaped, so a pre-parse strip cannot see it
     assert _strip_cohere_citations(wire) == wire
     cleaned = _clean_cohere_payload(json.loads(wire))

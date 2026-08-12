@@ -71,9 +71,7 @@ def provider_with(settings, *replies) -> tuple[OllamaModelProvider, list[dict]]:
     provider = OllamaModelProvider(settings)
     queue = list(replies)
     requests: list[dict] = []
-    provider._chat_type = lambda **parameters: ScriptedChat(
-        queue, requests, parameters
-    )
+    provider._chat_type = lambda **parameters: ScriptedChat(queue, requests, parameters)
     return provider, requests
 
 
@@ -109,9 +107,9 @@ def test_both_providers_advertise_the_same_tool_set(settings) -> None:
     for flat, nested in zip(shared, hosted):
         assert nested["function"]["parameters"] == flat["parameters"]
         assert nested["function"]["description"] == flat["description"]
-    assert {tool["name"] for tool in shared} == set(
-        PROJECT_TOOL_REQUIRED_ARGUMENTS
-    ) | {FINISH_TOOL_NAME}
+    assert {tool["name"] for tool in shared} == set(PROJECT_TOOL_REQUIRED_ARGUMENTS) | {
+        FINISH_TOOL_NAME
+    }
 
 
 def test_owed_files_narrow_create_file_and_keep_finish(settings) -> None:
@@ -258,7 +256,9 @@ async def test_an_empty_reply_with_no_call_and_no_text_is_still_an_error(
     settings,
 ) -> None:
     provider, _ = provider_with(settings, ToolReply(content=""))
-    with pytest.raises(ModelProviderError, match="neither a project tool call nor any text"):
+    with pytest.raises(
+        ModelProviderError, match="neither a project tool call nor any text"
+    ):
         await provider.project_step(build_request(), model_aliases=HOSTED)
 
 
@@ -336,7 +336,10 @@ async def test_a_scripted_build_turn_runs_the_branch_end_to_end(settings) -> Non
         settings,
         ToolReply(
             tool_calls=[
-                {"name": "create_file", "args": {"path": "app/main.py", "content": "x\n"}}
+                {
+                    "name": "create_file",
+                    "args": {"path": "app/main.py", "content": "x\n"},
+                }
             ]
         ),
         ToolReply(
@@ -362,9 +365,7 @@ async def test_a_scripted_build_turn_runs_the_branch_end_to_end(settings) -> Non
     while True:
         remaining = [path for path in owed if path not in staged]
         step = await provider.project_step(
-            build_request(
-                build_turn=bool(remaining), files_still_to_write=remaining
-            ),
+            build_request(build_turn=bool(remaining), files_still_to_write=remaining),
             model_aliases=HOSTED,
         )
         steps.append(step)
@@ -394,7 +395,9 @@ async def test_the_transport_switches_mid_conversation_by_model_name(settings) -
         settings,
         # Hosted: the plan arrives as a function call.
         ToolReply(
-            tool_calls=[{"name": "return_projectbuildplanv1", "args": {"files": ["a.py"]}}]
+            tool_calls=[
+                {"name": "return_projectbuildplanv1", "args": {"files": ["a.py"]}}
+            ]
         ),
         # Local: the same contract arrives as grammar-constrained text.
         FakeText('{"files": ["b.py"]}'),
@@ -408,11 +411,18 @@ async def test_the_transport_switches_mid_conversation_by_model_name(settings) -
 
 
 @pytest.mark.asyncio
-async def test_a_structured_decode_on_a_hosted_model_rides_one_function(settings) -> None:
+async def test_a_structured_decode_on_a_hosted_model_rides_one_function(
+    settings,
+) -> None:
     provider, requests = provider_with(
         settings,
         ToolReply(
-            tool_calls=[{"name": "return_projectbuildplanv1", "args": {"files": ["app/main.py"]}}]
+            tool_calls=[
+                {
+                    "name": "return_projectbuildplanv1",
+                    "args": {"files": ["app/main.py"]},
+                }
+            ]
         ),
     )
     plan = await provider.project_plan_files({}, model_aliases=HOSTED)
@@ -430,7 +440,9 @@ async def test_a_hosted_json_answer_in_text_is_still_judged_on_its_merits(
     """A model that ignored the function but answered with the right object
     should not spend a repair round-trip — validation is the authority."""
     provider, _ = provider_with(settings, ToolReply(content='{"files": ["a.py"]}'))
-    assert (await provider.project_plan_files({}, model_aliases=HOSTED)).files == ["a.py"]
+    assert (await provider.project_plan_files({}, model_aliases=HOSTED)).files == [
+        "a.py"
+    ]
 
 
 @pytest.mark.asyncio
@@ -509,7 +521,9 @@ async def test_a_hosted_fabricated_completion_is_declined_by_the_guard(
         # manifest and the guards, not the rewrite (test_spec_rewrite owns that).
         project_spec_rewrite=False,
         project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
+        project_reference_enabled=True,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
         project_reference_dir=Path("/nonexistent-reference"),
         project_reference_max_chars=14_000,
         project_reference_max_chars_local=6_000,

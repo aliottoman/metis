@@ -7,6 +7,7 @@ the symbol name and start line so a retrieved passage can cite `path::symbol`.
 Everything else falls back to a line-aware character window. Pure and
 dependency-free so it can be unit-tested without a model.
 """
+
 from __future__ import annotations
 
 import ast
@@ -14,18 +15,48 @@ from dataclasses import dataclass
 
 # Extension -> language label. Also the allow-list of indexable text files.
 TEXT_EXTENSIONS: dict[str, str] = {
-    ".py": "python", ".pyi": "python",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-    ".ts": "typescript", ".tsx": "typescript",
-    ".md": "markdown", ".markdown": "markdown", ".mdx": "markdown", ".rst": "rst",
-    ".txt": "text", ".text": "text",
-    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
-    ".ini": "ini", ".cfg": "ini", ".conf": "ini", ".env": "ini",
-    ".css": "css", ".scss": "css", ".html": "html",
-    ".sh": "shell", ".bash": "shell", ".zsh": "shell",
-    ".sql": "sql", ".go": "go", ".rs": "rust", ".java": "java",
-    ".c": "c", ".h": "c", ".cpp": "cpp", ".hpp": "cpp", ".cc": "cpp",
-    ".rb": "ruby", ".php": "php", ".swift": "swift", ".kt": "kotlin", ".lua": "lua",
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".mdx": "markdown",
+    ".rst": "rst",
+    ".txt": "text",
+    ".text": "text",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    ".ini": "ini",
+    ".cfg": "ini",
+    ".conf": "ini",
+    ".env": "ini",
+    ".css": "css",
+    ".scss": "css",
+    ".html": "html",
+    ".sh": "shell",
+    ".bash": "shell",
+    ".zsh": "shell",
+    ".sql": "sql",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cc": "cpp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".lua": "lua",
 }
 
 
@@ -173,7 +204,9 @@ def _chunk_markdown(text: str, max_chars: int, overlap: int) -> list[Chunk]:
     return chunks or _window(text, 1, None, max_chars, overlap)
 
 
-def chunk_text(text: str, lang: str | None, *, max_chars: int, overlap: int) -> list[Chunk]:
+def chunk_text(
+    text: str, lang: str | None, *, max_chars: int, overlap: int
+) -> list[Chunk]:
     """Chunk `text` by the best strategy for `lang`. Never returns empty-only chunks."""
     if not text.strip():
         return []

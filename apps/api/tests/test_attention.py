@@ -5,6 +5,7 @@ you" is only worth reading if those three are genuinely the top three, so a
 promise that came due today must outrank a backlog that has waited months
 without anything breaking.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -188,8 +189,12 @@ async def test_queue_update_only_closes_actions_the_host_offered() -> None:
     from waqil_api.queue_update import validate
 
     actions = [
-        {"id": "cact_real", "account_id": "cust_1", "account_name": "BAPCO",
-         "description": "Walk through the tenancy"},
+        {
+            "id": "cact_real",
+            "account_id": "cust_1",
+            "account_name": "BAPCO",
+            "description": "Walk through the tenancy",
+        },
     ]
     proposal = QueueUpdateV1(
         completed=[
@@ -214,7 +219,9 @@ async def test_a_new_action_with_no_resolvable_account_is_refused() -> None:
         {"id": "a", "account_id": "cust_1", "account_name": "A", "description": "x"},
         {"id": "b", "account_id": "cust_2", "account_name": "B", "description": "y"},
     ]
-    proposal = QueueUpdateV1(new_actions=[NewActionV1(description="Ambiguous follow-up")])
+    proposal = QueueUpdateV1(
+        new_actions=[NewActionV1(description="Ambiguous follow-up")]
+    )
     cleaned, _ = validate(proposal, actions)
     assert cleaned.new_actions == []
     assert any("no account" in item for item in cleaned.unmatched)
@@ -224,7 +231,9 @@ async def test_a_foreign_account_on_a_new_action_is_refused() -> None:
     from waqil_api.contracts import NewActionV1, QueueUpdateV1
     from waqil_api.queue_update import validate
 
-    actions = [{"id": "a", "account_id": "cust_1", "account_name": "A", "description": "x"}]
+    actions = [
+        {"id": "a", "account_id": "cust_1", "account_name": "A", "description": "x"}
+    ]
     proposal = QueueUpdateV1(
         new_actions=[NewActionV1(description="Sneaky", account_id="cust_other")]
     )
@@ -411,15 +420,21 @@ def test_a_filing_request_is_told_apart_from_a_work_report() -> None:
 def test_the_filing_clause_is_stripped_and_the_statement_kept_verbatim() -> None:
     from waqil_api.queue_update import statement_without_filing_verb
 
-    assert statement_without_filing_verb(
-        "File this in the answer bank: the coder is kimi-k2.7-code:cloud."
-    ) == "the coder is kimi-k2.7-code:cloud."
+    assert (
+        statement_without_filing_verb(
+            "File this in the answer bank: the coder is kimi-k2.7-code:cloud."
+        )
+        == "the coder is kimi-k2.7-code:cloud."
+    )
     # No filing clause: the message is its own statement, untouched.
     assert (
         statement_without_filing_verb("Gemma4 needs 2xH200 for a DAC.")
         == "Gemma4 needs 2xH200 for a DAC."
     )
     # A colon that is part of the statement is not a filing clause.
-    assert statement_without_filing_verb(
-        "The rule is simple: never write to a record you were not given."
-    ) == "The rule is simple: never write to a record you were not given."
+    assert (
+        statement_without_filing_verb(
+            "The rule is simple: never write to a record you were not given."
+        )
+        == "The rule is simple: never write to a record you were not given."
+    )

@@ -80,9 +80,7 @@ def test_every_window_of_a_long_section_repeats_the_heading_path() -> None:
     chunks = chunk_text(markdown, "markdown", max_chars=600, overlap=50)
     windows = [chunk for chunk in chunks if chunk.symbol == "Interactions"]
     assert len(windows) > 1, "expected the long section to split"
-    assert all(
-        chunk.text.startswith("Acme Corp > Interactions") for chunk in windows
-    )
+    assert all(chunk.text.startswith("Acme Corp > Interactions") for chunk in windows)
     # The heading path never eats more than half the window budget.
     assert all(len(chunk.text) <= 600 for chunk in chunks)
 

@@ -21,7 +21,11 @@ from waqil_api.control_plane import _note_regression, blocking_count
 def _verification(count: int) -> dict[str, Any]:
     return {
         "errors": [
-            {"rung": "typecheck", "path": f"app/f{i}.py", "error": f"F821: undefined name x{i}"}
+            {
+                "rung": "typecheck",
+                "path": f"app/f{i}.py",
+                "error": f"F821: undefined name x{i}",
+            }
             for i in range(count)
         ]
     }
@@ -53,9 +57,13 @@ def test_a_worse_repair_is_named_with_both_numbers() -> None:
 
 def test_progress_and_parity_are_not_flagged() -> None:
     # Fewer findings than it inherited: real progress, no warning.
-    assert "worse" not in str(_note_regression(_reason(2), prior=7, verification=_verification(2)))
+    assert "worse" not in str(
+        _note_regression(_reason(2), prior=7, verification=_verification(2))
+    )
     # The same count is not a regression either.
-    assert "worse" not in str(_note_regression(_reason(3), prior=3, verification=_verification(3)))
+    assert "worse" not in str(
+        _note_regression(_reason(3), prior=3, verification=_verification(3))
+    )
 
 
 def test_a_clean_repair_stays_clean() -> None:
@@ -73,9 +81,15 @@ def test_only_blocking_findings_count_toward_the_comparison() -> None:
     """Warnings never blocked, so they must not manufacture a regression."""
     verification = {
         "errors": [
-            {"rung": "runtime", "path": "app/main.py", "error": "GET /x failed: HTTP 500"},
+            {
+                "rung": "runtime",
+                "path": "app/main.py",
+                "error": "GET /x failed: HTTP 500",
+            },
             {"rung": "runtime", "path": "app/main.py", "error": "slow import"},
         ]
     }
     # Neither runtime finding is provable, so the blocking count is 0.
-    assert "worse" not in str(_note_regression(_reason(2), prior=1, verification=verification))
+    assert "worse" not in str(
+        _note_regression(_reason(2), prior=1, verification=verification)
+    )

@@ -1,4 +1,5 @@
 """Behavioural tests for run history and durable-memory harvesting."""
+
 from __future__ import annotations
 
 import pytest
@@ -15,7 +16,10 @@ async def _history(tmp_path, available: bool = True, **settings_kwargs):
     database = Database(tmp_path / "waqil.db")
     await database.open()
     settings = Settings(
-        _env_file=None, data_dir=tmp_path / "data", repo_root=tmp_path, **settings_kwargs
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        repo_root=tmp_path,
+        **settings_kwargs,
     )
     corpus = CorpusService(settings, database, FakeRetrieval(available=available))
     return RunHistoryService(settings, database, corpus), database, corpus
@@ -152,19 +156,28 @@ async def test_an_unfinished_run_is_not_recorded(tmp_path) -> None:
 
     # A run with no answer is not history; writing it would put an empty
     # document into retrieval that can only ever dilute a later search.
-    assert await history.record(
-        run_id="run_x", conversation_id="c", prompt="ask", response="  "
-    ) is None
-    assert await history.record(
-        run_id="../escape", conversation_id="c", prompt="ask", response="answer"
-    ) is None
+    assert (
+        await history.record(
+            run_id="run_x", conversation_id="c", prompt="ask", response="  "
+        )
+        is None
+    )
+    assert (
+        await history.record(
+            run_id="../escape", conversation_id="c", prompt="ask", response="answer"
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
 async def test_history_can_be_switched_off_entirely(tmp_path) -> None:
     history, _, _ = await _history(tmp_path, run_history_enabled=False)
 
-    assert await history.record(
-        run_id="run_1", conversation_id="c", prompt="ask", response="answer"
-    ) is None
+    assert (
+        await history.record(
+            run_id="run_1", conversation_id="c", prompt="ask", response="answer"
+        )
+        is None
+    )
     assert not history.root.exists()

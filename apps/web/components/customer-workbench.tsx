@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { CustomerSearch } from "@/components/customer-search";
+import { SelectMenu } from "@/components/select-menu";
 import {
   acceptWinValuation,
   addCustomerPerson,
@@ -266,7 +267,7 @@ export function CustomerWorkbench() {
   const [editingSource, setEditingSource] = useState<{ id: string; draft: SourceDraft } | null>(null);
 
   // What runs capture/analysis here is the same model the chat header shows.
-  // A cloud pin (Command A+, Grok, a hosted model) is "on" with nothing
+  // A cloud pin (ClinePass, Command A+, Grok, or a hosted model) is "on" with nothing
   // resident on-device — so status and the analyze gate follow the pin, not
   // the local session alone. Only a genuine no-model state reads as "off".
   const modelLabel = activeModelLabel(modelPreference, session);
@@ -1331,13 +1332,17 @@ export function CustomerWorkbench() {
                 <section className="customerProfileForm" aria-label="Edit account details">
                   <div className="customerProfileGrid">
                     <label><span>Name</span><input value={profileDraft.name} onChange={(event) => setProfileDraft({ ...profileDraft, name: event.target.value })} /></label>
-                    <label><span>Status</span>
-                      <select value={profileDraft.status} onChange={(event) => setProfileDraft({ ...profileDraft, status: event.target.value as CustomerAccount["status"] })}>
-                        <option value="active">Active</option>
-                        <option value="paused">Paused</option>
-                        <option value="archived">Archived</option>
-                      </select>
-                    </label>
+                    <SelectMenu
+                      className="customerFormSelect"
+                      label="Status"
+                      value={profileDraft.status}
+                      onChange={(value) => setProfileDraft({ ...profileDraft, status: value as CustomerAccount["status"] })}
+                      options={[
+                        { value: "active", label: "Active" },
+                        { value: "paused", label: "Paused" },
+                        { value: "archived", label: "Archived" },
+                      ]}
+                    />
                     <label><span>Industry</span><input value={profileDraft.industry} onChange={(event) => setProfileDraft({ ...profileDraft, industry: event.target.value })} placeholder="Government" /></label>
                     <label><span>Region</span><input value={profileDraft.region} onChange={(event) => setProfileDraft({ ...profileDraft, region: event.target.value })} placeholder="UAE" /></label>
                     <label className="wide"><span>Also known as (comma separated)</span><input value={profileDraft.aliases} onChange={(event) => setProfileDraft({ ...profileDraft, aliases: event.target.value })} placeholder="OHI UNHCR, UNHCR Oman" /></label>
@@ -1562,11 +1567,18 @@ export function CustomerWorkbench() {
                       <input value={editingAction.draft.description} onChange={(event) => setEditingAction({ ...editingAction, draft: { ...editingAction.draft, description: event.target.value } })} aria-label="Action description" />
                       <input value={editingAction.draft.owner} onChange={(event) => setEditingAction({ ...editingAction, draft: { ...editingAction.draft, owner: event.target.value } })} placeholder="Owner" aria-label="Action owner" />
                       <input type="date" value={editingAction.draft.due} onChange={(event) => setEditingAction({ ...editingAction, draft: { ...editingAction.draft, due: event.target.value } })} aria-label="Due date" />
-                      <select value={editingAction.draft.status} onChange={(event) => setEditingAction({ ...editingAction, draft: { ...editingAction.draft, status: event.target.value as CustomerAction["status"] } })} aria-label="Action status">
-                        <option value="open">Open</option>
-                        <option value="done">Done</option>
-                        <option value="cancelled">Cancelled</option>
-                      </select>
+                      <SelectMenu
+                        className="customerFormSelect"
+                        hideLabel
+                        label="Action status"
+                        value={editingAction.draft.status}
+                        onChange={(value) => setEditingAction({ ...editingAction, draft: { ...editingAction.draft, status: value as CustomerAction["status"] } })}
+                        options={[
+                          { value: "open", label: "Open" },
+                          { value: "done", label: "Done" },
+                          { value: "cancelled", label: "Cancelled" },
+                        ]}
+                      />
                       <div className="customerInlineActions">
                         <button className="ghostButton" type="button" onClick={() => setEditingAction(null)}>Cancel</button>
                         <button className="primaryButton" type="button" disabled={!editingAction.draft.description.trim() || busy === action.id} onClick={() => void saveAction()}>
@@ -1637,9 +1649,7 @@ export function CustomerWorkbench() {
 
                   {newFact ? (
                     <div className="customerInlineForm">
-                      <select value={newFact.kind} onChange={(event) => setNewFact({ ...newFact, kind: event.target.value })} aria-label="Fact kind">
-                        {FACT_KINDS.map((kind) => <option key={kind} value={kind}>{kind.replace("_", " ")}</option>)}
-                      </select>
+                      <SelectMenu className="customerFormSelect" hideLabel label="Fact kind" value={newFact.kind} onChange={(value) => setNewFact({ ...newFact, kind: value })} options={FACT_KINDS.map((kind) => ({ value: kind, label: kind.replace("_", " ") }))} />
                       <textarea value={newFact.content} onChange={(event) => setNewFact({ ...newFact, content: event.target.value })} placeholder="What is true about this account?" aria-label="Fact content" />
                       <div className="customerInlineActions">
                         <button className="ghostButton" type="button" onClick={() => setNewFact(null)}>Cancel</button>
@@ -1653,15 +1663,20 @@ export function CustomerWorkbench() {
                   <div className="customerFactGrid">
                     {visibleFacts.map((fact) => editingFact?.id === fact.id ? (
                       <div className="customerInlineForm" key={fact.id}>
-                        <select value={editingFact.draft.kind} onChange={(event) => setEditingFact({ ...editingFact, draft: { ...editingFact.draft, kind: event.target.value } })} aria-label="Fact kind">
-                          {FACT_KINDS.map((kind) => <option key={kind} value={kind}>{kind.replace("_", " ")}</option>)}
-                        </select>
+                        <SelectMenu className="customerFormSelect" hideLabel label="Fact kind" value={editingFact.draft.kind} onChange={(value) => setEditingFact({ ...editingFact, draft: { ...editingFact.draft, kind: value } })} options={FACT_KINDS.map((kind) => ({ value: kind, label: kind.replace("_", " ") }))} />
                         <textarea value={editingFact.draft.content} onChange={(event) => setEditingFact({ ...editingFact, draft: { ...editingFact.draft, content: event.target.value } })} aria-label="Fact content" />
-                        <select value={editingFact.draft.status} onChange={(event) => setEditingFact({ ...editingFact, draft: { ...editingFact.draft, status: event.target.value as CustomerFact["status"] } })} aria-label="Fact status">
-                          <option value="active">Active</option>
-                          <option value="disputed">Disputed</option>
-                          <option value="superseded">Superseded</option>
-                        </select>
+                        <SelectMenu
+                          className="customerFormSelect"
+                          hideLabel
+                          label="Fact status"
+                          value={editingFact.draft.status}
+                          onChange={(value) => setEditingFact({ ...editingFact, draft: { ...editingFact.draft, status: value as CustomerFact["status"] } })}
+                          options={[
+                            { value: "active", label: "Active" },
+                            { value: "disputed", label: "Disputed" },
+                            { value: "superseded", label: "Superseded" },
+                          ]}
+                        />
                         <div className="customerInlineActions">
                           <button className="ghostButton" type="button" onClick={() => setEditingFact(null)}>Cancel</button>
                           <button className="primaryButton" type="button" disabled={!editingFact.draft.content.trim() || busy === fact.id} onClick={() => void saveFact()}>
@@ -1721,9 +1736,7 @@ export function CustomerWorkbench() {
                     <article key={source.id} id={`source-${source.id}`}>
                       <div className="customerInlineForm">
                         <input value={editingSource.draft.title} onChange={(event) => setEditingSource({ ...editingSource, draft: { ...editingSource.draft, title: event.target.value } })} aria-label="Note title" />
-                        <select value={editingSource.draft.source_kind} onChange={(event) => setEditingSource({ ...editingSource, draft: { ...editingSource.draft, source_kind: event.target.value } })} aria-label="Note type">
-                          {SOURCE_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
-                        </select>
+                        <SelectMenu className="customerFormSelect" hideLabel label="Note type" value={editingSource.draft.source_kind} onChange={(value) => setEditingSource({ ...editingSource, draft: { ...editingSource.draft, source_kind: value } })} options={SOURCE_KINDS.map((kind) => ({ value: kind, label: kind }))} />
                         <textarea value={editingSource.draft.content} onChange={(event) => setEditingSource({ ...editingSource, draft: { ...editingSource.draft, content: event.target.value } })} aria-label="Note content" />
                         <div className="customerInlineActions">
                           <button className="ghostButton" type="button" onClick={() => setEditingSource(null)}>Cancel</button>
@@ -1794,14 +1807,37 @@ export function CustomerWorkbench() {
         />
       ) : null}
 
-      {captureOpen ? <div className="customerModalBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCaptureOpen(false); }}><section className="customerModal" role="dialog" aria-modal="true" aria-label="Capture customer note"><header><div><span className="eyebrow">Raw source</span><strong>Capture a customer note</strong></div><button type="button" onClick={() => setCaptureOpen(false)}>×</button></header><label><span>Type</span><select value={noteKind} onChange={(event) => setNoteKind(event.target.value as typeof noteKind)}><option value="meeting">Meeting</option><option value="note">Note</option><option value="chat">Chat</option><option value="notion">Notion</option><option value="attachment">Attachment</option></select></label><label><span>Title</span><input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} placeholder="Discovery call · July 28" /></label><label><span>Markdown notes</span><textarea value={noteContent} onChange={(event) => setNoteContent(event.target.value)} placeholder="Paste the original notes here. Metis saves them first; analysis is a separate action." /></label><p>{session?.state === "ready" ? "The model is ready, but analysis still waits for your explicit click." : "The model is off. This note will be saved as Waiting for analysis without launching anything."} Writing something down for yourself? Use <b>Add note</b> instead — it skips analysis entirely.</p><footer><button className="secondaryButton" type="button" onClick={() => setCaptureOpen(false)}>Cancel</button><button className="primaryButton" type="button" disabled={!noteTitle.trim() || !noteContent.trim() || busy === "capture"} onClick={() => void capture()}>{busy === "capture" ? "Saving…" : "Save raw note"}</button></footer></section></div> : null}
+      {captureOpen ? (
+        <div className="customerModalBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCaptureOpen(false); }}>
+          <section className="customerModal" role="dialog" aria-modal="true" aria-label="Capture customer note">
+            <header><div><span className="eyebrow">Raw source</span><strong>Capture a customer note</strong></div><button type="button" aria-label="Close capture note" onClick={() => setCaptureOpen(false)}>×</button></header>
+            <SelectMenu
+              className="customerFormSelect"
+              label="Type"
+              value={noteKind}
+              onChange={(value) => setNoteKind(value as typeof noteKind)}
+              options={[
+                { value: "meeting", label: "Meeting" },
+                { value: "note", label: "Note" },
+                { value: "chat", label: "Chat" },
+                { value: "notion", label: "Notion" },
+                { value: "attachment", label: "Attachment" },
+              ]}
+            />
+            <label><span>Title</span><input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} placeholder="Discovery call · July 28" /></label>
+            <label><span>Markdown notes</span><textarea value={noteContent} onChange={(event) => setNoteContent(event.target.value)} placeholder="Paste the original notes here. Metis saves them first; analysis is a separate action." /></label>
+            <p>{session?.state === "ready" ? "The model is ready, but analysis still waits for your explicit click." : "The model is off. This note will be saved as Waiting for analysis without launching anything."} Writing something down for yourself? Use <b>Add note</b> instead — it skips analysis entirely.</p>
+            <footer><button className="secondaryButton" type="button" onClick={() => setCaptureOpen(false)}>Cancel</button><button className="primaryButton" type="button" disabled={!noteTitle.trim() || !noteContent.trim() || busy === "capture"} onClick={() => void capture()}>{busy === "capture" ? "Saving…" : "Save raw note"}</button></footer>
+          </section>
+        </div>
+      ) : null}
 
       {winOpen ? (
         <div className="customerModalBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setWinOpen(false); }}>
           <section className="customerModal" role="dialog" aria-modal="true" aria-label={editingWinId ? "Edit customer win" : "Record customer win"}>
             <header>
               <div><span className="eyebrow">Win tracker</span><strong>{editingWinId ? "Edit win" : "Record a win"}{detail ? ` · ${detail.account.name}` : ""}</strong></div>
-              <button type="button" onClick={() => setWinOpen(false)}>×</button>
+              <button type="button" aria-label="Close win editor" onClick={() => setWinOpen(false)}>×</button>
             </header>
             <label><span>Title</span><input value={winTitle} onChange={(event) => setWinTitle(event.target.value)} placeholder="Cohere Command A DAC deployed" /></label>
             <label><span>Services</span>
@@ -1842,7 +1878,7 @@ export function CustomerWorkbench() {
                 <span className="eyebrow">{rateCard.catalog_size} Oracle SKUs · {rateCard.rates.length} priced</span>
                 <strong>Rate card</strong>
               </div>
-              <button type="button" onClick={() => setRatesOpen(false)}>×</button>
+              <button type="button" aria-label="Close rate card" onClick={() => setRatesOpen(false)}>×</button>
             </header>
             <p className="customerRatesNote">
               Oracle&rsquo;s service descriptions publish every SKU and the unit it bills in, but no prices.
@@ -1877,7 +1913,7 @@ export function CustomerWorkbench() {
         </div>
       ) : null}
 
-      {proposal && review ? <div className="customerModalBackdrop"><section className="customerReviewModal" role="dialog" aria-modal="true" aria-label="Review extracted customer update"><header><div><span className="eyebrow">One review · one save</span><strong>Review customer update</strong><p>Nothing below becomes account knowledge until you save it.</p></div><button type="button" onClick={() => { setProposal(null); setReview(null); }}>×</button></header><div className="customerReviewBody"><label><span>Summary</span><textarea value={review.summary} onChange={(event) => setReview((current) => current ? { ...current, summary: event.target.value } : current)} /></label><section><header><strong>Facts</strong><span>{review.facts.length}</span></header>{review.facts.map((fact, index) => <article key={`${fact.kind}-${index}`}><select value={fact.kind} onChange={(event) => setReview((current) => current ? { ...current, facts: current.facts.map((item, itemIndex) => itemIndex === index ? { ...item, kind: event.target.value } : item) } : current)}>{FACT_KINDS.map((kind) => <option key={kind} value={kind}>{kind.replace("_", " ")}</option>)}</select><textarea value={fact.content} onChange={(event) => setReview((current) => current ? { ...current, facts: current.facts.map((item, itemIndex) => itemIndex === index ? { ...item, content: event.target.value } : item) } : current)} /><small>“{fact.evidence.quote || "No evidence quote"}”</small><button type="button" onClick={() => setReview((current) => current ? { ...current, facts: current.facts.filter((_, itemIndex) => itemIndex !== index) } : current)}>Remove</button></article>)}</section><section><header><strong>Actions</strong><span>{review.actions.length}</span></header>{review.actions.map((action, index) => <article key={index}><textarea value={action.description} onChange={(event) => setReview((current) => current ? { ...current, actions: current.actions.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item) } : current)} /><input value={action.owner} placeholder="Owner" onChange={(event) => setReview((current) => current ? { ...current, actions: current.actions.map((item, itemIndex) => itemIndex === index ? { ...item, owner: event.target.value } : item) } : current)} /><small>“{action.evidence.quote || "No evidence quote"}”</small><button type="button" onClick={() => setReview((current) => current ? { ...current, actions: current.actions.filter((_, itemIndex) => itemIndex !== index) } : current)}>Remove</button></article>)}</section><section><header><strong>People</strong><span>{review.people.length}</span></header>{review.people.map((person, index) => <article key={index}><input value={person.name} onChange={(event) => setReview((current) => current ? { ...current, people: current.people.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) } : current)} /><input value={person.role} placeholder="Role" onChange={(event) => setReview((current) => current ? { ...current, people: current.people.map((item, itemIndex) => itemIndex === index ? { ...item, role: event.target.value } : item) } : current)} /><small>“{person.evidence.quote || "No evidence quote"}”</small><button type="button" onClick={() => setReview((current) => current ? { ...current, people: current.people.filter((_, itemIndex) => itemIndex !== index) } : current)}>Remove</button></article>)}</section></div><footer><span>Extracted locally with {proposal.model}</span><button className="primaryButton" type="button" onClick={() => void saveReview()} disabled={busy === "review"}>{busy === "review" ? "Saving…" : "Save update"}</button></footer></section></div> : null}
+      {proposal && review ? <div className="customerModalBackdrop"><section className="customerReviewModal" role="dialog" aria-modal="true" aria-label="Review extracted customer update"><header><div><span className="eyebrow">One review · one save</span><strong>Review customer update</strong><p>Nothing below becomes account knowledge until you save it.</p></div><button type="button" onClick={() => { setProposal(null); setReview(null); }}>×</button></header><div className="customerReviewBody"><label><span>Summary</span><textarea value={review.summary} onChange={(event) => setReview((current) => current ? { ...current, summary: event.target.value } : current)} /></label><section><header><strong>Facts</strong><span>{review.facts.length}</span></header>{review.facts.map((fact, index) => <article key={`${fact.kind}-${index}`}><SelectMenu className="customerFormSelect" hideLabel label="Fact kind" value={fact.kind} onChange={(value) => setReview((current) => current ? { ...current, facts: current.facts.map((item, itemIndex) => itemIndex === index ? { ...item, kind: value } : item) } : current)} options={FACT_KINDS.map((kind) => ({ value: kind, label: kind.replace("_", " ") }))} /><textarea value={fact.content} onChange={(event) => setReview((current) => current ? { ...current, facts: current.facts.map((item, itemIndex) => itemIndex === index ? { ...item, content: event.target.value } : item) } : current)} /><small>“{fact.evidence.quote || "No evidence quote"}”</small><button type="button" onClick={() => setReview((current) => current ? { ...current, facts: current.facts.filter((_, itemIndex) => itemIndex !== index) } : current)}>Remove</button></article>)}</section><section><header><strong>Actions</strong><span>{review.actions.length}</span></header>{review.actions.map((action, index) => <article key={index}><textarea value={action.description} onChange={(event) => setReview((current) => current ? { ...current, actions: current.actions.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item) } : current)} /><input value={action.owner} placeholder="Owner" onChange={(event) => setReview((current) => current ? { ...current, actions: current.actions.map((item, itemIndex) => itemIndex === index ? { ...item, owner: event.target.value } : item) } : current)} /><small>“{action.evidence.quote || "No evidence quote"}”</small><button type="button" onClick={() => setReview((current) => current ? { ...current, actions: current.actions.filter((_, itemIndex) => itemIndex !== index) } : current)}>Remove</button></article>)}</section><section><header><strong>People</strong><span>{review.people.length}</span></header>{review.people.map((person, index) => <article key={index}><input value={person.name} onChange={(event) => setReview((current) => current ? { ...current, people: current.people.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) } : current)} /><input value={person.role} placeholder="Role" onChange={(event) => setReview((current) => current ? { ...current, people: current.people.map((item, itemIndex) => itemIndex === index ? { ...item, role: event.target.value } : item) } : current)} /><small>“{person.evidence.quote || "No evidence quote"}”</small><button type="button" onClick={() => setReview((current) => current ? { ...current, people: current.people.filter((_, itemIndex) => itemIndex !== index) } : current)}>Remove</button></article>)}</section></div><footer><span>Extracted locally with {proposal.model}</span><button className="primaryButton" type="button" onClick={() => void saveReview()} disabled={busy === "review"}>{busy === "review" ? "Saving…" : "Save update"}</button></footer></section></div> : null}
     </div>
   );
 }

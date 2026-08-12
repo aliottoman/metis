@@ -180,7 +180,9 @@ def test_elicitation_clarification_helper() -> None:
     assert "A — and also B" in both
     # No pause, or an empty reply, adds nothing to the prompt.
     assert _elicitation_clarification(None, None) == ""
-    assert _elicitation_clarification({"question": "Q"}, {"option": "", "text": ""}) == ""
+    assert (
+        _elicitation_clarification({"question": "Q"}, {"option": "", "text": ""}) == ""
+    )
 
 
 # ── Full pause / resume through the API ──────────────────────────────────────

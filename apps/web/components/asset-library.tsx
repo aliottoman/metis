@@ -11,6 +11,8 @@ import {
   useState,
 } from "react";
 
+import { SelectMenu } from "@/components/select-menu";
+
 import {
   approveAsset,
   generateAssetRecipe,
@@ -144,6 +146,7 @@ export function AssetLibrary() {
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const logRequestRef = useRef<string | null>(null);
+  const standaloneHistoryPreparedRef = useRef(false);
   const drawerWidthRef = useRef(DEFAULT_ASSET_DRAWER_WIDTH);
   const drawerResizingRef = useRef(false);
   const drawerResizeOriginRef = useRef({ pointerX: 0, width: DEFAULT_ASSET_DRAWER_WIDTH });
@@ -167,6 +170,29 @@ export function AssetLibrary() {
     const poll = window.setInterval(() => void loadCatalog(true), CATALOG_POLL_MS);
     return () => window.clearInterval(poll);
   }, [loadCatalog]);
+
+  useEffect(() => {
+    const syncPlayerFromUrl = () => {
+      const requested = new URLSearchParams(window.location.search).get("player");
+      setPlayerId(requested || null);
+      if (!requested) setActionError(null);
+    };
+
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("player");
+    if (requested && params.get("standalone") === "1" && !standaloneHistoryPreparedRef.current) {
+      // A new tab normally has no page to go back to. Put the asset library
+      // immediately behind this preview so browser Back behaves naturally.
+      standaloneHistoryPreparedRef.current = true;
+      const standaloneUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.history.replaceState(window.history.state, "", "/assets");
+      window.history.pushState(window.history.state, "", standaloneUrl);
+    }
+
+    syncPlayerFromUrl();
+    window.addEventListener("popstate", syncPlayerFromUrl);
+    return () => window.removeEventListener("popstate", syncPlayerFromUrl);
+  }, []);
 
   useEffect(() => {
     const stored = Number(window.localStorage.getItem("metis.assetDrawerWidth"));
@@ -364,6 +390,16 @@ export function AssetLibrary() {
     openSettings(asset.id);
   }
 
+  function closePlayer() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("player") && params.get("standalone") === "1") {
+      window.history.back();
+      return;
+    }
+    setPlayerId(null);
+    setActionError(null);
+  }
+
   function updateEnv(assetId: string, key: string, value: string) {
     setEnvSaved(null);
     setEnvError(null);
@@ -468,10 +504,7 @@ export function AssetLibrary() {
             <button
               className="assetPlayerBack"
               type="button"
-              onClick={() => {
-                setPlayerId(null);
-                setActionError(null);
-              }}
+              onClick={closePlayer}
             >
               <span aria-hidden="true">←</span>
               Back to assets
@@ -506,7 +539,13 @@ export function AssetLibrary() {
                 </button>
               ) : null}
               {isRunning(player) && playerUrl ? (
-                <a href={playerUrl} target="_blank" rel="noreferrer">Open separately ↗</a>
+                <a
+                  href={`/assets?player=${encodeURIComponent(player.id)}&standalone=1`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open separately ↗
+                </a>
               ) : null}
             </div>
           </header>
@@ -592,27 +631,30 @@ export function AssetLibrary() {
               </span>
             </label>
 
-            <label className="assetSelectField">
-              <span className="assetFieldLabel">Category</span>
-              <select value={category} onChange={(event) => setCategory(event.target.value)}>
-                <option value="all">All categories</option>
-                {categories.map((item) => <option value={item} key={item}>{item}</option>)}
-              </select>
-            </label>
+            <SelectMenu
+              className="assetSelectField"
+              label="Category"
+              value={category}
+              onChange={setCategory}
+              options={[
+                { value: "all", label: "All categories" },
+                ...categories.map((item) => ({ value: item, label: item })),
+              ]}
+            />
 
-            <label className="assetSelectField assetStateField">
-              <span className="assetFieldLabel">State</span>
-              <select
-                value={lifecycle}
-                onChange={(event) => setLifecycle(event.target.value as LifecycleFilter)}
-              >
-                <option value="all">All assets ({counts.all})</option>
-                <option value="running">Active ({counts.running})</option>
-                <option value="ready">Ready ({counts.ready})</option>
-                <option value="review">Needs review ({counts.review})</option>
-                <option value="setup">Setup needed ({counts.setup})</option>
-              </select>
-            </label>
+            <SelectMenu
+              className="assetSelectField assetStateField"
+              label="State"
+              value={lifecycle}
+              onChange={(value) => setLifecycle(value as LifecycleFilter)}
+              options={[
+                { value: "all", label: `All assets (${counts.all})` },
+                { value: "running", label: `Active (${counts.running})` },
+                { value: "ready", label: `Ready (${counts.ready})` },
+                { value: "review", label: `Needs review (${counts.review})` },
+                { value: "setup", label: `Setup needed (${counts.setup})` },
+              ]}
+            />
             <div className="assetToolbarSummary" aria-live="polite">
               <strong>{visibleAssets.length}</strong>
               <span>{visibleAssets.length === 1 ? "match" : "matches"}</span>
@@ -794,7 +836,7 @@ export function AssetLibrary() {
                       <h3 id="asset-recipe-title">A reviewed launch recipe is required</h3>
                       <p>
                         Metis discovered this project, but will not guess how to run it.
-                        Command A+ can draft <code>.metis/asset.json</code> from the project&rsquo;s
+                        Your selected model can draft <code>.metis/asset.json</code> from the project&rsquo;s
                         own files — the drafted command still needs your review before anything runs.
                       </p>
                       <button
@@ -805,8 +847,8 @@ export function AssetLibrary() {
                         title="Reads the project's file list, README and config heads; writes .metis/asset.json for your review"
                       >
                         {selectedBusyAction === "recipe"
-                          ? "Command A+ is drafting…"
-                          : "Generate recipe with Command A+"}
+                          ? "Drafting with your selected model…"
+                          : "Generate recipe"}
                       </button>
                     </div>
                   </section>

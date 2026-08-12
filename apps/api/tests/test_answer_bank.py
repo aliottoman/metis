@@ -5,6 +5,7 @@ that matters is not "can it retrieve" — it is that an atom is a reviewed unit
 with citations, that lexical and semantic recall are fused rather than chosen
 between, and that nothing enters unreviewed.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,8 +31,11 @@ class _FakeDatabase:
         return [self.atoms[key] for key in ids if key in self.atoms]
 
     async def atoms_missing_vectors(self):
-        return [atom for atom in self.atoms.values() if atom["id"] not in
-                {row["atom_id"] for row in self.vectors}]
+        return [
+            atom
+            for atom in self.atoms.values()
+            if atom["id"] not in {row["atom_id"] for row in self.vectors}
+        ]
 
     async def store_answer_atom_vector(self, atom_id, model, vector):
         self.vectors.append({"atom_id": atom_id, "vector": vector})
@@ -171,7 +175,7 @@ async def test_entity_recall_finds_an_atom_that_shares_no_keyword() -> None:
     everything else differently, so neither BM25 nor the embedding of that
     exact wording is reliable — but the entity is right there."""
     atoms = [_atom("a1", "Committed capacity floor", "744 unit-hours.")]
-    database = _FakeDatabase(atoms, [])          # lexical finds nothing
+    database = _FakeDatabase(atoms, [])  # lexical finds nothing
     database.entity_counts = [{"entity": "dac", "atoms": 1}]
     bank = AnswerBank(Settings(), database, retrieval=None)  # dense unavailable
     found = await bank.retrieve("how does DAC billing start", top_k=3)

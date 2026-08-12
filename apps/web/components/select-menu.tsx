@@ -38,6 +38,10 @@ type SelectMenuProps = {
   /** Force the filter box on or off; defaults to on for long lists. */
   searchable?: boolean;
   disabled?: boolean;
+  /** Reuse the field in dense forms that already provide their own layout. */
+  className?: string;
+  /** Keep the accessible label while visually hiding it. */
+  hideLabel?: boolean;
 };
 
 const SEARCHABLE_THRESHOLD = 12;
@@ -53,6 +57,8 @@ export function SelectMenu({
   emptyMessage = "No matches",
   searchable,
   disabled = false,
+  className = "",
+  hideLabel = false,
 }: SelectMenuProps) {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -256,8 +262,8 @@ export function SelectMenu({
   let flatIndex = -1;
 
   return (
-    <div className="selectField">
-      <span className="selectLabel" id={`${id}-label`}>
+    <div className={`selectField ${className}`.trim()}>
+      <span className={`selectLabel ${hideLabel ? "visuallyHidden" : ""}`} id={`${id}-label`}>
         {label}
       </span>
       <div

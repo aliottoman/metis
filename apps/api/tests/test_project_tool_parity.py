@@ -59,9 +59,14 @@ def test_grok_is_advertised_exactly_the_roster_plus_finish() -> None:
             oci_responses_project_id="ocid1.aiproject.oc1.test",
         )
     )
-    advertised = {tool["name"] for tool in provider._unrestricted_project_tools()}
+    tools = provider._unrestricted_project_tools()
+    advertised = {tool["name"] for tool in tools}
     # finish_project_task is the OCI completion channel, not a workspace tool.
     assert advertised == ROSTER | {"finish_project_task"}
+    revision = next(tool for tool in tools if tool["name"] == "revise_plan")
+    parameters = revision["parameters"]
+    assert "remove_files" in parameters["properties"]
+    assert "remove_files" not in parameters["required"]
 
 
 def test_an_invented_tool_is_rejected_at_the_contract() -> None:

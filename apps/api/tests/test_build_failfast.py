@@ -38,7 +38,8 @@ def _plane(model: object) -> ControlPlane:
         project_spec_rewrite=False,
         project_spec_rewrite_max_chars=1800,
         # Likewise the repo map: these tests own the manifest and the guards.
-        project_repo_map_enabled=False, project_orchestrator_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
     )
     plane._guard = _noop
     plane._stage = _noop
@@ -51,6 +52,7 @@ async def test_an_empty_plan_ends_the_turn_without_spending_another_step() -> No
     step is spent" became "before the step this plan was meant to start". The
     verdict is unchanged: asked twice and naming nothing ends the turn rather
     than letting a planless build drift through its budget."""
+
     class NoPlanModel:
         def __init__(self) -> None:
             self.plan_calls = 0

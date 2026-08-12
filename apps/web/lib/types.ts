@@ -343,6 +343,14 @@ export interface ModelHealth {
   latency_ms?: number;
 }
 
+export interface ProjectCodingHealth {
+  configured: "clinecore" | string;
+  ready: boolean;
+  sidecar_built: boolean;
+  sidecar_readable: boolean;
+  reason?: string;
+}
+
 export interface HealthSnapshot {
   status: "ok" | "degraded" | "offline" | string;
   version?: string;
@@ -353,6 +361,7 @@ export interface HealthSnapshot {
   models?: ModelHealth[];
   database?: string;
   sandbox?: string;
+  project_coding_engine?: ProjectCodingHealth;
 }
 
 export interface ConversationDetail extends ConversationSummary {
@@ -533,6 +542,7 @@ export interface ModelPreference {
   oci_available: boolean;
   cohere_available: boolean;
   cline_available: boolean;
+  cline_models: string[];
 }
 
 export interface LocalModelOption {

@@ -102,9 +102,14 @@ def test_asset_scan_is_dynamic_bounded_and_metadata_only(
             "Customer 360",
             "Fresh API",
         }
-        assert next(
-            item["id"] for item in rescanned.json() if item["name"] == "Customer 360"
-        ) == stable_id
+        assert (
+            next(
+                item["id"]
+                for item in rescanned.json()
+                if item["name"] == "Customer 360"
+            )
+            == stable_id
+        )
 
     # The explicit scan snapshot survives an API restart without touching the
     # project folders again.
@@ -213,7 +218,9 @@ def test_manifest_launch_is_loopback_redacts_secrets_and_stops_on_shutdown(
         latest_error: Exception | None = None
         while time.monotonic() < deadline:
             try:
-                with urllib.request.urlopen(started.json()["url"], timeout=0.5) as response:
+                with urllib.request.urlopen(
+                    started.json()["url"], timeout=0.5
+                ) as response:
                     assert response.status == 200
                 break
             except Exception as exc:  # noqa: BLE001 - bounded startup polling
@@ -401,7 +408,11 @@ def test_env_file_values_reach_the_child_process_without_a_start_payload(
 
         deadline = time.monotonic() + 5
         logs = client.get(f"/api/v1/assets/{asset_id}/logs").json()["logs"]
-        while "PATHOK" not in logs and "PATHBAD" not in logs and time.monotonic() < deadline:
+        while (
+            "PATHOK" not in logs
+            and "PATHBAD" not in logs
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.02)
             logs = client.get(f"/api/v1/assets/{asset_id}/logs").json()["logs"]
         assert "from-dotenv" in logs
@@ -432,7 +443,9 @@ def test_launch_rejects_unknown_malformed_traversal_and_environment_keys(
     _write_manifest(malformed, {"launch": {"command": "python app.py"}})
 
     with _client(settings, root) as client:
-        assets = {item["name"]: item for item in client.post("/api/v1/assets/scan").json()}
+        assets = {
+            item["name"]: item for item in client.post("/api/v1/assets/scan").json()
+        }
         assert assets["malformed"]["launch_approved"] is False
         assert assets["approved"]["launch_configured"] is True
         assert assets["approved"]["launch_approved"] is False

@@ -7,6 +7,7 @@ was in the record, and nothing stopped it — the account's context arrived as
 one prose block, so no claim could be cited, and the grounding gate measures
 citations against retrieved evidence it never had.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -58,7 +59,7 @@ def test_ordinary_answers_are_never_flagged(answer: str) -> None:
 
 
 def test_digits_inside_identifiers_are_not_known_quantities() -> None:
-    """"Gemma4" must not make 4 a supported figure, or "4× faster" reads as
+    """ "Gemma4" must not make 4 a supported figure, or "4× faster" reads as
     grounded in a record that says nothing of the kind."""
     assert 4.0 not in _numbers_in("Gemma4 2xH200s")
     assert 110_000.0 in _numbers_in("Yearly ARR: $110,000")

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
+import { SelectMenu } from "@/components/select-menu";
+
 import {
   createCorpusSource,
   deleteCorpusSource,
@@ -525,16 +527,14 @@ export function KnowledgeCenter() {
             onChange={(event) => setLabel(event.target.value)}
             placeholder="Label (optional)"
           />
-          <select
-            className="knowledgeInput"
+          <SelectMenu
+            className="knowledgeSelect"
+            hideLabel
+            label="Source kind"
             value={kind}
-            onChange={(event) => setKind(event.target.value as CorpusSource["kind"])}
-            aria-label="Source kind"
-          >
-            {KINDS.map((item) => (
-              <option key={item} value={item}>{item}</option>
-            ))}
-          </select>
+            onChange={(value) => setKind(value as CorpusSource["kind"])}
+            options={KINDS.map((item) => ({ value: item, label: item }))}
+          />
           <button className="primaryButton" type="submit" disabled={adding || !path.trim()}>
             {adding ? "Adding…" : "Add source"}
           </button>

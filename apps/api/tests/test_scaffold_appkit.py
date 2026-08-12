@@ -120,10 +120,26 @@ def test_sniff_trusts_bytes_not_labels() -> None:
     assert uploads.sniff_mime(PNG_HEAD) == "image/png"
     assert uploads.sniff_mime(JPEG_HEAD) == "image/jpeg"
     assert uploads.sniff_mime(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "image/webp"
-    assert uploads.sniff_mime(b"plain text") == "application/octet-stream"
+    assert uploads.sniff_mime(b"%PDF-1.7") == "application/pdf"
+    assert (
+        uploads.sniff_mime("plain UTF-8: \u0633\u0644\u0627\u0645".encode())
+        == "text/plain"
+    )
 
 
-def test_save_upload_accepts_and_removes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "payload",
+    (b"#!/bin/sh\necho no", b"MZordinary-ascii-prefix", b"plain\x00text"),
+)
+def test_sniff_does_not_mistake_executables_or_binary_controls_for_text(
+    payload: bytes,
+) -> None:
+    assert uploads.sniff_mime(payload) == "application/octet-stream"
+
+
+def test_save_upload_accepts_and_removes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
     saved = _run(uploads.save_upload(_Upload(PNG_HEAD)))
     assert saved.mime == "image/png"
@@ -151,8 +167,46 @@ def test_save_upload_refuses_wrong_type_and_empty(
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
     with pytest.raises(uploads.UploadError, match="unsupported"):
         _run(uploads.save_upload(_Upload(b"%PDF-1.7 not an image")))
+    with pytest.raises(uploads.UploadError, match="unsupported"):
+        _run(uploads.save_upload(_Upload(b"plain text is not an image")))
     with pytest.raises(uploads.UploadError, match="empty"):
         _run(uploads.save_upload(_Upload(b"")))
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "mime"),
+    (
+        (b"%PDF-1.7 document", "application/pdf"),
+        ("invoice total: \u20ac42".encode(), "text/plain"),
+    ),
+)
+def test_document_policy_accepts_pdf_and_utf8_text(
+    payload: bytes,
+    mime: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    saved = _run(
+        uploads.save_upload(_Upload(payload), allowed_mimes=uploads.DOCUMENT_MIMES)
+    )
+    assert saved.mime == mime
+    saved.remove()
+
+
+def test_document_policy_checks_the_whole_text_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An ASCII first 16 bytes must not hide binary content later in the file."""
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    with pytest.raises(uploads.UploadError, match="unsupported"):
+        _run(
+            uploads.save_upload(
+                _Upload(b"ordinary text prefix" + b"\x00binary"),
+                allowed_mimes=uploads.DOCUMENT_MIMES,
+            )
+        )
     assert list(tmp_path.iterdir()) == []
 
 

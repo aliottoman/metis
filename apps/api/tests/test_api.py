@@ -14,7 +14,12 @@ from fastapi.testclient import TestClient
 def png_image(width: int = 2, height: int = 3) -> bytes:
     def chunk(kind: bytes, payload: bytes) -> bytes:
         checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
-        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+        return (
+            struct.pack(">I", len(payload))
+            + kind
+            + payload
+            + struct.pack(">I", checksum)
+        )
 
     header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
     scanlines = b"".join(b"\x00" + (b"\x00" * width * 4) for _ in range(height))
@@ -47,7 +52,9 @@ def new_conversation(client: TestClient) -> str:
     return response.json()["id"]
 
 
-def test_delete_conversation_removes_messages_and_is_not_found_afterward(client: TestClient) -> None:
+def test_delete_conversation_removes_messages_and_is_not_found_afterward(
+    client: TestClient,
+) -> None:
     conversation_id = new_conversation(client)
     accepted = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
@@ -58,8 +65,13 @@ def test_delete_conversation_removes_messages_and_is_not_found_afterward(client:
     deleted = client.delete(f"/api/v1/conversations/{conversation_id}")
     assert deleted.status_code == 204
     assert client.get(f"/api/v1/conversations/{conversation_id}").status_code == 404
-    assert client.get(f"/api/v1/conversations/{conversation_id}/messages").status_code == 404
-    assert conversation_id not in {item["id"] for item in client.get("/api/v1/conversations").json()}
+    assert (
+        client.get(f"/api/v1/conversations/{conversation_id}/messages").status_code
+        == 404
+    )
+    assert conversation_id not in {
+        item["id"] for item in client.get("/api/v1/conversations").json()
+    }
 
 
 def test_direct_run_and_replayable_events(client: TestClient) -> None:
@@ -78,9 +90,7 @@ def test_direct_run_and_replayable_events(client: TestClient) -> None:
     assert run["status"] == "completed"
     assert "Hello locally" in run["result"]["response"]
 
-    persisted_messages = client.get(
-        f"/api/v1/conversations/{conversation_id}/messages"
-    )
+    persisted_messages = client.get(f"/api/v1/conversations/{conversation_id}/messages")
     assert persisted_messages.status_code == 200
     assert {
         message["run_id"]
@@ -99,7 +109,9 @@ def test_direct_run_and_replayable_events(client: TestClient) -> None:
         f"/api/v1/conversations/{conversation_id}/messages",
         json={"content": "What did I just ask?", "attachment_ids": []},
     ).json()
-    follow_up_run = wait_for_status(client, follow_up["run_id"], {"completed", "failed"})
+    follow_up_run = wait_for_status(
+        client, follow_up["run_id"], {"completed", "failed"}
+    )
     assert follow_up_run["status"] == "completed"
     assert "Hello locally" in follow_up_run["result"]["response"]
 
@@ -107,7 +119,13 @@ def test_direct_run_and_replayable_events(client: TestClient) -> None:
 def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
     upload = client.post(
         "/api/v1/uploads",
-        files={"file": ("README.md", b"API service stores data in a database", "text/markdown")},
+        files={
+            "file": (
+                "README.md",
+                b"API service stores data in a database",
+                "text/markdown",
+            )
+        },
     )
     assert upload.status_code == 201
     upload_id = upload.json()["id"]
@@ -126,9 +144,7 @@ def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
     proposals = client.get("/api/v1/tool-proposals?status=pending").json()
     assert len(proposals) == 1
     proposal = proposals[0]
-    proposal_evidence = client.get(
-        f"/api/v1/tool-proposals/{proposal['id']}/evidence"
-    )
+    proposal_evidence = client.get(f"/api/v1/tool-proposals/{proposal['id']}/evidence")
     assert proposal_evidence.status_code == 200, proposal_evidence.text
     assert proposal_evidence.json()["bundle_verified"] is True
     assert proposal_evidence.json()["eval_report"]["passed"] is True
@@ -161,8 +177,10 @@ def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
     assert tools[0]["active_version_id"]
     versions = client.get(f"/api/v1/tools/{tools[0]['id']}/versions").json()
     portable = json.loads(
-        (Path(__file__).resolve().parents[3]
-        / "skills/reference-architecture-generator/metis.tool.json").read_text()
+        (
+            Path(__file__).resolve().parents[3]
+            / "skills/reference-architecture-generator/metis.tool.json"
+        ).read_text()
     )
     assert versions[0]["manifest"]["input_schema"] == portable["input_schema"]
     assert versions[0]["manifest"]["output_schema"] == portable["output_schema"]
@@ -171,7 +189,10 @@ def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
 
     second = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
-        json={"content": "Make another architecture diagram", "attachment_ids": [upload_id]},
+        json={
+            "content": "Make another architecture diagram",
+            "attachment_ids": [upload_id],
+        },
     )
     second_run = wait_for_status(
         client, second.json()["run_id"], {"completed", "failed", "awaiting_approval"}
@@ -179,7 +200,9 @@ def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
     assert second_run["status"] == "completed"
     assert second_run["result"]["proposal"] is None
 
-    correction = "The database relationship must be labelled as a private SQL connection."
+    correction = (
+        "The database relationship must be labelled as a private SQL connection."
+    )
     feedback = client.post(
         f"/api/v1/runs/{second_run['id']}/feedback",
         json={
@@ -191,8 +214,12 @@ def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
     assert feedback.status_code == 201
     improvement_ids = feedback.json()["tool_improvement_proposal_ids"]
     assert len(improvement_ids) == 1
-    improvements = client.get("/api/v1/tool-improvement-proposals?status=pending").json()
-    improvement = next(item for item in improvements if item["id"] == improvement_ids[0])
+    improvements = client.get(
+        "/api/v1/tool-improvement-proposals?status=pending"
+    ).json()
+    improvement = next(
+        item for item in improvements if item["id"] == improvement_ids[0]
+    )
     active_version = next(item for item in versions if item["state"] == "active")
     assert improvement["tool_version_id"] == active_version["id"]
     assert improvement["content_hash"] == active_version["content_hash"]
@@ -203,9 +230,12 @@ def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
         f"/api/v1/tools/{unchanged_tool['id']}/versions"
     ).json()
     assert unchanged_tool["active_version_id"] == active_version["id"]
-    assert next(
-        item for item in unchanged_versions if item["id"] == active_version["id"]
-    )["state"] == "active"
+    assert (
+        next(item for item in unchanged_versions if item["id"] == active_version["id"])[
+            "state"
+        ]
+        == "active"
+    )
 
     evidence = client.get(
         f"/api/v1/tool-improvement-proposals/{improvement['id']}/evidence"
@@ -213,13 +243,17 @@ def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
     assert evidence.status_code == 200, evidence.text
     evidence_body = evidence.json()
     assert evidence_body["base_version"]["bundle_verified"] is True
-    assert evidence_body["base_version"]["manifest"]["content_hash"] == active_version[
-        "content_hash"
-    ]
+    assert (
+        evidence_body["base_version"]["manifest"]["content_hash"]
+        == active_version["content_hash"]
+    )
     assert evidence_body["base_version"]["eval_report"]["passed"] is True
     source_paths = {item["path"] for item in evidence_body["base_version"]["files"]}
     assert "skills/reference-architecture-generator/SKILL.md" in source_paths
-    assert "skills/reference-architecture-generator/src/architecture_tool.py" in source_paths
+    assert (
+        "skills/reference-architecture-generator/src/architecture_tool.py"
+        in source_paths
+    )
 
     queued = client.post(
         f"/api/v1/tool-improvement-proposals/{improvement['id']}/decision",
@@ -242,10 +276,14 @@ def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
         },
     )
     assert replayed_queue.status_code == 200
-    assert replayed_queue.json()["revision_request"]["id"] == queued.json()[
-        "revision_request"
-    ]["id"]
-    assert client.get("/api/v1/tools").json()[0]["active_version_id"] == active_version["id"]
+    assert (
+        replayed_queue.json()["revision_request"]["id"]
+        == queued.json()["revision_request"]["id"]
+    )
+    assert (
+        client.get("/api/v1/tools").json()[0]["active_version_id"]
+        == active_version["id"]
+    )
 
     second_correction = "Use the original public database layout after all."
     second_feedback = client.post(
@@ -277,7 +315,10 @@ def test_upload_architecture_approval_and_reuse(client: TestClient) -> None:
     )
     assert rejected.status_code == 200
     assert rejected.json()["outcome"] == "rejected"
-    assert client.get("/api/v1/tools").json()[0]["active_version_id"] == active_version["id"]
+    assert (
+        client.get("/api/v1/tools").json()[0]["active_version_id"]
+        == active_version["id"]
+    )
 
     # Active execution revalidates the exact approved deployment hash before
     # invoking the runner; changed skill/infra/image evidence is fail-closed.
@@ -418,7 +459,8 @@ def test_images_are_accepted_while_archives_and_secrets_are_rejected(
     client: TestClient,
 ) -> None:
     archive = client.post(
-        "/api/v1/uploads", files={"file": ("source.zip", b"not a zip", "application/zip")}
+        "/api/v1/uploads",
+        files={"file": ("source.zip", b"not a zip", "application/zip")},
     )
     assert archive.status_code == 415
     environment = client.post(
@@ -440,7 +482,10 @@ def test_images_are_accepted_while_archives_and_secrets_are_rejected(
     image_conversation_id = new_conversation(client)
     image_message = client.post(
         f"/api/v1/conversations/{image_conversation_id}/messages",
-        json={"content": "Keep this image with the chat", "attachment_ids": [image.json()["id"]]},
+        json={
+            "content": "Keep this image with the chat",
+            "attachment_ids": [image.json()["id"]],
+        },
     )
     assert image_message.status_code == 202, image_message.text
     image_run = wait_for_status(
@@ -473,7 +518,9 @@ def test_images_are_accepted_while_archives_and_secrets_are_rejected(
     assert office.status_code == 201, office.text
     blob_root = client.app.state.runtime.settings.blob_dir
     blobs_before = {
-        path for path in blob_root.rglob("*") if path.is_file() and ".tmp" not in path.parts
+        path
+        for path in blob_root.rglob("*")
+        if path.is_file() and ".tmp" not in path.parts
     }
     corrupt_office = client.post(
         "/api/v1/uploads",
@@ -487,7 +534,9 @@ def test_images_are_accepted_while_archives_and_secrets_are_rejected(
     )
     assert corrupt_office.status_code == 415
     blobs_after = {
-        path for path in blob_root.rglob("*") if path.is_file() and ".tmp" not in path.parts
+        path
+        for path in blob_root.rglob("*")
+        if path.is_file() and ".tmp" not in path.parts
     }
     assert blobs_after == blobs_before
     fake_pdf = client.post(
@@ -548,10 +597,14 @@ def test_interrupted_run_can_be_cancelled(client: TestClient) -> None:
         f"/api/v1/conversations/{conversation_id}/messages",
         json={"content": "Build an architecture diagram", "attachment_ids": []},
     ).json()
-    waiting = wait_for_status(client, accepted["run_id"], {"awaiting_approval", "failed"})
+    waiting = wait_for_status(
+        client, accepted["run_id"], {"awaiting_approval", "failed"}
+    )
     assert waiting["status"] == "awaiting_approval"
     recoverable = client.get("/api/v1/runs?status=awaiting_approval").json()
-    entry = next(item for item in recoverable if item["run"]["id"] == accepted["run_id"])
+    entry = next(
+        item for item in recoverable if item["run"]["id"] == accepted["run_id"]
+    )
     assert entry["approval"]["run_id"] == accepted["run_id"]
     cancelled = client.post(f"/api/v1/runs/{accepted['run_id']}/cancel")
     assert cancelled.status_code == 200
@@ -572,20 +625,27 @@ def test_attachment_text_cannot_grant_permission(client: TestClient) -> None:
     conversation_id = new_conversation(client)
     accepted = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
-        json={"content": "Summarize the attached document", "attachment_ids": [upload["id"]]},
+        json={
+            "content": "Summarize the attached document",
+            "attachment_ids": [upload["id"]],
+        },
     ).json()
     completed = wait_for_status(client, accepted["run_id"], {"completed", "failed"})
     assert completed["status"] == "completed"
     assert client.get("/api/v1/tool-proposals?status=pending").json() == []
 
 
-def test_rejected_candidate_hash_is_a_non_runnable_tombstone(client: TestClient) -> None:
+def test_rejected_candidate_hash_is_a_non_runnable_tombstone(
+    client: TestClient,
+) -> None:
     first_conversation = new_conversation(client)
     accepted = client.post(
         f"/api/v1/conversations/{first_conversation}/messages",
         json={"content": "Build an architecture diagram", "attachment_ids": []},
     ).json()
-    waiting = wait_for_status(client, accepted["run_id"], {"awaiting_approval", "failed"})
+    waiting = wait_for_status(
+        client, accepted["run_id"], {"awaiting_approval", "failed"}
+    )
     assert waiting["status"] == "awaiting_approval"
     proposal = client.get("/api/v1/tool-proposals?status=pending").json()[0]
     rejected = client.post(

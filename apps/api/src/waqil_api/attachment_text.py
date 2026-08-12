@@ -11,11 +11,47 @@ from xml.etree import ElementTree
 
 
 TEXT_SUFFIXES = {
-    ".txt", ".md", ".rst", ".rtf", ".log", ".csv", ".tsv", ".ipynb",
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".json", ".yaml", ".yml",
-    ".toml", ".ini", ".cfg", ".conf", ".xml", ".html", ".css", ".sql",
-    ".sh", ".zsh", ".go", ".rs", ".java", ".kt", ".rb", ".php", ".c",
-    ".h", ".cpp", ".hpp", ".cs", ".tf", ".tfvars", ".graphql", ".gql",
+    ".txt",
+    ".md",
+    ".rst",
+    ".rtf",
+    ".log",
+    ".csv",
+    ".tsv",
+    ".ipynb",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".xml",
+    ".html",
+    ".css",
+    ".sql",
+    ".sh",
+    ".zsh",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".rb",
+    ".php",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cs",
+    ".tf",
+    ".tfvars",
+    ".graphql",
+    ".gql",
 }
 BINARY_DOCUMENT_SUFFIXES = {".pdf", ".docx", ".pptx", ".xlsx"}
 IMAGE_SUFFIX_MEDIA_TYPES = {
@@ -117,7 +153,13 @@ def extract_attachment_text(
             )
     except AttachmentExtractionError:
         raise
-    except (zipfile.BadZipFile, RuntimeError, OSError, EOFError, NotImplementedError) as exc:
+    except (
+        zipfile.BadZipFile,
+        RuntimeError,
+        OSError,
+        EOFError,
+        NotImplementedError,
+    ) as exc:
         raise AttachmentExtractionError(
             "the Office document package is corrupt or unsupported"
         ) from exc
@@ -186,13 +228,26 @@ def _image_dimensions(media_type: str, content: bytes) -> tuple[int, int]:
         if len(content) < 4 or not content.startswith(b"\xff\xd8"):
             raise AttachmentExtractionError("the JPEG image is corrupt or unsupported")
         sof_markers = {
-            0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
-            0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF,
+            0xC0,
+            0xC1,
+            0xC2,
+            0xC3,
+            0xC5,
+            0xC6,
+            0xC7,
+            0xC9,
+            0xCA,
+            0xCB,
+            0xCD,
+            0xCE,
+            0xCF,
         }
         offset = 2
         while offset + 4 <= len(content):
             if content[offset] != 0xFF:
-                raise AttachmentExtractionError("the JPEG image is corrupt or unsupported")
+                raise AttachmentExtractionError(
+                    "the JPEG image is corrupt or unsupported"
+                )
             while offset < len(content) and content[offset] == 0xFF:
                 offset += 1
             if offset >= len(content):
@@ -203,14 +258,18 @@ def _image_dimensions(media_type: str, content: bytes) -> tuple[int, int]:
                 continue
             if offset + 2 > len(content):
                 break
-            segment_length = int.from_bytes(content[offset:offset + 2], "big")
+            segment_length = int.from_bytes(content[offset : offset + 2], "big")
             if segment_length < 2 or offset + segment_length > len(content):
-                raise AttachmentExtractionError("the JPEG image is corrupt or unsupported")
+                raise AttachmentExtractionError(
+                    "the JPEG image is corrupt or unsupported"
+                )
             if marker in sof_markers:
                 if segment_length < 7:
-                    raise AttachmentExtractionError("the JPEG image is corrupt or unsupported")
-                height = int.from_bytes(content[offset + 3:offset + 5], "big")
-                width = int.from_bytes(content[offset + 5:offset + 7], "big")
+                    raise AttachmentExtractionError(
+                        "the JPEG image is corrupt or unsupported"
+                    )
+                height = int.from_bytes(content[offset + 3 : offset + 5], "big")
+                width = int.from_bytes(content[offset + 5 : offset + 7], "big")
                 return _bounded_image_dimensions(width, height)
             offset += segment_length
         raise AttachmentExtractionError("the JPEG image is corrupt or unsupported")
@@ -231,14 +290,18 @@ def _safe_zip(content: bytes) -> zipfile.ZipFile:
     try:
         archive = zipfile.ZipFile(io.BytesIO(content))
     except (zipfile.BadZipFile, OSError) as exc:
-        raise AttachmentExtractionError("the Office document is not a valid ZIP package") from exc
+        raise AttachmentExtractionError(
+            "the Office document is not a valid ZIP package"
+        ) from exc
     infos = archive.infolist()
     if len(infos) > _MAX_ZIP_MEMBERS:
         archive.close()
         raise AttachmentExtractionError("the Office document contains too many files")
     if sum(item.file_size for item in infos) > _MAX_UNCOMPRESSED_BYTES:
         archive.close()
-        raise AttachmentExtractionError("the Office document expands beyond the safe limit")
+        raise AttachmentExtractionError(
+            "the Office document expands beyond the safe limit"
+        )
     if any(
         name.startswith(("/", "\\")) or ".." in Path(name).parts
         for name in (item.filename for item in infos)
@@ -252,7 +315,9 @@ def _xml_text(payload: bytes, *, paragraph_tags: tuple[str, ...]) -> str:
     try:
         root = ElementTree.fromstring(payload)
     except ElementTree.ParseError as exc:
-        raise AttachmentExtractionError("the Office document contains invalid XML") from exc
+        raise AttachmentExtractionError(
+            "the Office document contains invalid XML"
+        ) from exc
     pieces: list[str] = []
     for element in root.iter():
         local = element.tag.rsplit("}", 1)[-1]
@@ -274,7 +339,9 @@ def _extract_docx(content: bytes) -> str:
             or re.fullmatch(r"word/(?:header|footer)\d+\.xml", name)
         ]
         if "word/document.xml" not in names:
-            raise AttachmentExtractionError("the DOCX document is missing word/document.xml")
+            raise AttachmentExtractionError(
+                "the DOCX document is missing word/document.xml"
+            )
         return "\n".join(
             _xml_text(archive.read(name), paragraph_tags=("p", "tr")) for name in names
         )
@@ -314,11 +381,13 @@ def _shared_strings(archive: zipfile.ZipFile) -> list[str]:
     for item in root.iter():
         if item.tag.rsplit("}", 1)[-1] != "si":
             continue
-        values.append("".join(
-            node.text or ""
-            for node in item.iter()
-            if node.tag.rsplit("}", 1)[-1] == "t"
-        ))
+        values.append(
+            "".join(
+                node.text or ""
+                for node in item.iter()
+                if node.tag.rsplit("}", 1)[-1] == "t"
+            )
+        )
     return values
 
 
@@ -337,7 +406,9 @@ def _extract_xlsx(content: bytes) -> str:
             try:
                 root = ElementTree.fromstring(archive.read(name))
             except ElementTree.ParseError as exc:
-                raise AttachmentExtractionError("the XLSX worksheet XML is invalid") from exc
+                raise AttachmentExtractionError(
+                    "the XLSX worksheet XML is invalid"
+                ) from exc
             rows: list[str] = []
             for row in root.iter():
                 if row.tag.rsplit("}", 1)[-1] != "row":
@@ -377,7 +448,9 @@ def _extract_pdf(content: bytes) -> str:
         raise AttachmentExtractionError("the PDF signature is invalid")
     executable = shutil.which("pdftotext")
     if executable is None:
-        raise AttachmentExtractionError("PDF extraction requires the local pdftotext utility")
+        raise AttachmentExtractionError(
+            "PDF extraction requires the local pdftotext utility"
+        )
     try:
         with tempfile.NamedTemporaryFile(suffix=".pdf") as source:
             source.write(content)
@@ -390,10 +463,14 @@ def _extract_pdf(content: bytes) -> str:
                 timeout=20,
             )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise AttachmentExtractionError("the PDF could not be converted to text") from exc
+        raise AttachmentExtractionError(
+            "the PDF could not be converted to text"
+        ) from exc
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", errors="replace").strip()[:180]
-        raise AttachmentExtractionError(detail or "the PDF could not be converted to text")
+        raise AttachmentExtractionError(
+            detail or "the PDF could not be converted to text"
+        )
     extracted = result.stdout.decode("utf-8", errors="replace")
     pages = [page.strip() for page in extracted.split("\f")]
     pages = [page for page in pages if page]

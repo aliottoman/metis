@@ -1,0 +1,40 @@
+{
+  "name": "@metis/cline-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local, fail-closed ClineCore bridge for Metis coding sessions.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "metis-cline-sidecar": "./dist/src/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/src/protocol.d.ts",
+      "import": "./dist/src/protocol.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/src/index.js",
+    "test": "pnpm run build && node --test dist/tests/*.test.js"
+  },
+  "dependencies": {
+    "@cline/sdk": "0.0.72"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.6",
+    "typescript": "6.0.2"
+  }
+}

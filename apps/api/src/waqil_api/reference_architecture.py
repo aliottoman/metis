@@ -93,10 +93,7 @@ class ReferenceArchitectureRunner:
         ).hexdigest()
         invocation_id = f"attempt_{uuid.uuid4().hex}"
         workspace = (
-            self.settings.run_dir
-            / run_id
-            / f"action_{action_digest}"
-            / invocation_id
+            self.settings.run_dir / run_id / f"action_{action_digest}" / invocation_id
         ).resolve()
         input_dir = workspace / "input"
         output_dir = workspace / "output"
@@ -110,7 +107,9 @@ class ReferenceArchitectureRunner:
             "validation_profile": validation_profile,
         }
         if diagram_code is not None:
-            validate_diagram_source_for(validation_profile, diagram_code, spec, ["svg", "png"])
+            validate_diagram_source_for(
+                validation_profile, diagram_code, spec, ["svg", "png"]
+            )
             input_payload["diagram_code"] = diagram_code
         request_bytes = json.dumps(input_payload, ensure_ascii=False).encode("utf-8")
         (input_dir / "request.txt").write_text(request, encoding="utf-8")
@@ -118,7 +117,9 @@ class ReferenceArchitectureRunner:
         mode = self.settings.reference_runner_mode
         if mode == "deterministic":
             if not self.settings.allow_test_backends:
-                raise ReferenceRunnerError("deterministic runner is restricted to test mode")
+                raise ReferenceRunnerError(
+                    "deterministic runner is restricted to test mode"
+                )
             envelope = await asyncio.to_thread(
                 self._write_deterministic_outputs,
                 output_dir,
@@ -149,12 +150,17 @@ class ReferenceArchitectureRunner:
             # The reviewed host wrapper owns all Podman flags. There is no
             # production fallback to executing generated code on the host.
             sandbox_runner = (
-                Path(snapshot_path) / "infra" / "sandbox" / "run_reference_architecture.py"
+                Path(snapshot_path)
+                / "infra"
+                / "sandbox"
+                / "run_reference_architecture.py"
                 if snapshot_path
                 else self.settings.reference_sandbox_runner
             )
             if not sandbox_runner.is_file():
-                raise ReferenceRunnerError(f"sandbox runner unavailable: {sandbox_runner}")
+                raise ReferenceRunnerError(
+                    f"sandbox runner unavailable: {sandbox_runner}"
+                )
             resolved_image = await self.resolve_image_ref(
                 image_ref or self.settings.reference_runner_image
             )
@@ -216,7 +222,9 @@ class ReferenceArchitectureRunner:
             )
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
         except (FileNotFoundError, TimeoutError) as exc:
-            raise ReferenceRunnerError("IMAGE_DIGEST_UNAVAILABLE: cannot inspect image") from exc
+            raise ReferenceRunnerError(
+                "IMAGE_DIGEST_UNAVAILABLE: cannot inspect image"
+            ) from exc
         digest = stdout.decode("ascii", errors="ignore").strip()
         if process.returncode != 0 or not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
             raise ReferenceRunnerError(
@@ -227,7 +235,9 @@ class ReferenceArchitectureRunner:
 
     async def candidate_identity(self) -> tuple[str, str]:
         if self.settings.reference_runner_mode == "podman":
-            image_ref = await self.resolve_image_ref(self.settings.reference_runner_image)
+            image_ref = await self.resolve_image_ref(
+                self.settings.reference_runner_image
+            )
         elif self.settings.reference_runner_mode == "local":
             image_ref = "local:test-only"
         else:
@@ -269,13 +279,17 @@ class ReferenceArchitectureRunner:
 
                 if self.settings.reference_runner_mode == "deterministic":
                     try:
-                        if set(request) - {
-                            "schema_version",
-                            "spec",
-                            "output_formats",
-                            "render_mode",
-                            "diagram_code",
-                        } or request.get("schema_version") != "1":
+                        if (
+                            set(request)
+                            - {
+                                "schema_version",
+                                "spec",
+                                "output_formats",
+                                "render_mode",
+                                "diagram_code",
+                            }
+                            or request.get("schema_version") != "1"
+                        ):
                             raise ValueError("invalid request envelope")
                         spec = ArchitectureSpecV1.model_validate(request["spec"])
                         formats = request.get("output_formats", ["svg", "png"])
@@ -317,7 +331,9 @@ class ReferenceArchitectureRunner:
                 else:
                     if self.settings.reference_runner_mode == "local":
                         if not self.settings.allow_test_backends:
-                            raise ReferenceRunnerError("local runner is restricted to test mode")
+                            raise ReferenceRunnerError(
+                                "local runner is restricted to test mode"
+                            )
                         command = [
                             sys.executable,
                             str(self._runner_path()),
@@ -358,7 +374,9 @@ class ReferenceArchitectureRunner:
                     if "artifact_names" in expected:
                         checks["artifact_names"] = names == expected["artifact_names"]
                     if "renderer" in expected:
-                        checks["renderer"] = envelope.get("renderer") == expected["renderer"]
+                        checks["renderer"] = (
+                            envelope.get("renderer") == expected["renderer"]
+                        )
                     validation = envelope.get("validation", {})
                     counts = validation.get("counts", {})
                     if "component_count" in expected:
@@ -366,21 +384,27 @@ class ReferenceArchitectureRunner:
                             counts.get("components") == expected["component_count"]
                         )
                     if "edge_count" in expected:
-                        checks["edge_count"] = counts.get("edges") == expected["edge_count"]
+                        checks["edge_count"] = (
+                            counts.get("edges") == expected["edge_count"]
+                        )
                     if "generated_source_static_validation" in expected:
                         checks["static_validation"] = (
                             validation.get("static_code", {}).get("status")
                             == expected["generated_source_static_validation"]
                         )
                     if "svg_contains" in expected:
-                        svg = (output_dir / "architecture.svg").read_text(encoding="utf-8")
+                        svg = (output_dir / "architecture.svg").read_text(
+                            encoding="utf-8"
+                        )
                         checks["svg_contains"] = all(
                             value in svg for value in expected["svg_contains"]
                         )
                     if expected.get("svg_active_content") is False:
-                        svg = (output_dir / "architecture.svg").read_text(
-                            encoding="utf-8"
-                        ).lower()
+                        svg = (
+                            (output_dir / "architecture.svg")
+                            .read_text(encoding="utf-8")
+                            .lower()
+                        )
                         checks["svg_active_content"] = not any(
                             token in svg
                             for token in ("<script", "<foreignobject", "javascript:")
@@ -388,7 +412,9 @@ class ReferenceArchitectureRunner:
                     if expected.get("host_shell_used") is False:
                         checks["host_shell_used"] = True
                 passed = bool(checks) and all(checks.values())
-                message = "Declared evaluation passed." if passed else "Expectation mismatch."
+                message = (
+                    "Declared evaluation passed." if passed else "Expectation mismatch."
+                )
             except Exception as exc:
                 passed = False
                 message = f"Evaluation error: {type(exc).__name__}: {str(exc)[:500]}"
@@ -413,7 +439,9 @@ class ReferenceArchitectureRunner:
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
-                stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
+                stdin=asyncio.subprocess.PIPE
+                if stdin is not None
+                else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 # The wrapper resolves podman itself; this PATH guarantees it
@@ -422,7 +450,8 @@ class ReferenceArchitectureRunner:
                 start_new_session=True,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(stdin), timeout=self.settings.reference_runner_timeout_seconds
+                process.communicate(stdin),
+                timeout=self.settings.reference_runner_timeout_seconds,
             )
         except TimeoutError as exc:
             if process is not None:
@@ -433,7 +462,9 @@ class ReferenceArchitectureRunner:
                 await asyncio.shield(self._interrupt_runner(process))
             raise
         except FileNotFoundError as exc:
-            raise ReferenceRunnerError(f"runner executable unavailable: {command[0]}") from exc
+            raise ReferenceRunnerError(
+                f"runner executable unavailable: {command[0]}"
+            ) from exc
         stdout = stdout_bytes[: 20 * 1024 * 1024].decode("utf-8", errors="replace")
         stderr = stderr_bytes[: 20 * 1024 * 1024].decode("utf-8", errors="replace")
         if process.returncode != 0:
@@ -510,7 +541,9 @@ class ReferenceArchitectureRunner:
         for filename in expected_files:
             path = output_dir / filename
             safe = path.resolve()
-            checks[f"safe_path:{filename}"] = output_root in safe.parents and not path.is_symlink()
+            checks[f"safe_path:{filename}"] = (
+                output_root in safe.parents and not path.is_symlink()
+            )
             checks[f"present:{filename}"] = path.is_file() and path.stat().st_size > 0
             if checks[f"safe_path:{filename}"] and checks[f"present:{filename}"]:
                 content = path.read_bytes()
@@ -538,7 +571,9 @@ class ReferenceArchitectureRunner:
             )
             generated_spec = ArchitectureSpecV1.model_validate(spec_envelope["spec"])
             checks["valid_spec"] = True
-            checks["spec_exact_match"] = generated_spec == canonical_architecture_spec(spec)
+            checks["spec_exact_match"] = generated_spec == canonical_architecture_spec(
+                spec
+            )
         except (OSError, ValueError, KeyError):
             checks["valid_spec"] = False
             checks["spec_exact_match"] = False
@@ -557,7 +592,9 @@ class ReferenceArchitectureRunner:
             checks["artifact_validation"] = (
                 validation.get("artifacts", {}).get("status") == "passed"
             )
-            checks["envelope_validation_match"] = envelope.get("validation") == validation
+            checks["envelope_validation_match"] = (
+                envelope.get("validation") == validation
+            )
         except (OSError, ValueError, KeyError, TypeError):
             checks["validation_schema"] = False
             checks["static_code_validation"] = False
@@ -577,8 +614,10 @@ class ReferenceArchitectureRunner:
                 )
             if "png" in output_formats:
                 checks["png_signature"] = (
-                    output_dir / "architecture.png"
-                ).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+                    (output_dir / "architecture.png")
+                    .read_bytes()
+                    .startswith(b"\x89PNG\r\n\x1a\n")
+                )
         except OSError:
             if "svg" in output_formats:
                 checks["svg_safe"] = False
@@ -664,7 +703,9 @@ class ReferenceArchitectureRunner:
                 {
                     "schema_version": "1",
                     "renderer": renderer,
-                    "warnings": ["Test-only renderer; production must use rootless Podman."],
+                    "warnings": [
+                        "Test-only renderer; production must use rootless Podman."
+                    ],
                     "validation": validation,
                 },
                 indent=2,
@@ -712,7 +753,9 @@ class ReferenceArchitectureRunner:
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise ReferenceRunnerError("portable tool manifest is unavailable or invalid") from exc
+            raise ReferenceRunnerError(
+                "portable tool manifest is unavailable or invalid"
+            ) from exc
         if (
             not isinstance(manifest, dict)
             or manifest.get("schema_version") != "1"
@@ -770,9 +813,9 @@ class ReferenceArchitectureRunner:
         digest.update(manifest["integrity"]["content_sha256"].encode("ascii"))
         digest.update(b"\0")
         digest.update(
-            json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            json.dumps(
+                manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
         )
         digest.update(b"\0")
         digest.update(image_ref.encode("utf-8"))
@@ -784,7 +827,9 @@ class ReferenceArchitectureRunner:
             infra_dir / "Containerfile",
         ):
             if not path.is_file():
-                raise ReferenceRunnerError(f"deployment integrity file is missing: {path.name}")
+                raise ReferenceRunnerError(
+                    f"deployment integrity file is missing: {path.name}"
+                )
             digest.update(f"infra/{path.name}".encode("utf-8"))
             digest.update(b"\0")
             digest.update(path.read_bytes())
@@ -806,12 +851,18 @@ class ReferenceArchitectureRunner:
         destination = (self.settings.tool_bundle_dir / deployment_hash).resolve()
         if destination.exists():
             if self.bundle_hash(image_ref, destination) != deployment_hash:
-                raise ReferenceRunnerError("stored immutable tool snapshot failed verification")
+                raise ReferenceRunnerError(
+                    "stored immutable tool snapshot failed verification"
+                )
             return destination
 
-        temporary = self.settings.tool_bundle_dir / f".{deployment_hash}.{uuid.uuid4().hex}.tmp"
+        temporary = (
+            self.settings.tool_bundle_dir / f".{deployment_hash}.{uuid.uuid4().hex}.tmp"
+        )
         try:
-            skill_destination = temporary / "skills" / "reference-architecture-generator"
+            skill_destination = (
+                temporary / "skills" / "reference-architecture-generator"
+            )
             shutil.copytree(
                 self.settings.reference_skill_dir,
                 skill_destination,
@@ -842,9 +893,9 @@ class ReferenceArchitectureRunner:
                         "schema_version": "1",
                         "deployment_hash": deployment_hash,
                         "image_ref": image_ref,
-                        "portable_content_sha256": self.portable_manifest()["integrity"][
-                            "content_sha256"
-                        ],
+                        "portable_content_sha256": self.portable_manifest()[
+                            "integrity"
+                        ]["content_sha256"],
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -870,15 +921,24 @@ class ReferenceArchitectureRunner:
         snapshot = Path(snapshot_path).resolve()
         root = self.settings.tool_bundle_dir.resolve()
         if root not in snapshot.parents or snapshot.name != expected_hash:
-            raise ReferenceRunnerError("tool snapshot path is outside content-addressed storage")
-        if not snapshot.is_dir() or self.bundle_hash(image_ref, snapshot) != expected_hash:
+            raise ReferenceRunnerError(
+                "tool snapshot path is outside content-addressed storage"
+            )
+        if (
+            not snapshot.is_dir()
+            or self.bundle_hash(image_ref, snapshot) != expected_hash
+        ):
             raise ReferenceRunnerError("immutable tool snapshot failed verification")
-        metadata = json.loads((snapshot / "deployment.json").read_text(encoding="utf-8"))
+        metadata = json.loads(
+            (snapshot / "deployment.json").read_text(encoding="utf-8")
+        )
         if (
             metadata.get("deployment_hash") != expected_hash
             or metadata.get("image_ref") != image_ref
         ):
-            raise ReferenceRunnerError("tool snapshot metadata does not match pinned version")
+            raise ReferenceRunnerError(
+                "tool snapshot metadata does not match pinned version"
+            )
         return snapshot
 
 
@@ -892,11 +952,19 @@ def _minimal_png() -> bytes:
     """Generate a valid opaque 1x1 PNG without an image dependency."""
 
     def chunk(name: bytes, payload: bytes) -> bytes:
-        return struct.pack(">I", len(payload)) + name + payload + struct.pack(
-            ">I", zlib.crc32(name + payload) & 0xFFFFFFFF
+        return (
+            struct.pack(">I", len(payload))
+            + name
+            + payload
+            + struct.pack(">I", zlib.crc32(name + payload) & 0xFFFFFFFF)
         )
 
     signature = b"\x89PNG\r\n\x1a\n"
     header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
     pixels = zlib.compress(b"\x00\x4f\x46\xe5\xff")
-    return signature + chunk(b"IHDR", header) + chunk(b"IDAT", pixels) + chunk(b"IEND", b"")
+    return (
+        signature
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", pixels)
+        + chunk(b"IEND", b"")
+    )

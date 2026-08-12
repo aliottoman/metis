@@ -4,6 +4,7 @@ The live search endpoint and result pages are moving targets; what must stay
 correct forever is how Metis decodes DuckDuckGo's redirect wrapping, drops ad
 slots, and flattens HTML into promptable text.
 """
+
 from waqil_api.config import Settings
 from waqil_api.web_research import WebResearch, _decode_result_href, _strip_html
 

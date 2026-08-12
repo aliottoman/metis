@@ -158,7 +158,17 @@ def project_environment(
 
 # Directories whose contents can never change what a project *is*.
 _SKIPPED_DIRS = frozenset(
-    {".git", ".hg", ".metis", ".venv", "venv", "node_modules", "__pycache__", "dist", "build"}
+    {
+        ".git",
+        ".hg",
+        ".metis",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        "dist",
+        "build",
+    }
 )
 
 
@@ -177,9 +187,9 @@ def capabilities_of_tree(root: Path) -> frozenset[str]:
                 continue
             path = Path(current) / name
             try:
-                files[str(path.relative_to(root))] = path.read_text(
-                    encoding="utf-8"
-                )[:100_000]
+                files[str(path.relative_to(root))] = path.read_text(encoding="utf-8")[
+                    :100_000
+                ]
             except (OSError, UnicodeDecodeError, ValueError):
                 continue
     return detect_capabilities(files)

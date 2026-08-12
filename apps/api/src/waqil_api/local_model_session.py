@@ -5,6 +5,7 @@ the dedicated session endpoint (or an approval resume that the user explicitly
 confirmed). Models already running before Metis starts are treated as external
 and are never stopped by Metis automatically.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -85,9 +86,7 @@ def _date(value: object) -> datetime | None:
 
 
 class LocalModelSessionManager:
-    def __init__(
-        self, settings: Settings, preference: ModelPreferenceStore
-    ) -> None:
+    def __init__(self, settings: Settings, preference: ModelPreferenceStore) -> None:
         self.settings = settings
         self.preference = preference
         self._lock = asyncio.Lock()
@@ -103,7 +102,9 @@ class LocalModelSessionManager:
         self.idle_timeout_seconds = int(
             saved.get("idle_timeout_seconds") or settings.local_model_idle_seconds
         )
-        self.context_window = int(saved.get("context_window") or settings.context_window)
+        self.context_window = int(
+            saved.get("context_window") or settings.context_window
+        )
         # A restart must not silently revert to the unload-after-every-call
         # default: the saved idle window is what the user last asked for, and
         # without this the next turn evicts a model they chose to keep warm.
@@ -155,7 +156,9 @@ class LocalModelSessionManager:
         except (httpx.HTTPError, ValueError) as exc:
             raise LocalModelSessionError(f"Ollama is unavailable: {exc}") from exc
 
-    async def _post(self, path: str, payload: dict[str, Any], timeout: float = 120.0) -> None:
+    async def _post(
+        self, path: str, payload: dict[str, Any], timeout: float = 120.0
+    ) -> None:
         try:
             async with httpx.AsyncClient(
                 base_url=self.settings.ollama_base_url, timeout=timeout
@@ -165,21 +168,26 @@ class LocalModelSessionManager:
                     # Ollama explains a rejected request in its own JSON body; the
                     # bare status line does not, so surface the body instead.
                     raise LocalModelSessionError(
-                        "Ollama could not update the model: "
-                        f"{_error_detail(response)}"
+                        f"Ollama could not update the model: {_error_detail(response)}"
                     )
         except httpx.HTTPError as exc:
-            raise LocalModelSessionError(f"Ollama could not update the model: {exc}") from exc
+            raise LocalModelSessionError(
+                f"Ollama could not update the model: {exc}"
+            ) from exc
 
     async def models(self) -> list[LocalModelOptionV1]:
         if self.deterministic:
             return [
                 LocalModelOptionV1(
-                    id="deterministic", name="Deterministic test model", loaded=True,
+                    id="deterministic",
+                    name="Deterministic test model",
+                    loaded=True,
                     owned_by_metis=True,
                 )
             ]
-        tags, running = await asyncio.gather(self._get("/api/tags"), self._get("/api/ps"))
+        tags, running = await asyncio.gather(
+            self._get("/api/tags"), self._get("/api/ps")
+        )
         live: dict[str, dict[str, Any]] = {}
         for row in running.get("models", []):
             if isinstance(row, dict):
@@ -209,13 +217,32 @@ class LocalModelSessionManager:
                     ),
                     loaded=loaded_row is not None,
                     resident_bytes=_resident_bytes(loaded_row),
-                    expires_at=_date(loaded_row.get("expires_at")) if loaded_row else None,
+                    expires_at=_date(loaded_row.get("expires_at"))
+                    if loaded_row
+                    else None,
                     owned_by_metis=name == self._owned_model,
                 )
             )
         return sorted(result, key=lambda item: item.name.casefold())
 
     async def status(self, *, include_models: bool = True) -> LocalModelSessionV1:
+        if not include_models and (
+            not self.selected_model or is_cloud_model(self.selected_model)
+        ):
+            # A hosted selection has no local weights and no relationship to
+            # Ollama's reachability. Internal readiness checks ask for status
+            # without the inventory; answering them by contacting Ollama made a
+            # healthy cloud-only run report the local session as broken.
+            self._state, self._error = "off", None
+            return LocalModelSessionV1(
+                state="off",
+                selected_model=self.selected_model,
+                idle_timeout_seconds=self.idle_timeout_seconds,
+                context_window=self.context_window,
+                busy_count=0,
+                total_memory_bytes=_total_memory_bytes(),
+                models=[],
+            )
         try:
             models = await self.models()
             selected = next(
@@ -236,9 +263,7 @@ class LocalModelSessionManager:
                 idle_timeout_seconds=self.idle_timeout_seconds,
                 context_window=self.context_window,
                 expires_at=selected.expires_at if selected else None,
-                owned_by_metis=bool(
-                    selected and selected.id == self._owned_model
-                ),
+                owned_by_metis=bool(selected and selected.id == self._owned_model),
                 busy_count=self._busy,
                 # Everything loaded counts, not just the selected model, since a
                 # model left running elsewhere occupies the same memory.
@@ -278,7 +303,9 @@ class LocalModelSessionManager:
                         await self._post(
                             "/api/generate",
                             {
-                                "model": item.id, "prompt": "", "stream": False,
+                                "model": item.id,
+                                "prompt": "",
+                                "stream": False,
                                 "keep_alive": 0,
                             },
                             timeout=30.0,
@@ -386,7 +413,9 @@ class LocalModelSessionManager:
         value = await self.status(include_models=False)
         expected = model or self.selected_model
         if value.state not in {"ready", "busy"} or not expected:
-            raise LocalModelSessionError("Launch a local model before sending this request.")
+            raise LocalModelSessionError(
+                "Launch a local model before sending this request."
+            )
         if expected != self.selected_model:
             raise LocalModelSessionError(
                 f"This run is pinned to {expected}. Launch that exact model to continue."

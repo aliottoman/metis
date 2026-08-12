@@ -4,6 +4,7 @@ Ollama parses keep_alive with Go's time.ParseDuration, which rejects a bare
 "-1" outright. These tests pin the format so an indefinite session cannot
 regress into a 400 from the runtime again.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -50,7 +51,9 @@ async def test_launch_sends_a_parseable_keep_alive(tmp_path, monkeypatch) -> Non
 
         return [LocalModelOptionV1(id="qwen", name="qwen", loaded=False)]
 
-    async def fake_post(path: str, payload: dict[str, Any], timeout: float = 120.0) -> None:
+    async def fake_post(
+        path: str, payload: dict[str, Any], timeout: float = 120.0
+    ) -> None:
         sent.append(payload)
 
     monkeypatch.setattr(manager, "models", fake_models)
@@ -96,7 +99,9 @@ async def test_post_surfaces_the_runtime_explanation(tmp_path, monkeypatch) -> N
 
 def test_restart_restores_the_saved_idle_window(tmp_path) -> None:
     """A restart must not revert to the unload-after-every-call default."""
-    settings = Settings(data_dir=tmp_path, model_backend="ollama", ollama_keep_alive="0")
+    settings = Settings(
+        data_dir=tmp_path, model_backend="ollama", ollama_keep_alive="0"
+    )
     settings.prepare_directories()
     settings.model_session_path.write_text(
         '{"selected_model": "qwen", "idle_timeout_seconds": 1800, '
@@ -112,7 +117,9 @@ def test_restart_restores_the_saved_idle_window(tmp_path) -> None:
 
 
 def test_a_fresh_install_keeps_the_unload_after_each_call_default(tmp_path) -> None:
-    settings = Settings(data_dir=tmp_path, model_backend="ollama", ollama_keep_alive="0")
+    settings = Settings(
+        data_dir=tmp_path, model_backend="ollama", ollama_keep_alive="0"
+    )
     settings.prepare_directories()
 
     LocalModelSessionManager(settings, ModelPreferenceStore(settings))
@@ -120,7 +127,9 @@ def test_a_fresh_install_keeps_the_unload_after_each_call_default(tmp_path) -> N
     assert settings.ollama_keep_alive == "0"
 
 
-async def _launched(tmp_path, monkeypatch) -> tuple[LocalModelSessionManager, list[dict[str, Any]]]:
+async def _launched(
+    tmp_path, monkeypatch
+) -> tuple[LocalModelSessionManager, list[dict[str, Any]]]:
     """A manager that owns a running model, as it is after a real launch."""
     manager = _manager(tmp_path)
     sent: list[dict[str, Any]] = []
@@ -131,7 +140,9 @@ async def _launched(tmp_path, monkeypatch) -> tuple[LocalModelSessionManager, li
 
         return [LocalModelOptionV1(id="qwen", name="qwen", loaded=running["loaded"])]
 
-    async def fake_post(path: str, payload: dict[str, Any], timeout: float = 120.0) -> None:
+    async def fake_post(
+        path: str, payload: dict[str, Any], timeout: float = 120.0
+    ) -> None:
         sent.append(payload)
         running["loaded"] = payload.get("keep_alive") != 0
 
@@ -144,16 +155,16 @@ async def _launched(tmp_path, monkeypatch) -> tuple[LocalModelSessionManager, li
 
 
 @pytest.mark.asyncio
-async def test_shutdown_gives_back_the_weights_metis_loaded(tmp_path, monkeypatch) -> None:
+async def test_shutdown_gives_back_the_weights_metis_loaded(
+    tmp_path, monkeypatch
+) -> None:
     """Otherwise a closed app leaves tens of gigabytes wired for the whole
     keep_alive window — forever, when the user chose "until stopped"."""
     manager, sent = await _launched(tmp_path, monkeypatch)
 
     assert await manager.release_owned() is True
 
-    assert sent == [
-        {"model": "qwen", "prompt": "", "stream": False, "keep_alive": 0}
-    ]
+    assert sent == [{"model": "qwen", "prompt": "", "stream": False, "keep_alive": 0}]
     # Idempotent: a second stop has nothing of its own to release.
     assert await manager.release_owned() is False
 
@@ -210,14 +221,18 @@ async def test_idle_release_can_be_turned_off(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_model_metis_did_not_launch_is_left_alone(tmp_path, monkeypatch) -> None:
+async def test_a_model_metis_did_not_launch_is_left_alone(
+    tmp_path, monkeypatch
+) -> None:
     """Someone else's model is not Metis's to unload."""
     manager = _manager(tmp_path)
     manager.selected_model = "qwen"
     manager._last_client_activity -= 10_000
     sent: list[dict[str, Any]] = []
 
-    async def fake_post(path: str, payload: dict[str, Any], timeout: float = 120.0) -> None:
+    async def fake_post(
+        path: str, payload: dict[str, Any], timeout: float = 120.0
+    ) -> None:
         sent.append(payload)
 
     monkeypatch.setattr(manager, "_post", fake_post)
@@ -286,7 +301,9 @@ async def test_the_watchdog_asks_to_release_while_nothing_is_running(tmp_path) -
 
 
 @pytest.mark.asyncio
-async def test_the_watchdog_holds_the_clock_open_while_a_run_is_in_flight(tmp_path) -> None:
+async def test_the_watchdog_holds_the_clock_open_while_a_run_is_in_flight(
+    tmp_path,
+) -> None:
     """A run awaiting approval makes no model call for as long as the user
     takes to answer; releasing under it would strand the turn."""
     session = await _run_watchdog(active=True, seconds=2.5)

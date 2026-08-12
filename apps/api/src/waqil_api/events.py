@@ -17,7 +17,9 @@ class EventBus:
 
     def __init__(self, database: Database) -> None:
         self.database = database
-        self._conditions: defaultdict[str, asyncio.Condition] = defaultdict(asyncio.Condition)
+        self._conditions: defaultdict[str, asyncio.Condition] = defaultdict(
+            asyncio.Condition
+        )
 
     async def emit(
         self,
@@ -57,4 +59,3 @@ class EventBus:
                     await asyncio.wait_for(condition.wait(), timeout=heartbeat_seconds)
             except TimeoutError:
                 yield None
-

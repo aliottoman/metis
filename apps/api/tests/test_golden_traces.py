@@ -11,6 +11,7 @@ Composed from the pure static rungs (syntax + wiring) exactly as the build loop
 assembles them, so no model and no container are needed: the traces run in
 milliseconds and never depend on a VM.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -43,11 +44,19 @@ def _verdict(
     wiring = _from_rung(
         staged_wiring_errors(staged, project_paths=list(project_paths)), "wiring"
     )
-    result["errors"].extend(item for item in wiring if item.get("severity") != "warning")
-    result["warnings"].extend(item for item in wiring if item.get("severity") == "warning")
+    result["errors"].extend(
+        item for item in wiring if item.get("severity") != "warning"
+    )
+    result["warnings"].extend(
+        item for item in wiring if item.get("severity") == "warning"
+    )
     result["errors"] = _distinct_findings(result["errors"])
     result["warnings"] = _distinct_findings(result["warnings"])
-    return _blocking_reason(result), _annotate_summary("<staged file list>", result), result
+    return (
+        _blocking_reason(result),
+        _annotate_summary("<staged file list>", result),
+        result,
+    )
 
 
 # ── Trace 1: the live qwen "Agent Showcase" build that did not boot ──────────

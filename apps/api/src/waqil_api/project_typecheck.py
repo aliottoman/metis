@@ -14,6 +14,7 @@ off: a model-authored `pyproject.toml` can register a mypy plugin, and a plugin
 is imported, so honouring project config here would hand the changeset exactly
 the code execution the sandbox exists to contain.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,12 +34,12 @@ WARNING = "warning"
 # opinion about style must never block a build.
 _BLOCKING_MYPY_CODES = frozenset(
     {
-        "call-arg",       # a keyword or positional the callee does not accept
-        "attr-defined",   # a name that is not in the module or object
-        "name-defined",   # an undefined name
+        "call-arg",  # a keyword or positional the callee does not accept
+        "attr-defined",  # a name that is not in the module or object
+        "name-defined",  # an undefined name
         "call-overload",  # no signature matches the call
-        "return-value",   # returns something the annotation forbids
-        "assignment",     # assigns something the annotation forbids
+        "return-value",  # returns something the annotation forbids
+        "assignment",  # assigns something the annotation forbids
     }
 )
 # Advisory: real, but routinely true of correct freshly written code.
@@ -192,8 +193,14 @@ async def staged_static_analysis(
         # changeset under review, so it does not get to configure its reviewer.
         ruff_code, ruff_output = await _run(
             [
-                sys.executable, "-m", "ruff", "check",
-                "--isolated", "--output-format=json", "--exit-zero", ".",
+                sys.executable,
+                "-m",
+                "ruff",
+                "check",
+                "--isolated",
+                "--output-format=json",
+                "--exit-zero",
+                ".",
             ],
             root,
             timeout_seconds,
@@ -207,8 +214,11 @@ async def staged_static_analysis(
         # phantom keyword argument it catches in a second when asked directly.
         _, mypy_output = await _run(
             [
-                sys.executable, "-m", "mypy",
-                "--config-file", str(empty_config),
+                sys.executable,
+                "-m",
+                "mypy",
+                "--config-file",
+                str(empty_config),
                 "--ignore-missing-imports",
                 "--no-error-summary",
                 "--no-incremental",

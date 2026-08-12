@@ -3,7 +3,7 @@
 The asset scanner refuses to guess how a discovered folder runs — that is a
 launch recipe's job, and until now writing one meant a whole project-mode
 conversation. This module is the one-click path: a bounded look at the
-project, one structured Command A+ call, and a candidate manifest that must
+project, one structured call to the selected model, and a candidate manifest that must
 survive the scanner's own parser before it may touch disk.
 
 What this deliberately does NOT change: a generated recipe arrives exactly as
@@ -12,6 +12,7 @@ untrusted as a hand-written one. It lands as `launch_configured` and NOT
 the command shown in full — still stands between the model's draft and
 anything executing on this machine.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,18 +22,41 @@ from .asset_library import manifest_metadata_from_body
 from .contracts import AssetRecipeV1
 
 # Directories that describe how a project is built, not what it is.
-_SKIP_DIRS = frozenset({
-    ".git", ".metis", ".venv", "venv", "node_modules", "__pycache__",
-    ".next", "dist", "build", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-})
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".metis",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".next",
+        "dist",
+        "build",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+    }
+)
 # The manifests these files carry are what the model actually reasons from.
 _CONFIG_FILES = (
-    "requirements.txt", "pyproject.toml", "package.json", "Procfile",
-    "setup.py", "environment.yml", "uv.lock",
+    "requirements.txt",
+    "pyproject.toml",
+    "package.json",
+    "Procfile",
+    "setup.py",
+    "environment.yml",
+    "uv.lock",
 )
 _ENTRY_CANDIDATES = (
-    "app.py", "main.py", "run.py", "server.py", "streamlit_app.py",
-    "api.py", "index.js", "server.js",
+    "app.py",
+    "main.py",
+    "run.py",
+    "server.py",
+    "streamlit_app.py",
+    "api.py",
+    "index.js",
+    "server.js",
 )
 _MAX_TREE_ENTRIES = 120
 _HEAD_CHARS = 1_200
@@ -69,12 +93,19 @@ def gather_recipe_context(project: Path) -> dict:
             if child.is_dir() and not child.is_symlink():
                 tree.append(child.name + "/")
                 try:
-                    for grandchild in sorted(child.iterdir(), key=lambda item: item.name.casefold()):
-                        if grandchild.name in _SKIP_DIRS or grandchild.name.startswith("."):
+                    for grandchild in sorted(
+                        child.iterdir(), key=lambda item: item.name.casefold()
+                    ):
+                        if grandchild.name in _SKIP_DIRS or grandchild.name.startswith(
+                            "."
+                        ):
                             continue
                         if len(tree) >= _MAX_TREE_ENTRIES:
                             break
-                        tree.append(f"{child.name}/{grandchild.name}" + ("/" if grandchild.is_dir() else ""))
+                        tree.append(
+                            f"{child.name}/{grandchild.name}"
+                            + ("/" if grandchild.is_dir() else "")
+                        )
                 except OSError:
                     continue
             elif child.is_file():

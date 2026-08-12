@@ -21,6 +21,7 @@ wall. This host-side broker is the single enforcement point; an in-sandbox
 stdio transport (a tool calling the model mid-execution) plugs into the same
 object rather than reimplementing any of these controls.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -119,9 +120,7 @@ class ModelBroker:
                 f"({self._access.max_calls_per_run}) for tool '{self._tool_slug}'"
             )
 
-    async def call(
-        self, *, template_id: str, role: str, params: dict[str, Any]
-    ) -> str:
+    async def call(self, *, template_id: str, role: str, params: dict[str, Any]) -> str:
         """Run one brokered model call and return its text as data.
 
         Raises ``BrokerError`` (bad role/template) or ``BrokerBudgetExceeded``

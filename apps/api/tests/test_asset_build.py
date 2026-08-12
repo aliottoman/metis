@@ -60,7 +60,10 @@ def test_absent_or_empty_build_is_valid_and_the_command_still_parses() -> None:
     # Absent and an explicit empty list are equivalent: no build, still launchable.
     # (The catalog persists a buildless asset as `"build": []`, so this parse must
     # stay valid or trust would evaporate on reload.)
-    for launch in ({"command": ["python", "app.py"]}, {"command": ["python", "app.py"], "build": []}):
+    for launch in (
+        {"command": ["python", "app.py"]},
+        {"command": ["python", "app.py"], "build": []},
+    ):
         meta = manifest_metadata_from_body({"launch": launch})
         assert meta.command == ("python", "app.py")
         assert meta.build == ()
@@ -95,7 +98,9 @@ def test_build_runs_before_launch_and_streams_to_logs(
     root.mkdir()
     project = root / "needs-build"
     project.mkdir()
-    (project / "README.md").write_text("# Needs Build\n\nCompiles first.\n", encoding="utf-8")
+    (project / "README.md").write_text(
+        "# Needs Build\n\nCompiles first.\n", encoding="utf-8"
+    )
     # The launch asserts the build artifact exists, so it can only come up if the
     # build ran first, in the project directory.
     build_step = [
@@ -122,7 +127,9 @@ def test_build_runs_before_launch_and_streams_to_logs(
     with _client(settings, root) as client:
         asset = client.post("/api/v1/assets/scan").json()[0]
         assert asset["build_command"] == [build_step]
-        assert client.post(f"/api/v1/assets/{asset['id']}/approval").json()["launch_approved"]
+        assert client.post(f"/api/v1/assets/{asset['id']}/approval").json()[
+            "launch_approved"
+        ]
         started = client.post(f"/api/v1/assets/{asset['id']}/start", json={})
         assert started.status_code == 200, started.text
         # start() returns only after the build has finished, so its side effect
@@ -150,7 +157,9 @@ def test_a_failed_build_aborts_the_launch_and_marks_failed(
     root.mkdir()
     project = root / "bad-build"
     project.mkdir()
-    (project / "README.md").write_text("# Bad Build\n\nWill not compile.\n", encoding="utf-8")
+    (project / "README.md").write_text(
+        "# Bad Build\n\nWill not compile.\n", encoding="utf-8"
+    )
     _write_manifest(
         project,
         {
@@ -158,7 +167,11 @@ def test_a_failed_build_aborts_the_launch_and_marks_failed(
             "launch": {
                 # If the launch ever ran it would leave this marker; it must not.
                 "command": ["{python}", "-c", "open('launched.txt','w').write('x')"],
-                "build": ["{python}", "-c", "import sys;print('BOOM',flush=True);sys.exit(3)"],
+                "build": [
+                    "{python}",
+                    "-c",
+                    "import sys;print('BOOM',flush=True);sys.exit(3)",
+                ],
             },
         },
     )
@@ -183,7 +196,9 @@ def test_a_hung_build_step_times_out_and_aborts(
     root.mkdir()
     project = root / "hung-build"
     project.mkdir()
-    (project / "README.md").write_text("# Hung Build\n\nNever finishes.\n", encoding="utf-8")
+    (project / "README.md").write_text(
+        "# Hung Build\n\nNever finishes.\n", encoding="utf-8"
+    )
     _write_manifest(
         project,
         {
@@ -201,13 +216,18 @@ def test_a_hung_build_step_times_out_and_aborts(
         assert started.status_code == 200, started.text
         assert started.json()["status"] == "failed"
         assert not (project / "launched.txt").exists()
-        assert "timed out" in client.get(f"/api/v1/assets/{asset['id']}/logs").json()["logs"]
+        assert (
+            "timed out"
+            in client.get(f"/api/v1/assets/{asset['id']}/logs").json()["logs"]
+        )
 
 
 # ── Trust and persistence ────────────────────────────────────────────────────
 
 
-def test_editing_the_build_step_revokes_trust(settings: Settings, tmp_path: Path) -> None:
+def test_editing_the_build_step_revokes_trust(
+    settings: Settings, tmp_path: Path
+) -> None:
     root = tmp_path / "projects"
     root.mkdir()
     project = root / "rebuilt"
@@ -225,7 +245,9 @@ def test_editing_the_build_step_revokes_trust(settings: Settings, tmp_path: Path
         # The build argv is part of the trusted fingerprint, so editing it drops
         # trust exactly as editing the launch command does.
         manifest["launch"]["build"][0][-1] = "print('build-v2')"
-        (project / ".metis" / "asset.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (project / ".metis" / "asset.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
         denied = client.post(f"/api/v1/assets/{asset['id']}/start", json={})
         assert denied.status_code == 409
         changed = client.get("/api/v1/assets").json()[0]
@@ -233,7 +255,9 @@ def test_editing_the_build_step_revokes_trust(settings: Settings, tmp_path: Path
         assert changed["status"] == "needs_approval"
 
 
-def test_a_trusted_build_survives_a_client_restart(settings: Settings, tmp_path: Path) -> None:
+def test_a_trusted_build_survives_a_client_restart(
+    settings: Settings, tmp_path: Path
+) -> None:
     root = tmp_path / "projects"
     root.mkdir()
     project = root / "persist-build"

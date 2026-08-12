@@ -5,7 +5,14 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, ValidationInfo
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+    ValidationInfo,
+)
 
 
 def utc_now() -> datetime:
@@ -287,8 +294,8 @@ class AssetV1(Contract):
 class AssetRecipeV1(Contract):
     """A model-drafted launch recipe for one asset, flat by design.
 
-    This is the wire shape Command A+ fills through one function call —
-    nested `launch.command` objects decode less reliably than flat fields,
+    This is the wire shape the selected model fills through one structured
+    call — nested `launch.command` objects decode less reliably than flat fields,
     so the endpoint assembles the real .metis/asset.json body from these.
     """
 
@@ -429,8 +436,13 @@ class PlanEnvelopeV1(Contract):
     schema_version: Literal["1"] = "1"
     summary: str
     route: Literal[
-        "direct", "existing_tool", "tool_factory", "tool_definition", "document",
-        "queue_update", "ask_user",
+        "direct",
+        "existing_tool",
+        "tool_factory",
+        "tool_definition",
+        "document",
+        "queue_update",
+        "ask_user",
     ]
     tool_slug: str | None = None
     risk_level: RiskLevel = RiskLevel.R0
@@ -472,6 +484,16 @@ class ProjectWorkspaceV1(Contract):
     file_count: int = Field(default=0, ge=0)
     metis_md_path: str = ".metis/METIS.md"
     updated_at: datetime | None = None
+
+
+class ProjectProtectionsV1(Contract):
+    """Per-project files a coding session may read but never change.
+
+    Identities and patterns only: the bytes behind them are hashed per run at
+    admission, so a file edited between runs cannot inherit a stale hash.
+    """
+
+    protected_files: list[str] = Field(default_factory=list, max_length=256)
 
 
 class ProjectOpenV1(Contract):
@@ -579,6 +601,23 @@ class ProjectAgentStepV1(Contract):
     extra_calls: list[ProjectToolCallV1] = Field(default_factory=list, max_length=3)
     learnings: list[str] = Field(default_factory=list, max_length=16)
 
+    @field_validator("extra_calls")
+    @classmethod
+    def batched_calls_are_reads_only(
+        cls, value: list[ProjectToolCallV1]
+    ) -> list[ProjectToolCallV1]:
+        """Enforce what the comment above has always asserted.
+
+        The batch executes in order with no model step between its members and
+        reports ``staged: False`` for every one, so a write riding along here
+        would bypass the write pin, the one-write-per-step rule, and the
+        read-only-before-a-plan gate. This was documented and never checked;
+        a non-read is dropped rather than rejecting the whole step, because
+        the step's own first call may be perfectly good.
+        """
+
+        return [item for item in value if item.name in READ_ONLY_PROJECT_TOOLS]
+
     @model_validator(mode="before")
     @classmethod
     def coerce_step_envelope(cls, value: Any) -> Any:
@@ -660,14 +699,27 @@ PROJECT_TOOL_ARGUMENT_PROPERTIES: dict[str, dict[str, Any]] = {
     "question": {"type": "string"},
     "options": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
     "message": {"type": "string"},
-    # revise_plan. `files` is the corrected manifest, so it carries the same
-    # bound the manifest contract does; `reason` is what the evidence showed.
+    # revise_plan. `files` is the proposed manifest, so it carries the same
+    # bound the manifest contract does. Omissions are retained by the host;
+    # `remove_files` is the explicit, evidence-backed removal channel.
     "files": {"type": "array", "items": {"type": "string"}, "maxItems": 24},
+    "remove_files": {
+        "type": "array",
+        "items": {"type": "string"},
+        "maxItems": 24,
+    },
     "reason": {"type": "string"},
 }
 
 # What each tool actually needs, mirroring the host's own refusals so the
 # grammar and the workspace cannot disagree about what a valid call looks like.
+# Tools that only ever look. Everything else can put bytes in the staged
+# overlay and is therefore subject to the plan gate in the control plane.
+READ_ONLY_PROJECT_TOOLS = frozenset(
+    {"list_files", "search_code", "read_file", "inspect_api"}
+)
+
+
 PROJECT_TOOL_REQUIRED_ARGUMENTS: dict[str, list[str]] = {
     "list_files": [],
     "search_code": ["query"],
@@ -696,6 +748,12 @@ PROJECT_TOOL_REQUIRED_ARGUMENTS: dict[str, list[str]] = {
     # the evidence showed, the host re-gates on the new list.
     "revise_plan": ["files", "reason"],
 }
+
+# A deliberately out-of-range inclusive end is safe: the workspace clamps it
+# to the current file length. This lets the recovery grammar require a complete
+# replacement without first spending another model step rediscovering a line
+# count the host already owns.
+WHOLE_FILE_END_LINE = 1_000_000
 
 # The roster's talk tools: host affordances the loop routes itself (a pause on
 # a question, an answer published as the turn's response). They are on the
@@ -744,7 +802,7 @@ PROJECT_TOOL_OPTIONAL_ARGUMENTS: dict[str, list[str]] = {
     "inspect_api": ["symbol"],
     "ask_user": ["options"],
     "respond": [],
-    "revise_plan": [],
+    "revise_plan": ["remove_files"],
 }
 
 # One line per tool saying what it is for, in the terms the model has to get
@@ -780,7 +838,7 @@ _PROJECT_TOOL_NOTES: dict[str, str] = {
         "exported names, and the real signature of one function or class. Use it "
         "whenever you are about to call an API you have not verified — a keyword "
         "argument that does not exist parses perfectly and fails at runtime. "
-        "module is an import path such as \"openai\"; symbol is optional. It "
+        'module is an import path such as "openai"; symbol is optional. It '
         "reads libraries, never this project's own files — use read_file for those."
     ),
     "ask_user": (
@@ -799,10 +857,11 @@ _PROJECT_TOOL_NOTES: dict[str, str] = {
     "revise_plan": (
         "Correct this turn's file manifest when what you read contradicts it — "
         "a planned path the project does not have, a framework that makes it "
-        "wrong, work that turns out to need different files. files is the "
-        "complete corrected list (send [] if the task needs no new files), "
-        "reason is what you found. Use this instead of writing a file you "
-        "believe is wrong, and instead of finishing to escape the plan."
+        "wrong, work that turns out to need different files. Omitted prior "
+        "paths remain committed. files proposes the corrected order and any "
+        "additions; remove_files explicitly names invalid unstaged paths to "
+        "drop, and reason gives the repository evidence. Use this instead of "
+        "writing a file you believe is wrong or finishing to escape the plan."
     ),
 }
 
@@ -839,7 +898,34 @@ def project_step_retry_schema(tool: str) -> dict[str, Any]:
         "properties": PROJECT_TOOL_ARGUMENT_PROPERTIES,
         "required": list(PROJECT_TOOL_REQUIRED_ARGUMENTS[tool]),
     }
-    return {**schema, "properties": properties, "required": ["status", "tool", "arguments"]}
+    return {
+        **schema,
+        "properties": properties,
+        "required": ["status", "tool", "arguments"],
+    }
+
+
+def project_whole_file_schema(path: str) -> dict[str, Any]:
+    """One exact recovery move: replace the complete current file.
+
+    Exact blocks and guessed line ranges are the two edit strategies that can
+    keep failing without changing the overlay. After either is refused, this
+    schema makes the safer fallback structural: the path and whole-file range
+    are fixed, leaving the model to provide only the corrected complete text.
+    """
+    schema = project_step_retry_schema("replace_lines")
+    properties = dict(schema["properties"])
+    arguments = dict(properties["arguments"])
+    argument_properties = dict(arguments["properties"])
+    argument_properties["path"] = {"type": "string", "enum": [path]}
+    argument_properties["start_line"] = {"type": "integer", "enum": [1]}
+    argument_properties["end_line"] = {
+        "type": "integer",
+        "enum": [WHOLE_FILE_END_LINE],
+    }
+    arguments["properties"] = argument_properties
+    properties["arguments"] = arguments
+    return {**schema, "properties": properties}
 
 
 def project_directed_schema(
@@ -872,6 +958,9 @@ def project_directed_schema(
     # revise_plan's own arguments, or naming it in the enum would make it
     # grammatically legal and semantically impossible to fill in.
     argument_properties["files"] = PROJECT_TOOL_ARGUMENT_PROPERTIES["files"]
+    argument_properties["remove_files"] = PROJECT_TOOL_ARGUMENT_PROPERTIES[
+        "remove_files"
+    ]
     argument_properties["reason"] = PROJECT_TOOL_ARGUMENT_PROPERTIES["reason"]
     arguments["properties"] = argument_properties
     properties["arguments"] = arguments
@@ -915,7 +1004,11 @@ def project_write_schema(paths: list[str]) -> dict[str, Any]:
         },
         "required": ["path"],
     }
-    return {**schema, "properties": properties, "required": ["status", "tool", "arguments"]}
+    return {
+        **schema,
+        "properties": properties,
+        "required": ["status", "tool", "arguments"],
+    }
 
 
 class ProjectSpecV1(Contract):
@@ -933,6 +1026,11 @@ class ProjectSpecV1(Contract):
     assumptions: list[str] = Field(default_factory=list, max_length=8)
 
 
+# Big enough for a seeded listing or a record's full field set, small enough
+# that the plan, the checkpoint, and the sandbox request all stay bounded.
+_MAX_EXPECT_JSON_CHARS = 4_000
+
+
 class AcceptanceScenarioV1(Contract):
     """One machine-checkable claim about what the built app must do.
 
@@ -946,15 +1044,28 @@ class AcceptanceScenarioV1(Contract):
     """
 
     name: str = Field(min_length=1, max_length=120)
-    method: Literal["GET", "POST"] = "GET"
+    # Keep this enum in parity with the networkless verifier. Collapsing an
+    # edit verb to POST changes the claim being tested (and can turn a correct
+    # PATCH-only route into a false 405), while collapsing it to GET can make a
+    # mutating workflow look healthy without exercising it at all.
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "GET"
     # The request line, query string included — the sandbox replays it verbatim.
     # A route with required query parameters answers 422 to a bare path, so
     # "/convert" where "/convert?value=0&direction=c-to-f" was meant reports a
     # correct app as broken.
     path: str = Field(min_length=1, max_length=300)
-    # What rides in the request: nothing, the JSON object in `body`, or the
-    # verifier's real PNG fixture as a multipart upload.
-    body_kind: Literal["none", "json", "image_upload"] = "none"
+    # What rides in the request: nothing, the JSON object in `body`, or one of
+    # the verifier's deterministic multipart fixtures. ``text_upload`` is the
+    # credentialless TXT path; ``executable_upload`` is a harmless fixed binary
+    # signature used only to prove refusal; ``image_upload`` deliberately
+    # exercises image handling and may therefore reach an external adapter.
+    body_kind: Literal[
+        "none",
+        "json",
+        "text_upload",
+        "executable_upload",
+        "image_upload",
+    ] = "none"
     body: dict[str, Any] = Field(default_factory=dict)
     # "2xx_or_4xx" is the resilient default: it proves the route is alive and
     # validating without guessing which side of validation a minimal body
@@ -962,7 +1073,183 @@ class AcceptanceScenarioV1(Contract):
     expect_status: Literal["2xx", "4xx", "2xx_or_4xx"] = "2xx_or_4xx"
     # Substrings the response text must contain, when the claim is about
     # content — extracted fields present, a verdict named, a total computed.
+    # Case-insensitive and satisfiable by extra data, which is right for a
+    # textual claim and wrong for an exact one: two live models passed a
+    # containment check by *appending* a record next to the wrong one they
+    # were asked to fix. Use expect_json_exact whenever the request names
+    # exact records, counts, field values, or a exact list.
     expect_contains: list[str] = Field(default_factory=list, max_length=8)
+    # The response body parsed as JSON must equal this structure exactly.
+    # Object keys compare independent of order; arrays keep their order unless
+    # json_match says otherwise. Extra keys and extra array elements are
+    # failures — that is the whole point. None means the scenario makes no
+    # exact claim, which keeps every scenario written before this field
+    # behaving exactly as it did.
+    expect_json_exact: dict[str, Any] | list[Any] | None = None
+    # A closed enum, never inference: "exact" compares arrays positionally,
+    # "unordered_array" compares them as multisets (identical members and
+    # multiplicity) at every depth. A scenario that needs order-independence
+    # must say so, so an exact assertion can never be silently weakened into
+    # a set comparison by a planner that found ordering inconvenient.
+    json_match: Literal["exact", "unordered_array"] = "exact"
+
+    @field_validator("expect_json_exact")
+    @classmethod
+    def validate_expect_json_exact(cls, value: Any) -> Any:
+        """Keep the assertion small enough to carry and cheap to compare.
+
+        This rides the same local grammar and checkpoint as the rest of the
+        plan, and it is replayed inside the networkless sandbox, so an
+        unbounded structure is both a context cost and a verifier cost.
+        """
+
+        if value is None:
+            return None
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError) as error:
+            raise ValueError("expect_json_exact must be JSON-serializable") from error
+        if len(encoded) > _MAX_EXPECT_JSON_CHARS:
+            raise ValueError(
+                "expect_json_exact must be at most "
+                f"{_MAX_EXPECT_JSON_CHARS} serialized characters"
+            )
+        return value
+
+
+# One number, shared by every consumer of a slice's scenario_names. It is the
+# PLAN's scenario bound: a slice may legitimately name every scenario the plan
+# declared, and a separate, smaller per-slice cap was a silent policy that
+# rejected a correct planner reply for naming six of its own six scenarios.
+MAX_PLAN_SCENARIOS = 8
+# How many files one vertical slice may own and write. The single source for
+# the bound: project_slices, plan validation and the sidecar's write-scope wire
+# format all agree with this number, and the host synthesizes a whole-manifest
+# slice only up to it.
+MAX_SLICE_FILES = 8
+
+
+_ENTRYPOINT_BASENAMES = frozenset(
+    {
+        "main.py",
+        "app.py",
+        "server.py",
+        "asgi.py",
+        "wsgi.py",
+        "index.js",
+        "index.ts",
+        "server.js",
+        "server.ts",
+        "app.js",
+        "app.ts",
+    }
+)
+
+
+class ProjectVerticalSliceV1(Contract):
+    """One independently buildable, verifier-gated product outcome.
+
+    Files remain globally dependency ordered.  A slice groups one contiguous
+    range into a small end-to-end outcome so the coding harness can finish and
+    verify useful behaviour without carrying the entire build conversation.
+    """
+
+    name: str = Field(min_length=1, max_length=120)
+    outcome: str = Field(min_length=1, max_length=600)
+    files: list[str] = Field(
+        default_factory=list, min_length=1, max_length=MAX_SLICE_FILES
+    )
+    # owned_files/integration_files are the outcome-based split beneath
+    # `files`: a slice that owns nothing but re-opens an earlier slice's file
+    # to wire it up isn't a horizontal layer, it's the integration step a
+    # true vertical slice needs. Both optional so an older planner reply
+    # (which knows only `files`) keeps working exactly as before -- see
+    # bind_slice_ownership below, which fills them in from `files` when
+    # absent and validates them against `files` when present.
+    owned_files: list[str] = Field(default_factory=list)
+    integration_files: list[str] = Field(default_factory=list)
+    # No max_length here: harmless planner excess (a model naming more
+    # scenarios than the host keeps) must be recoverable, not a rejection
+    # that discards an otherwise valid multi-file plan. validate_scenario_names
+    # runs in "before" mode so it can normalize and trim an oversized list
+    # itself, ahead of any core-schema length check that would reject it
+    # outright. The five-item host limit and the filter against declared
+    # scenario names are enforced together in ProjectBuildPlanV1, which is
+    # the only place both a slice's names and the declared scenario list are
+    # both in view.
+    scenario_names: list[str] = Field(default_factory=list)
+
+    @field_validator("files")
+    @classmethod
+    def validate_files(cls, value: list[str]) -> list[str]:
+        return ProjectBuildPlanV1.validate_files(value)
+
+    @field_validator("owned_files", "integration_files")
+    @classmethod
+    def validate_ownership_paths(cls, value: list[str]) -> list[str]:
+        return ProjectBuildPlanV1.validate_files(value)
+
+    @field_validator("scenario_names", mode="before")
+    @classmethod
+    def validate_scenario_names(cls, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        seen: list[str] = []
+        for item in value:
+            name = " ".join(str(item or "").split())[:120]
+            if name and name not in seen:
+                seen.append(name)
+        return seen
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_files_from_ownership(cls, value: Any) -> Any:
+        """Let the planner author ownership, and derive `files` from it.
+
+        `files` is the union of owned_files and integration_files, so asking a
+        model to restate it is asking it to keep two lists in agreement for no
+        benefit — and a live planner failed exactly there, returning slices
+        whose combined list did not match its own ownership split. Where
+        ownership is given it is authoritative and the combined list is
+        derived canonically; a redundant model-authored `files` is ignored
+        rather than reconciled. A reply that names only `files` (older
+        providers, scripted callers, checkpoints) is untouched.
+        """
+
+        if not isinstance(value, dict):
+            return value
+        owned = [
+            str(path) for path in value.get("owned_files") or [] if str(path).strip()
+        ]
+        integration = [
+            str(path)
+            for path in value.get("integration_files") or []
+            if str(path).strip()
+        ]
+        if owned or integration:
+            return {**value, "files": owned + integration}
+        return value
+
+    @model_validator(mode="after")
+    def bind_slice_ownership(self) -> ProjectVerticalSliceV1:
+        declared = set(self.owned_files) | set(self.integration_files)
+        if not declared:
+            # An older-style reply that only ever named `files`: the whole
+            # slice is its own, exclusive work -- exactly today's behavior.
+            self.owned_files = list(self.files)
+            self.integration_files = []
+            return self
+        # `files` was derived from these two lists above, so they agree by
+        # construction. What still has to hold is that they are disjoint: a
+        # file cannot be both this slice's own work and an earlier slice's
+        # file it is merely allowed to extend.
+        overlap = set(self.owned_files) & set(self.integration_files)
+        if overlap:
+            raise ValueError(
+                f"a file cannot be both owned and an integration file in the "
+                f"same slice: {', '.join(sorted(overlap))}"
+            )
+        return self
 
 
 class ProjectBuildPlanV1(Contract):
@@ -996,7 +1283,13 @@ class ProjectBuildPlanV1(Contract):
     # The acceptance scenarios that make "done" checkable against the spec
     # rather than against the model's summary. Optional: an empty list keeps
     # the ladder exactly as it was.
-    scenarios: list[AcceptanceScenarioV1] = Field(default_factory=list, max_length=8)
+    scenarios: list[AcceptanceScenarioV1] = Field(
+        default_factory=list, max_length=MAX_PLAN_SCENARIOS
+    )
+    # Preferred execution units for ClineCore. Each valid slice is contiguous
+    # in ``files`` and contains at most six paths. Older providers/checkpoints
+    # may omit this; the host then derives conservative bounded slices.
+    slices: list[ProjectVerticalSliceV1] = Field(default_factory=list, max_length=8)
 
     @field_validator("files")
     @classmethod
@@ -1017,6 +1310,86 @@ class ProjectBuildPlanV1(Contract):
                 continue
             seen.append(path)
         return seen
+
+    @model_validator(mode="after")
+    def bind_slice_scenario_names(self) -> ProjectBuildPlanV1:
+        """Recover harmless excess in a slice's scenario_names, in place.
+
+        A slice naming a scenario the plan never declared is harmless excess
+        that must not discard an otherwise valid multi-file plan, so unknown
+        names are filtered out. Every DECLARED name is kept: a slice may
+        legitimately be responsible for all of the plan's scenarios, and the
+        old five-item trim silently dropped commitments the planner made —
+        which is what refused a correct six-scenario Atlas plan.
+
+        Deduplicated, order preserved, bounded only by the plan's own
+        scenario limit, which the declared list already satisfies.
+        """
+        if not self.slices:
+            return self
+        declared = {scenario.name for scenario in self.scenarios}
+        for slice_ in self.slices:
+            slice_.scenario_names = list(
+                dict.fromkeys(
+                    name for name in slice_.scenario_names if name in declared
+                )
+            )[:MAX_PLAN_SCENARIOS]
+        return self
+
+    @model_validator(mode="after")
+    def bind_slice_ownership_and_entrypoint(self) -> ProjectBuildPlanV1:
+        """Reject a declared multi-slice plan that cannot actually be built as
+        independent vertical slices, falling back to the host's safe
+        deterministic chunking rather than executing a plan that would either
+        violate an earlier slice's immutability or never produce anything
+        runnable.
+
+        Two provable failure shapes, both cleared the same way — to an empty
+        slice list, which vertical_build_slices (project_slices.py) already
+        treats as "no valid declared plan, chunk the dependency order
+        instead":
+
+        - An integration_files reference to a file no STRICTLY EARLIER slice
+          owns. Without this check, "integration" would just be a second name
+          for "edit whatever you want": the whole point of the exclusive-
+          ownership default (ProjectVerticalSliceV1.bind_slice_ownership) is
+          that a later slice touches an earlier file only where the earlier
+          slice explicitly allowed it.
+        - A whole-application plan whose first slice owns or integrates no
+          recognizable application entrypoint. The measured failure this
+          closes: a "Foundation: config, database, models" first slice with
+          a Health-route scenario attached that could not actually run yet,
+          because app/main.py was planned four slices later. A bootstrap
+          slice is acceptable only when it can produce a checkable runnable
+          outcome, such as the application importing and serving /health.
+        """
+        if not self.slices:
+            return self
+        # The top-level manifest is authoritative. Now that each slice's
+        # combined `files` is DERIVED from its ownership, the ownership split
+        # is the only thing standing between the planner and what gets built,
+        # so it must reproduce that manifest exactly -- same paths, same
+        # count, same order. Anything that loses, duplicates, invents or
+        # reorders a planned file is cleared to the safe deterministic
+        # partition rather than executed.
+        owned_sequence = [path for item in self.slices for path in item.owned_files]
+        if owned_sequence != self.files:
+            self.slices = []
+            return self
+        owned_so_far: set[str] = set()
+        for slice_ in self.slices:
+            if set(slice_.integration_files) - owned_so_far:
+                self.slices = []
+                return self
+            owned_so_far |= set(slice_.owned_files)
+        if self.scope == "whole_app":
+            first = self.slices[0]
+            first_files = set(first.owned_files) | set(first.integration_files)
+            if not any(
+                path.rsplit("/", 1)[-1] in _ENTRYPOINT_BASENAMES for path in first_files
+            ):
+                self.slices = []
+        return self
 
 
 class ProjectDirectionV1(Contract):
@@ -1078,7 +1451,7 @@ class ProjectDirectionV1(Contract):
         if isinstance(value, list):
             # Each field's own bound, so trimming can never itself trip the
             # limit it is protecting.
-            return value[:12 if info.field_name == "reuse" else 6]
+            return value[: 12 if info.field_name == "reuse" else 6]
         return value
 
     @field_validator("path")
@@ -1217,7 +1590,9 @@ class DiagramCodeV1(Contract):
     @classmethod
     def validate_diagram_code(cls, value: str) -> str:
         if "\x00" in value or "\r" in value:
-            raise ValueError("diagram_code must use LF line endings and contain no NUL bytes")
+            raise ValueError(
+                "diagram_code must use LF line endings and contain no NUL bytes"
+            )
         if len(value.encode("utf-8")) > 100_000:
             raise ValueError("diagram_code exceeds 100000 UTF-8 bytes")
         return value
@@ -1666,6 +2041,10 @@ class ModelPreferenceV1(Contract):
     oci_available: bool = False
     cohere_available: bool = False
     cline_available: bool = False
+    # Subscription-backed models the backend has verified against the project
+    # tool contract. Paid Cline gateway routes are still valid explicit chain
+    # entries, but are not advertised as ClinePass choices.
+    cline_models: list[str] = Field(default_factory=list, max_length=32)
 
     @field_validator("role_chains")
     @classmethod
@@ -1793,8 +2172,15 @@ class CustomerPersonUpsertV1(Contract):
 
 
 CustomerFactKind = Literal[
-    "requirement", "decision", "use_case", "risk", "question",
-    "constraint", "model", "dac_note", "other"
+    "requirement",
+    "decision",
+    "use_case",
+    "risk",
+    "question",
+    "constraint",
+    "model",
+    "dac_note",
+    "other",
 ]
 CustomerFactStatus = Literal["active", "superseded", "disputed"]
 
@@ -2202,7 +2588,9 @@ class ToolDefinitionDraftV1(Contract):
     output_sketch: str = Field(default="", max_length=2_000)
 
     # Coerce and bound these free-text hints rather than fail the whole draft.
-    @field_validator("description", "intent", "input_sketch", "output_sketch", mode="before")
+    @field_validator(
+        "description", "intent", "input_sketch", "output_sketch", mode="before"
+    )
     @classmethod
     def _coerce_text_field(cls, value: Any) -> str:
         return _as_text(value)[:2_000]
@@ -2395,13 +2783,17 @@ class ArchitectureSpecV1(Contract):
     direction: Literal["LR", "RL", "TB", "BT"] = "LR"
     components: list[ArchitectureComponentV1] = Field(min_length=1, max_length=64)
     edges: list[ArchitectureEdgeV1] = Field(default_factory=list, max_length=256)
-    boundaries: list[ArchitectureBoundaryV1] = Field(default_factory=list, max_length=16)
+    boundaries: list[ArchitectureBoundaryV1] = Field(
+        default_factory=list, max_length=16
+    )
     assumptions: list[str] = Field(default_factory=list, max_length=32)
     unresolved_ambiguities: list[str] = Field(default_factory=list, max_length=32)
 
     @field_validator("edges")
     @classmethod
-    def validate_edges(cls, value: list[ArchitectureEdgeV1]) -> list[ArchitectureEdgeV1]:
+    def validate_edges(
+        cls, value: list[ArchitectureEdgeV1]
+    ) -> list[ArchitectureEdgeV1]:
         return value
 
     @field_validator("assumptions", "unresolved_ambiguities")
@@ -2657,8 +3049,14 @@ class AttentionItemV1(Contract):
 
     key: str
     kind: Literal[
-        "run_approval", "customer_action", "customer_note",
-        "tool_proposal", "memory", "answer_atom", "asset_trust", "stale_source",
+        "run_approval",
+        "customer_action",
+        "customer_note",
+        "tool_proposal",
+        "memory",
+        "answer_atom",
+        "asset_trust",
+        "stale_source",
     ]
     kind_label: str = ""
     title: str

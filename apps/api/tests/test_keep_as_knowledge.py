@@ -22,7 +22,9 @@ class _Events:
     def __init__(self) -> None:
         self.emitted: list[tuple[str, dict]] = []
 
-    async def emit(self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None):
+    async def emit(
+        self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None
+    ):
         self.emitted.append((event_type, payload or {}))
 
 
@@ -48,9 +50,7 @@ class _Database:
 
 
 def _plane(database: _Database) -> types.SimpleNamespace:
-    return types.SimpleNamespace(
-        database=database, events=_Events(), memory_index=None
-    )
+    return types.SimpleNamespace(database=database, events=_Events(), memory_index=None)
 
 
 _STATE = {
@@ -72,8 +72,7 @@ async def test_a_statement_with_no_account_becomes_a_pending_memory() -> None:
     assert kind == "project"
     # The filing instruction goes; the user's own words stay exactly as written.
     assert content == (
-        "Metis's hosted build coder is kimi-k2.7-code:cloud, picked on "
-        "8 August 2026."
+        "Metis's hosted build coder is kimi-k2.7-code:cloud, picked on 8 August 2026."
     )
     # Stated outright, not inferred from a run.
     assert confidence == 1.0
@@ -116,7 +115,8 @@ async def test_a_document_length_paste_is_refused_with_somewhere_to_put_it() -> 
     database = _Database()
     plane = _plane(database)
     result = await ControlPlane._keep_as_knowledge(
-        plane, {**_STATE, "prompt": "Note this: " + ("a very long meeting record. " * 200)}
+        plane,
+        {**_STATE, "prompt": "Note this: " + ("a very long meeting record. " * 200)},
     )
     assert database.created == []
     assert "too long" in result["response_text"]

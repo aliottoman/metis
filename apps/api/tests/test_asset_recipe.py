@@ -1,4 +1,4 @@
-"""One-click launch recipes, drafted by Command A+.
+"""One-click launch recipes, drafted by the selected model.
 
 The claim under test is not "the model writes good recipes" — that is judged
 live — but the machinery around it: the context the model sees is bounded and
@@ -19,6 +19,7 @@ from waqil_api.asset_recipe import RecipeError, gather_recipe_context, write_rec
 from waqil_api.config import Settings
 from waqil_api.contracts import AssetRecipeV1
 from waqil_api.main import create_app
+from waqil_api.model_provider import ModelProviderError, RoutedModelProvider
 
 
 def _project(tmp_path: Path) -> Path:
@@ -38,11 +39,27 @@ def _project(tmp_path: Path) -> Path:
 STREAMLIT_RECIPE = AssetRecipeV1(
     entrypoint="app.py",
     launch_command=[
-        "{uv}", "run", "--isolated", "--no-project", "--no-env-file",
-        "--with-requirements", "requirements.txt", "--with", "streamlit",
-        "--", "python", "-m", "streamlit", "run", "app.py",
-        "--server.address", "{host}", "--server.port", "{port}",
-        "--server.headless", "true",
+        "{uv}",
+        "run",
+        "--isolated",
+        "--no-project",
+        "--no-env-file",
+        "--with-requirements",
+        "requirements.txt",
+        "--with",
+        "streamlit",
+        "--",
+        "python",
+        "-m",
+        "streamlit",
+        "run",
+        "app.py",
+        "--server.address",
+        "{host}",
+        "--server.port",
+        "{port}",
+        "--server.headless",
+        "true",
     ],
     env_keys=["INVOICE_API_KEY"],
 )
@@ -102,21 +119,102 @@ def test_a_build_command_the_scanner_would_reject_never_touches_disk(tmp_path) -
     project = _project(tmp_path)
     # A control char in a build token fails the same argv rules the launch
     # command obeys, so the draft never survives validation.
-    poisoned = STREAMLIT_RECIPE.model_copy(update={"build_command": ["npm", "run\nbuild"]})
+    poisoned = STREAMLIT_RECIPE.model_copy(
+        update={"build_command": ["npm", "run\nbuild"]}
+    )
     with pytest.raises(RecipeError, match="did not survive validation"):
         write_recipe(project, poisoned)
     assert not (project / ".metis" / "asset.json").exists()
 
 
-class _FakeCohere:
+class _FakeSelectedModel:
+    def __init__(self) -> None:
+        self.saw_context: dict | None = None
+        self.saw_aliases: dict[str, str] | None = None
+
+    async def draft_asset_recipe(
+        self, context: dict, *, model_aliases: dict[str, str] | None = None
+    ) -> AssetRecipeV1:
+        self.saw_context = context
+        self.saw_aliases = model_aliases
+        return STREAMLIT_RECIPE
+
+
+class _StructuredLane:
     available = True
 
     def __init__(self) -> None:
-        self.saw_context: dict | None = None
+        self.calls: list[dict] = []
 
-    async def draft_asset_recipe(self, context: dict) -> AssetRecipeV1:
-        self.saw_context = context
+    async def _structured(self, schema, **kwargs):
+        self.calls.append({"schema": schema, **kwargs})
         return STREAMLIT_RECIPE
+
+
+class _ChatOnlyLane:
+    name = "cline"
+    available = True
+
+
+@pytest.mark.asyncio
+async def test_recipe_drafting_uses_the_selected_routed_lane() -> None:
+    local = _StructuredLane()
+    oci = _StructuredLane()
+    cohere = _StructuredLane()
+    routed = RoutedModelProvider(local, oci, cohere=cohere)  # type: ignore[arg-type]
+
+    result = await routed.draft_asset_recipe(
+        {"files": ["app.py"]},
+        model_aliases={"_provider": "cohere", "coder": "ignored-on-this-lane"},
+    )
+
+    assert result == STREAMLIT_RECIPE
+    assert not local.calls
+    assert not oci.calls
+    assert len(cohere.calls) == 1
+    assert cohere.calls[0]["schema"] is AssetRecipeV1
+    assert "app.py" in cohere.calls[0]["user_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_recipe_drafting_passes_the_selected_local_model_alias() -> None:
+    local = _StructuredLane()
+    routed = RoutedModelProvider(local, _StructuredLane())  # type: ignore[arg-type]
+    aliases = {"_provider": "local", "coder": "kimi-k2.7-code:cloud"}
+
+    await routed.draft_asset_recipe({"files": ["main.py"]}, model_aliases=aliases)
+
+    assert len(local.calls) == 1
+    assert local.calls[0]["role"] == "coder"
+    assert local.calls[0]["model_aliases"] == aliases
+
+
+@pytest.mark.asyncio
+async def test_missing_selected_capability_is_a_provider_error() -> None:
+    routed = RoutedModelProvider(
+        _StructuredLane(),
+        _StructuredLane(),
+        cline=_ChatOnlyLane(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(
+        ModelProviderError,
+        match="selected cline provider does not support architecture spec",
+    ):
+        await routed.architecture_spec(
+            "Draw this system",
+            "",
+            model_aliases={"_provider": "cline"},
+        )
+
+    with pytest.raises(
+        ModelProviderError,
+        match="selected cline provider does not support structured generation",
+    ):
+        await routed.draft_asset_recipe(
+            {"files": ["app.py"]},
+            model_aliases={"_provider": "cline"},
+        )
 
 
 def test_the_endpoint_generates_validates_and_leaves_trust_ungranted(
@@ -126,8 +224,11 @@ def test_the_endpoint_generates_validates_and_leaves_trust_ungranted(
     configured = settings.model_copy(update={"asset_roots": [project.parent]})
     app = create_app(configured)
     with TestClient(app) as client:
-        fake = _FakeCohere()
-        app.state.runtime.model.cohere = fake
+        fake = _FakeSelectedModel()
+        app.state.runtime.model = fake
+        app.state.runtime.model_preference.save(
+            "pinned", "gpt-oss:120b-cloud", provider="local"
+        )
 
         catalog = client.post("/api/v1/assets/scan").json()
         asset = next(item for item in catalog if item["name"] == "Invoice Extractor")
@@ -143,13 +244,16 @@ def test_the_endpoint_generates_validates_and_leaves_trust_ungranted(
         # The model saw the bounded context, not the raw folder.
         assert fake.saw_context is not None
         assert "do-not-read" not in json.dumps(fake.saw_context)
+        assert fake.saw_aliases is not None
+        assert fake.saw_aliases["_provider"] == "local"
+        assert fake.saw_aliases["coder"] == "gpt-oss:120b-cloud"
 
         # Second click: the existing manifest is refused, not clobbered.
         again = client.post(f"/api/v1/assets/{asset['id']}/manifest/generate")
         assert again.status_code == 409
 
 
-def test_the_endpoint_names_the_missing_key_without_a_provider(
+def test_the_endpoint_names_a_backend_without_structured_recipe_support(
     settings: Settings, tmp_path
 ) -> None:
     project = _project(tmp_path)
@@ -160,4 +264,4 @@ def test_the_endpoint_names_the_missing_key_without_a_provider(
         asset = next(item for item in catalog if item["name"] == "Invoice Extractor")
         response = client.post(f"/api/v1/assets/{asset['id']}/manifest/generate")
         assert response.status_code == 503
-        assert "WAQIL_COHERE_API_KEY" in response.json()["detail"]
+        assert "selected model backend" in response.json()["detail"]

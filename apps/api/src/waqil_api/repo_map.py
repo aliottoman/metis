@@ -24,8 +24,10 @@ Three design commitments, each learned from something that went wrong before:
   nothing and never raises. The bar is "names, and where they live" — not a
   compiler.
 """
+
 from __future__ import annotations
 
+import ast
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -47,6 +49,13 @@ _MAX_SYMBOLS_PER_FILE = 24
 # properties took the entire top of a real project's map.
 _MAX_LEAF_SYMBOLS = 6
 
+# Interface context is deliberately denser than the ranked overview: the coder
+# needs enough of a dependency to call it correctly, not its whole body. These
+# caps are per file; the renderer also enforces one hard total character bound.
+_MAX_INTERFACE_SYMBOLS = 32
+_MAX_INTERFACE_IMPORTS = 12
+_MAX_SIGNATURE_CHARS = 280
+
 _PAGERANK_DAMPING = 0.85
 _PAGERANK_ITERATIONS = 24
 
@@ -57,7 +66,7 @@ _MAX_NAME_OWNERS = 3
 # Kinds that appear in the map but never attract rank. A method name is not a
 # module-level identity, and an anchor or a colour token is not something other
 # files "depend on" in any sense PageRank should reward.
-_NON_ATTRACTING_KINDS = frozenset({"method", "anchor", "token", "selector"})
+_NON_ATTRACTING_KINDS = frozenset({"method", "field", "anchor", "token", "selector"})
 
 # Tokens in a request that could plausibly be an identifier. Three characters
 # is the floor at which a match stops being noise ("app" is a signal; "an" is
@@ -75,15 +84,70 @@ class Symbol:
     name: str
     line: int
     detail: str = ""  # the short signature-ish tail, when the language gives one
+    owner: str = ""  # class containing a method/field; empty for module surface
+    exported: bool = True
+    is_async: bool = False
+    binding: str = ""  # classmethod | staticmethod | empty
 
     def render(self) -> str:
-        if self.kind in ("class", "component"):
+        if self.kind == "class":
             return f"class {self.name}{self.detail}"
+        if self.kind == "component":
+            return f"component {self.name}{self.detail}"
         if self.kind in ("function", "method"):
-            return f"def {self.name}{self.detail}"
+            is_script = self.path.rsplit(".", 1)[-1] in {
+                "ts",
+                "tsx",
+                "js",
+                "jsx",
+                "mjs",
+                "cjs",
+            }
+            prefix = (
+                ("async function" if self.is_async else "function")
+                if is_script
+                else ("async def" if self.is_async else "def")
+            )
+            return f"{prefix} {self.name}{self.detail}"
         if self.kind == "type":
             return f"type {self.name}{self.detail}"
         return f"{self.name}{self.detail}"
+
+    def render_interface(self) -> str:
+        """The externally callable spelling, including its owning class."""
+        qualified = f"{self.owner}.{self.name}" if self.owner else self.name
+        if self.kind == "class":
+            return f"class {qualified}{self.detail}"
+        if self.kind == "component":
+            return f"component {qualified}{self.detail}"
+        if self.kind in ("function", "method"):
+            is_script = self.path.rsplit(".", 1)[-1] in {
+                "ts",
+                "tsx",
+                "js",
+                "jsx",
+                "mjs",
+                "cjs",
+            }
+            prefix = (
+                ("async function" if self.is_async else "function")
+                if is_script
+                else ("async def" if self.is_async else "def")
+            )
+            binding = f"@{self.binding} " if self.binding else ""
+            return f"{binding}{prefix} {qualified}{self.detail}"
+        if self.kind == "type":
+            return f"type {qualified}{self.detail}"
+        return f"{qualified}{self.detail}"
+
+
+@dataclass(frozen=True)
+class ImportFact:
+    """One import statement, normalized by the language parser where possible."""
+
+    path: str
+    line: int
+    statement: str
 
 
 @dataclass(frozen=True)
@@ -100,40 +164,218 @@ class FileFacts:
     path: str
     symbols: tuple[Symbol, ...]
     references: tuple[str, ...]
+    imports: tuple[ImportFact, ...] = ()
 
 
 # ── Extraction, one dialect at a time ──────────────────────────────────────
 
 
-def _is_surface(node: code_graph.GraphNode, module_depth: int) -> bool:
-    """Whether a definition is reachable from outside its own file.
+def _short(value: str, limit: int = _MAX_SIGNATURE_CHARS) -> str:
+    """One bounded, single-line source fragment."""
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
 
-    Top-level anything, and the methods and inner classes of a top-level class.
-    Everything deeper is a closure — real code, but not a name another file can
-    hold, which is all this map is for.
-    """
-    nesting = len(node.qualname.split(".")) - module_depth
-    if nesting <= 1:
-        return True
-    return nesting == 2 and node.kind in ("method", "class")
+
+def _unparse(node: ast.AST | None, *, limit: int = 120) -> str:
+    if node is None:
+        return ""
+    try:
+        return _short(ast.unparse(node), limit)
+    except Exception:  # noqa: BLE001 - a type annotation must not lose the map
+        return "?"
+
+
+def _python_arg(argument: ast.arg, default: ast.AST | None = None) -> str:
+    text = argument.arg
+    if argument.annotation is not None:
+        text += f": {_unparse(argument.annotation)}"
+    if default is not None:
+        text += f" = {_unparse(default)}"
+    return text
+
+
+def _python_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    """A callable signature assembled from AST fields, never from its body."""
+    arguments = node.args
+    positional = [*arguments.posonlyargs, *arguments.args]
+    defaults: list[ast.AST | None] = [None] * (
+        len(positional) - len(arguments.defaults)
+    ) + list(arguments.defaults)
+    pieces = [
+        _python_arg(argument, default)
+        for argument, default in zip(positional, defaults, strict=True)
+    ]
+    if arguments.posonlyargs:
+        pieces.insert(len(arguments.posonlyargs), "/")
+    if arguments.vararg is not None:
+        pieces.append("*" + _python_arg(arguments.vararg))
+    elif arguments.kwonlyargs:
+        pieces.append("*")
+    for argument, default in zip(
+        arguments.kwonlyargs, arguments.kw_defaults, strict=True
+    ):
+        pieces.append(_python_arg(argument, default))
+    if arguments.kwarg is not None:
+        pieces.append("**" + _python_arg(arguments.kwarg))
+    result = "(" + ", ".join(pieces) + ")"
+    if node.returns is not None:
+        result += f" -> {_unparse(node.returns)}"
+    return _short(result)
+
+
+def _python_class_detail(node: ast.ClassDef) -> str:
+    bases = [_unparse(base) for base in node.bases]
+    bases.extend(
+        f"{keyword.arg}={_unparse(keyword.value)}"
+        for keyword in node.keywords
+        if keyword.arg
+    )
+    return _short(f"({', '.join(bases)})") if bases else ""
+
+
+def _binding(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    for decorator in node.decorator_list:
+        name = _unparse(decorator, limit=80).rsplit(".", 1)[-1]
+        if name in ("classmethod", "staticmethod"):
+            return name
+    return ""
+
+
+def _assigned_names(node: ast.Assign | ast.AnnAssign) -> list[str]:
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    return [target.id for target in targets if isinstance(target, ast.Name)]
+
+
+def _python_exports(tree: ast.Module) -> set[str] | None:
+    """Literal ``__all__`` when declared, otherwise the public-name convention."""
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        if "__all__" not in _assigned_names(node):
+            continue
+        value = node.value
+        if not isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            return None
+        names = {
+            item.value
+            for item in value.elts
+            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+        }
+        return names or None
+    return None
+
+
+def _is_exported(name: str, explicit: set[str] | None) -> bool:
+    return name in explicit if explicit is not None else not name.startswith("_")
+
+
+def _python_value_detail(node: ast.Assign | ast.AnnAssign, name: str) -> str:
+    if isinstance(node, ast.AnnAssign) and node.annotation is not None:
+        return _short(f": {_unparse(node.annotation)}", 140)
+    # Lowercase module values such as `router = APIRouter()` are public
+    # integration points. Uppercase constants need their name, not a potentially
+    # enormous set/dict value; call signatures can still refer to them exactly.
+    value = node.value
+    if name.isupper() or value is None:
+        return ""
+    return _short(f" = {_unparse(value, limit=100)}", 120)
 
 
 def _python_facts(path: str, source: str) -> FileFacts:
-    nodes, edges = code_graph.extract(source, path)
-    depth = len(code_graph.module_qualname(path).split("."))
-    symbols = tuple(
-        Symbol(path, node.kind, node.name, node.start_line)
-        for node in nodes
-        # The module node names the file, which the map already prints as a
-        # heading; repeating it as its own symbol wastes a line per file.
-        if node.kind != "module"
-        # A closure is not the file's surface. `on_token` defined inside a
-        # function or a method is invisible to every other file, and listing it
-        # spent map budget describing internals nobody can call. A METHOD sits
-        # at the same nesting depth as a closure and is kept, which is why the
-        # rule reads the kind rather than the depth alone.
-        and _is_surface(node, depth)
-    )
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return FileFacts(path, (), ())
+    _, edges = code_graph.extract(source, path)
+    explicit = _python_exports(tree)
+    symbols: list[Symbol] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            symbols.append(
+                Symbol(
+                    path,
+                    "function",
+                    node.name,
+                    node.lineno,
+                    _python_signature(node),
+                    exported=_is_exported(node.name, explicit),
+                    is_async=isinstance(node, ast.AsyncFunctionDef),
+                )
+            )
+            continue
+        if isinstance(node, ast.ClassDef):
+            class_exported = _is_exported(node.name, explicit)
+            symbols.append(
+                Symbol(
+                    path,
+                    "class",
+                    node.name,
+                    node.lineno,
+                    _python_class_detail(node),
+                    exported=class_exported,
+                )
+            )
+            for member in node.body:
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    symbols.append(
+                        Symbol(
+                            path,
+                            "method",
+                            member.name,
+                            member.lineno,
+                            _python_signature(member),
+                            owner=node.name,
+                            exported=class_exported
+                            and (
+                                not member.name.startswith("_")
+                                or member.name == "__init__"
+                            ),
+                            is_async=isinstance(member, ast.AsyncFunctionDef),
+                            binding=_binding(member),
+                        )
+                    )
+                elif isinstance(member, ast.AnnAssign):
+                    for name in _assigned_names(member):
+                        symbols.append(
+                            Symbol(
+                                path,
+                                "field",
+                                name,
+                                member.lineno,
+                                _python_value_detail(member, name),
+                                owner=node.name,
+                                exported=class_exported and not name.startswith("_"),
+                            )
+                        )
+                elif isinstance(member, ast.ClassDef):
+                    symbols.append(
+                        Symbol(
+                            path,
+                            "class",
+                            member.name,
+                            member.lineno,
+                            _python_class_detail(member),
+                            owner=node.name,
+                            exported=class_exported and not member.name.startswith("_"),
+                        )
+                    )
+            continue
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            for name in _assigned_names(node):
+                if name == "__all__":
+                    continue
+                symbols.append(
+                    Symbol(
+                        path,
+                        "constant" if name.isupper() else "value",
+                        name,
+                        node.lineno,
+                        _python_value_detail(node, name),
+                        exported=_is_exported(name, explicit),
+                    )
+                )
     references = tuple(
         edge.dst_name
         for edge in edges
@@ -145,7 +387,17 @@ def _python_facts(path: str, source: str) -> FileFacts:
         # all forty-seven files that call `.get()` on anything at all.
         if edge.kind == "imports" or (edge.kind == "calls" and "." not in edge.dst_raw)
     )
-    return FileFacts(path, symbols, references)
+    imports = tuple(
+        sorted(
+            (
+                ImportFact(path, node.lineno, _short(ast.unparse(node), 320))
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.Import, ast.ImportFrom))
+            ),
+            key=lambda item: (item.line, item.statement),
+        )
+    )
+    return FileFacts(path, tuple(symbols), references, imports)
 
 
 # One line-oriented pattern per declaration form TS/JS actually uses. A parser
@@ -161,18 +413,53 @@ def _python_facts(path: str, source: str) -> FileFacts:
 _TOP_LEVEL = r"^(?:export\s+(?:default\s+)?)?"
 _TS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("class", re.compile(_TOP_LEVEL + r"(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)")),
-    ("function", re.compile(_TOP_LEVEL + r"(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)")),
-    ("function", re.compile(_TOP_LEVEL + r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=>")),
+    (
+        "function",
+        re.compile(_TOP_LEVEL + r"(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)"),
+    ),
+    (
+        "function",
+        re.compile(
+            _TOP_LEVEL
+            + r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=>"
+        ),
+    ),
     ("type", re.compile(_TOP_LEVEL + r"(?:interface|type|enum)\s+([A-Za-z_$][\w$]*)")),
-    ("token", re.compile(_TOP_LEVEL + r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*[:=](?!.*=>)")),
+    (
+        "token",
+        re.compile(
+            _TOP_LEVEL + r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*[:=](?!.*=>)"
+        ),
+    ),
 )
 _TS_IMPORT = re.compile(r"""^\s*import\s+(?:(.+?)\s+from\s+)?['"]([^'"]+)['"]""")
 _TS_REQUIRE = re.compile(r"""require\(\s*['"]([^'"]+)['"]\s*\)""")
 
 
+def _typescript_detail(line: str, name: str, kind: str) -> str:
+    """The declaration tail that fixes a TS/JS caller's parameter spelling."""
+    declaration = line.strip().rstrip(";{ ")
+    if kind in ("class", "type"):
+        _, _, tail = declaration.partition(name)
+        detail = _short(tail, _MAX_SIGNATURE_CHARS)
+        return f" {detail}" if detail and not detail.startswith("(") else detail
+    if kind == "function":
+        function_match = re.search(
+            rf"\bfunction\s*\*?\s*{re.escape(name)}", declaration
+        )
+        if function_match is not None:
+            return _short(declaration[function_match.end() :], _MAX_SIGNATURE_CHARS)
+        _, separator, right = declaration.partition("=")
+        if separator:
+            right = re.sub(r"^\s*async\s+", "", right)
+            return _short(right.split("=>", 1)[0], _MAX_SIGNATURE_CHARS)
+    return ""
+
+
 def _typescript_facts(path: str, source: str) -> FileFacts:
     symbols: list[Symbol] = []
     references: list[str] = []
+    imports: list[ImportFact] = []
     for number, line in enumerate(source.splitlines(), start=1):
         if len(line) > 400:  # a minified or generated line names nothing useful
             continue
@@ -181,21 +468,36 @@ def _typescript_facts(path: str, source: str) -> FileFacts:
             clause, module = imported.groups()
             references.append(_module_leaf(module))
             references.extend(_TOKEN.findall(clause or ""))
+            imports.append(ImportFact(path, number, _short(line.strip(), 320)))
             continue
         for required in _TS_REQUIRE.findall(line):
             references.append(_module_leaf(required))
+            imports.append(ImportFact(path, number, _short(line.strip(), 320)))
         for kind, pattern in _TS_PATTERNS:
             found = pattern.match(line)
             if found is not None:
                 name = found.group(1)
+                exported = line.startswith("export ")
+                is_async = bool(re.search(r"\basync\b", line[: found.end() + 20]))
                 # A React component is a function whose name is capitalised;
                 # saying so is worth a word, because "which file owns the
                 # sidebar" is the question a UI task actually asks.
+                detail_kind = kind
                 if kind == "function" and name[:1].isupper():
                     kind = "component"
-                symbols.append(Symbol(path, kind, name, number))
+                symbols.append(
+                    Symbol(
+                        path,
+                        kind,
+                        name,
+                        number,
+                        _typescript_detail(line, name, detail_kind),
+                        exported=exported,
+                        is_async=is_async,
+                    )
+                )
                 break
-    return FileFacts(path, tuple(symbols), tuple(references))
+    return FileFacts(path, tuple(symbols), tuple(references), tuple(imports))
 
 
 _HTML_ID = re.compile(r"""\bid\s*=\s*['"]([^'"]+)['"]""")
@@ -290,7 +592,10 @@ def extract(path: str, source: str) -> FileFacts:
     # happens to declare a frequently-called helper collect 1,335 votes and win
     # every ranking regardless of the request.
     return FileFacts(
-        facts.path, facts.symbols, tuple(dict.fromkeys(facts.references))
+        facts.path,
+        facts.symbols,
+        tuple(dict.fromkeys(facts.references)),
+        tuple(dict.fromkeys(facts.imports)),
     )
 
 
@@ -340,7 +645,9 @@ def _personalisation(facts: Sequence[FileFacts], terms: set[str]) -> dict[str, f
             # the file the request named did not reach the top ten.
             score += 25.0 * len(path_parts & terms)
             score += 6.0 * sum(
-                1 for symbol in entry.symbols if symbol.name.lower().lstrip("#.") in terms
+                1
+                for symbol in entry.symbols
+                if symbol.name.lower().lstrip("#.") in terms
             )
         weights[entry.path] = score
     total = sum(weights.values()) or 1.0
@@ -390,7 +697,9 @@ def rank(facts: Sequence[FileFacts], terms: set[str] | None = None) -> dict[str,
             for owner in owners.get(reference.lower(), ()):
                 if owner == entry.path:
                     continue  # a file citing itself says nothing about importance
-                out_edges[entry.path][owner] = out_edges[entry.path].get(owner, 0.0) + 1.0
+                out_edges[entry.path][owner] = (
+                    out_edges[entry.path].get(owner, 0.0) + 1.0
+                )
 
     seed = _personalisation(facts, terms)
     scores = dict(seed)
@@ -521,6 +830,163 @@ def render(
                 tail += f", and {len(bare) - len(listed)} more"
             lines.append(tail)
     return "\n".join(lines)
+
+
+def _module_identifier(path: str) -> str:
+    """The import spelling implied by a source path."""
+    normalized = path.replace("\\", "/")
+    for suffix in (".pyi", ".tsx", ".jsx", ".mjs", ".cjs", ".py", ".ts", ".js"):
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+            break
+    if normalized.endswith("/__init__"):
+        normalized = normalized[: -len("/__init__")]
+    return normalized.replace("/", ".")
+
+
+def _interface_symbols(entry: FileFacts) -> list[Symbol]:
+    """Only names another file may legally compose."""
+    return [
+        symbol
+        for symbol in entry.symbols
+        if symbol.exported
+        and (not symbol.name.startswith("_") or symbol.name == "__init__")
+    ]
+
+
+def _interface_block(entry: FileFacts, role: str, max_chars: int) -> str:
+    """One file's public surface inside a strict per-file allocation."""
+    module = _module_identifier(entry.path)
+    importable = entry.path.rsplit(".", 1)[-1] in {
+        "py",
+        "pyi",
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs",
+    }
+    locator = f"import {module}" if importable else "source asset"
+    heading = f"{entry.path} [{role}; {locator}]"
+    if max_chars <= len(heading):
+        return _short(heading, max_chars)
+    lines = [heading]
+    used = len(heading)
+    symbols = _interface_symbols(entry)
+    imports = [] if role == "appkit public API" else list(entry.imports)
+    omitted_symbols = max(0, len(symbols) - _MAX_INTERFACE_SYMBOLS)
+    omitted_imports = max(0, len(imports) - _MAX_INTERFACE_IMPORTS)
+    symbols = symbols[:_MAX_INTERFACE_SYMBOLS]
+    imports = imports[:_MAX_INTERFACE_IMPORTS]
+
+    def append(line: str) -> bool:
+        nonlocal used
+        cost = len(line) + 1
+        # Keep enough room to state that something was omitted. The summary is
+        # more useful than one last clipped signature and makes truncation an
+        # explicit fact rather than an accidental implication.
+        if used + cost > max_chars:
+            return False
+        lines.append(line)
+        used += cost
+        return True
+
+    if symbols:
+        append("  public:")
+        for index, symbol in enumerate(symbols):
+            if not append(f"    {symbol.line:>5}  {symbol.render_interface()}"):
+                omitted_symbols += len(symbols) - index
+                break
+    if imports:
+        append("  imports:")
+        for index, imported in enumerate(imports):
+            if not append(f"    {imported.line:>5}  {imported.statement}"):
+                omitted_imports += len(imports) - index
+                break
+    omitted = omitted_symbols + omitted_imports
+    if omitted:
+        summary = f"    … {omitted} more import/interface line(s) omitted"
+        # If the last successful detail consumed the summary room, trade it for
+        # the honest omission count.
+        while len(lines) > 1 and used + len(summary) + 1 > max_chars:
+            removed = lines.pop()
+            used -= len(removed) + 1
+        append(summary)
+    return "\n".join(lines)
+
+
+def render_interfaces(
+    facts: Sequence[FileFacts],
+    *,
+    target_path: str,
+    dependency_paths: Sequence[str] = (),
+    max_chars: int = 6_000,
+) -> str:
+    """Exact imports and public signatures for one planned file or repair.
+
+    The ranked repo map answers *where should I look?* This view answers the
+    narrower directed-coder question: *what names may this file import and how
+    are they called?* It intentionally includes only the target, earlier plan
+    dependencies, and Metis-owned ``appkit`` modules. Every detail is parsed
+    from current source bytes; no model or hand-maintained API summary is
+    involved.
+    """
+    if max_chars <= 0 or not target_path:
+        return ""
+    by_path = {entry.path: entry for entry in facts}
+    dependencies = [
+        path
+        for path in dict.fromkeys(str(item) for item in dependency_paths)
+        if path != target_path and path in by_path
+    ]
+    appkit = sorted(
+        path
+        for path in by_path
+        if path.startswith("appkit/")
+        and path not in dependencies
+        and path != target_path
+    )
+    ordered: list[tuple[FileFacts, str]] = []
+    if target_path in by_path:
+        ordered.append((by_path[target_path], "current target contract"))
+    ordered.extend((by_path[path], "earlier dependency") for path in dependencies)
+    ordered.extend((by_path[path], "appkit public API") for path in appkit)
+
+    header = (
+        f"Exact interface map for target {target_path} "
+        "(machine-derived from current disk + staged overlay):"
+    )
+    target_status = (
+        "Target exists: preserve its public names and imports while repairing it."
+        if target_path in by_path
+        else "Target is new: compose only the dependency/appkit names listed below."
+    )
+    preamble = header + "\n" + target_status
+    if len(preamble) >= max_chars:
+        return _short(preamble, max_chars)
+    if not ordered:
+        return preamble
+
+    remaining = max_chars - len(preamble) - 2
+    # Equal allocations guarantee that a wide target cannot crowd out every
+    # appkit module or earlier dependency. A block may use less than its share;
+    # the final join still obeys the hard total bound.
+    per_file = max(180, remaining // len(ordered))
+    blocks = [_interface_block(entry, role, per_file) for entry, role in ordered]
+    output = preamble
+    omitted_files = 0
+    for block in blocks:
+        candidate = output + "\n\n" + block
+        if len(candidate) > max_chars:
+            omitted_files += 1
+            continue
+        output = candidate
+    if omitted_files:
+        tail = f"\n… {omitted_files} interface file(s) omitted by the character budget."
+        if len(output) + len(tail) <= max_chars:
+            output += tail
+    return output
 
 
 def build(

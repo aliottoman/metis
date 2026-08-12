@@ -6,7 +6,12 @@ from fastapi.testclient import TestClient
 def test_customer_capture_review_save_and_markdown_output(client: TestClient) -> None:
     created = client.post(
         "/api/v1/customers",
-        json={"name": "Acme", "aliases": ["ACME"], "industry": "Retail", "region": "UAE"},
+        json={
+            "name": "Acme",
+            "aliases": ["ACME"],
+            "industry": "Retail",
+            "region": "UAE",
+        },
     )
     assert created.status_code == 201
     account_id = created.json()["id"]
@@ -52,7 +57,10 @@ def test_customer_capture_review_save_and_markdown_output(client: TestClient) ->
     assert analyzed.status_code == 200
     proposal = analyzed.json()
     assert proposal["status"] == "review"
-    assert proposal["extraction"]["actions"][0]["description"] == "Ali to send sizing guidance."
+    assert (
+        proposal["extraction"]["actions"][0]["description"]
+        == "Ali to send sizing guidance."
+    )
 
     saved = client.put(
         f"/api/v1/customers/proposals/{proposal['id']}/save",
@@ -68,7 +76,10 @@ def test_customer_capture_review_save_and_markdown_output(client: TestClient) ->
 
     tracker = client.put(
         "/api/v1/customer-settings",
-        json={"tracker_url": "https://company.example/activity", "activity_template": ""},
+        json={
+            "tracker_url": "https://company.example/activity",
+            "activity_template": "",
+        },
     )
     assert tracker.status_code == 200
     output = client.post(
@@ -125,7 +136,10 @@ def test_customer_win_lifecycle_and_dashboard_tracker(client: TestClient) -> Non
     assert dashboard["total_yearly_arr"] == 42000
     assert dashboard["wins_by_service"]["DAC"] == 1
     assert dashboard["wins_by_service"]["On-demand"] == 1
-    assert dashboard["recent_wins"][0]["account_name"] in {"Northwind Authority", "Harbor Health"}
+    assert dashboard["recent_wins"][0]["account_name"] in {
+        "Northwind Authority",
+        "Harbor Health",
+    }
 
     detail = client.get(f"/api/v1/customers/{first_id}").json()
     assert len(detail["wins"]) == 1
@@ -170,13 +184,17 @@ def test_delete_customer_removes_account_scoped_data(client: TestClient) -> None
     deleted = client.delete(f"/api/v1/customers/{account_id}")
     assert deleted.status_code == 204
     assert client.get(f"/api/v1/customers/{account_id}").status_code == 404
-    assert account_id not in {item["id"] for item in client.get("/api/v1/customers").json()}
+    assert account_id not in {
+        item["id"] for item in client.get("/api/v1/customers").json()
+    }
 
 
 def test_dac_shape_alone_counts_as_a_dac_win(client: TestClient) -> None:
     """The record-win form offers the DAC shape as the way to mark a DAC win, so
     a shape with no explicit DAC service tag must still reach the tracker tile."""
-    account_id = client.post("/api/v1/customers", json={"name": "Shape only"}).json()["id"]
+    account_id = client.post("/api/v1/customers", json={"name": "Shape only"}).json()[
+        "id"
+    ]
     recorded = client.post(
         f"/api/v1/customers/{account_id}/wins",
         json={
@@ -191,10 +209,14 @@ def test_dac_shape_alone_counts_as_a_dac_win(client: TestClient) -> None:
     assert dashboard["dac_wins"] == 1
 
 
-def test_win_dates_are_stored_as_utc_so_ordering_is_chronological(client: TestClient) -> None:
+def test_win_dates_are_stored_as_utc_so_ordering_is_chronological(
+    client: TestClient,
+) -> None:
     """won_at rows are compared as text, so a preserved +04:00 offset would sort
     against a UTC row lexicographically rather than chronologically."""
-    account_id = client.post("/api/v1/customers", json={"name": "Ordering"}).json()["id"]
+    account_id = client.post("/api/v1/customers", json={"name": "Ordering"}).json()[
+        "id"
+    ]
     # 2026-01-01T00:00+04:00 is 2025-12-31T20:00Z — earlier than the second win.
     earlier = client.post(
         f"/api/v1/customers/{account_id}/wins",
@@ -208,14 +230,22 @@ def test_win_dates_are_stored_as_utc_so_ordering_is_chronological(client: TestCl
     # Normalized to UTC on the way in, not kept at its original +04:00 offset.
     assert earlier.json()["won_at"] == "2025-12-31T20:00:00Z"
 
-    titles = [item["title"] for item in client.get(f"/api/v1/customers/{account_id}").json()["wins"]]
+    titles = [
+        item["title"]
+        for item in client.get(f"/api/v1/customers/{account_id}").json()["wins"]
+    ]
     assert titles == ["UTC win", "Gulf-offset win"], titles
-    recent = [item["title"] for item in client.get("/api/v1/customers/dashboard").json()["recent_wins"]]
+    recent = [
+        item["title"]
+        for item in client.get("/api/v1/customers/dashboard").json()["recent_wins"]
+    ]
     assert recent[:2] == ["UTC win", "Gulf-offset win"], recent
 
 
 def test_naive_win_date_is_read_as_utc(client: TestClient) -> None:
-    account_id = client.post("/api/v1/customers", json={"name": "Naive date"}).json()["id"]
+    account_id = client.post("/api/v1/customers", json={"name": "Naive date"}).json()[
+        "id"
+    ]
     recorded = client.post(
         f"/api/v1/customers/{account_id}/wins",
         json={"title": "Date only", "won_at": "2025-12-30T00:00:00"},

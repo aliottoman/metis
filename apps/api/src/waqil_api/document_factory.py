@@ -18,6 +18,7 @@ Rendering degrades rather than fails: a table with no columns is skipped, an
 empty section becomes a heading, and a document with no sections at all still
 produces a valid title page.
 """
+
 from __future__ import annotations
 
 import re
@@ -25,6 +26,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 
 from .contracts import DocumentOutlineV1
+from .prompt_scope import user_instruction
 
 # The house style. One palette, one type scale, applied by the renderer so no
 # two documents can disagree about what Metis output looks like.
@@ -76,12 +78,12 @@ def is_explicit_document_request(prompt: str) -> bool:
 
     Conservative on purpose, in the same spirit as the toolify and web
     signals: the user asking a question about decks must never cause one to
-    be built."""
-    return bool(_DOCUMENT_REQUEST.search(prompt))
+    be built — nor a meeting note they pasted that mentions building one."""
+    return bool(_DOCUMENT_REQUEST.search(user_instruction(prompt)))
 
 
 def requested_format(prompt: str) -> str:
-    """"pptx" or "pdf" for this prompt. Slides win ties — a request naming
+    """ "pptx" or "pdf" for this prompt. Slides win ties — a request naming
     both ("a deck I can send as a PDF") is still fundamentally a deck."""
     if _PPTX_WORDS.search(prompt):
         return "pptx"
@@ -188,7 +190,9 @@ def _render_pptx(outline: DocumentOutlineV1) -> bytes:
         fill.fore_color.rgb = RGBColor(*PAPER)
 
     def textbox(slide, left, top, width, height):
-        box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
+        box = slide.shapes.add_textbox(
+            Inches(left), Inches(top), Inches(width), Inches(height)
+        )
         frame = box.text_frame
         frame.word_wrap = True
         return frame
@@ -225,7 +229,8 @@ def _render_pptx(outline: DocumentOutlineV1) -> bytes:
 
         top = 1.9
         prose = "\n".join(
-            block.text for block in split_body(section.body)
+            block.text
+            for block in split_body(section.body)
             if isinstance(block, TextBlock)
         )
         if prose:
@@ -238,7 +243,9 @@ def _render_pptx(outline: DocumentOutlineV1) -> bytes:
         if section.bullets:
             bullets = textbox(slide, 0.9, top, 11.5, 4.0)
             for index, bullet in enumerate(section.bullets):
-                paragraph = bullets.paragraphs[0] if index == 0 else bullets.add_paragraph()
+                paragraph = (
+                    bullets.paragraphs[0] if index == 0 else bullets.add_paragraph()
+                )
                 paragraph.space_after = Pt(10)
                 run = paragraph.add_run()
                 run.text = f"•  {bullet}"
@@ -315,32 +322,51 @@ def _render_pdf(outline: DocumentOutlineV1) -> bytes:
         return colors.Color(value[0] / 255, value[1] / 255, value[2] / 255)
 
     title_style = ParagraphStyle(
-        "MetisTitle", fontName="Helvetica-Bold", fontSize=24, leading=29,
-        textColor=rgb(INK), spaceAfter=4,
+        "MetisTitle",
+        fontName="Helvetica-Bold",
+        fontSize=24,
+        leading=29,
+        textColor=rgb(INK),
+        spaceAfter=4,
     )
     subtitle_style = ParagraphStyle(
-        "MetisSubtitle", fontName="Helvetica", fontSize=11.5, leading=16,
-        textColor=rgb(MUTED), spaceAfter=10,
+        "MetisSubtitle",
+        fontName="Helvetica",
+        fontSize=11.5,
+        leading=16,
+        textColor=rgb(MUTED),
+        spaceAfter=10,
     )
     heading_style = ParagraphStyle(
-        "MetisHeading", fontName="Helvetica-Bold", fontSize=13.5, leading=18,
-        textColor=rgb(INK), spaceBefore=16, spaceAfter=6,
+        "MetisHeading",
+        fontName="Helvetica-Bold",
+        fontSize=13.5,
+        leading=18,
+        textColor=rgb(INK),
+        spaceBefore=16,
+        spaceAfter=6,
     )
     body_style = ParagraphStyle(
-        "MetisBody", fontName="Helvetica", fontSize=10.5, leading=15.5,
-        textColor=rgb(INK), alignment=TA_LEFT, spaceAfter=6,
+        "MetisBody",
+        fontName="Helvetica",
+        fontSize=10.5,
+        leading=15.5,
+        textColor=rgb(INK),
+        alignment=TA_LEFT,
+        spaceAfter=6,
     )
     source_style = ParagraphStyle(
-        "MetisSource", fontName="Helvetica", fontSize=8.5, leading=12.5,
+        "MetisSource",
+        fontName="Helvetica",
+        fontSize=8.5,
+        leading=12.5,
         textColor=rgb(MUTED),
     )
 
     def escape(text: str) -> str:
         """Platypus reads a paragraph as mini-HTML, so unescaped user text can
         break the render (or silently vanish) on a stray angle bracket."""
-        return (
-            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        )
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     story: list = [
         Paragraph(escape(outline.title or "Untitled"), title_style),
@@ -358,14 +384,28 @@ def _render_pdf(outline: DocumentOutlineV1) -> bytes:
                 continue
             if not block.columns:
                 continue
-            data = [[Paragraph(f"<b>{escape(label)}</b>", body_style) for label in block.columns]]
-            data += [[Paragraph(escape(cell), body_style) for cell in row] for row in block.rows]
+            data = [
+                [
+                    Paragraph(f"<b>{escape(label)}</b>", body_style)
+                    for label in block.columns
+                ]
+            ]
+            data += [
+                [Paragraph(escape(cell), body_style) for cell in row]
+                for row in block.rows
+            ]
             table = Table(data, hAlign="LEFT", repeatRows=1)
             table.setStyle(
                 TableStyle(
                     [
                         ("LINEBELOW", (0, 0), (-1, 0), 0.9, rgb(ACCENT)),
-                        ("LINEBELOW", (0, 1), (-1, -2), 0.4, colors.Color(0.85, 0.84, 0.82)),
+                        (
+                            "LINEBELOW",
+                            (0, 1),
+                            (-1, -2),
+                            0.4,
+                            colors.Color(0.85, 0.84, 0.82),
+                        ),
                         ("VALIGN", (0, 0), (-1, -1), "TOP"),
                         ("LEFTPADDING", (0, 0), (-1, -1), 0),
                         ("RIGHTPADDING", (0, 0), (-1, -1), 10),
@@ -379,9 +419,7 @@ def _render_pdf(outline: DocumentOutlineV1) -> bytes:
             story.append(
                 ListFlowable(
                     [
-                        ListItem(
-                            Paragraph(escape(bullet), body_style), leftIndent=12
-                        )
+                        ListItem(Paragraph(escape(bullet), body_style), leftIndent=12)
                         for bullet in section.bullets
                     ],
                     bulletType="bullet",

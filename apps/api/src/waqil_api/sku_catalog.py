@@ -15,6 +15,7 @@ overwrite a rate someone confirmed, and a rate edit can never invent a SKU.
 
 Only a SKU that appears in *both* can produce a dollar figure.
 """
+
 from __future__ import annotations
 
 import json
@@ -235,6 +236,10 @@ class SkuCatalog:
             names = [*rate.aliases]
             if rate.part_number:
                 names.append(rate.part_number)
-            if any(re.search(rf"\b{re.escape(_normalize(n))}\b", haystack) for n in names if n):
+            if any(
+                re.search(rf"\b{re.escape(_normalize(n))}\b", haystack)
+                for n in names
+                if n
+            ):
                 found.append(rate)
         return found

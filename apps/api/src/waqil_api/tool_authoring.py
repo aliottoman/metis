@@ -13,6 +13,7 @@ many tools never generalizes the trust boundary: every buildable tool draws its
 capabilities from this menu, and the global broker-budget ceiling is enforced at
 hardening time so no definition can ever be stored asking for more.
 """
+
 from __future__ import annotations
 
 import re
@@ -141,17 +142,47 @@ _TEXT_SUMMARY = Archetype(
         "summary card",
     ),
     disqualifiers=(
-        "calculat", "comput", "parse", "parsing", "total", "subtotal", "sum of",
-        "vat", "tax", "count", "tally", "invoice", "amount", "price", "cost",
-        "percent", "rate", "score", "estimate", "convert", "formula",
+        "calculat",
+        "comput",
+        "parse",
+        "parsing",
+        "total",
+        "subtotal",
+        "sum of",
+        "vat",
+        "tax",
+        "count",
+        "tally",
+        "invoice",
+        "amount",
+        "price",
+        "cost",
+        "percent",
+        "rate",
+        "score",
+        "estimate",
+        "convert",
+        "formula",
     ),
     # This template reads a README or project text and returns a project card.
     # A request has to be about such a document for it to fit: on a bare "a tool
     # that summarises things" it built a project-card tool that then rendered
     # "Untitled Project" three times over.
     required_context=(
-        "readme", "project", "repo", "repository", "codebase", "document",
-        "doc ", "docs", "file", "page", "article", "text", "card", "overview",
+        "readme",
+        "project",
+        "repo",
+        "repository",
+        "codebase",
+        "document",
+        "doc ",
+        "docs",
+        "file",
+        "page",
+        "article",
+        "text",
+        "card",
+        "overview",
     ),
     default_name="Project Summary Card",
     default_description=(
@@ -311,7 +342,10 @@ _CODE_AUTHORING = Archetype(
     eval_fixtures=(
         EvalFixture(
             name="runs-and-returns-object",
-            tool_input={"text": "the quick brown fox jumps over the lazy dog", "prompt": "do the task"},
+            tool_input={
+                "text": "the quick brown fox jumps over the lazy dog",
+                "prompt": "do the task",
+            },
             broker_reply="ok",
             expected_properties=["output_matches_contract"],
         ),

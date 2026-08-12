@@ -59,6 +59,7 @@ import type {
   RecoverableRun,
   RiskLevel,
   RunHandle,
+  RunRecord,
   ToolDefinitionBuild,
   ToolDefinitionProposal,
   ToolDefinitionRecord,
@@ -505,6 +506,11 @@ export async function getRunResult(runId: string): Promise<Record<string, unknow
     `${API_PREFIX}/runs/${encodeURIComponent(runId)}`,
   );
   return run.result ?? {};
+}
+
+/** Lightweight run status for the app shell's cross-page completion signal. */
+export async function getRunRecord(runId: string): Promise<RunRecord> {
+  return request<RunRecord>(`${API_PREFIX}/runs/${encodeURIComponent(runId)}`);
 }
 
 function normalizeApproval(value: unknown): RecoverableRun["approval"] {
@@ -970,6 +976,7 @@ export async function getHealth(): Promise<HealthSnapshot> {
   const ollama = asRecord(item.ollama);
   const details = asRecord(item.details);
   const model = asRecord(details.model);
+  const projectCoding = asRecord(details.project_coding_engine);
   const modelReachable = typeof model.reachable === "boolean" ? model.reachable : undefined;
   const configuredModels = asRecord(model.configured);
   const configuredAvailable = asRecord(model.configured_available);
@@ -992,6 +999,15 @@ export async function getHealth(): Promise<HealthSnapshot> {
       : listFrom(item.models).length
         ? listFrom(item.models).map(normalizeModel)
         : [],
+    project_coding_engine: Object.keys(projectCoding).length
+      ? {
+          configured: stringValue(projectCoding.configured, "unknown"),
+          ready: projectCoding.ready === true,
+          sidecar_built: projectCoding.sidecar_built === true,
+          sidecar_readable: projectCoding.sidecar_readable === true,
+          reason: projectCoding.reason ? stringValue(projectCoding.reason) : undefined,
+        }
+      : undefined,
   };
 }
 
@@ -1231,6 +1247,9 @@ function normalizeModelPreference(value: unknown): ModelPreference {
     oci_available: item.oci_available === true,
     cohere_available: item.cohere_available === true,
     cline_available: item.cline_available === true,
+    cline_models: listFrom(item.cline_models)
+      .map((entry) => stringValue(entry))
+      .filter(Boolean),
   };
 }
 
@@ -1865,7 +1884,7 @@ export async function approveAsset(assetId: string): Promise<AssetV1> {
 }
 
 /**
- * Draft .metis/asset.json with Command A+ for an asset that has none.
+ * Draft .metis/asset.json with the selected model for an asset that has none.
  *
  * Generation is not trust: the result lands as launch_configured and NOT
  * launch_approved, so the fingerprint review still gates the first start.
@@ -2003,4 +2022,60 @@ export async function decideAnswer(
     method: "POST",
     body: JSON.stringify({ status, supersedes }),
   });
+}
+
+export type ProjectProtections = {
+  protected_files: string[];
+  resolved: string[];
+  unmatched: string[];
+};
+
+export async function getProjectProtections(
+  projectId: string,
+): Promise<ProjectProtections> {
+  return normalizeProtections(
+    await request<unknown>(`${API_PREFIX}/projects/${projectId}/protections`),
+  );
+}
+
+export async function setProjectProtections(
+  projectId: string,
+  protectedFiles: string[],
+): Promise<ProjectProtections> {
+  return normalizeProtections(
+    await request<unknown>(`${API_PREFIX}/projects/${projectId}/protections`, {
+      method: "PUT",
+      body: JSON.stringify({ protected_files: protectedFiles }),
+    }),
+  );
+}
+
+/** Parse one patterns-per-line editor value into the stored list. */
+export function parseProtectionPatterns(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/** A pattern the API will refuse, named before the user tries to save it. */
+export function invalidProtectionPatterns(patterns: string[]): string[] {
+  return patterns.filter(
+    (item) => item.startsWith("/") || item.split("/").includes(".."),
+  );
+}
+
+function normalizeProtections(response: unknown): ProjectProtections {
+  const item = asRecord(unwrap(response));
+  const list = (key: string): string[] =>
+    Array.isArray(item[key]) ? (item[key] as unknown[]).map(String) : [];
+  return {
+    protected_files: list("protected_files"),
+    resolved: list("resolved"),
+    unmatched: list("unmatched"),
+  };
 }

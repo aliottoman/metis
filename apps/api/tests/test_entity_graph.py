@@ -21,7 +21,10 @@ def test_parses_clean_json() -> None:
         ("Metis", "project"),
         ("Ali", "person"),
     }
-    assert (result.relations[0].source, result.relations[0].relation) == ("Ali", "builds")
+    assert (result.relations[0].source, result.relations[0].relation) == (
+        "Ali",
+        "builds",
+    )
 
 
 def test_strips_code_fence_and_prose() -> None:
@@ -55,4 +58,6 @@ def test_incomplete_records_are_skipped() -> None:
     )
     result = parse(raw)
     assert [e.name for e in result.entities] == ["Valid"]  # nameless entity skipped
-    assert [r.relation for r in result.relations] == ["knows"]  # relationless edge skipped
+    assert [r.relation for r in result.relations] == [
+        "knows"
+    ]  # relationless edge skipped

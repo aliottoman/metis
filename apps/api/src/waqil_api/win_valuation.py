@@ -16,6 +16,7 @@ and editable — but it cannot invent a price, a SKU, or a total.
 The result is always a *proposal*. It is stored apart from `yearly_arr` and
 only becomes the win's figure when the user accepts it.
 """
+
 from __future__ import annotations
 
 import json
@@ -100,7 +101,9 @@ class WinValuationService:
         )
         return self.to_contract(row)
 
-    async def accept(self, win_id: str, yearly_arr: float | None = None) -> WinValuationV1:
+    async def accept(
+        self, win_id: str, yearly_arr: float | None = None
+    ) -> WinValuationV1:
         """Promote the estimate — or a corrected figure — to the win's ARR."""
         row = await self.database.get_win_valuation(win_id)
         if row is None:
@@ -212,9 +215,7 @@ class WinValuationService:
 
     # -- pricing ---------------------------------------------------------
 
-    def _price(
-        self, raw_lines: Any
-    ) -> tuple[list[WinValuationLineV1], list[str]]:
+    def _price(self, raw_lines: Any) -> tuple[list[WinValuationLineV1], list[str]]:
         """Turn the model's quantities into money. All arithmetic, no judgement."""
         lines: list[WinValuationLineV1] = []
         unpriced: list[str] = []
@@ -239,7 +240,9 @@ class WinValuationService:
                 continue
             if quantity <= 0:
                 continue
-            amount, basis = self._annualize(rate.unit, rate.value, quantity, utilization)
+            amount, basis = self._annualize(
+                rate.unit, rate.value, quantity, utilization
+            )
             entry = self.catalog.entry(rate.part_number) if rate.part_number else None
             lines.append(
                 WinValuationLineV1(

@@ -31,7 +31,9 @@ class _Events:
     def __init__(self) -> None:
         self.emitted: list[str] = []
 
-    async def emit(self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None):
+    async def emit(
+        self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None
+    ):
         self.emitted.append(event_type)
 
 
@@ -123,7 +125,9 @@ async def test_a_restatement_that_changed_a_figure_is_thrown_away(monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_a_tool_that_succeeds_first_time_is_never_asked_twice(monkeypatch) -> None:
+async def test_a_tool_that_succeeds_first_time_is_never_asked_twice(
+    monkeypatch,
+) -> None:
     plane = _plane(restatement=["Fixed Costs: 50000"], outputs=[ANSWERED])
     output, _meta = await _run(plane, monkeypatch)
     assert output == ANSWERED

@@ -17,6 +17,7 @@ deliberately boring tag-stripper. Both choices trade fidelity for zero new
 dependencies and zero API keys — good enough to ground an answer, and every
 failure degrades to fewer snippets rather than a dead turn.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -28,6 +29,7 @@ import httpx
 
 from .config import Settings
 from .contracts import KnowledgeSnippetV1
+from .prompt_scope import user_instruction
 
 _SEARCH_ENDPOINT = "https://html.duckduckgo.com/html/?q={query}"
 
@@ -67,14 +69,22 @@ _EXPLICIT_WEB = (
     ),
     re.compile(r"\b(?:search|scan|check)\s+the\s+(?:web|internet)\b", re.IGNORECASE),
     re.compile(r"\b(?:web|internet)\s+search\b", re.IGNORECASE),
-    re.compile(r"\b(?:google|research\s+online|search\s+online|look\s+online)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:google|research\s+online|search\s+online|look\s+online)\b", re.IGNORECASE
+    ),
 )
 
 
 def is_explicit_web_request(prompt: str) -> bool:
     """True when the prompt itself asks for the web — consent in the user's
-    own words, which the Auto scope honors without a scope switch."""
-    return any(pattern.search(prompt) for pattern in _EXPLICIT_WEB)
+    own words, which the Auto scope honors without a scope switch.
+
+    "Their own words" is meant literally, so the match is against the
+    instruction rather than anything pasted under it: an email quoted into the
+    chat that says "search online for a vendor" is text the user handed over,
+    not consent they gave."""
+    instruction = user_instruction(prompt)
+    return any(pattern.search(instruction) for pattern in _EXPLICIT_WEB)
 
 
 def _strip_html(fragment: str) -> str:
@@ -163,7 +173,9 @@ class WebResearch:
         response = await client.get(_SEARCH_ENDPOINT.format(query=query))
         response.raise_for_status()
         links = _RESULT_LINK.findall(response.text)
-        blurbs = [_strip_html(match) for match in _RESULT_SNIPPET.findall(response.text)]
+        blurbs = [
+            _strip_html(match) for match in _RESULT_SNIPPET.findall(response.text)
+        ]
         results: list[tuple[str, str, str]] = []
         seen: set[str] = set()
         for index, (href, title_html) in enumerate(links):
@@ -177,9 +189,7 @@ class WebResearch:
                 break
         return results
 
-    async def _read_page(
-        self, client: httpx.AsyncClient, url: str
-    ) -> tuple[str, str]:
+    async def _read_page(self, client: httpx.AsyncClient, url: str) -> tuple[str, str]:
         """(title, text) of one page. Non-HTML answers (PDFs, images) return
         empty text rather than binary soup in the prompt."""
         response = await client.get(url)

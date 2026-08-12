@@ -6,6 +6,7 @@ code is used, so an improvement is accepted only if it ALSO passes the gate (the
 reviewer can never widen capabilities); an unsafe verdict blocks the build; and
 any reviewer error/unavailability is fail-soft (the AST-gated original is used).
 """
+
 from __future__ import annotations
 
 import types
@@ -18,14 +19,18 @@ from waqil_api.control_plane import AuthoredReviewRejected, ControlPlane
 
 ORIGINAL = "def run(inputs, model):\n    return {'v': 1}\n"
 IMPROVED_VALID = "def run(inputs, model):\n    return {'v': 2, 'better': True}\n"
-IMPROVED_UNSAFE = "import os\n\n\ndef run(inputs, model):\n    return {'v': os.getcwd()}\n"
+IMPROVED_UNSAFE = (
+    "import os\n\n\ndef run(inputs, model):\n    return {'v': os.getcwd()}\n"
+)
 
 
 class _Events:
     def __init__(self) -> None:
         self.types: list[str] = []
 
-    async def emit(self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None):
+    async def emit(
+        self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None
+    ):
         self.types.append(event_type)
 
 
@@ -50,7 +55,9 @@ class _FakeReviewer:
 
 
 def _definition():
-    draft = ToolDefinitionDraftV1(name="Sentiment Tool", description="classify sentiment of text")
+    draft = ToolDefinitionDraftV1(
+        name="Sentiment Tool", description="classify sentiment of text"
+    )
     return tool_authoring.harden_draft(draft, slug="sentiment-tool", max_broker_calls=4)
 
 
@@ -71,7 +78,11 @@ _STATE = {"run_id": "r", "conversation_id": "c", "model_aliases": {}}
 
 @pytest.mark.asyncio
 async def test_valid_improvement_is_applied() -> None:
-    cp = _cp(_FakeReviewer({"safe": True, "reasons": ["tightened"], "improved_code": IMPROVED_VALID}))
+    cp = _cp(
+        _FakeReviewer(
+            {"safe": True, "reasons": ["tightened"], "improved_code": IMPROVED_VALID}
+        )
+    )
     code, review = await ControlPlane._author_and_review(cp, _STATE, _definition())
     assert code.strip() == IMPROVED_VALID.strip()
     assert review["applied"] is True and review["reviewed"] is True
@@ -82,7 +93,9 @@ async def test_valid_improvement_is_applied() -> None:
 async def test_improvement_that_fails_the_gate_is_rejected() -> None:
     # Grok's "improvement" adds `import os` → fails the AST profile → discarded,
     # the original AST-gated code is kept. The reviewer cannot widen capabilities.
-    cp = _cp(_FakeReviewer({"safe": True, "reasons": [], "improved_code": IMPROVED_UNSAFE}))
+    cp = _cp(
+        _FakeReviewer({"safe": True, "reasons": [], "improved_code": IMPROVED_UNSAFE})
+    )
     code, review = await ControlPlane._author_and_review(cp, _STATE, _definition())
     assert code.strip() == ORIGINAL.strip()
     assert review["applied"] is False
@@ -90,7 +103,11 @@ async def test_improvement_that_fails_the_gate_is_rejected() -> None:
 
 @pytest.mark.asyncio
 async def test_unsafe_verdict_blocks_the_build() -> None:
-    cp = _cp(_FakeReviewer({"safe": False, "reasons": ["exfiltrates data"], "improved_code": ""}))
+    cp = _cp(
+        _FakeReviewer(
+            {"safe": False, "reasons": ["exfiltrates data"], "improved_code": ""}
+        )
+    )
     with pytest.raises(AuthoredReviewRejected, match="unsafe"):
         await ControlPlane._author_and_review(cp, _STATE, _definition())
 

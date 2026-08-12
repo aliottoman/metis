@@ -57,6 +57,7 @@ uninstall-agent:
 
 test:
 	$(MAKE) verify-lock
+	pnpm --dir apps/cline-sidecar test
 	.venv/bin/pytest apps/api/tests tests
 	.venv/bin/pytest skills/reference-architecture-generator/tests
 	pnpm --dir apps/web test
@@ -65,6 +66,7 @@ verify-lock:
 	UV_CACHE_DIR="$(WAQIL_UV_CACHE)" UV_PROJECT_ENVIRONMENT="$(CURDIR)/.venv" .venv/bin/uv sync --project apps/api --frozen --extra dev --extra cloud --inexact --no-python-downloads --check
 
 build:
+	pnpm --dir apps/cline-sidecar build
 	pnpm --dir apps/web build
 
 # The native macOS app: builds with the Command Line Tools' SwiftPM (no

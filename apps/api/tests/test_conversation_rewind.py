@@ -40,7 +40,9 @@ async def test_a_rewind_hides_the_message_and_everything_after_it(tmp_path) -> N
         retired = await database.supersede_messages_from(conversation_id, ids[2])
         assert retired == 3  # the third turn and both messages after it
 
-        live = [message.content for message in await database.list_messages(conversation_id)]
+        live = [
+            message.content for message in await database.list_messages(conversation_id)
+        ]
         assert live == ["How many OCI nodes?", "Twelve, at the stated throughput."]
 
         # The model's own window, which is the one that actually matters: a
@@ -65,7 +67,8 @@ async def test_a_rewind_is_idempotent_and_keeps_the_rows(tmp_path) -> None:
         # take governed records with it.
         connection = sqlite3.connect(tmp_path / "twice.db")
         stored = connection.execute(
-            "SELECT count(*) FROM messages WHERE conversation_id = ?", (conversation_id,)
+            "SELECT count(*) FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
         ).fetchone()[0]
         connection.close()
         assert stored == 5
@@ -78,12 +81,16 @@ async def test_a_rewind_drops_the_rolling_summary(tmp_path) -> None:
     """The summary was written over text that is no longer in the thread."""
     database, conversation_id, ids = await _thread(tmp_path / "summary.db")
     try:
-        assert "Emirates" in await database.refresh_conversation_summary(conversation_id)
+        assert "Emirates" in await database.refresh_conversation_summary(
+            conversation_id
+        )
         await database.supersede_messages_from(conversation_id, ids[2])
         # Cleared outright rather than left to go stale: whatever is written
         # next is built from the live messages only.
         assert await database.get_conversation_summary(conversation_id) == ""
-        assert "Emirates" not in await database.refresh_conversation_summary(conversation_id)
+        assert "Emirates" not in await database.refresh_conversation_summary(
+            conversation_id
+        )
     finally:
         await database.close()
 
@@ -93,6 +100,8 @@ async def test_rewinding_an_unknown_message_is_refused(tmp_path) -> None:
     database, conversation_id, _ = await _thread(tmp_path / "missing.db")
     try:
         with pytest.raises(LookupError):
-            await database.supersede_messages_from(conversation_id, "msg_does_not_exist")
+            await database.supersede_messages_from(
+                conversation_id, "msg_does_not_exist"
+            )
     finally:
         await database.close()

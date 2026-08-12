@@ -33,6 +33,91 @@ def test_defaults_to_split_per_role_models(tmp_path) -> None:
     }
 
 
+def test_clinepass_catalog_is_backend_owned_and_excludes_paid_models(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    settings.cline_api_key = "subscription-key"
+    preference = ModelPreferenceStore(settings).load()
+    assert preference.cline_models[0] == "cline-pass/qwen3.7-plus"
+    assert "cline-pass/deepseek-v4-pro" in preference.cline_models
+    assert "cline-pass/kimi-k3" in preference.cline_models
+    assert all(model.startswith("cline-pass/") for model in preference.cline_models)
+
+
+def test_clinepass_defaults_have_role_specific_safety_ladders(tmp_path) -> None:
+    import json
+
+    settings = _settings(tmp_path)
+    settings.cline_api_key = "subscription-key"
+    store = ModelPreferenceStore(settings)
+    store.save("split", None, provider="cline")
+
+    aliases = store.resolve_aliases()
+    planners = json.loads(aliases["_chain_planner"])
+    coders = json.loads(aliases["_fallbacks_coder"])
+    assert [item["model"] for item in planners] == [
+        "cline-pass/qwen3.7-plus",
+        "cline-pass/glm-5.2",
+    ]
+    assert [item["model"] for item in coders] == [
+        "cline-pass/kimi-k3",
+        "cline-pass/kimi-k2.7-code",
+    ]
+    advertised = set(store.load().cline_models)
+    assert {item["model"] for item in planners + coders} <= advertised
+
+
+@pytest.mark.parametrize(
+    ("coder_primary", "expected_backups"),
+    [
+        ("cline-pass/kimi-k3", ["cline-pass/kimi-k2.7-code"]),
+        ("cline-pass/kimi-k2.7-code", ["cline-pass/kimi-k3"]),
+    ],
+)
+def test_synthesized_cline_ladders_do_not_repeat_env_selected_primaries(
+    tmp_path, coder_primary: str, expected_backups: list[str]
+) -> None:
+    import json
+
+    settings = _settings(tmp_path)
+    settings.cline_api_key = "subscription-key"
+    settings.cline_orchestrator_model = "cline-pass/glm-5.2"
+    settings.cline_coder_model = coder_primary
+    store = ModelPreferenceStore(settings)
+    store.save("split", None, provider="cline")
+
+    aliases = store.resolve_aliases()
+    planners = json.loads(aliases["_chain_planner"])
+    backups = json.loads(aliases["_fallbacks_coder"])
+
+    assert planners == [{"provider": "cline", "model": "cline-pass/glm-5.2"}]
+    assert [item["model"] for item in backups] == expected_backups
+    assert coder_primary not in {item["model"] for item in backups}
+
+
+def test_an_explicit_cline_planner_chain_is_never_rewritten(tmp_path) -> None:
+    import json
+
+    from waqil_api.contracts import RoleChainEntryV1
+
+    settings = _settings(tmp_path)
+    settings.cline_api_key = "subscription-key"
+    store = ModelPreferenceStore(settings)
+    store.save(
+        "split",
+        None,
+        provider="cline",
+        role_chains={
+            "planner": [
+                RoleChainEntryV1(provider="cline", model="cline-pass/qwen3.7-max")
+            ]
+        },
+    )
+
+    assert json.loads(store.resolve_aliases()["_chain_planner"]) == [
+        {"provider": "cline", "model": "cline-pass/qwen3.7-max"}
+    ]
+
+
 def test_pinning_one_model_routes_every_role_to_it(tmp_path) -> None:
     store = ModelPreferenceStore(_settings(tmp_path))
     saved = store.save("pinned", "qwen3.6:35b-mlx")
@@ -96,7 +181,9 @@ def test_oci_requires_explicit_configuration_and_pins_native_tools(tmp_path) -> 
     assert enabled.resolve_aliases()["_oci_tools"] == "code_interpreter,x_search"
 
 
-def test_the_grok_lane_kill_switch_disables_oci_without_touching_cohere(tmp_path) -> None:
+def test_the_grok_lane_kill_switch_disables_oci_without_touching_cohere(
+    tmp_path,
+) -> None:
     """One flag sidelines the Grok lane, re-enablable later: with credentials
     fully configured, grok_lane_enabled=False must read as unavailable — the
     same wire fact the whole web UI disables its Grok controls on — while
@@ -132,7 +219,9 @@ def test_the_grok_lane_kill_switch_disables_oci_without_touching_cohere(tmp_path
     assert enabled.oci_available is True
 
 
-def test_a_stale_oci_preference_collapses_to_local_when_the_lane_is_off(tmp_path) -> None:
+def test_a_stale_oci_preference_collapses_to_local_when_the_lane_is_off(
+    tmp_path,
+) -> None:
     on = Settings(
         _env_file=None,
         data_dir=tmp_path / "data",
@@ -201,12 +290,16 @@ def test_role_chain_validation_refuses_broken_ladders(tmp_path) -> None:
     # A hosted model measured to ignore tool calling.
     with _pytest.raises(ValueError, match="does not honour tool calling"):
         store.save(
-            "split", None,
-            role_chains={"coder": [RoleChainEntryV1(provider="local", model="minimax-m3:cloud")]},
+            "split",
+            None,
+            role_chains={
+                "coder": [RoleChainEntryV1(provider="local", model="minimax-m3:cloud")]
+            },
         )
     # A lane with no key behind it.
     with _pytest.raises(ValueError, match="Cohere, which is not configured"):
         store.save(
-            "split", None,
+            "split",
+            None,
             role_chains={"coder": [RoleChainEntryV1(provider="cohere")]},
         )

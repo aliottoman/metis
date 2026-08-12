@@ -125,10 +125,16 @@ def scaffold_note(*, has_oci: bool, has_web: bool = False) -> str:
         "Read configuration at use time; never at import time.",
         "- appkit.money: to_money, sum_money, within_cents, within_percent — "
         "Decimal arithmetic for amounts; a missing value stays None, never zero.",
-        "- appkit.uploads: await save_upload(upload) -> SavedUpload(path, mime, "
-        "size), .remove() in a finally. Sniffs the real MIME, enforces a size "
-        "cap, never trusts client filenames. FastAPI upload routes also need "
-        "python-multipart declared in requirements.",
+        "- appkit.uploads exports IMAGE_MIMES, DOCUMENT_MIMES, UploadError, "
+        "SavedUpload, sniff_mime(data), and await save_upload(upload, *, "
+        "max_bytes=10 * 1024 * 1024, allowed_mimes=IMAGE_MIMES) -> "
+        "SavedUpload(path, mime, size). The default is image-only. A document "
+        "route MUST call save_upload(upload, allowed_mimes=DOCUMENT_MIMES); "
+        "that policy accepts verified images, PDF, and plain UTF-8 text. Catch "
+        "UploadError and return HTTP 415, and call saved.remove() in a finally. "
+        "The helper sniffs bytes, enforces the size cap, and never trusts client "
+        "filenames. FastAPI upload routes also need python-multipart declared "
+        "in requirements.",
     ]
     if has_web:
         lines.append(

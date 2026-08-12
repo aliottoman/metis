@@ -40,9 +40,7 @@ def test_approval_interrupt_resumes_after_process_restart(settings) -> None:
         assert response.status_code == 200
         completed = _wait(restarted, accepted["run_id"], {"completed", "failed"})
         assert completed["status"] == "completed", completed
-        events = restarted.get(
-            f"/api/v1/runs/{accepted['run_id']}/events?after=0"
-        ).text
+        events = restarted.get(f"/api/v1/runs/{accepted['run_id']}/events?after=0").text
         assert "event: run.resumed" in events
         assert events.count("event: approval.applied") == 1
 
@@ -58,7 +56,9 @@ def test_decision_persisted_before_crash_is_resumed_on_startup(settings) -> None
         assert waiting["status"] == "awaiting_approval"
         recovery = first.get("/api/v1/runs?status=awaiting_approval").json()
         approval = next(
-            item["approval"] for item in recovery if item["run"]["id"] == accepted["run_id"]
+            item["approval"]
+            for item in recovery
+            if item["run"]["id"] == accepted["run_id"]
         )
         changed = first.portal.call(
             first.app.state.runtime.database.record_approval_decision,
@@ -71,9 +71,7 @@ def test_decision_persisted_before_crash_is_resumed_on_startup(settings) -> None
     with TestClient(create_app(settings)) as restarted:
         completed = _wait(restarted, accepted["run_id"], {"completed", "failed"})
         assert completed["status"] == "completed", completed
-        events = restarted.get(
-            f"/api/v1/runs/{accepted['run_id']}/events?after=0"
-        ).text
+        events = restarted.get(f"/api/v1/runs/{accepted['run_id']}/events?after=0").text
         assert "event: run.resumed" in events
         assert events.count("event: approval.applied") == 1
 
@@ -82,7 +80,9 @@ class SlowDeterministicProvider(DeterministicModelProvider):
     def __init__(self, started: threading.Event) -> None:
         self.started = started
 
-    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+    async def generate(
+        self, request, on_token=None, *, model_aliases=None, on_reasoning=None
+    ):
         self.started.set()
         await asyncio.Event().wait()
 
@@ -108,11 +108,11 @@ def test_graceful_shutdown_suspends_and_recovers_inflight_graph(settings) -> Non
         assert checkpoint is not None
 
     with TestClient(create_app(settings)) as restarted:
-        completed = _wait(restarted, accepted["run_id"], {"completed", "failed", "cancelled"})
+        completed = _wait(
+            restarted, accepted["run_id"], {"completed", "failed", "cancelled"}
+        )
         assert completed["status"] == "completed", completed
-        events = restarted.get(
-            f"/api/v1/runs/{accepted['run_id']}/events?after=0"
-        ).text
+        events = restarted.get(f"/api/v1/runs/{accepted['run_id']}/events?after=0").text
         assert "event: run.suspended" in events
         assert "event: run.recovered" in events
 
@@ -128,7 +128,9 @@ def test_runs_in_one_conversation_have_isolated_checkpoint_keys(settings) -> Non
             ).json()
             runs.append(accepted["run_id"])
         for run_id in runs:
-            assert _wait(client, run_id, {"completed", "failed"})["status"] == "completed"
+            assert (
+                _wait(client, run_id, {"completed", "failed"})["status"] == "completed"
+            )
         rows = client.portal.call(
             client.app.state.runtime.checkpointer.conn.execute_fetchall,
             "SELECT DISTINCT thread_id FROM checkpoints",

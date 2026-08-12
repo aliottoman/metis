@@ -3,6 +3,7 @@
 These drive a real chat turn end-to-end through the graph (plan -> synthesize ->
 ground_review -> {revise|publish}) with an injected model and corpus, so the
 edges, the loop counter, and the termination bound are all exercised for real."""
+
 from __future__ import annotations
 
 import json
@@ -47,7 +48,9 @@ class _ScriptedModel(DeterministicModelProvider):
         self.generate_calls = 0
         self.last_request = None
 
-    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+    async def generate(
+        self, request, on_token=None, *, model_aliases=None, on_reasoning=None
+    ):
         self.last_request = request
         index = min(self.generate_calls, len(self._answers) - 1)
         content = self._answers[index]
@@ -118,17 +121,20 @@ def _run_turn(
     ).json()
     completed = _wait(client, accepted["run_id"], {"completed", "failed"})
     events = client.get(f"/api/v1/runs/{accepted['run_id']}/events?after=0").text
-    messages = client.get(
-        f"/api/v1/conversations/{conversation['id']}/messages"
-    ).json()
+    messages = client.get(f"/api/v1/conversations/{conversation['id']}/messages").json()
     assistant = [m for m in messages if m["role"] == "assistant"][-1]
     return completed, {"events": events}, assistant["content"]
 
 
-def test_strong_retrieval_uncited_answer_triggers_one_bounded_revision(settings) -> None:
+def test_strong_retrieval_uncited_answer_triggers_one_bounded_revision(
+    settings,
+) -> None:
     # First answer cites nothing; strong retrieval (0.95) -> exactly one revision.
     model = _ScriptedModel(
-        ["Here is a summary with no citations.", "Per my notes [1], it is a local agent."]
+        [
+            "Here is a summary with no citations.",
+            "Per my notes [1], it is a local agent.",
+        ]
     )
     with TestClient(create_app(settings)) as client:
         completed, meta, content = _run_turn(client, model, _StubCorpus(score=0.95))
@@ -159,7 +165,9 @@ def test_weak_retrieval_does_not_force_a_revision(settings) -> None:
     assert "[1]" not in content
 
 
-def test_revision_loop_is_bounded_when_the_model_keeps_ignoring_sources(settings) -> None:
+def test_revision_loop_is_bounded_when_the_model_keeps_ignoring_sources(
+    settings,
+) -> None:
     # The model never cites; the loop must still stop at answer_max_revisions (1),
     # so synthesize runs at most twice — the bound lives in the graph, not the model.
     model = _ScriptedModel(["No citations ever."])  # same uncited answer every pass
@@ -196,7 +204,9 @@ def test_notion_only_scope_filters_retrieval_to_notion(settings) -> None:
     assert retrieved["knowledge_scope"] == "notion"
 
 
-def test_notion_only_scope_refuses_without_support_and_skips_generation(settings) -> None:
+def test_notion_only_scope_refuses_without_support_and_skips_generation(
+    settings,
+) -> None:
     model = _ScriptedModel(["This should never be generated."])
     corpus = _StubCorpus(score=0.95, empty=True)
     with TestClient(create_app(settings)) as client:
@@ -238,9 +248,7 @@ def _run_attachment_turn(
     ).json()
     completed = _wait(client, accepted["run_id"], {"completed", "failed"})
     events = client.get(f"/api/v1/runs/{accepted['run_id']}/events?after=0").text
-    messages = client.get(
-        f"/api/v1/conversations/{conversation['id']}/messages"
-    ).json()
+    messages = client.get(f"/api/v1/conversations/{conversation['id']}/messages").json()
     assistant = [m for m in messages if m["role"] == "assistant"][-1]
     return completed, events, assistant["content"]
 
@@ -311,7 +319,9 @@ def test_notion_only_scope_never_asks_the_model_to_cite_a_withheld_attachment(
     assert "attached document is the primary factual source" not in critique
 
 
-def test_attachment_is_primary_evidence_when_cloud_knowledge_lookup_fails(settings) -> None:
+def test_attachment_is_primary_evidence_when_cloud_knowledge_lookup_fails(
+    settings,
+) -> None:
     model = _ScriptedModel(["The attached launch code is ORCHID-73."])
     with TestClient(create_app(settings)) as client:
         runtime = client.app.state.runtime
@@ -337,9 +347,7 @@ def test_attachment_is_primary_evidence_when_cloud_knowledge_lookup_fails(settin
             },
         ).json()
         completed = _wait(client, accepted["run_id"], {"completed", "failed"})
-        events = client.get(
-            f"/api/v1/runs/{accepted['run_id']}/events?after=0"
-        ).text
+        events = client.get(f"/api/v1/runs/{accepted['run_id']}/events?after=0").text
 
     assert completed["status"] == "completed"
     assert model.last_request is not None

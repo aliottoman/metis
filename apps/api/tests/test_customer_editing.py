@@ -4,6 +4,7 @@ An extraction proposes; a person decides. These tests hold that line: every
 account-scoped record can be written, corrected, and removed without a model in
 the loop, and what the user writes is findable again from anywhere.
 """
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
@@ -62,7 +63,11 @@ def test_direct_notes_are_saved_edited_pinned_and_deleted(client: TestClient) ->
 
     edited = client.put(
         f"/api/v1/customers/notes/{note['id']}",
-        json={"title": "Standing context", "body": "Runs OCI Ashburn and Dubai.", "pinned": False},
+        json={
+            "title": "Standing context",
+            "body": "Runs OCI Ashburn and Dubai.",
+            "pinned": False,
+        },
     )
     assert edited.status_code == 200
     assert edited.json()["body"] == "Runs OCI Ashburn and Dubai."
@@ -99,7 +104,11 @@ def test_pinned_notes_reach_the_scoped_chat_context(client: TestClient) -> None:
     account_id = _account(client, "GlassHub")
     client.post(
         f"/api/v1/customers/{account_id}/notes",
-        json={"title": "Procurement", "body": "Only buys through the reseller.", "pinned": True},
+        json={
+            "title": "Procurement",
+            "body": "Only buys through the reseller.",
+            "pinned": True,
+        },
     )
     client.post(
         f"/api/v1/customers/{account_id}/notes",
@@ -137,7 +146,11 @@ def test_facts_actions_and_people_can_be_written_by_hand(client: TestClient) -> 
 
     action = client.post(
         f"/api/v1/customers/{account_id}/actions",
-        json={"description": "Send the DAC shape", "owner": "Ali", "due_at": "2026-08-10T00:00:00Z"},
+        json={
+            "description": "Send the DAC shape",
+            "owner": "Ali",
+            "due_at": "2026-08-10T00:00:00Z",
+        },
     )
     assert action.status_code == 201, action.text
     assert action.json()["status"] == "open"
@@ -184,14 +197,20 @@ def test_facts_actions_and_people_can_be_written_by_hand(client: TestClient) -> 
     assert len(detail["facts"]) == 1 and len(detail["actions"]) == 1
     assert len(detail["people"]) == 1
 
-    assert client.delete(f"/api/v1/customers/facts/{fact.json()['id']}").status_code == 204
+    assert (
+        client.delete(f"/api/v1/customers/facts/{fact.json()['id']}").status_code == 204
+    )
     assert client.delete(f"/api/v1/customers/actions/{action_id}").status_code == 204
     assert client.delete(f"/api/v1/customers/people/{person_id}").status_code == 204
     emptied = client.get(f"/api/v1/customers/{account_id}").json()
-    assert emptied["facts"] == [] and emptied["actions"] == [] and emptied["people"] == []
+    assert (
+        emptied["facts"] == [] and emptied["actions"] == [] and emptied["people"] == []
+    )
 
 
-def test_renaming_a_contact_onto_an_existing_name_is_refused(client: TestClient) -> None:
+def test_renaming_a_contact_onto_an_existing_name_is_refused(
+    client: TestClient,
+) -> None:
     account_id = _account(client, "Two contacts")
     first = client.post(
         f"/api/v1/customers/{account_id}/people", json={"name": "Sam"}
@@ -220,7 +239,11 @@ def test_a_captured_note_can_be_corrected_and_removed(client: TestClient) -> Non
 
     fixed = client.put(
         f"/api/v1/customers/sources/{source_id}",
-        json={"title": "Discovery call", "content": "Corrected note", "source_kind": "meeting"},
+        json={
+            "title": "Discovery call",
+            "content": "Corrected note",
+            "source_kind": "meeting",
+        },
     )
     assert fixed.status_code == 200, fixed.text
     assert fixed.json()["title"] == "Discovery call"
@@ -251,11 +274,18 @@ def test_search_spans_every_account_and_record_kind(client: TestClient) -> None:
     )
     client.post(
         f"/api/v1/customers/{first}/wins",
-        json={"title": "Command A DAC live", "brief": "Cohere models on a dedicated cluster."},
+        json={
+            "title": "Command A DAC live",
+            "brief": "Cohere models on a dedicated cluster.",
+        },
     )
     client.post(
         "/api/v1/customers/sources",
-        json={"account_id": second, "title": "Notes", "content": "Cohere embed v4 evaluated."},
+        json={
+            "account_id": second,
+            "title": "Notes",
+            "content": "Cohere embed v4 evaluated.",
+        },
     )
 
     found = client.get("/api/v1/customers/search", params={"q": "cohere"})
@@ -268,10 +298,14 @@ def test_search_spans_every_account_and_record_kind(client: TestClient) -> None:
     assert all(item["account_name"] for item in hits)
     assert any("rerank latency" in item["snippet"] for item in hits)
 
-    scoped = client.get("/api/v1/customers/search", params={"q": "Delta"}).json()["hits"]
+    scoped = client.get("/api/v1/customers/search", params={"q": "Delta"}).json()[
+        "hits"
+    ]
     assert [item["account_name"] for item in scoped] == ["Delta Logistics"]
 
-    assert client.get("/api/v1/customers/search", params={"q": "  "}).json()["hits"] == []
+    assert (
+        client.get("/api/v1/customers/search", params={"q": "  "}).json()["hits"] == []
+    )
 
 
 def test_search_treats_wildcards_as_literal_text(client: TestClient) -> None:
@@ -368,7 +402,12 @@ def test_a_self_authored_note_files_without_an_approval(client: TestClient) -> N
 def _capture(client: TestClient, account_id: str, content: str) -> str:
     created = client.post(
         "/api/v1/customers/sources",
-        json={"account_id": account_id, "source_kind": "note", "title": "Note", "content": content},
+        json={
+            "account_id": account_id,
+            "source_kind": "note",
+            "title": "Note",
+            "content": content,
+        },
     )
     assert created.status_code == 201, created.text
     return str(created.json()["id"])
@@ -378,14 +417,20 @@ def test_auto_analyze_extracts_a_fresh_note_on_a_cloud_pin(client: TestClient) -
     """On a cloud pin, a captured note is analyzed automatically into a review
     proposal (waiting → review) — no manual Analyze click, no facts written."""
     account_id = _account(client, "Aurora Systems")
-    source_id = _capture(client, account_id, "Agreed a 2xH100 DAC. Action: send pricing by Friday.")
+    source_id = _capture(
+        client, account_id, "Agreed a 2xH100 DAC. Action: send pricing by Friday."
+    )
 
     service = client.app.state.runtime.customers  # type: ignore[attr-defined]
     service._cloud_pinned = lambda: True  # pretend Command A+ is the pinned model
 
     client.portal.call(service.auto_analyze, source_id)  # type: ignore[attr-defined]
 
-    source = next(s for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"] if s["id"] == source_id)
+    source = next(
+        s
+        for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"]
+        if s["id"] == source_id
+    )
     assert source["status"] == "review"  # analyzed, now awaiting your approval
 
 
@@ -400,7 +445,11 @@ def test_auto_analyze_is_a_noop_without_a_cloud_pin(client: TestClient) -> None:
 
     client.portal.call(service.auto_analyze, source_id)  # type: ignore[attr-defined]
 
-    source = next(s for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"] if s["id"] == source_id)
+    source = next(
+        s
+        for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"]
+        if s["id"] == source_id
+    )
     assert source["status"] == "waiting"
 
 
@@ -416,7 +465,9 @@ def test_note_capture_reads_update_with_this_note_phrasing() -> None:
     )
     assert queue_update.is_note_capture_request("file it as the following note")
     assert queue_update.is_note_capture_request("note: bring back the 1xH100 shape")
-    assert not queue_update.is_note_capture_request("what did we do about the throttling?")
+    assert not queue_update.is_note_capture_request(
+        "what did we do about the throttling?"
+    )
     assert not queue_update.is_note_capture_request("summarize the last meeting notes")
 
 
@@ -428,27 +479,42 @@ def test_an_account_is_matched_by_its_acronym_not_only_its_full_name() -> None:
     from waqil_api import queue_update
 
     accounts = [
-        {"id": "mcit", "name": "Ministry of Communications and Information Technology (MCIT)"},
+        {
+            "id": "mcit",
+            "name": "Ministry of Communications and Information Technology (MCIT)",
+        },
         {"id": "shura", "name": "Shura Council (via MCIT)"},
         {"id": "tasmu", "name": "TASMU (MCIT)"},
         {"id": "qatar", "name": "Qatar Ministry of Communications"},
     ]
-    got = queue_update.candidate_accounts("add a note to MCIT: kickoff done", accounts, "")
+    got = queue_update.candidate_accounts(
+        "add a note to MCIT: kickoff done", accounts, ""
+    )
     assert got and got[0]["id"] == "mcit", "the ministry's own acronym must rank first"
     assert {a["id"] for a in got} == {"mcit", "shura", "tasmu"}
     # A bare question names no account, and a scoped chat needs no naming.
-    assert queue_update.candidate_accounts("what is the DAC status?", accounts, "") == []
-    assert queue_update.candidate_accounts("kickoff done", accounts, "tasmu")[0]["id"] == "tasmu"
+    assert (
+        queue_update.candidate_accounts("what is the DAC status?", accounts, "") == []
+    )
+    assert (
+        queue_update.candidate_accounts("kickoff done", accounts, "tasmu")[0]["id"]
+        == "tasmu"
+    )
 
 
-def test_resolve_account_is_confident_on_a_clear_acronym_and_defers_when_vague() -> None:
+def test_resolve_account_is_confident_on_a_clear_acronym_and_defers_when_vague() -> (
+    None
+):
     """Routing an unscoped message needs one answer, not a list: a clear acronym
     resolves to a single account (file it, auto-scope); a vague reference resolves
     to nothing (the planner asks); a scoped id always wins."""
     from waqil_api import queue_update
 
     accounts = [
-        {"id": "mcit", "name": "Ministry of Communications and Information Technology (MCIT)"},
+        {
+            "id": "mcit",
+            "name": "Ministry of Communications and Information Technology (MCIT)",
+        },
         {"id": "shura", "name": "Shura Council (via MCIT)"},
         {"id": "defense", "name": "Ministry of Defense (Saudi)"},
     ]
@@ -479,7 +545,9 @@ def test_a_scoped_note_files_instead_of_being_answered(client: TestClient) -> No
     control_plane.events.emit = _swallow  # type: ignore[attr-defined]
 
     # The agent reads the message and routes it to file_note.
-    async def route_to_file_note(_schema: object, **_kwargs: object) -> CustomerAgentStepV1:
+    async def route_to_file_note(
+        _schema: object, **_kwargs: object
+    ) -> CustomerAgentStepV1:
         return CustomerAgentStepV1(
             calls=[CustomerToolCallV1(name="file_note", title="Throttling finding")]
         )
@@ -533,16 +601,26 @@ def test_notion_pages_map_to_records_and_dedupe(client: TestClient) -> None:
     )
     filed = client.portal.call(service.ingest_notion_documents, [page])  # type: ignore[attr-defined]
     assert filed == 1
-    notion_sources = [s for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"] if s["source_kind"] == "notion"]
+    notion_sources = [
+        s
+        for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"]
+        if s["source_kind"] == "notion"
+    ]
     assert len(notion_sources) == 1 and notion_sources[0]["status"] == "review"
 
     # The ~12h re-sync of an unchanged page must add nothing.
     assert client.portal.call(service.ingest_notion_documents, [page]) == 0  # type: ignore[attr-defined]
-    notion_after = [s for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"] if s["source_kind"] == "notion"]
+    notion_after = [
+        s
+        for s in client.get(f"/api/v1/customers/{account_id}").json()["sources"]
+        if s["source_kind"] == "notion"
+    ]
     assert len(notion_after) == 1
 
 
-def test_notion_pages_without_a_clear_account_are_left_alone(client: TestClient) -> None:
+def test_notion_pages_without_a_clear_account_are_left_alone(
+    client: TestClient,
+) -> None:
     """A page that names no account (or several) stays knowledge-only."""
     from types import SimpleNamespace
 
@@ -550,5 +628,7 @@ def test_notion_pages_without_a_clear_account_are_left_alone(client: TestClient)
     service = client.app.state.runtime.customers  # type: ignore[attr-defined]
     service._cloud_pinned = lambda: True
 
-    generic = SimpleNamespace(title="Weekly planning notes", markdown="Some notes.", url="", page_id="p2")
+    generic = SimpleNamespace(
+        title="Weekly planning notes", markdown="Some notes.", url="", page_id="p2"
+    )
     assert client.portal.call(service.ingest_notion_documents, [generic]) == 0  # type: ignore[attr-defined]

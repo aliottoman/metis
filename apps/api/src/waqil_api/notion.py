@@ -8,6 +8,7 @@ The connector deliberately keeps Notion access separate from retrieval:
   consented corpus pipeline owns chunking, embeddings, reranking, and citations.
 * The secret remains local (mode 0600) and is never included in an API response.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -91,9 +92,7 @@ def _plain_text(items: Any) -> str:
     if not isinstance(items, list):
         return ""
     return "".join(
-        str(item.get("plain_text", ""))
-        for item in items
-        if isinstance(item, dict)
+        str(item.get("plain_text", "")) for item in items if isinstance(item, dict)
     ).strip()
 
 
@@ -139,9 +138,8 @@ class NotionApiClient:
         """Stay below Notion's average request budget during large syncs."""
         now = time.monotonic()
         if self._last_request_started_at is not None:
-            remaining = (
-                _REQUEST_INTERVAL_SECONDS
-                - (now - self._last_request_started_at)
+            remaining = _REQUEST_INTERVAL_SECONDS - (
+                now - self._last_request_started_at
             )
             if remaining > 0:
                 time.sleep(remaining)
@@ -340,9 +338,7 @@ class NotionService:
             last_error=config.get("last_error"),
         )
 
-    async def configure(
-        self, update: NotionConnectionUpdateV1
-    ) -> NotionConnectionV1:
+    async def configure(self, update: NotionConnectionUpdateV1) -> NotionConnectionV1:
         config = self._load()
         roots: list[str] = []
         for raw in update.root_page_ids:
@@ -375,9 +371,7 @@ class NotionService:
                 self._fetch_documents, token, roots
             )
             self._last_documents = documents
-            written, removed = await asyncio.to_thread(
-                self._materialize, documents
-            )
+            written, removed = await asyncio.to_thread(self._materialize, documents)
             config.update(
                 last_synced_at=_now(),
                 page_count=len(documents),
@@ -412,7 +406,9 @@ class NotionService:
         elif not source.consent:
             message += " Enable RAG indexing to embed and retrieve these pages."
         else:
-            message += " Cloud embeddings are unavailable, so the mirror was not indexed."
+            message += (
+                " Cloud embeddings are unavailable, so the mirror was not indexed."
+            )
         return NotionSyncResultV1(
             pages_fetched=len(documents),
             pages_written=written,

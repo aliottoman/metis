@@ -58,7 +58,9 @@ def test_write_tools_never_take_an_evidence_body_from_the_model() -> None:
     assert note_props == {"title"}, "file_note must not accept a body argument"
 
     activity_props = set(by_name[ct.RECORD_ACTIVITY]["parameters"]["properties"])
-    assert activity_props == set(), "record_activity must read the message from the host"
+    assert activity_props == set(), (
+        "record_activity must read the message from the host"
+    )
 
     apply_props = set(by_name[ct.APPLY_EXTRACTION]["parameters"]["properties"])
     assert apply_props == {"proposal_id"}, "apply_extraction only names which proposal"

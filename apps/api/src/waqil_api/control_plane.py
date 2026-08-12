@@ -4,8 +4,9 @@ import asyncio
 import hashlib
 import json
 import re
-from collections.abc import Mapping
-from datetime import UTC, datetime
+import time
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict, cast
@@ -16,8 +17,20 @@ from langgraph.types import Command, interrupt
 
 from .attachment_text import extract_attachment_text
 from .blob_store import BlobStore
+from .coding_contracts import (
+    HOST_CHECKS,
+    HostCheck,
+    HostCheckResultV1,
+    CodingCleanupHoldV1,
+    CodingCleanupStatus,
+    CodingSessionState,
+    CodingSessionV1,
+    TERMINAL_CODING_STATES,
+)
+from .coding_engine import CodingEngine, CodingSessionStore
 from .config import Settings
 from .contracts import (
+    AcceptanceScenarioV1,
     ApprovalDecisionV1,
     ApprovalRequestV1,
     ArchitectureSpecV1,
@@ -38,6 +51,7 @@ from .contracts import (
     PlanningRequestV1,
     PROJECT_READ_TOOLS,
     ProjectAgentStepV1,
+    MAX_PLAN_SCENARIOS,
     ProjectBuildPlanV1,
     ProjectToolCallV1,
     ProposalStatus,
@@ -78,6 +92,7 @@ from .model_provider import (
     ToolRoute,
     build_planning_attachment_evidence,
     classify_backend_unavailable,
+    classify_model_error,
     default_routing_catalog,
     drain_repairs,
     is_explicit_toolify_request,
@@ -94,7 +109,34 @@ from .project_scaffold import (
     wants_web_ui,
 )
 from .project_contracts import is_stylesheet
+from .project_direct_contract import build_direct_contract
+from .project_coding_engine import (
+    ProjectCodingCoordinator,
+    ProjectCodingError,
+    coding_provider,
+    direct_coding_prompt,
+    initial_coding_prompt,
+    repair_coding_prompt,
+)
+from .project_plan_validation import (
+    PlanValidation,
+    normalize_build_plan,
+    validate_effective_plan,
+)
+from .project_repair_routing import (
+    RepairRoute,
+    changed_unaffected_paths,
+    route_acceptance_finding,
+    staged_file_hashes,
+)
+from .project_slices import (
+    MAX_SLICE_FILES,
+    dependency_slice_prefix,
+    next_vertical_slice,
+    synthesize_single_slice,
+)
 from .project_workspace import ProjectWorkspaceError, VerificationNotApprovedError
+from .prompt_scope import user_instruction
 from .run_history import changes_from_trace
 from .policy import (
     ExecutionBoundary,
@@ -151,20 +193,42 @@ def _has_own_frontend(project_context: Mapping[str, Any]) -> bool:
     seeding was built for.
     """
     manifest = project_context.get("manifest")
-    tree = list((manifest or {}).get("file_tree") or []) if isinstance(manifest, dict) else []
+    tree = (
+        list((manifest or {}).get("file_tree") or [])
+        if isinstance(manifest, dict)
+        else []
+    )
     if not tree:
         return False
     paths = [str(path) for path in tree if not str(path).startswith("appkit/")]
     has_manifest = any(path.endswith("package.json") for path in paths)
     has_bundler = any(
         path.endswith(
-            ("vite.config.js", "vite.config.ts", "next.config.mjs", "next.config.js",
-             "webpack.config.js", "svelte.config.js", "angular.json")
+            (
+                "vite.config.js",
+                "vite.config.ts",
+                "next.config.mjs",
+                "next.config.js",
+                "webpack.config.js",
+                "svelte.config.js",
+                "angular.json",
+            )
         )
         for path in paths
     )
-    has_components = any(path.endswith((".jsx", ".tsx", ".vue", ".svelte")) for path in paths)
-    return has_manifest and (has_bundler or has_components)
+    has_components = any(
+        path.endswith((".jsx", ".tsx", ".vue", ".svelte")) for path in paths
+    )
+    # Framework-less FastAPI/Flask projects commonly own a complete static UI
+    # without package.json. Treat the cohesive HTML+CSS+JS bundle as an
+    # existing frontend too. A lone index.html remains deliberately
+    # insufficient, preserving the Streamlit-to-appkit conversion case.
+    has_static_bundle = (
+        any(path.endswith((".html", ".htm")) for path in paths)
+        and any(path.endswith(".css") for path in paths)
+        and any(path.endswith((".js", ".mjs")) for path in paths)
+    )
+    return (has_manifest and (has_bundler or has_components)) or has_static_bundle
 
 
 def _gaps_from_findings(errors: list[dict[str, str]]) -> dict[str, list[str]]:
@@ -184,7 +248,9 @@ def _gaps_from_findings(errors: list[dict[str, str]]) -> dict[str, list[str]]:
             # pluralisation is not a symbol name.
             if match.strip() in ("es", "s"):
                 continue
-            for name in (part.strip().strip("…").lstrip(".") for part in match.split(",")):
+            for name in (
+                part.strip().strip("…").lstrip(".") for part in match.split(",")
+            ):
                 if not name:
                     continue
                 if name.startswith("--"):
@@ -197,14 +263,215 @@ def _gaps_from_findings(errors: list[dict[str, str]]) -> dict[str, list[str]]:
     }
 
 
+def _merge_project_plan_revision(
+    previous: list[str], proposed: list[str], remove_files: list[str]
+) -> tuple[list[str], list[str]]:
+    """Merge a revision without treating an accidental subset as deletion.
+
+    A repair model commonly sees one or two failing files and returns those as
+    though they were the whole manifest.  Omission is therefore not deletion:
+    prior commitments remain in their original dependency order unless the
+    caller names them separately in ``remove_files``.  A genuinely complete
+    proposal may still reorder the retained paths.  An incomplete proposal is
+    treated as an additive delta, preserving the old order and appending new
+    paths in the order proposed.
+
+    Returns the merged manifest and the prior paths retained specifically
+    because the proposal omitted them.  The latter makes the host intervention
+    visible in trace evidence instead of silently rewriting the model's call.
+    """
+    removals = set(remove_files)
+    retained = [path for path in previous if path not in removals]
+    proposal = [path for path in proposed if path not in removals]
+    retained_omissions = [path for path in retained if path not in proposal]
+    if not retained_omissions:
+        return proposal, []
+
+    previous_set = set(previous)
+    additions = [path for path in proposal if path not in previous_set]
+    return [*retained, *additions], retained_omissions
+
+
+def _verifier_finding_signature(findings: list[dict[str, Any]]) -> str:
+    """Stable identity for the defects a repair is supposed to remove.
+
+    File bytes are not evidence that a repair worked. A live build changed
+    ``index.html`` successfully while leaving the verifier's exact finding
+    untouched, and the loop consequently kept the same coder forever. Sort the
+    semantic fields so a verifier changing only result order is still the same
+    outcome; any smaller or otherwise changed finding set is genuine progress
+    and gets a fresh allowance.
+    """
+
+    normalized = sorted(
+        {
+            (
+                str(item.get("path", "")),
+                str(item.get("error", "")),
+                str(item.get("severity", "")),
+                str(item.get("kind", "")),
+                str(item.get("rung", "")),
+            )
+            for item in findings
+        }
+    )
+    return hashlib.sha256(
+        json.dumps(normalized, ensure_ascii=False, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _staged_content_hash(staged: Mapping[str, Any], path: str) -> str:
+    """SHA-256 of one staged file's exact bytes, or "" when it is not staged."""
+
+    entry = staged.get(path)
+    content = entry.get("content") if isinstance(entry, Mapping) else None
+    if not isinstance(content, str):
+        return ""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _repairable_project_path(path: str) -> bool:
+    """Whether a verifier path belongs to code the project agent may edit.
+
+    ``appkit`` is a host-owned scaffold and the workspace deliberately refuses
+    model writes there.  Feeding one of its findings into a directed repair
+    therefore creates a guaranteed refusal loop.  Pathless findings are useful
+    on the review card, but cannot safely pin a file-editing model either.
+    """
+
+    candidate = str(path or "").strip()
+    parts = Path(candidate).parts
+    return bool(
+        candidate
+        and parts
+        and not Path(candidate).is_absolute()
+        and ".." not in parts
+        and parts[0] not in {".git", ".metis", "appkit"}
+    )
+
+
+def _repairable_verifier_findings(
+    findings: list[dict[str, Any]], known_paths: set[str]
+) -> list[dict[str, Any]]:
+    """Blocking findings with an exact current project file to repair.
+
+    A target is exact when it is present in the staged overlay or in the live
+    project manifest, both of which ``_prefetch_for_coder`` reads immediately
+    before the coder call.  A planned-but-not-created file is not silently
+    converted into a repair: the preserved manifest's normal create direction
+    owns that case.
+    """
+
+    return [
+        dict(item)
+        for item in findings
+        if _blocks_approval(item)
+        and _repairable_project_path(str(item.get("path", "")))
+        and str(item.get("path", "")) in known_paths
+    ]
+
+
+def _protected_paths(state: Mapping[str, Any]) -> list[str]:
+    """Files this run may read but never change.
+
+    Sourced from the run's own frozen contract, so a live settings change
+    cannot widen what an in-flight build is allowed to touch.
+    """
+
+    contract = dict(state.get("project_contract") or {})
+    return sorted(
+        {str(path) for path in contract.get("protected_files") or [] if str(path)}
+    )
+
+
+def _authorized_scope_text(state: Mapping[str, Any]) -> str:
+    """One sentence describing where the session may write."""
+
+    contract = dict(state.get("project_contract") or {})
+    scope = str(contract.get("authorized_scope") or "").strip()
+    if scope:
+        return scope
+    protected = _protected_paths(state)
+    if protected:
+        return (
+            "Any file in this project except the protected files listed above. "
+            "Metis independently rejects a change to any of them."
+        )
+    return "Any file in this project."
+
+
+def _repair_context(
+    files: list[str], findings: list[dict[str, Any]], *, unchanged: int = 0
+) -> dict[str, Any]:
+    """Checkpoint-safe form of one verifier-owned repair queue."""
+
+    bounded = [
+        {
+            "path": str(item.get("path", ""))[:1_000],
+            "error": str(item.get("error", ""))[:2_000],
+            "severity": str(item.get("severity", ""))[:100],
+            "kind": str(item.get("kind", ""))[:100],
+            **({"rung": str(item.get("rung", ""))[:100]} if item.get("rung") else {}),
+        }
+        for item in findings[:12]
+    ]
+    if not bounded:
+        return {}
+    return {
+        "files": list(dict.fromkeys(str(path) for path in files if path)),
+        "findings": bounded,
+        "finding_signature": _verifier_finding_signature(bounded),
+        "unchanged_verifications": max(0, int(unchanged)),
+    }
+
+
+def _repair_direction(target: str, findings: list[dict[str, Any]]) -> dict[str, Any]:
+    """One exact file direction derived only from current verifier evidence."""
+
+    target_findings = [item for item in findings if str(item.get("path", "")) == target]
+    detail = "; ".join(
+        f"{item['path']}: {item['error']}" for item in target_findings[:8]
+    )
+    return {
+        "path": target,
+        "instruction": (
+            f"Fix {target}. Verification found: {detail}. Patch it with "
+            "apply_patch or replace_lines. The exact current file is prefetched "
+            "in this step; change nothing else."
+        ),
+        "reuse": [],
+        "read": [],
+        "style_gaps": _gaps_from_findings(findings),
+    }
+
+
+def _repair_coder_index(aliases: Mapping[str, Any], *, cline_default: str = "") -> int:
+    """Route structured DeepSeek build failures to the first repair coder.
+
+    Live and synthetic tests showed the broad-build DeepSeek rung producing
+    destructive repair rewrites while the following Kimi rung preserved the
+    file and fixed the same defect.  This applies only to that measured primary
+    and only when a configured second rung exists; single-rung and Kimi-first
+    user chains remain untouched.
+    """
+
+    chain = _coder_chain(aliases)
+    if len(chain) < 2:
+        return 0
+    first = chain[0]
+    model = str(first.get("model") or "")
+    if first.get("provider") == "cline" and not model:
+        model = cline_default
+    return 1 if "deepseek-v4-pro" in model.casefold() else 0
+
+
 def _directed_attention(directed: dict[str, Any]) -> str:
-    """The coder's entire brief for one file: the orchestrator's words, framed.
+    """The coder's entire brief for one file: its direction, safely framed.
 
     The framing is the host's (which tool, that reads are closed, what to do if
-    the instruction cannot be carried out); the *content* is the orchestrator's
-    and is passed through whole. Summarising it here would put the host back in
-    the business of deciding what a file should contain, which is the seat this
-    split just took it out of.
+    the instruction cannot be carried out); the content is passed through whole.
+    It comes from the compact plan plus host invariants on current runs, and from
+    ProjectDirectionV1 only for a compatibility checkpoint.
     """
     path = str(directed.get("path", ""))
     instruction = str(directed.get("instruction", "")).strip()
@@ -300,9 +567,14 @@ def _coder_chain(aliases: Mapping[str, Any]) -> list[dict[str, Any]]:
         ]
         if chain:
             return chain
+    primary_provider = str(aliases.get("_provider") or "local")
     primary = {
-        "provider": str(aliases.get("_provider") or "local"),
-        "model": aliases.get("coder"),
+        "provider": primary_provider,
+        # Cline owns separate defaults for planner and coder. The generic
+        # aliases still contain the local coder name, which is not a valid
+        # Cline model ID and used to be forwarded when no explicit chain was
+        # configured.
+        "model": None if primary_provider == "cline" else aliases.get("coder"),
     }
     raw = str(aliases.get("_fallbacks_coder") or "")
     extras: list[Any] = []
@@ -324,33 +596,117 @@ def _coder_chain(aliases: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _planner_aliases(aliases: Mapping[str, Any]) -> dict[str, str]:
-    """The run's aliases routed to the ORCHESTRATOR's seat, for one call.
+# Every tool that can put bytes into the staged overlay. Kept as one set so a
+# new write tool cannot be added without deciding where it sits relative to the
+# plan gate below.
+PROJECT_WRITE_TOOLS = frozenset({"create_file", "apply_patch", "replace_lines"})
 
-    `_provider` is global to a run — it is what chat itself reads — so without
-    this the orchestrator ran on whatever lane the conversation was pinned to
-    and the planner ladder was decorative. The split is only real if the two
-    seats can hold different models, and this is where that becomes true.
 
-    Only the FIRST planner rung is applied: a direction that cannot be produced
-    falls back to the undirected loop, which is a better failure than walking a
-    ladder inside a call whose result is optional.
+def _write_authority_denied(
+    state: Mapping[str, Any], planned: Sequence[str] | None = None
+) -> str:
+    """Why a staged write is refused right now, or "" when it is allowed.
+
+    The invariant: until a project has a validated, accepted plan, model tools
+    are read-only. A live plan-only probe watched a planner-stage model
+    `replace_lines` an application file before any plan existed at all -- it
+    was in scope by luck, not by authority, because there was no scope yet to
+    be in. Exploration is for looking; the plan is what turns looking into
+    permission to write.
+
+    Host-owned scaffold staging is unaffected: it never travels through a tool
+    call, and it is excluded from "has the model written" everywhere else too.
     """
-    patched = {str(k): str(v) for k, v in aliases.items()}
+
+    # `planned` is the manifest this very step just established, which is not
+    # in `state` yet -- the plan is taken and the first write dispatched in one
+    # step, and reading only the incoming state would refuse the write the
+    # plan just authorized.
+    files = list(planned if planned is not None else [])
+    if not is_project_build_request(str(state.get("prompt") or "")):
+        # A turn the plan gate never applies to -- a one-line correction, a
+        # conversational project edit -- has no plan to wait for, and never
+        # did. Holding those to a plan that will never be taken would make
+        # small edits impossible rather than safe. The gate exists for build
+        # turns, where exploration precedes a plan that defines the scope.
+        return ""
+    if not files and not state.get("project_plan_taken"):
+        return (
+            "No accepted plan exists yet, so this project is read-only. Keep "
+            "exploring with read_file, list_files, search_code or inspect_api. "
+            "Writing becomes available once the plan is taken and a slice is "
+            "authorized."
+        )
+    if not files and not list(state.get("project_planned_files") or []):
+        return (
+            "The accepted plan names no files, so there is no authorized write "
+            "scope. This project stays read-only until a plan with files is "
+            "established."
+        )
+    return ""
+
+
+def _planner_failure_stage(error: BaseException) -> str:
+    """Which stage of one planner attempt failed, without quoting the reply.
+
+    A malformed reply and a schema violation are different defects: the first
+    says the transport or the decoder produced no JSON at all, the second that
+    valid JSON did not satisfy the contract. Telemetry needs to tell them
+    apart to know whether provider-native schema enforcement is helping, and
+    neither classification requires storing what the model actually said.
+    """
+
+    name = type(error).__name__
+    detail = str(error).casefold()
+    if name == "ValidationError" or "validation error" in detail:
+        return "schema"
+    if "no valid json" in detail or "json" in detail and "expecting" in detail:
+        return "json"
+    if getattr(error, "reason", ""):
+        return "transport"
+    return "unknown"
+
+
+def _planner_chain(aliases: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The planner ladder used by spec, manifest, and legacy directions.
+
+    It returns every rung so a backend refusal can fall once to the next
+    configured planner instead of silently handing scope back to the coder.
+    With no explicit ladder there is exactly one rung and behavior is unchanged.
+    """
     explicit = str(aliases.get("_chain_planner") or "")
-    if not explicit:
-        return patched
-    try:
-        entries = json.loads(explicit)
-    except ValueError:
-        return patched
-    if not (isinstance(entries, list) and entries and isinstance(entries[0], dict)):
-        return patched
-    return _chain_step_aliases(patched, entries[0])
+    if explicit:
+        try:
+            entries = json.loads(explicit)
+        except ValueError:
+            entries = []
+        chain = [
+            {
+                "provider": str(entry.get("provider") or "local"),
+                "model": entry.get("model"),
+            }
+            for entry in entries
+            if isinstance(entry, dict)
+        ]
+        if chain:
+            return chain
+    provider = str(aliases.get("_provider") or "local")
+    return [
+        {
+            "provider": provider,
+            # Cline's provider owns its default per role. A local planner name
+            # in the global aliases is not a Cline model override.
+            "model": (
+                aliases.get("_cline_model")
+                if provider == "cline"
+                else aliases.get("planner")
+            ),
+        }
+    ]
 
 
 def _chain_step_aliases(
-    aliases: Mapping[str, Any], entry: Mapping[str, Any]
+    aliases: Mapping[str, Any], entry: Mapping[str, Any], *, role: str = "coder"
 ) -> dict[str, str]:
     """The run's aliases with one ladder rung applied, for one call.
 
@@ -366,11 +722,13 @@ def _chain_step_aliases(
         # one is overriding that seat rather than setting the coder alias the
         # Ollama lane reads. Writing it into `coder` here would have silently
         # sent the orchestrator's model name to a lane that never reads it.
-        patched["_cline_model" if provider == "cline" else "coder"] = str(model)
+        patched["_cline_model" if provider == "cline" else role] = str(model)
     return patched
 
 
-def _chain_entry_label(entry: Mapping[str, Any], aliases: Mapping[str, Any]) -> str:
+def _chain_entry_label(
+    entry: Mapping[str, Any], aliases: Mapping[str, Any], *, role: str = "coder"
+) -> str:
     """A rung as the user would name it, for the fallback event."""
     provider = str(entry.get("provider") or "local")
     if provider == "cohere":
@@ -379,7 +737,40 @@ def _chain_entry_label(entry: Mapping[str, Any], aliases: Mapping[str, Any]) -> 
         return f"Cline ({entry.get('model') or 'default'})"
     if provider == "oci":
         return "Grok (OCI)"
-    return str(entry.get("model") or aliases.get("coder") or "local model")
+    return str(entry.get("model") or aliases.get(role) or "local model")
+
+
+def _next_chain_index(
+    chain: list[dict[str, Any]], current: int, *, reason: str
+) -> int | None:
+    """Return the next useful rung for this particular failure.
+
+    A normal model-specific throttle or outage advances exactly one rung, even
+    when that rung is on the same provider. An explicit provider-wide cap is
+    different: every later model on that provider shares the exhausted account,
+    so calling each one merely repeats a known failure. In that one case jump
+    to the first rung backed by another provider, or report exhaustion when the
+    chain contains no such rung.
+    """
+    candidate = current + 1
+    if reason != "provider_exhausted":
+        return candidate if candidate < len(chain) else None
+    provider = str(chain[current].get("provider") or "local").casefold()
+    while candidate < len(chain):
+        other = str(chain[candidate].get("provider") or "local").casefold()
+        if other != provider:
+            return candidate
+        candidate += 1
+    return None
+
+
+def _provider_failure_label(entry: Mapping[str, Any], *, reason: str) -> str:
+    """Name an account-wide cap without attributing it to one model."""
+    if reason != "provider_exhausted":
+        return ""
+    provider = str(entry.get("provider") or "local")
+    labels = {"cline": "Cline", "cohere": "Cohere", "oci": "OCI", "local": "Local"}
+    return f"{labels.get(provider.casefold(), provider)} provider"
 
 
 def _model_has_written(staged: Mapping[str, Any]) -> bool:
@@ -401,6 +792,19 @@ def _model_has_written(staged: Mapping[str, Any]) -> bool:
 def _has_seeded_scaffold(staged: Mapping[str, Any]) -> bool:
     """Whether the host-owned appkit scaffold is already in the overlay."""
     return any(path == "appkit" or path.startswith("appkit/") for path in staged)
+
+
+def _project_has_scaffold(project_context: Mapping[str, Any]) -> bool:
+    """Whether the repository map says appkit already exists on disk."""
+    manifest = project_context.get("manifest")
+    tree = (
+        list((manifest or {}).get("file_tree") or [])
+        if isinstance(manifest, dict)
+        else []
+    )
+    return any(
+        str(path) == "appkit" or str(path).startswith("appkit/") for path in tree
+    )
 
 
 def _model_written_count(staged: Mapping[str, Any]) -> int:
@@ -509,7 +913,7 @@ def _extract_python_source(raw: str) -> str:
         if newline != -1:
             text = text[newline + 1 :]
         if text.rstrip().endswith("```"):
-            text = text.rstrip()[: -3]
+            text = text.rstrip()[:-3]
     return text.strip() + "\n"
 
 
@@ -622,6 +1026,49 @@ def _looks_prescriptive(prompt: str) -> bool:
     STACK/FILES/RULES, and every prescriptive spec written here does.
     """
     return bool(_SPEC_STRUCTURE.search(prompt))
+
+
+# Deliberately narrow. This is not a general "find paths mentioned anywhere
+# in the prompt" heuristic — that would manufacture a "requirement" out of
+# ordinary prose that merely names a path in passing (e.g. "preserve the
+# exact behavior of app/main.py"). It fires only on an explicit, unambiguous
+# enumeration, the same phrasing this project's own prescriptive specs and
+# capability-evaluation scenarios already use: "...exactly these ... files:
+# a, b, c."
+_REQUIRED_FILES_TRIGGER = re.compile(
+    r"exactly these(?=[^:\n]{0,120}?\bfiles?\b)[^:\n]{0,120}:\s*", re.IGNORECASE
+)
+_REQUIRED_FILES_STOP = re.compile(r"\.\s*\n")
+_REQUIRED_FILES_TOKEN = re.compile(r"[\w.\-]+(?:/[\w.\-]+)*")
+
+
+def _extract_required_files(text: str) -> list[str]:
+    """Files a prescriptive request names as required, independent of and
+    prior to whatever the model itself later plans.
+
+    Extracted once, held for the whole run (see project_required_files), and
+    checked against both the final plan and the final staged changeset
+    before approval — neither the planner nor a later repair can silently
+    drop an explicitly requested file without it being caught.
+    """
+    match = _REQUIRED_FILES_TRIGGER.search(text)
+    if match is None:
+        return []
+    tail = text[match.end() : match.end() + 2_000]
+    stop = _REQUIRED_FILES_STOP.search(tail)
+    if stop is not None:
+        tail = tail[: stop.start()]
+    found: list[str] = []
+    for raw in re.split(r"[,\n]", tail):
+        candidate = raw.strip()
+        if (
+            candidate
+            and _REQUIRED_FILES_TOKEN.fullmatch(candidate)
+            and "." in candidate.rsplit("/", 1)[-1]
+            and candidate not in found
+        ):
+            found.append(candidate)
+    return found[:32]
 
 
 def _reference_notes(
@@ -755,7 +1202,9 @@ def _substantive_prompt(state: AgentState) -> str:
     if not _RETRY_PROMPT.match(prompt):
         return prompt
     for item in reversed(state.get("recent_messages", [])):
-        if item.get("role") == "user" and not _RETRY_PROMPT.match(item.get("content", "")):
+        if item.get("role") == "user" and not _RETRY_PROMPT.match(
+            item.get("content", "")
+        ):
             return item.get("content", "")
     return prompt
 
@@ -768,16 +1217,21 @@ def _substantive_prompt(state: AgentState) -> str:
 _PERCENT_CLAIM = re.compile(r"\b(\d{1,3}(?:\.\d+)?)\s*%")
 # `×` is not a word character, so a trailing \b never matches after it; the
 # ASCII `x` does need one, or the shape "2xH200" reads as a claim of "2×".
-_MULTIPLIER_CLAIM = re.compile(
-    r"\b(\d{1,3}(?:\.\d+)?)\s*(?:×|x\b)", re.IGNORECASE
+_MULTIPLIER_CLAIM = re.compile(r"\b(\d{1,3}(?:\.\d+)?)\s*(?:×|x\b)", re.IGNORECASE)
+_MONEY_CLAIM = re.compile(
+    r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*([kmb]|million|billion)?", re.IGNORECASE
 )
-_MONEY_CLAIM = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*([kmb]|million|billion)?", re.IGNORECASE)
 _QUOTE_CLAIM = re.compile(r"[\"“]([^\"”]{25,400})[\"”]")
 _DURATION_CLAIM = re.compile(
     r"\b(multi-year|multi year|\d{1,2}[-\s]?(?:year|month)(?:s)?)\b", re.IGNORECASE
 )
-_MONEY_SCALE = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000,
-                "million": 1_000_000, "billion": 1_000_000_000}
+_MONEY_SCALE = {
+    "k": 1_000,
+    "m": 1_000_000,
+    "b": 1_000_000_000,
+    "million": 1_000_000,
+    "billion": 1_000_000_000,
+}
 
 
 def _numbers_in(text: str) -> set[float]:
@@ -988,7 +1442,9 @@ def _safe_knowledge_error(error: Exception, *, has_attachments: bool) -> dict[st
         reason = "The configured knowledge-search model is unavailable in this region."
     elif "401" in lowered or "403" in lowered or "not authorized" in lowered:
         category = "authorization"
-        reason = "Knowledge search is not authorized with the current OCI configuration."
+        reason = (
+            "Knowledge search is not authorized with the current OCI configuration."
+        )
     elif "timeout" in lowered or "timed out" in lowered:
         category = "timeout"
         reason = "Knowledge search timed out."
@@ -1023,14 +1479,20 @@ _BLOCKED_STEP_GUIDANCE: dict[str, str] = {
         "this message again."
     ),
     "backend_unreachable": (
-        "the local model server did not answer. Check that Ollama is running, then "
-        "send this message again."
+        "the selected model backend could not be reached. Check that provider's "
+        "connection, then send this message again or switch lanes in the model menu."
     ),
     "rate_limited": (
         "the model backend is rate-limited or out of quota right now, so it "
         "returned no reply. This is a limit on the account behind the backend, "
         "not a problem with your request — wait a moment (or switch lanes in the "
         "model menu) and send this message again."
+    ),
+    "provider_exhausted": (
+        "the selected provider reported an account-wide usage cap, so none of "
+        "its other models can answer either. I stopped without spending calls "
+        "on them. Wait for that provider's allowance to reset, or switch to a "
+        "different provider and send this message again."
     ),
     "backend_error": (
         "the model backend returned a server error and no reply. This is the "
@@ -1123,6 +1585,18 @@ class AgentState(TypedDict):
     # round, both budgets bounded — without this, budget exhaustion carried
     # broken files straight onto the approval card.
     project_verify_bonus_steps: int
+    # The dependency-ordered manifest prefix most recently proven clean. A
+    # prefix advances only after every verification rung that can run reports
+    # no blocker; a failed slice keeps the frontier fixed until its exact
+    # repair context is clean.
+    project_verified_prefix: int
+    # Intermediate dependency slices already opened this turn. The pure slice
+    # selector caps these; final acceptance verification is always separate.
+    project_slice_verifications: int
+    # One causal verifier queue: {files, findings}. It survives repair attempts
+    # and coder fallbacks, and clears only when that same slice re-verifies or a
+    # corrected manifest deliberately replaces its dependency order.
+    project_repair_context: dict[str, Any]
     # The tool whose arguments were just refused for their shape, if any. The
     # next step's grammar is narrowed to exactly that tool's required keys, so
     # the omission cannot be repeated. Written on every step-producing path so a
@@ -1133,6 +1607,11 @@ class AgentState(TypedDict):
     # write target to this list, which is the one thing that stops a model
     # re-creating work it has already staged. Cleared the same way as above.
     project_write_pin: list[str]
+    # A host-selected edit strategy after a brittle exact edit failed. The
+    # current strategy is {kind: "whole_file", path, trigger_tool, detail}; it
+    # survives a coder switch and clears only when that file is staged or the
+    # plan is revised.
+    project_repair_strategy: dict[str, Any]
     # Consecutive refusals per "tool:path" target. A model that keeps rewriting
     # the same file it cannot rewrite will otherwise spend the entire step budget
     # on it; past the limit the target is closed for the turn.
@@ -1143,6 +1622,13 @@ class AgentState(TypedDict):
     # Empty means no manifest was taken, and the older "did you stage anything"
     # rule applies.
     project_planned_files: list[str]
+    # Files the user's own request explicitly enumerated ("...exactly these
+    # ... files: a, b, c"), extracted once from the request/spec text and
+    # held independent of whatever the model itself later plans. Neither a
+    # narrower plan nor a later revision can silently drop one without it
+    # being caught: the final plan must cover it, and so must the final
+    # staged changeset, before approval.
+    project_required_files: list[str]
     # Whether the plan call has already run this turn. Distinct from holding
     # files: a plan that legitimately named none (a question, or a task needing
     # no new files) must not be re-requested on every step that follows.
@@ -1175,6 +1661,25 @@ class AgentState(TypedDict):
     # that failed to answer advances it, and the rest of the turn stays on the
     # rung that worked rather than re-trying the dead one every step.
     project_chain_index: int
+    # The planner ladder has the same sticky ownership. Spec rewrite, manifest
+    # and any compatibility direction stay on the first rung that answers.
+    project_planner_chain_index: int
+    # Durable ownership of the feature-gated ClineCore inner loop. The row
+    # named here retains the exact disposable-mirror baseline and sidecar
+    # cursor; findings/signatures keep verifier feedback causal across graph
+    # checkpoints without copying source text into this state.
+    project_coding_session_id: str
+    # Every host-predicted sidecar identity that may exist for the current
+    # durable row. This includes an ambiguous deterministic child whose
+    # creation may have succeeded before its response was lost.
+    project_coding_cleanup_ids: list[str]
+    project_coding_rounds: int
+    project_coding_slice_rounds: int
+    project_coding_slice_files: list[str]
+    project_coding_slice_complete: bool
+    project_coding_findings: list[dict[str, Any]]
+    project_coding_finding_signature: str
+    project_coding_unchanged_findings: int
     # Where the turn is in the explore→act arc: "" → "exploring" → "building".
     # Derived, one-way, and emitted as project.phase events so the timeline
     # can show the arc; the act transition is what the structural read gate
@@ -1191,15 +1696,14 @@ class AgentState(TypedDict):
     # file or ends the turn, so this cannot grow without bound; it is carried
     # for the record and for the event stream.
     project_focus_rounds: int
-    # ── The orchestrator/coder split ───────────────────────────────────────
-    # The direction the orchestrator gave for the file being written now:
-    # {path, instruction, reuse, read, done, reason}. Empty when the turn is
-    # not directed — a question, a plan the orchestrator declared done, or the
-    # split switched off, all of which return the ordinary single-model loop.
+    # ── The planner/coder split ────────────────────────────────────────────
+    # The current single-file direction: {path, instruction, reuse, read}.
+    # Compact plans derive it deterministically from dependency order; verifier
+    # repairs author it from exact findings; compatibility checkpoints may still
+    # receive it from ProjectDirectionV1. Empty means the turn is not directed.
     project_direction: dict[str, Any]
-    # How many times each path has been directed. A repair is the orchestrator
-    # naming the same path again, which is the mechanism working; a cap is what
-    # stops it being a loop.
+    # How many times each path has been directed. Repeating the same path is a
+    # repair; the cap stops it becoming a loop.
     project_direction_attempts: dict[str, int]
     # Why the orchestrator stopped answering, when it did. Carried so the
     # turn's ending can name the cause instead of reporting a model that
@@ -1210,6 +1714,30 @@ class AgentState(TypedDict):
     # claims made checkable, replayed by the sandbox rung against the finished
     # app. Plain dicts (AcceptanceScenarioV1 shape) so checkpoints stay JSON.
     project_planned_scenarios: list[dict[str, Any]]
+    # Contiguous, independently verifiable product increments. ClineCore gives
+    # each slice a fresh causal tool loop; old checkpoints derive them from the
+    # flat manifest at execution time.
+    project_planned_slices: list[dict[str, Any]]
+    # Planner tokens observed this turn, kept apart from the sidecar's
+    # coder usage so a run's ceiling can account for both.
+    project_planner_tokens: int
+    # Every planner inference attempt this turn, failed ones included.
+    project_planner_attempts: int
+    # Bounded corrective retries for a repair round that wrote nothing.
+    project_repair_no_change: int
+    # The frozen direct-build contract, persisted with the checkpoint so a
+    # continuation restores exactly what the work started under.
+    project_contract: dict[str, Any]
+    # The one slice a final acceptance failure was attributed to, in
+    # ProjectVerticalSliceV1's shape plus routing evidence. Set only by
+    # _carry_pending_overlay; while it is set the coding round repairs exactly
+    # this scope over the carried overlay and every other verified slice is
+    # left alone. Empty in an ordinary build.
+    project_repair_slice: dict[str, Any]
+    # SHA-256 of every staged file the routed repair may NOT write, recorded
+    # before its session starts. Compared after import so "it changed only
+    # what it was authorized to change" is evidence, not an assumption.
+    project_repair_hashes: dict[str, str]
     # The prescriptive spec a loose whole-app request was compiled into, with
     # the assumptions that compilation confessed. Empty when the request was
     # already a spec, the rewrite is off, or the provider cannot compile one.
@@ -1298,6 +1826,8 @@ class ControlPlane:
         model_session: Any | None = None,
         web: Any | None = None,
         answers: Any | None = None,
+        coding_engine: CodingEngine | None = None,
+        coding_sessions: CodingSessionStore | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
@@ -1335,6 +1865,22 @@ class ControlPlane:
         # Optional answer bank. Absent means answers are never harvested and
         # never retrieved; everything else is unchanged.
         self.answers = answers
+        # ClineCore replaces only the inner coding loop. It edits a disposable
+        # mirror; this coordinator imports its byte diff through the existing
+        # staged overlay. Missing dependencies leave the legacy engine intact.
+        self.project_coding = (
+            ProjectCodingCoordinator(
+                settings,
+                coding_engine,
+                coding_sessions,
+                projects,
+                events,
+            )
+            if coding_engine is not None
+            and coding_sessions is not None
+            and projects is not None
+            else None
+        )
         self.policy = PolicyEngine()
         self.graph = self._build_graph().compile(checkpointer=checkpointer)
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -1531,10 +2077,9 @@ class ControlPlane:
             if prior is None:
                 return state
             prior_run, prior_project = prior
-            if (
-                prior_run == state["run_id"]
-                or prior_project != state["model_aliases"].get("_project_id")
-            ):
+            if prior_run == state["run_id"] or prior_project != state[
+                "model_aliases"
+            ].get("_project_id"):
                 return state
             approval = await self.database.get_pending_approval(prior_run)
             if approval is None or approval.kind != "project_apply_build":
@@ -1550,12 +2095,94 @@ class ControlPlane:
             return state
         if not staged:
             return state
+        manifest_paths = set(
+            ((values.get("project_context") or {}).get("manifest") or {}).get(
+                "file_tree", []
+            )
+        )
+        known_paths = set(staged) | manifest_paths
+        prior_context = dict(values.get("project_repair_context") or {})
+        raw_findings = [
+            dict(item)
+            for item in prior_context.get("findings") or []
+            if isinstance(item, Mapping)
+        ]
+        findings = _repairable_verifier_findings(raw_findings, known_paths)
+        repair_files = [
+            str(path)
+            for path in prior_context.get("files") or []
+            if str(path) in known_paths
+        ]
+        repair_context = _repair_context(repair_files, findings)
+        target = str(findings[0].get("path", "")) if findings else ""
+
+        # A prior manifest is executable scope, not conversational history.
+        # Preserve it only after the current contract validates every path;
+        # malformed/stale checkpoint values fall back to an exact one-file
+        # repair plan instead of weakening the write boundary.
+        try:
+            planned = ProjectBuildPlanV1(
+                files=[str(path) for path in values.get("project_planned_files") or []]
+            ).files
+        except Exception:  # noqa: BLE001 - old checkpoints may predate this contract
+            planned = []
+        limit = int(getattr(self.settings, "project_staged_max_files", 48))
+        planned = planned[:limit]
+        if target and target not in planned and len(planned) < limit:
+            planned.append(target)
+        scenarios: list[dict[str, Any]] = []
+        for raw in list(values.get("project_planned_scenarios") or [])[
+            :MAX_PLAN_SCENARIOS
+        ]:
+            try:
+                scenario = AcceptanceScenarioV1.model_validate(raw)
+            except Exception:  # noqa: BLE001 - one malformed scenario is not safe to carry
+                continue
+            scenarios.append(scenario.model_dump(mode="json"))
+
+        chain_index = 0
+        chain: list[dict[str, Any]] = []
+        if repair_context:
+            aliases = dict(state.get("model_aliases") or {})
+            chain = _coder_chain(aliases)
+            chain_index = _repair_coder_index(
+                aliases,
+                cline_default=str(
+                    getattr(self.settings, "cline_coder_model", "") or ""
+                ),
+            )
         await self.events.emit(
             state["run_id"],
             state["conversation_id"],
             "project.staged_resumed",
-            {"files": sorted(staged), "from_run": prior_run},
+            {
+                "files": sorted(staged),
+                "from_run": prior_run,
+                **({"repair_target": target} if target else {}),
+            },
         )
+        if target:
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.repair_resumed",
+                {
+                    "from_run": prior_run,
+                    "path": target,
+                    "findings": len(findings),
+                    "coder_chain_index": chain_index,
+                    **(
+                        {
+                            "coder": _chain_entry_label(
+                                chain[chain_index],
+                                state.get("model_aliases") or {},
+                            )
+                        }
+                        if chain
+                        else {}
+                    ),
+                },
+            )
         # The carried work arrives as trace evidence, not prose: the model's
         # first step already sees which files exist only in the overlay and
         # why the previous card did not clear.
@@ -1576,14 +2203,17 @@ class ControlPlane:
                 # do not clip them again here or the tail of a larger finding
                 # set disappears precisely when the repair model needs it.
                 "verification_summary": str(getattr(approval, "summary", "") or ""),
+                "verification_findings": list(repair_context.get("findings") or []),
                 "note": (
                     "staged changes from the previous turn, carried into this one "
-                    "exactly as verification inspected them; read_file sees them, "
-                    "and verification_summary contains the complete findings"
+                    "exactly as verification inspected them; the first exact "
+                    "app-owned blocker is already selected and read_file sees the "
+                    "overlay bytes, while verification_summary retains the complete "
+                    "findings for review"
                 ),
             },
         }
-        return {
+        carried: dict[str, Any] = {
             **state,
             "project_staged": staged,
             "project_trace": [note],
@@ -1592,6 +2222,166 @@ class ControlPlane:
             "project_prior_blocking": blocking_count(
                 str(getattr(approval, "blocked_reason", "") or "")
             ),
+        }
+        if planned:
+            carried_slices = [
+                dict(item)
+                for item in list(values.get("project_planned_slices") or [])[:8]
+                if isinstance(item, Mapping)
+            ]
+            prior_prefix = max(
+                0, min(int(values.get("project_verified_prefix") or 0), len(planned))
+            )
+            # Only a build that verified every slice may claim its frontier.
+            # An incomplete one has slices it never proved and still
+            # re-establishes its own.
+            fully_verified = bool(planned) and prior_prefix >= len(planned)
+            route = (
+                route_acceptance_finding(
+                    # Attribution runs on the raw defect set: a finding the
+                    # ordinary repair filter drops (a host probe's own module,
+                    # a defect with no path) is exactly the case that must
+                    # stop honestly rather than fall back to a full rebuild.
+                    findings=findings or raw_findings,
+                    slices=carried_slices,
+                    staged=staged,
+                )
+                if raw_findings and fully_verified
+                else RepairRoute()
+            )
+            carried.update(
+                {
+                    "project_planned_files": planned,
+                    "project_planned_scenarios": scenarios,
+                    "project_planned_slices": carried_slices,
+                    "project_plan_taken": True,
+                    "project_build_intent": (
+                        str(values.get("project_build_intent") or "edit")
+                        if str(values.get("project_build_intent") or "edit")
+                        in {"build", "edit"}
+                        else "edit"
+                    ),
+                    "project_build_scope": (
+                        str(values.get("project_build_scope") or "narrow")
+                        if str(values.get("project_build_scope") or "narrow")
+                        in {"whole_app", "narrow"}
+                        else "narrow"
+                    ),
+                    # A fully verified build carrying blocking findings keeps
+                    # its frontier: those slices really were proven, and
+                    # rolling this to zero is what made one bad seed string
+                    # cost a second complete rebuild. It holds whether or not
+                    # the defect could be attributed -- an unattributable one
+                    # stops for review, and re-coding proven slices is not a
+                    # safer answer than saying so. A follow-up carrying no
+                    # findings is new work, not a repair, and an incomplete
+                    # build never had the claim; both re-establish their own.
+                    "project_verified_prefix": (
+                        prior_prefix if fully_verified and raw_findings else 0
+                    ),
+                }
+            )
+            if route.routed:
+                carried.update(await self._carry_routed_repair(state, route, staged))
+            elif raw_findings and fully_verified:
+                # Verified everything, then failed acceptance on something no
+                # slice owns. Pointing a model at a guess would put verified
+                # files back under its pen; say so instead.
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "project.repair_unattributed",
+                    {
+                        "from_run": prior_run,
+                        "reason": route.reason[:500],
+                        "target": route.target,
+                        "findings": len(findings),
+                    },
+                )
+        if repair_context:
+            carried.update(
+                {
+                    "project_repair_context": repair_context,
+                    "project_direction": _repair_direction(target, findings),
+                    "project_focus_path": target,
+                    "project_write_pin": [target],
+                    "project_direction_attempts": {},
+                    "project_repair_strategy": {},
+                    "project_syntax_retries": 0,
+                    "project_consecutive_reads": 0,
+                    "project_stall_steps": 0,
+                    "project_refused_streak": 0,
+                    "project_chain_index": chain_index,
+                    "project_phase": "building",
+                    # The ClineCore lane consumes verifier evidence directly;
+                    # legacy repair direction remains for old checkpoints and
+                    # the per-tool loop, while both lanes share exact findings.
+                    "project_coding_findings": findings,
+                    "project_coding_finding_signature": _verifier_finding_signature(
+                        findings
+                    ),
+                    "project_coding_unchanged_findings": 0,
+                }
+            )
+        return cast(AgentState, carried)
+
+    async def _carry_routed_repair(
+        self,
+        state: AgentState,
+        route: RepairRoute,
+        staged: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Install one attributed slice repair over the carried overlay.
+
+        The frontier stays where the build left it, so no clean slice is
+        replanned or recoded. Only this slice's declared scope is writable,
+        and every other staged file's hash is recorded first so the round can
+        prove afterwards that it stayed byte-identical.
+        """
+
+        unaffected = staged_file_hashes(staged, exclude=route.authorized_paths)
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.repair_routed",
+            {
+                "target": route.target,
+                "slice": route.slice_name,
+                "slice_index": route.slice_index,
+                "attribution": route.attribution,
+                "authorized_paths": list(route.authorized_paths),
+                "rerun_scenarios": list(route.rerun_scenarios),
+                "unaffected_files": len(unaffected),
+                "reason": route.reason[:500],
+            },
+        )
+        return {
+            "project_repair_slice": {
+                "name": route.slice_name,
+                "outcome": route.slice_outcome,
+                "files": list(route.authorized_paths),
+                "owned_files": list(route.owned_files),
+                "integration_files": list(route.integration_files),
+                "scenario_names": list(route.rerun_scenarios),
+                "target": route.target,
+                "slice_index": route.slice_index,
+                "attribution": route.attribution,
+                # The authorized files as they stand now, so the round can
+                # tell a real repair from a session that ended without
+                # changing a single byte it was sent to change.
+                "target_hashes": {
+                    path: _staged_content_hash(staged, path)
+                    for path in route.authorized_paths
+                },
+            },
+            "project_repair_hashes": unaffected,
+            # A routed repair opens exactly one fresh session over the carried
+            # overlay; it never continues the finished build's transcript.
+            "project_coding_session_id": "",
+            "project_coding_cleanup_ids": [],
+            "project_coding_slice_files": [],
+            "project_coding_slice_rounds": 0,
+            "project_coding_slice_complete": False,
         }
 
     async def resume(
@@ -1640,9 +2430,7 @@ class ControlPlane:
             )
         except Exception:  # noqa: BLE001 - a missing/unreadable checkpoint is "none pending"
             return None
-        values = (
-            checkpoint.checkpoint.get("channel_values", {}) if checkpoint else {}
-        )
+        values = checkpoint.checkpoint.get("channel_values", {}) if checkpoint else {}
         raw = values.get("elicitation_request")
         # Once answered the same turn records elicitation_answer and moves on, so
         # its presence means this question is no longer pending.
@@ -1683,6 +2471,31 @@ class ControlPlane:
         if task and not task.done():
             await asyncio.gather(task, return_exceptions=True)
         current = await self.database.get_run(run_id)
+        project_coding = getattr(self, "project_coding", None)
+        if changed and project_coding is not None:
+            try:
+                coding_sessions = await project_coding.sessions.for_run(run_id)
+            except Exception:
+                coding_sessions = []
+            cleanup_state = cast(
+                AgentState,
+                {
+                    "run_id": run_id,
+                    "conversation_id": (
+                        current.conversation_id
+                        if current is not None
+                        else run.conversation_id
+                        if run is not None
+                        else ""
+                    ),
+                },
+            )
+            for coding_session in coding_sessions:
+                await self._release_project_coding_session(
+                    cleanup_state,
+                    coding_session.id,
+                    CodingSessionState.ABORTED,
+                )
         if (
             changed
             and current
@@ -1736,7 +2549,7 @@ class ControlPlane:
             aliases = record.get("model_aliases", {})
             if (
                 self.model_session is not None
-                and aliases.get("_provider") not in ("oci", "cohere")
+                and aliases.get("_provider") not in ("oci", "cohere", "cline")
                 and self.settings.model_backend != "deterministic"
             ):
                 try:
@@ -1791,9 +2604,7 @@ class ControlPlane:
                 )
             await self._spawn(
                 run_id,
-                self._drive(
-                    run_id, conversation_id, graph_input, recovery=True
-                ),
+                self._drive(run_id, conversation_id, graph_input, recovery=True),
             )
 
     async def _drive(
@@ -1817,7 +2628,9 @@ class ControlPlane:
             result = await self.graph.ainvoke(
                 graph_input, config=self._config(conversation_id, run_id)
             )
-            interrupts = result.get("__interrupt__", []) if isinstance(result, dict) else []
+            interrupts = (
+                result.get("__interrupt__", []) if isinstance(result, dict) else []
+            )
             if interrupts:
                 # ask_user and approval share this suspend machinery; awaiting_kind
                 # (set by the prepare node, cleared once answered) picks the
@@ -1828,7 +2641,9 @@ class ControlPlane:
                 )
                 await self.database.set_run_status(
                     run_id,
-                    RunStatus.AWAITING_INPUT if awaiting_input else RunStatus.AWAITING_APPROVAL,
+                    RunStatus.AWAITING_INPUT
+                    if awaiting_input
+                    else RunStatus.AWAITING_APPROVAL,
                 )
                 # The request was persisted/emitted before interrupt(), so the API
                 # never depends on serializing LangGraph's internal object.
@@ -1847,7 +2662,36 @@ class ControlPlane:
             await self.database.set_run_status(
                 run_id, RunStatus.COMPLETED, result=serializable
             )
-            await self.events.emit(run_id, conversation_id, "run.completed", serializable)
+            await self.events.emit(
+                run_id, conversation_id, "run.completed", serializable
+            )
+            coding_session_id = (
+                str(result.get("project_coding_session_id") or "")
+                if isinstance(result, dict)
+                else ""
+            )
+            if coding_session_id:
+                # A terminal graph result is not itself durable: a crash after
+                # its node returned can replay that node from the previous
+                # checkpoint. Release no-write runtime state only after the run
+                # verdict above is committed, so recovery can recognize the
+                # settled journal without issuing another model turn. Cleanup
+                # is maintenance: a deletion failure cannot rewrite the run's
+                # already-committed verdict.
+                self._spawn_maintenance(
+                    self._cleanup_completed_no_approval_session(
+                        cast(
+                            AgentState,
+                            {
+                                **result,
+                                "run_id": run_id,
+                                "conversation_id": conversation_id,
+                            },
+                        ),
+                        coding_session_id,
+                    ),
+                    name=f"metis-coding-cleanup-{coding_session_id}",
+                )
         except RunCancelled:
             await self.database.set_run_status(run_id, RunStatus.CANCELLED)
             await self.events.emit(run_id, conversation_id, "run.cancelled", {})
@@ -1926,7 +2770,9 @@ class ControlPlane:
             )
             text_bytes = len(text.encode("utf-8"))
             if consumed + text_bytes > self.settings.max_text_attachment_bytes:
-                raise ValueError("aggregate attachment text exceeds the v1 context budget")
+                raise ValueError(
+                    "aggregate attachment text exceeds the v1 context budget"
+                )
             consumed += text_bytes
             pieces.append(f"{_attachment_header(str(record['filename']))}\n{text}")
             filenames.append(str(record["filename"]))
@@ -1934,7 +2780,10 @@ class ControlPlane:
             state["run_id"],
             state["conversation_id"],
             "input.ingested",
-            {"attachment_count": len(state.get("attachment_ids", [])), "text_bytes": consumed},
+            {
+                "attachment_count": len(state.get("attachment_ids", [])),
+                "text_bytes": consumed,
+            },
         )
         return {
             "attachment_text": "\n\n".join(pieces),
@@ -1971,10 +2820,8 @@ class ControlPlane:
         # to Command A+ silently cut recent history 20× (240k → 12k chars)
         # and memory context 10× — a quality cliff with no event and no
         # banner, guaranteed to be misread as "the model got worse".
-        using_cloud = model_aliases.get("_provider") in ("oci", "cohere")
-        memory_limit = (
-            self.settings.oci_memory_context_chars if using_cloud else 8_000
-        )
+        using_cloud = model_aliases.get("_provider") in ("oci", "cohere", "cline")
+        memory_limit = self.settings.oci_memory_context_chars if using_cloud else 8_000
         recent_history_limit = (
             self.settings.oci_recent_history_chars if using_cloud else 12_000
         )
@@ -2211,9 +3058,1461 @@ class ControlPlane:
             return "plan"
         return (
             "project"
-            if state.get("model_aliases", {}).get("_project_id") and self.projects is not None
+            if state.get("model_aliases", {}).get("_project_id")
+            and self.projects is not None
             else "plan"
         )
+
+    @staticmethod
+    def _uses_cline_direct(state: AgentState) -> bool:
+        """One persistent session owns the work; no planner manifest or slices.
+
+        Frozen into the run aliases at submit time exactly like the engine, so
+        an in-flight checkpoint keeps finishing on the path it started on and a
+        live settings change can never split a run across two designs.
+        """
+
+        return (
+            str(state.get("model_aliases", {}).get("_build_path") or "planner_slices")
+            == "cline_direct"
+        )
+
+    @staticmethod
+    def _uses_clinecore(state: AgentState) -> bool:
+        """The engine is frozen in the run aliases, never read from live settings."""
+
+        return (
+            str(state.get("model_aliases", {}).get("_coding_engine") or "legacy")
+            == "clinecore"
+        )
+
+    async def _release_project_coding_session(
+        self,
+        state: AgentState,
+        session_id: str,
+        terminal_state: CodingSessionState,
+        *,
+        additional_sidecar_ids: Sequence[str] | None = None,
+    ) -> None:
+        """Best-effort temporary-runtime cleanup after a durable host verdict."""
+
+        coordinator = getattr(self, "project_coding", None)
+        if coordinator is None or not session_id:
+            return
+        try:
+            await coordinator.release(
+                session_id,
+                terminal_state,
+                additional_sidecar_ids=(
+                    tuple(additional_sidecar_ids)
+                    if additional_sidecar_ids is not None
+                    else tuple(state.get("project_coding_cleanup_ids") or [])
+                ),
+            )
+        except Exception as error:
+            # The real project verdict is already durable (or no real file was
+            # ever touched). Surface cleanup debt without turning an approval,
+            # rejection, or honest provider stop into a second failure.
+            try:
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "project.coding_cleanup_failed",
+                    {"session_id": session_id, "reason": str(error)[:500]},
+                )
+            except Exception:
+                pass
+
+    async def _cleanup_completed_no_approval_session(
+        self,
+        state: AgentState,
+        session_id: str,
+    ) -> None:
+        """Release a settled no-write run, preserving any anomalous model bytes."""
+
+        coordinator = getattr(self, "project_coding", None)
+        if coordinator is None:
+            return
+        if _model_has_written(state.get("project_staged") or {}):
+            reason = "completed no-approval run still contains model-staged bytes"
+            try:
+                await coordinator.sessions.hold_cleanup(
+                    session_id,
+                    CodingCleanupHoldV1(
+                        target_state=CodingSessionState.COMPLETED,
+                        reason=reason,
+                    ),
+                )
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "project.coding_cleanup_held",
+                    {"session_id": session_id, "reason": reason},
+                )
+            except Exception as error:
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "project.coding_cleanup_failed",
+                    {"session_id": session_id, "reason": str(error)[:500]},
+                )
+            return
+        await self._release_project_coding_session(
+            state,
+            session_id,
+            CodingSessionState.COMPLETED,
+        )
+
+    async def reconcile_coding_cleanup(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> dict[str, int]:
+        """Retry terminal coding artifacts without invoking a model provider."""
+
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None:
+            raise ValueError("coding cleanup time must be timezone-aware")
+        current = current.astimezone(UTC)
+        coordinator = getattr(self, "project_coding", None)
+        stats = {"candidates": 0, "held": 0, "released": 0, "orphans": 0}
+        if coordinator is not None:
+            candidates = await coordinator.sessions.cleanup_candidates(
+                now=current,
+                limit=limit,
+            )
+            stats["candidates"] = len(candidates)
+            for session in candidates:
+                target = await self._coding_cleanup_target(session)
+                if target is None:
+                    continue
+                if (
+                    session.cleanup_status is CodingCleanupStatus.ACTIVE
+                    and session.state is CodingSessionState.IDLE
+                    and target is CodingSessionState.COMPLETED
+                    and await self._completed_no_approval_has_staged_bytes(session)
+                ):
+                    reason = (
+                        "completed no-approval checkpoint retains model-staged bytes"
+                    )
+                    try:
+                        await coordinator.sessions.hold_cleanup(
+                            session.id,
+                            CodingCleanupHoldV1(
+                                target_state=target,
+                                reason=reason,
+                            ),
+                        )
+                        await self.events.emit(
+                            session.run_id,
+                            session.conversation_id,
+                            "project.coding_cleanup_held",
+                            {"session_id": session.id, "reason": reason},
+                        )
+                        stats["held"] += 1
+                    except Exception as error:
+                        await self.events.emit(
+                            session.run_id,
+                            session.conversation_id,
+                            "project.coding_cleanup_failed",
+                            {"session_id": session.id, "reason": str(error)[:500]},
+                        )
+                    continue
+                before = await coordinator.sessions.get(session.id)
+                await self._release_project_coding_session(
+                    cast(
+                        AgentState,
+                        {
+                            "run_id": session.run_id,
+                            "conversation_id": session.conversation_id,
+                        },
+                    ),
+                    session.id,
+                    target,
+                    additional_sidecar_ids=session.cleanup_sidecar_ids,
+                )
+                after = await coordinator.sessions.get(session.id)
+                if (
+                    before is not None
+                    and after is not None
+                    and before.cleanup_status is not CodingCleanupStatus.CLEAN
+                    and after.cleanup_status is CodingCleanupStatus.CLEAN
+                ):
+                    stats["released"] += 1
+
+        projects = getattr(self, "projects", None)
+        if projects is not None:
+            referenced = await self.database.list_coding_workspace_paths()
+            removed = await projects.discard_unreferenced_external_mirrors(
+                referenced,
+                older_than=current
+                - timedelta(seconds=self.settings.cline_orphan_workspace_age_seconds),
+            )
+            stats["orphans"] = len(removed)
+        if coordinator is not None:
+            # The same conservative sweep for event journals. Ancestry is
+            # durable at mint time, so this only ever finds a journal stranded
+            # by a crash between minting an identity and committing it.
+            stats["orphan_journals"] = len(
+                await coordinator.discard_unreferenced_journals(
+                    older_than=current
+                    - timedelta(seconds=self.settings.cline_orphan_journal_age_seconds),
+                )
+            )
+        return stats
+
+    async def _coding_cleanup_target(
+        self,
+        session: CodingSessionV1,
+    ) -> CodingSessionState | None:
+        if session.cleanup_target_state is not None:
+            return session.cleanup_target_state
+        if session.state in TERMINAL_CODING_STATES:
+            return session.state
+        run = await self.database.get_run(session.run_id)
+        if run is None:
+            return None
+        if run.status == RunStatus.FAILED.value:
+            return CodingSessionState.FAILED
+        if run.status == RunStatus.CANCELLED.value:
+            return CodingSessionState.ABORTED
+        if run.status != RunStatus.COMPLETED.value:
+            return None
+        approval = await self.database.get_latest_approval_record(session.run_id)
+        if approval is None:
+            return CodingSessionState.COMPLETED
+        decision = str(approval.get("status") or "")
+        if decision == Decision.APPROVE.value:
+            return CodingSessionState.COMPLETED
+        if decision in {Decision.REJECT.value, "draft"}:
+            return CodingSessionState.ABORTED
+        return None
+
+    async def _completed_no_approval_has_staged_bytes(
+        self,
+        session: CodingSessionV1,
+    ) -> bool:
+        if await self.database.get_latest_approval_record(session.run_id) is not None:
+            return False
+        try:
+            checkpoint = await self.checkpointer.aget_tuple(
+                self._config(session.conversation_id, session.run_id)
+            )
+        except Exception:
+            # Unreadable state is treated conservatively. The audit record and
+            # mirror stay held for operator recovery rather than risking bytes.
+            return True
+        if checkpoint is None:
+            return True
+        values = checkpoint.checkpoint.get("channel_values", {})
+        checkpoint_session_id = str(values.get("project_coding_session_id") or "")
+        if checkpoint_session_id and checkpoint_session_id != session.id:
+            return False
+        staged = values.get("project_staged") or {}
+        return isinstance(staged, Mapping) and _model_has_written(staged)
+
+    def _make_check_handler(
+        self,
+        state: AgentState,
+        project_id: str,
+        mirror_of: Callable[[str], Any],
+        scenarios: Sequence[Mapping[str, Any]],
+    ) -> Callable[[str, HostCheck], Awaitable[HostCheckResultV1]]:
+        """Answer one `run_check` from a live coding session.
+
+        The model names a check. Metis reads its own mirror, owns the argv, and
+        runs the same pinned networkless verifier the approval gate uses. The
+        session never executes anything and never learns a command.
+
+        Budgeted: checks are cheap next to an inference round but not free, and
+        an unbounded loop of them is its own way to burn a turn.
+        """
+
+        budget = int(self.settings.project_run_check_budget)
+        spent = 0
+        timeout = float(self.settings.project_run_check_timeout_seconds)
+
+        async def _run(session_id: str, check: HostCheck) -> HostCheckResultV1:
+            nonlocal spent
+            started = time.monotonic()
+            if spent >= budget:
+                return HostCheckResultV1(
+                    check=check,
+                    unavailable=(
+                        f"this session has used all {budget} of its checks; "
+                        "finish the work and let Metis verify"
+                    ),
+                )
+            spent += 1
+            # Looked up by the id the CALLER supplies. A first round has no
+            # session id in state yet, so keying off state alone made every
+            # first-round check report "no mirror" -- and the first round is
+            # where the work happens.
+            mirror = mirror_of(session_id)
+            if mirror is None:
+                return HostCheckResultV1(
+                    check=check, unavailable="the workspace mirror is not available"
+                )
+            try:
+                preview = await asyncio.wait_for(
+                    self.projects.preview_external_overlay(
+                        project_id, mirror, dict(state.get("project_staged") or {})
+                    ),
+                    timeout=timeout,
+                )
+                # Which rungs a name maps to is Metis's decision, not the
+                # model's: `full` is the same verification the approval gate
+                # runs, and the cheaper names stop earlier.
+                verification = await asyncio.wait_for(
+                    self._verify_staged_changeset(
+                        project_id,
+                        preview,
+                        full=check == "full",
+                        scenarios=(
+                            list(scenarios) if check in ("acceptance", "full") else None
+                        ),
+                    ),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                return HostCheckResultV1(
+                    check=check,
+                    unavailable=f"the check did not finish within {int(timeout)}s",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # noqa: BLE001 - the session must be told
+                return HostCheckResultV1(
+                    check=check,
+                    unavailable=f"the check could not run: {str(error)[:200]}",
+                )
+            errors = list(verification.get("errors") or [])
+            warnings = list(verification.get("warnings") or [])
+            findings = [
+                {
+                    "path": str(item.get("path") or "")[:1_000],
+                    "severity": "error"
+                    if item.get("severity") != "warning"
+                    else "warning",
+                    "detail": str(item.get("error") or "")[:2_000],
+                }
+                for item in (errors + warnings)[:50]
+            ]
+            result = HostCheckResultV1(
+                check=check,
+                ok=not errors,
+                errors=len(errors),
+                warnings=len(warnings),
+                findings=findings,
+                durationMs=int((time.monotonic() - started) * 1000),
+                truncated=len(errors) + len(warnings) > 50,
+            )
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.check_requested",
+                {
+                    "session_id": session_id,
+                    "check": check,
+                    "ok": result.ok,
+                    "errors": result.errors,
+                    "warnings": result.warnings,
+                    "duration_ms": result.duration_ms,
+                    "checks_used": spent,
+                    "checks_budget": budget,
+                },
+            )
+            return result
+
+        return _run
+
+    async def _project_clinecore_round(
+        self,
+        state: AgentState,
+        *,
+        prompt_context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Run one persistent Cline edit turn, then verify its imported bytes.
+
+        Cline owns inspection and editing inside the disposable mirror. Metis
+        owns the plan, provider ladder, independent diff, verifier feedback,
+        bounded fallback, and the final approval. A retry re-enters this method
+        with the same durable sidecar session rather than reconstructing the
+        task one file at a time.
+        """
+
+        await self._guard(state)
+        if self.project_coding is None:
+            return {
+                "response_text": (
+                    "The Cline coding engine is selected for this run, but its "
+                    "local sidecar is not available. Nothing was changed. Build "
+                    "the pinned sidecar and retry."
+                ),
+                "project_pending_call": {},
+            }
+        project_id = str(state.get("model_aliases", {}).get("_project_id") or "")
+        planned = [str(path) for path in state.get("project_planned_files") or []]
+        if self._uses_cline_direct(state):
+            # There is no manifest to be missing. The session writes anywhere
+            # in the contract's roots, so the only precondition is a contract.
+            if not project_id or not state.get("project_contract"):
+                return {
+                    "response_text": (
+                        "This project build was not started because its contract "
+                        "could not be established. Nothing was changed."
+                    ),
+                    "project_pending_call": {},
+                }
+        elif not project_id or not planned:
+            return {
+                "response_text": (
+                    "The Cline coding engine was not started because the planner "
+                    "did not establish a file manifest. Nothing was changed."
+                ),
+                "project_pending_call": {},
+            }
+
+        verified_prefix = max(
+            0, min(int(state.get("project_verified_prefix", 0)), len(planned))
+        )
+        previous_slice_complete = bool(state.get("project_coding_slice_complete"))
+        # An attributed acceptance repair is not the next slice in the plan --
+        # it is one already-verified slice reopened deliberately. It therefore
+        # bypasses frontier selection entirely and never advances the frontier;
+        # every other slice stays exactly as it was verified.
+        repair_slice = dict(state.get("project_repair_slice") or {})
+        active_slice: dict[str, Any] | None
+        direct = self._uses_cline_direct(state)
+        if direct:
+            # No slice selection, no frontier, no attribution. One session owns
+            # the whole authorized scope and decides its own order; the files
+            # that actually changed come from the independent mirror diff.
+            active_slice = {
+                "name": "Implementation",
+                "outcome": "Complete the task and leave the checks clean.",
+                "files": list(planned),
+                "owned_files": list(planned),
+                "integration_files": [],
+                "scenario_names": [],
+            }
+        elif repair_slice.get("files"):
+            active_slice = repair_slice
+        else:
+            active_slice = next_vertical_slice(
+                planned,
+                list(state.get("project_planned_slices") or []),
+                verified_count=verified_prefix,
+            )
+        if active_slice is None:
+            return {
+                "response_text": (
+                    "Every planned vertical slice is already verified. Review the "
+                    "complete staged changeset below."
+                ),
+                "project_pending_call": {},
+                "project_verified_prefix": len(planned),
+            }
+        slice_files = [str(path) for path in active_slice["files"]]
+        # owned_files is the slice's exact, non-overlapping contribution to
+        # the manifest partition; slice_files (owned + integration) is the
+        # broader write scope for this round and may re-list an earlier
+        # slice's already-consumed file. Only owned_files may drive "where
+        # are we in the plan" arithmetic below -- using slice_files there
+        # would make an integration file look like it duplicated a position.
+        owned_files = [
+            str(path) for path in active_slice.get("owned_files") or slice_files
+        ]
+        checkpoint_slice = [
+            str(path) for path in state.get("project_coding_slice_files") or []
+        ]
+        if (
+            checkpoint_slice
+            and not previous_slice_complete
+            and checkpoint_slice != slice_files
+        ):
+            raise ProjectCodingError(
+                "the active vertical slice changed across a coding checkpoint"
+            )
+        repairing = bool(repair_slice.get("files"))
+        if direct:
+            # The scope IS the manifest, so there is no position to check and
+            # no partition to have drifted from.
+            pass
+        elif not repairing:
+            expected_slice = planned[
+                verified_prefix : verified_prefix + len(owned_files)
+            ]
+            if owned_files != expected_slice:
+                raise ProjectCodingError(
+                    "the active vertical slice no longer matches the frozen project "
+                    "plan"
+                )
+        elif not set(slice_files) <= set(planned):
+            # A repair scope is not positional, but it is still bounded by the
+            # frozen manifest: it may only reopen files the plan already owns.
+            raise ProjectCodingError(
+                "the attributed repair scope names a file outside the frozen "
+                "project plan"
+            )
+        # A routed repair always closes at the complete changeset: the whole
+        # build is already staged, so its verification is the cumulative one
+        # and its clean result goes straight to the approval card.
+        # In direct mode every round closes at the complete changeset: there
+        # is no prefix, so verification is always the cumulative one.
+        final_slice = (
+            True
+            if direct
+            else repairing or verified_prefix + len(owned_files) == len(planned)
+        )
+        scenario_names = {
+            str(name) for name in active_slice.get("scenario_names") or []
+        }
+        integration_files = [
+            str(path) for path in active_slice.get("integration_files") or []
+        ]
+        if integration_files and not repairing:
+            # This slice reopens a file an earlier, already-verified slice
+            # owned -- a real vertical slice's integration point, not a
+            # horizontal layer, but exactly the edit that can silently break
+            # what that earlier slice already proved. Re-run every scenario
+            # that already passed, not just this slice's own, so a
+            # regression in the shared file is caught here rather than
+            # discovered later as "the app used to do X".
+            verified_paths = set(planned[:verified_prefix])
+            for item in list(state.get("project_planned_slices") or []):
+                item_files = {str(path) for path in item.get("files") or []}
+                if item_files and item_files <= verified_paths:
+                    scenario_names |= {
+                        str(name) for name in item.get("scenario_names") or []
+                    }
+        all_scenarios = list(state.get("project_planned_scenarios") or [])
+        slice_scenarios = (
+            all_scenarios
+            if final_slice
+            else [
+                item
+                for item in all_scenarios
+                if str(item.get("name") or "") in scenario_names
+            ]
+        )
+
+        total_rounds = int(state.get("project_coding_rounds", 0))
+        rounds = (
+            0
+            if previous_slice_complete
+            else int(state.get("project_coding_slice_rounds", total_rounds))
+        )
+        max_rounds = int(getattr(self.settings, "cline_sidecar_max_rounds", 4))
+        if rounds >= max_rounds:
+            return {
+                "response_text": (
+                    f"I stopped after {rounds} bounded Cline coding round(s). "
+                    "The review below contains the exact remaining verifier findings."
+                ),
+                "project_pending_call": {},
+            }
+
+        aliases = dict(state.get("model_aliases") or {})
+        chain = _coder_chain(aliases)
+        index = min(int(state.get("project_chain_index", 0)), len(chain) - 1)
+        prior_findings = list(state.get("project_coding_findings") or [])
+        unchanged = int(state.get("project_coding_unchanged_findings", 0))
+        same_limit = int(
+            getattr(self.settings, "cline_sidecar_unchanged_findings_limit", 2)
+        )
+        # Broad-build DeepSeek is measured as the best primary, while Kimi
+        # preserves complete files more reliably for exact repairs. Switch on
+        # the first verifier-owned repair; later switches require repeated,
+        # identical findings rather than cosmetic byte churn.
+        if prior_findings and rounds == 1:
+            index = max(
+                index,
+                _repair_coder_index(
+                    aliases, cline_default=self.settings.cline_coder_model
+                ),
+            )
+        elif prior_findings and unchanged >= same_limit and index + 1 < len(chain):
+            previous = index
+            index += 1
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "run.model_fallback",
+                {
+                    "role": "coder",
+                    "from": _chain_entry_label(chain[previous], aliases),
+                    "to": _chain_entry_label(chain[index], aliases),
+                    "reason": "unchanged_verifier_findings",
+                    "detail": f"{unchanged} identical verifier result(s)",
+                },
+            )
+            unchanged = 0
+
+        entry = chain[index]
+        try:
+            provider = coding_provider(
+                self.settings,
+                provider=str(entry.get("provider") or "local"),
+                model=(str(entry["model"]) if entry.get("model") else None),
+            )
+        except ProjectCodingError as error:
+            return {
+                "response_text": f"The selected coding route is unavailable: {error}",
+                "project_pending_call": {},
+                "project_chain_index": index,
+            }
+
+        session_id = str(state.get("project_coding_session_id") or "")
+        if previous_slice_complete and session_id:
+            # The prior node durably checkpointed its clean bytes and frontier.
+            # Only now may its isolated SDK transcript/mirror be released.
+            await self._release_project_coding_session(
+                state,
+                session_id,
+                CodingSessionState.COMPLETED,
+                additional_sidecar_ids=state.get("project_coding_cleanup_ids") or [],
+            )
+            session_id = ""
+        operation_id = f"{state['run_id']}:round:{total_rounds + 1}"
+        recovered = False
+        known_import_rejection = bool(
+            session_id
+            and any(
+                isinstance(finding, Mapping)
+                and str(finding.get("kind") or "") == "import_rejection"
+                for finding in prior_findings
+            )
+        )
+        check_handler = (
+            self._make_check_handler(
+                state,
+                project_id,
+                lambda session_id: (
+                    self.project_coding.live_mirror(session_id)
+                    or self.project_coding.live_mirror(
+                        str(state.get("project_coding_session_id") or "")
+                    )
+                ),
+                slice_scenarios,
+            )
+            if direct and self.settings.project_run_check_budget
+            else None
+        )
+        engine = getattr(self.project_coding, "engine", None)
+        install = getattr(engine, "set_check_handler", None)
+        if install is not None:
+            install(check_handler)
+        try:
+            resumed = (
+                None
+                if known_import_rejection
+                else await self.project_coding.recover_for_run(
+                    state["run_id"],
+                    project_id=project_id,
+                    staged=dict(state.get("project_staged") or {}),
+                    provider=provider,
+                    allowed_paths=slice_files,
+                    operation_id=operation_id,
+                    protected_paths=_protected_paths(state),
+                    broad_scope=direct,
+                )
+            )
+            if resumed is not None:
+                round_result = resumed
+                recovered = True
+            elif session_id:
+                staged_continue = dict(state.get("project_staged") or {})
+                continuation_prompt = (
+                    direct_coding_prompt(
+                        task=state["prompt"],
+                        existing_files=sorted(
+                            path for path in slice_files if path in staged_continue
+                        ),
+                        new_files=sorted(
+                            path for path in slice_files if path not in staged_continue
+                        ),
+                        protected_files=sorted(_protected_paths(state)),
+                        authorized_scope=_authorized_scope_text(state),
+                        checks=(
+                            list(HOST_CHECKS)
+                            if self.settings.project_run_check_budget
+                            else []
+                        ),
+                        findings=prior_findings,
+                        attempt=rounds + 1,
+                    )
+                    if direct
+                    else repair_coding_prompt(
+                        prior_findings,
+                        attempt=rounds + 1,
+                        allowed_paths=slice_files,
+                    )
+                    if prior_findings
+                    else (
+                        "The local coding process was interrupted before Metis "
+                        "observed an application-file diff. Resume the original "
+                        "task in this same workspace, inspect the current files, "
+                        "finish the planned implementation, summarize, and stop "
+                        "for independent verification."
+                    )
+                )
+                round_result = await self.project_coding.continue_session(
+                    session_id,
+                    prompt=continuation_prompt,
+                    staged=dict(state.get("project_staged") or {}),
+                    provider=provider,
+                    allowed_paths=slice_files,
+                    operation_id=operation_id,
+                    # The frozen contract, unchanged from admission. A repair
+                    # round is the same run under the same scope; narrowing it
+                    # here is what made a direct session's clean repair
+                    # unimportable.
+                    protected_paths=_protected_paths(state),
+                    broad_scope=direct,
+                )
+            else:
+                context = dict(prompt_context or state.get("project_context") or {})
+                repo_map = str(context.get("repo_map") or "")
+                if not repo_map:
+                    repo_map = await self._project_repo_map(
+                        state,
+                        project_id,
+                        aliases.get("_provider") in ("oci", "cohere", "cline"),
+                    )
+                staged_now = dict(state.get("project_staged") or {})
+                repo_map_text = str(
+                    dict(prompt_context or state.get("project_context") or {}).get(
+                        "repo_map"
+                    )
+                    or ""
+                )
+                if direct:
+                    # One builder for the first round and every continuation.
+                    # A path appears in exactly one section, so nothing can
+                    # tell the model to read a file it also told it to create.
+                    start_prompt = direct_coding_prompt(
+                        task=state["prompt"],
+                        existing_files=sorted(
+                            path for path in slice_files if path in staged_now
+                        ),
+                        new_files=sorted(
+                            path for path in slice_files if path not in staged_now
+                        ),
+                        protected_files=sorted(_protected_paths(state)),
+                        authorized_scope=_authorized_scope_text(state),
+                        acceptance=slice_scenarios,
+                        checks=(
+                            list(HOST_CHECKS)
+                            if self.settings.project_run_check_budget
+                            else []
+                        ),
+                        findings=prior_findings,
+                        attempt=rounds + 1,
+                        repo_map=repo_map_text,
+                    )
+                else:
+                    # The frozen planner/slice path, unchanged.
+                    start_prompt = initial_coding_prompt(
+                        task=state["prompt"],
+                        planned_files=slice_files,
+                        full_plan=planned,
+                        slice_name=str(active_slice.get("name") or ""),
+                        slice_outcome=str(active_slice.get("outcome") or ""),
+                        scenarios=slice_scenarios,
+                        spec=state.get("project_spec") or {},
+                        repo_map=repo_map,
+                        staged=state.get("project_staged") or {},
+                    )
+                    if prior_findings:
+                        start_prompt += "\n\n" + repair_coding_prompt(
+                            prior_findings,
+                            attempt=rounds + 1,
+                            allowed_paths=slice_files,
+                        )
+                round_result = await self.project_coding.start(
+                    run_id=state["run_id"],
+                    conversation_id=state["conversation_id"],
+                    project_id=project_id,
+                    prompt=start_prompt,
+                    staged=dict(state.get("project_staged") or {}),
+                    provider=provider,
+                    allowed_paths=slice_files,
+                    operation_id=operation_id,
+                    protected_paths=_protected_paths(state),
+                    broad_scope=direct,
+                )
+        except ProjectCodingError as error:
+            if install is not None:
+                install(None)
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.coding_failed",
+                {"round": rounds + 1, "reason": str(error)[:500]},
+            )
+            # An import/scope refusal marks its durable coding row failed before
+            # raising. It must not leave a private SDK transcript and mirror
+            # behind merely because the graph never received the session id.
+            try:
+                failed_sessions = await self.project_coding.sessions.for_run(
+                    state["run_id"]
+                )
+            except Exception:
+                failed_sessions = []
+            for failed in failed_sessions:
+                if failed.state is CodingSessionState.FAILED:
+                    await self._release_project_coding_session(
+                        state, failed.id, CodingSessionState.FAILED
+                    )
+            return {
+                "response_text": (
+                    "The Cline coding session stopped at Metis's safety boundary: "
+                    f"{error}. No external edit was applied to the real project."
+                ),
+                "project_pending_call": {},
+            }
+
+        staged = round_result.staged
+        rounds += 1
+        total_rounds += 1
+        common: dict[str, Any] = {
+            "project_staged": staged,
+            "project_coding_session_id": round_result.session.id,
+            "project_coding_cleanup_ids": list(round_result.cleanup_sidecar_ids),
+            "project_coding_rounds": total_rounds,
+            "project_coding_slice_rounds": rounds,
+            "project_coding_slice_files": slice_files,
+            "project_coding_slice_complete": False,
+            "project_chain_index": index,
+            "project_iterations": int(state.get("project_iterations", 0)) + 1,
+            "project_pending_call": {},
+            "project_phase": "building",
+            "project_direction": {},
+            "project_focus_path": "",
+            "project_write_pin": [],
+        }
+        # The round is over: no further check may be served against a mirror
+        # that is about to be imported, rebased or discarded.
+        if install is not None:
+            install(None)
+        terminal_result_state = (
+            str(round_result.result.state)
+            if round_result.result is not None
+            and round_result.result.state in {"aborted", "failed"}
+            else ""
+        )
+        terminal_finish_reason = (
+            round_result.result.finish_reason
+            if round_result.result is not None
+            else round_result.finish_reason
+        )
+        terminal_controlled_stop_reason = (
+            round_result.result.controlled_stop_reason
+            if round_result.result is not None
+            else round_result.controlled_stop_reason
+        )
+        controlled_budget_stop = bool(
+            (
+                round_result.result is not None
+                and round_result.result.state == "failed"
+                and round_result.result.controlled_stop_reason == "max_iterations"
+            )
+            or (
+                round_result.result is None
+                and round_result.recovered
+                and round_result.settled_recovery
+                and round_result.controlled_stop_reason == "max_iterations"
+            )
+        )
+        terminal_result_detail = (
+            str(round_result.result.summary or "").strip()[:2_000]
+            if terminal_result_state and round_result.result is not None
+            else ""
+        )
+        if round_result.rejection_repairable:
+            rejection_path = str(round_result.rejection_path or "")
+            rejection_reason = str(round_result.rejection_reason or "").strip()
+            if not rejection_path or rejection_path not in slice_files:
+                raise ProjectCodingError(
+                    "the coding engine returned an invalid repairable import refusal"
+                )
+            finding = {
+                "path": rejection_path,
+                "error": rejection_reason
+                or "the planned file has invalid syntax in the private coding workspace",
+                "severity": "error",
+                "kind": "import_rejection",
+                "rung": "syntax",
+            }
+            next_index = index + 1 if index + 1 < len(chain) else index
+            if rounds >= max_rounds:
+                await self._release_project_coding_session(
+                    state,
+                    round_result.session.id,
+                    CodingSessionState.FAILED,
+                    additional_sidecar_ids=round_result.cleanup_sidecar_ids,
+                )
+                raise ProjectCodingError(
+                    "the coding engine exhausted its bounded rounds while repairing "
+                    f"invalid syntax in {rejection_path}"
+                )
+            if next_index != index:
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "run.model_fallback",
+                    {
+                        "role": "coder",
+                        "from": _chain_entry_label(chain[index], aliases),
+                        "to": _chain_entry_label(chain[next_index], aliases),
+                        "reason": "repairable_import_rejection",
+                        "detail": rejection_reason[:300],
+                        "path": rejection_path,
+                        "terminal_state": terminal_result_state,
+                        "session_id": round_result.session.id,
+                        "finish_reason": terminal_finish_reason or "",
+                        "controlled_stop_reason": (
+                            terminal_controlled_stop_reason or ""
+                        ),
+                    },
+                )
+            return {
+                **common,
+                "project_chain_index": next_index,
+                "project_coding_findings": [finding],
+                "project_coding_finding_signature": (
+                    _verifier_finding_signature([finding])
+                ),
+                "project_coding_unchanged_findings": 0,
+                "project_repair_context": _repair_context(
+                    slice_files, [finding], unchanged=0
+                ),
+                "project_consecutive_reads": 0,
+                "project_stall_steps": 0,
+            }
+        terminal_failure_reason: str | None = None
+        if terminal_result_detail and not controlled_budget_stop:
+            terminal_error = RuntimeError(terminal_result_detail)
+            terminal_failure_reason = classify_model_error(
+                terminal_error
+            ) or classify_backend_unavailable(terminal_error)
+        if (
+            terminal_result_state
+            and terminal_failure_reason is None
+            and not controlled_budget_stop
+        ):
+            # A settled SDK call is not necessarily a successful model turn.
+            # In particular, ClineCore reports policy/tool refusals as
+            # ``aborted`` without raising a transport error.  Letting that
+            # result reach the ordinary empty-overlay branch would turn an
+            # incomplete coding attempt into a clean RunStatus.COMPLETED.
+            # Preserve the terminal verdict before either verification or the
+            # intentional completed/no-write response can run.
+            message = (
+                "The Cline coding round ended "
+                f"{terminal_result_state} before it completed the requested work."
+            )
+            if terminal_result_detail:
+                message += f" The engine reported: {terminal_result_detail[:500]}"
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.coding_failed",
+                {
+                    "round": rounds,
+                    "session_id": round_result.session.id,
+                    "state": terminal_result_state,
+                    "finish_reason": terminal_finish_reason or "",
+                    "controlled_stop_reason": (terminal_controlled_stop_reason or ""),
+                    "reason": message[:500],
+                },
+            )
+            await self._release_project_coding_session(
+                state,
+                round_result.session.id,
+                (
+                    CodingSessionState.ABORTED
+                    if terminal_result_state == "aborted"
+                    else CodingSessionState.FAILED
+                ),
+                additional_sidecar_ids=round_result.cleanup_sidecar_ids,
+            )
+            raise ProjectCodingError(message)
+        backend_failure_detail = terminal_result_detail
+        reason = terminal_failure_reason
+        if reason is None and round_result.engine_error:
+            backend_failure_detail = round_result.engine_error
+            reason = classify_backend_unavailable(
+                RuntimeError(round_result.engine_error)
+            )
+        if reason is not None:
+            next_index = _next_chain_index(chain, index, reason=reason)
+            await self._release_project_coding_session(
+                state,
+                round_result.session.id,
+                CodingSessionState.FAILED,
+                additional_sidecar_ids=round_result.cleanup_sidecar_ids,
+            )
+            if next_index is not None and rounds < max_rounds:
+                skipped = [
+                    _chain_entry_label(item, aliases)
+                    for item in chain[index + 1 : next_index]
+                ]
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "run.model_fallback",
+                    {
+                        "role": "coder",
+                        "from": _chain_entry_label(chain[index], aliases),
+                        "to": _chain_entry_label(chain[next_index], aliases),
+                        "reason": reason,
+                        "detail": backend_failure_detail[:300],
+                        **(
+                            {
+                                "terminal_state": terminal_result_state,
+                                "session_id": round_result.session.id,
+                                "finish_reason": terminal_finish_reason or "",
+                                "controlled_stop_reason": (
+                                    terminal_controlled_stop_reason or ""
+                                ),
+                            }
+                            if terminal_result_state
+                            else {}
+                        ),
+                        **({"skipped": skipped} if skipped else {}),
+                    },
+                )
+                return {
+                    **common,
+                    "project_coding_session_id": "",
+                    "project_coding_cleanup_ids": [],
+                    "project_chain_index": next_index,
+                    "project_coding_findings": prior_findings,
+                }
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "run.model_exhausted",
+                {
+                    "role": "coder",
+                    "operation": "clinecore_round",
+                    "model": _chain_entry_label(chain[index], aliases),
+                    "provider": str(chain[index].get("provider") or "local"),
+                    "reason": reason,
+                    "error": backend_failure_detail[:300],
+                },
+            )
+            return {
+                **common,
+                "project_coding_session_id": "",
+                "project_coding_cleanup_ids": [],
+                "response_text": _BLOCKED_STEP_GUIDANCE.get(
+                    reason, _BLOCKED_STEP_GUIDANCE["backend_unreachable"]
+                ),
+            }
+        if controlled_budget_stop and not _model_has_written(staged):
+            message = (
+                "The Cline coding round reached its controlled iteration limit "
+                "before it produced an application file change. Nothing was "
+                "applied, and the run is incomplete."
+            )
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.coding_failed",
+                {
+                    "round": rounds,
+                    "session_id": round_result.session.id,
+                    "state": "failed",
+                    "finish_reason": terminal_finish_reason or "",
+                    "controlled_stop_reason": "max_iterations",
+                    "reason": message,
+                },
+            )
+            await self._release_project_coding_session(
+                state,
+                round_result.session.id,
+                CodingSessionState.FAILED,
+                additional_sidecar_ids=round_result.cleanup_sidecar_ids,
+            )
+            # A round that spent its whole budget and wrote nothing is not
+            # evidence the slice is impossible -- it is evidence THIS coder,
+            # on THIS attempt, could not act. Switching coder for the retry
+            # (the same move already made for a verifier-owned repair or an
+            # infrastructure failure) gives a different model a real chance
+            # before the turn gives up. Only exhausting the ladder, or the
+            # round budget, stops the turn -- never a single silent retry of
+            # the identical coder that just failed to write anything.
+            next_index = index + 1 if index + 1 < len(chain) else None
+            if next_index is not None and rounds < max_rounds:
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "run.model_fallback",
+                    {
+                        "role": "coder",
+                        "from": _chain_entry_label(chain[index], aliases),
+                        "to": _chain_entry_label(chain[next_index], aliases),
+                        "reason": "controlled_budget_stop_no_write",
+                        "detail": message,
+                        "session_id": round_result.session.id,
+                    },
+                )
+                return {
+                    **common,
+                    "project_coding_session_id": "",
+                    "project_coding_cleanup_ids": [],
+                    "project_chain_index": next_index,
+                }
+            raise ProjectCodingError(message)
+        if not _model_has_written(staged):
+            if recovered and not round_result.settled_recovery and rounds < max_rounds:
+                # The prior local process ended before any application diff was
+                # observable. Checkpoint the recovered identity first; the next
+                # graph step resumes its original task rather than pretending an
+                # empty recovery was a completed model turn.
+                return {
+                    **common,
+                    "project_coding_findings": prior_findings,
+                    "project_consecutive_reads": 0,
+                    "project_stall_steps": 0,
+                }
+            return {
+                **common,
+                "response_text": (
+                    "The Cline session finished without producing an application "
+                    "file change. Nothing was applied."
+                    + (
+                        f" The model route also reported: {round_result.engine_error}."
+                        if round_result.engine_error
+                        else ""
+                    )
+                ),
+            }
+
+        verification = await self._verify_staged_changeset(
+            project_id,
+            staged,
+            planned=planned if final_slice else slice_files,
+            scenarios=slice_scenarios,
+        )
+        await self._emit_staged_verification(state, verification)
+        blockers = _blocking_findings(verification)
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            # A run with no slices must not report one. The direct path emits
+            # its own name so the timeline (and anyone reading the trace) never
+            # sees slice vocabulary for work that had no slices.
+            "project.build_checked" if direct else "project.vertical_slice_checked",
+            {
+                "name": str(active_slice.get("name") or "Current slice"),
+                "outcome": str(active_slice.get("outcome") or ""),
+                "files": slice_files,
+                "owned_files": owned_files,
+                "integration_files": integration_files,
+                "scenario_names": sorted(scenario_names),
+                # A direct round owns no declared file list -- its scope is the
+                # whole project and its changed paths are read from the diff
+                # afterwards -- so there is no "through" file to name.
+                "through": (
+                    owned_files[-1]
+                    if owned_files
+                    else (slice_files[-1] if slice_files else "")
+                ),
+                "final": final_slice,
+                "errors": len(verification["errors"]),
+                "warnings": len(verification["warnings"]),
+                "ran": len(verification["checks"]),
+                **(
+                    {
+                        "repair": True,
+                        "repair_target": str(repair_slice.get("target") or ""),
+                        "repair_attribution": str(
+                            repair_slice.get("attribution") or ""
+                        ),
+                    }
+                    if repairing
+                    else {}
+                ),
+            },
+        )
+        if repairing and not blockers:
+            # Cumulative verification passed. Before this may become an
+            # approval card, the repair must also prove it stayed inside the
+            # scope it was routed to: an untouched target is not convergence,
+            # and a rewritten bystander is exactly the regression that
+            # reopening verified slices was supposed to make impossible.
+            drift = changed_unaffected_paths(
+                dict(state.get("project_repair_hashes") or {}), staged
+            )
+            baseline = dict(repair_slice.get("target_hashes") or {})
+            touched = sorted(
+                path
+                for path in slice_files
+                if staged.get(path, {}).get("content") is not None
+                and _staged_content_hash(staged, path) != baseline.get(path)
+            )
+            if drift or not touched:
+                message = (
+                    "The attributed repair did not converge: "
+                    + (
+                        "it changed files it was not authorized to write "
+                        f"({', '.join(drift[:5])}). "
+                        if drift
+                        else "it produced no change to any file it was "
+                        "authorized to write. "
+                    )
+                    + "The previously verified changeset is unchanged and is not "
+                    "offered for approval on the strength of this attempt."
+                )
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "project.repair_rejected",
+                    {
+                        "target": str(repair_slice.get("target") or ""),
+                        "slice": str(repair_slice.get("name") or ""),
+                        "unaffected_changed": drift[:12],
+                        "authorized_changed": touched,
+                        "reason": message[:500],
+                    },
+                )
+                await self._release_project_coding_session(
+                    state,
+                    round_result.session.id,
+                    CodingSessionState.FAILED,
+                    additional_sidecar_ids=round_result.cleanup_sidecar_ids,
+                )
+                return {
+                    **common,
+                    "project_staged": dict(state.get("project_staged") or {}),
+                    "project_coding_session_id": "",
+                    "project_coding_cleanup_ids": [],
+                    "project_repair_slice": {},
+                    "project_repair_hashes": {},
+                    "response_text": message,
+                }
+        if not blockers:
+            frontier = verified_prefix + len(owned_files)
+            if not final_slice:
+                return {
+                    **common,
+                    # Keep the clean session identity for one checkpoint. The
+                    # next node releases it before opening a fresh causal loop
+                    # for the next slice, avoiding the pre-checkpoint loss gap.
+                    "project_coding_slice_complete": True,
+                    "project_coding_findings": [],
+                    "project_coding_finding_signature": "",
+                    "project_coding_unchanged_findings": 0,
+                    "project_repair_context": {},
+                    "project_verified_prefix": frontier,
+                    "project_slice_verifications": int(
+                        state.get("project_slice_verifications", 0)
+                    )
+                    + 1,
+                    "project_chain_index": 0,
+                    "project_consecutive_reads": 0,
+                    "project_stall_steps": 0,
+                }
+            return {
+                **common,
+                "response_text": (
+                    f"I repaired {repair_slice.get('target') or 'the failing file'} "
+                    f"inside the “{repair_slice.get('name')}” slice, leaving every "
+                    "other verified file byte-identical. The complete changeset "
+                    f"passed {len(verification['checks'])} independent "
+                    "verification check(s), including every scenario the earlier "
+                    "slices already proved. Review the exact changeset below."
+                    if repairing
+                    else (
+                        (
+                            "Cline reached its controlled iteration limit after "
+                            "staging safe project bytes. "
+                            if controlled_budget_stop
+                            else f"Cline completed {rounds} bounded coding round(s). "
+                        )
+                        + "All "
+                        f"{len(planned)} planned artifacts across the vertical "
+                        "slices are staged and passed "
+                        f"{len(verification['checks'])} independent verification "
+                        "check(s). Review the exact changeset below."
+                    )
+                ),
+                "project_coding_findings": [],
+                "project_coding_finding_signature": "",
+                "project_coding_unchanged_findings": 0,
+                "project_repair_context": {},
+                "project_repair_slice": {},
+                "project_repair_hashes": {},
+                "project_verified_prefix": len(planned),
+            }
+
+        signature = _verifier_finding_signature(blockers)
+        previous_signature = str(state.get("project_coding_finding_signature") or "")
+        unchanged = unchanged + 1 if signature == previous_signature else 0
+        can_switch = index + 1 < len(chain)
+        # ── A repair round that wrote nothing ──────────────────────────────
+        # Distinct from a repair that tried and failed: this one left the
+        # blocker exactly as it found it and touched none of the bytes it was
+        # authorized to touch. It must not be credited as convergence, and it
+        # must not simply be retried identically -- one corrective
+        # continuation with explicit "no change was detected" feedback, or the
+        # next configured rung, and then an honest stop.
+        before_round = dict(state.get("project_staged") or {})
+        repair_round = bool(prior_findings)
+        wrote_nothing = repair_round and all(
+            _staged_content_hash(staged, path)
+            == _staged_content_hash(before_round, path)
+            for path in slice_files
+        )
+        if wrote_nothing:
+            no_change_retries = int(state.get("project_repair_no_change", 0))
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.repair_no_change",
+                {
+                    "round": rounds,
+                    "model": _chain_entry_label(chain[index], aliases),
+                    "authorized_paths": slice_files,
+                    "blockers": len(blockers),
+                    "finding_unchanged": signature == previous_signature,
+                    "retries_spent": no_change_retries,
+                    "session_id": round_result.session.id,
+                },
+            )
+            if no_change_retries >= 1 and not can_switch:
+                # The bounded retry is spent and there is no other rung: stop
+                # rather than spend another round on a model that has already
+                # been told, in terms, that it changed nothing.
+                return {
+                    **common,
+                    "response_text": (
+                        f"The repair round changed none of the {len(slice_files)} "
+                        "file(s) it was authorized to write, and the blocking "
+                        f"finding is unchanged after {rounds} round(s). I stopped "
+                        "rather than repeat an attempt that produced no edit. The "
+                        "staged changeset below is exactly what the last "
+                        "successful round produced."
+                    ),
+                    "project_coding_findings": blockers,
+                    "project_coding_finding_signature": signature,
+                    "project_repair_context": _repair_context(
+                        slice_files, blockers, unchanged=unchanged
+                    ),
+                }
+            next_no_change_index = index + 1 if can_switch else index
+            return {
+                **common,
+                "project_chain_index": next_no_change_index,
+                "project_repair_no_change": no_change_retries + 1,
+                "project_coding_findings": blockers,
+                "project_coding_finding_signature": signature,
+                "project_coding_unchanged_findings": unchanged,
+                "project_repair_context": {
+                    **_repair_context(slice_files, blockers, unchanged=unchanged),
+                    # The one piece of feedback the next attempt needs that the
+                    # findings alone do not carry.
+                    "no_change_detected": True,
+                },
+                "project_consecutive_reads": 0,
+                "project_stall_steps": 0,
+            }
+        exhausted = rounds >= max_rounds or (unchanged >= same_limit and not can_switch)
+        repair = _repair_context(slice_files, blockers, unchanged=unchanged)
+        if exhausted:
+            return {
+                **common,
+                "response_text": (
+                    f"Cline staged {len(staged)} file change(s), but independent "
+                    f"verification still has {len(blockers)} blocking finding(s) "
+                    f"after {rounds} bounded round(s). I stopped rather than loop "
+                    "or weaken the checks; the review below names each blocker."
+                ),
+                "project_coding_findings": blockers,
+                "project_coding_finding_signature": signature,
+                "project_coding_unchanged_findings": unchanged,
+                "project_repair_context": repair,
+            }
+        return {
+            **common,
+            "project_coding_findings": blockers,
+            "project_coding_finding_signature": signature,
+            "project_coding_unchanged_findings": unchanged,
+            "project_repair_context": repair,
+            "project_consecutive_reads": 0,
+            "project_stall_steps": 0,
+        }
+
+    async def _project_direct_admission(
+        self, state: AgentState, project_id: str
+    ) -> dict[str, Any] | None:
+        """Freeze this run's contract, or stop and ask. ``None`` means proceed.
+
+        Runs once per run: the contract is persisted with the checkpoint, so a
+        continuation restores exactly the contract the work started under and
+        cannot silently widen it.
+        """
+
+        if state.get("project_contract"):
+            return None
+        context = state.get("project_context") or await self.projects.context(
+            project_id
+        )
+        tree = [
+            str(path)
+            for path in ((context or {}).get("manifest") or {}).get("file_tree") or []
+        ]
+        project = await self.projects.assets.project_path(project_id)
+        persistent = await self._project_protected_setting(project_id)
+        contract, resolution = build_direct_contract(
+            prompt=str(state.get("prompt") or ""),
+            project=Path(project),
+            tree=tree,
+            project_protected=persistent,
+            acceptance=list(state.get("project_planned_scenarios") or []),
+            max_iterations=int(self.settings.cline_sidecar_max_iterations),
+            max_rounds=int(self.settings.cline_sidecar_max_rounds),
+            check_budget=int(self.settings.project_run_check_budget),
+        )
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.direct_contract",
+            {
+                "writable_roots": list(contract.writable_roots),
+                "protected_files": list(contract.protected_files),
+                "task_protected": list(contract.task_protected),
+                "project_protected": list(contract.project_protected),
+                "unresolved": list(resolution.unmatched + resolution.ambiguous),
+                "max_iterations": contract.max_iterations,
+                "check_budget": contract.check_budget,
+            },
+        )
+        if resolution.needs_user:
+            # An explicit protection that could not be resolved safely stops
+            # the run BEFORE any inference. Guessing here is the one mistake
+            # that cannot be undone by a later refusal.
+            return {
+                "response_text": resolution.question(),
+                "project_pending_call": {},
+                "project_contract": {},
+            }
+        return {"project_contract": contract.as_state()}
+
+    async def _project_protected_setting(self, project_id: str) -> list[str]:
+        """Per-project protections a person set, or []. Identities, not bytes."""
+
+        try:
+            context = await self.projects.context(project_id)
+        except Exception:  # noqa: BLE001 - a missing setting protects nothing extra
+            return []
+        stored = ((context or {}).get("settings") or {}).get("protected_files") or []
+        return [str(path) for path in stored if str(path)]
 
     async def _project_step(self, state: AgentState) -> dict[str, Any]:
         """One bounded coding-agent decision.
@@ -2226,8 +4525,116 @@ class ControlPlane:
         project_id = state.get("model_aliases", {}).get("_project_id", "")
         if not project_id or self.projects is None:
             raise ValueError("project workspace is unavailable")
+        if state.get("response_text") and not state.get("project_pending_call"):
+            # The execute node can now finish deterministically after immediate
+            # verification, or stop a repair after its bounded refusals. The
+            # graph deliberately returns here once; preserve that host verdict
+            # instead of asking a model for another step before routing it to
+            # approval/publication.
+            #
+            # This is checked BEFORE the direct branch below, not after. The
+            # direct branch has no wording condition left to make it selective,
+            # so a terminal turn re-entering this node -- via `retry`, or via
+            # the project_execute edge -- would otherwise open a second Cline
+            # round on a turn that had already answered.
+            return {}
+        if self._uses_cline_direct(state):
+            # The whole direct flow: resolve and freeze the contract, then hand
+            # the task to one persistent session. No exploration loop, no
+            # manifest, no topology gate, no slice frontier -- and the files
+            # that changed are read afterwards from the mirror diff.
+            #
+            # The routing decision is the user's explicit project selection,
+            # frozen into this run's aliases at submit time. It is deliberately
+            # NOT re-derived from the request's wording: a build-request regex
+            # sat here and read "Add invoice-status filtering to the existing
+            # application..." as conversation, dropping a frozen direct run
+            # into the legacy per-file loop -- the one outcome the frozen alias
+            # exists to prevent. Cline decides for itself whether the answer is
+            # an inspection or an edit; a turn that changes nothing simply
+            # returns without a changeset, and no approval card is raised.
+            direct = await self._project_direct_admission(state, project_id)
+            if direct is not None:
+                return direct
+            return await self._project_clinecore_round(state)
+        if (
+            self._uses_clinecore(state)
+            and state.get("project_plan_taken")
+            and state.get("project_planned_files")
+            and state.get("project_build_intent") != "question"
+        ):
+            return await self._project_clinecore_round(state)
         iterations = int(state.get("project_iterations", 0))
         staged = state.get("project_staged") or {}
+        planned_now = [str(path) for path in state.get("project_planned_files") or []]
+        repair_active = bool(
+            (state.get("project_direction") or {}).get("path")
+            or state.get("project_focus_path")
+            or (state.get("project_repair_strategy") or {}).get("path")
+        )
+        if (
+            planned_now
+            and _model_has_written(staged)
+            and all(path in staged for path in planned_now)
+            and not repair_active
+        ):
+            # Completion is a host-observable fact now: the turn's own ordered
+            # plan is fully represented in the overlay. Verify immediately,
+            # before another model call can drift back into reads or attempt to
+            # recreate files that already exist. A failed verification creates
+            # one exact repair direction; a clean one ends deterministically and
+            # goes straight to the changeset approval.
+            verification = await self._verify_staged_changeset(
+                project_id,
+                staged,
+                planned=planned_now,
+                scenarios=state.get("project_planned_scenarios") or [],
+            )
+            await self._emit_staged_verification(state, verification)
+            verify_retries = int(state.get("project_syntax_retries", 0))
+            blocking_findings = _blocking_findings(verification)
+            if blocking_findings and verify_retries < _MAX_STAGED_VERIFY_RETRIES:
+                return await self._staged_verify_retry(
+                    state, iterations, verify_retries, blocking_findings
+                )
+            if blocking_findings:
+                message = (
+                    f"I staged every planned file, but verification still found "
+                    f"{len(blocking_findings)} blocking problem(s) "
+                    "after the bounded repair attempts. I stopped instead of "
+                    "spending more steps on unchanged work; the review below names "
+                    "each remaining problem."
+                )
+            else:
+                message = (
+                    f"All {len(planned_now)} planned file change(s) are staged and "
+                    f"passed {len(verification['checks'])} verification check(s). "
+                    "Review the complete changeset below."
+                )
+            return {
+                "project_pending_call": {},
+                "response_text": message,
+                "project_consecutive_reads": 0,
+                **(
+                    {
+                        "project_repair_context": {},
+                        "project_verified_prefix": len(planned_now),
+                        "project_syntax_retries": 0,
+                    }
+                    if not blocking_findings
+                    else {}
+                ),
+            }
+        slice_update = await self._project_dependency_slice(
+            state,
+            project_id,
+            staged,
+            planned_now,
+            iterations,
+            repair_active=repair_active,
+        )
+        if slice_update is not None:
+            return slice_update
         step_cap = self.settings.project_agent_max_steps + int(
             state.get("project_verify_bonus_steps", 0)
         )
@@ -2249,10 +4656,12 @@ class ControlPlane:
                         planned=state.get("project_planned_files") or [],
                         scenarios=state.get("project_planned_scenarios") or [],
                     )
+                    blocking_findings = _blocking_findings(verification)
                     if verification["errors"]:
                         await self._emit_staged_verification(state, verification)
-                        update = self._staged_verify_retry(
-                            state, iterations, verify_retries, verification["errors"]
+                    if blocking_findings:
+                        update = await self._staged_verify_retry(
+                            state, iterations, verify_retries, blocking_findings
                         )
                         update["project_verify_bonus_steps"] = (
                             int(state.get("project_verify_bonus_steps", 0)) + 2
@@ -2347,6 +4756,7 @@ class ControlPlane:
                 # The counter restarts: the model is being asked a different,
                 # smaller question, and it deserves the allowance to answer it.
                 "project_consecutive_reads": 0,
+                "project_stall_steps": 0,
                 "project_pending_call": {},
             }
         # When the orchestrator died mid-turn, the drift that follows is a
@@ -2361,6 +4771,19 @@ class ControlPlane:
             else ""
         )
         ceiling = _FOCUSED_EXPLORE_STEPS if focused else _explore_budget(state)
+        focused_stall = int(state.get("project_stall_steps", 0))
+        if focused and focused_stall >= _FOCUSED_NO_PROGRESS_SWITCH_STEPS:
+            switched = await self._advance_coder_ladder(
+                state,
+                reason="focused_no_progress",
+                detail=(
+                    f"{focused_stall} focused step(s) left the staged overlay "
+                    f"unchanged while working on {focused}"
+                ),
+                step=iterations + 1,
+            )
+            if switched is not None:
+                return {**switched, "project_pending_call": {}}
         if explored >= ceiling:
             # Either it was narrowed to one file and still would not write it,
             # or it drifted with nothing left owed to narrow to. Both mean
@@ -2382,10 +4805,12 @@ class ControlPlane:
                         planned=state.get("project_planned_files") or [],
                         scenarios=state.get("project_planned_scenarios") or [],
                     )
+                    blocking_findings = _blocking_findings(verification)
                     if verification["errors"]:
                         await self._emit_staged_verification(state, verification)
-                        update = self._staged_verify_retry(
-                            state, iterations, verify_retries, verification["errors"]
+                    if blocking_findings:
+                        update = await self._staged_verify_retry(
+                            state, iterations, verify_retries, blocking_findings
                         )
                         # The same bonus the step-cap path grants: the fix budget
                         # is separate from the exploration budget, or a turn that
@@ -2427,11 +4852,17 @@ class ControlPlane:
         project_context = state.get("project_context") or await self.projects.context(
             project_id
         )
-        cloud_context = state.get("model_aliases", {}).get("_provider") in ("oci", "cohere")
+        cloud_context = state.get("model_aliases", {}).get("_provider") in (
+            "oci",
+            "cohere",
+            "cline",
+        )
         prompt_context = project_context
         if not cloud_context:
             prompt_context = dict(project_context)
-            prompt_context["metis_md"] = str(project_context.get("metis_md", ""))[:20_000]
+            prompt_context["metis_md"] = str(project_context.get("metis_md", ""))[
+                :20_000
+            ]
             manifest = dict(project_context.get("manifest", {}))
             manifest["file_tree"] = list(manifest.get("file_tree", []))[:500]
             prompt_context["manifest"] = manifest
@@ -2449,35 +4880,46 @@ class ControlPlane:
             list(state.get("project_trace", [])),
             max_characters=180_000 if cloud_context else 36_000,
         )
+        existing_direction = dict(state.get("project_direction") or {})
+        active_repair = dict(state.get("project_repair_strategy") or {})
+        if active_repair.get("kind") == "whole_file" and active_repair.get("path"):
+            # Exact-edit failures can happen outside a planner-directed step.
+            # A complete rewrite is safe only if the coder receives the current
+            # file, so synthesize the same prefetch direction used by repairs.
+            existing_direction = {
+                "path": str(active_repair["path"]),
+                "instruction": "Rewrite the complete file after an exact edit refusal.",
+                "reuse": [],
+                "read": [],
+            }
+        if existing_direction.get("path"):
+            # Verifier-created repair directions do not pass through the fresh
+            # orchestrator branch below. Fetch the exact current overlay bytes
+            # here before reads are closed, otherwise an exact patch is asked of
+            # a coder that may only have a clipped, 24-entry-old copy in trace.
+            trace = await self._prefetch_for_coder(
+                state, project_id, staged, existing_direction, trace
+            )
         spec_info = await self._project_spec_rewrite(state, iterations, staged)
         spec_text = str((spec_info or {}).get("spec") or "")
+        if not state.get("project_required_files") and not state.get(
+            "project_plan_taken"
+        ):
+            # Computed once, from the same source the planner itself reads
+            # (the compiled spec when one exists, otherwise the raw request),
+            # and held for the rest of the run -- see project_required_files.
+            required_now = _extract_required_files(spec_text or state["prompt"])
+            if required_now:
+                state["project_required_files"] = required_now
         plan = await self._project_manifest(
             state, prompt_context, iterations, staged, spec_text=spec_text
         )
         planned = plan["files"]
         planned_scenarios = plan["scenarios"]
-        if planned == [] and plan["intent"] != "question" and is_new_application_request(
-            state["prompt"]
-        ):
-            # Asked twice, named nothing — a plan failure, distinct from a
-            # manifest that merely could not be requested (None). Scoped to
-            # whole-application requests: a path-level build ("create app/x.py")
-            # can proceed gateless as it always has, but an application asked
-            # for by shape with no plan behind it is the measured 30-minute
-            # drift. Ending here costs nothing: no step was spent, nothing was
-            # staged.
-            await self.events.emit(
-                state["run_id"], state["conversation_id"], "project.plan_failed", {}
-            )
-            return {
-                "response_text": (
-                    "The model could not produce a build plan for this request — "
-                    "asked twice, it named no files — so the build was not started "
-                    "and nothing was written. Rephrase or narrow the request, or "
-                    "switch to the cloud builder for a request of this size."
-                ),
-                "project_pending_call": {},
-            }
+        planned_slices = plan["slices"]
+        plan_failure = await self._project_plan_failure_response(state, plan)
+        if plan_failure is not None:
+            return plan_failure
         # Carried on EVERY outcome, not just a clean step. The manifest is
         # taken once, so losing it to a single unreadable reply would silently
         # drop the gate for the whole turn — the step after it, no longer the
@@ -2487,16 +4929,26 @@ class ControlPlane:
             if planned and not state.get("project_planned_files")
             else {}
         )
-        if not iterations and not state.get("project_phase") and is_project_build_request(
-            state["prompt"]
+        planner_index = int(state.get("project_planner_chain_index", 0))
+        if planner_index:
+            carry["project_planner_chain_index"] = planner_index
+        required_files = list(state.get("project_required_files") or [])
+        if required_files:
+            carry["project_required_files"] = required_files
+        if (
+            not iterations
+            and not state.get("project_phase")
+            and is_project_build_request(state["prompt"])
         ):
             # The explore→act arc, made visible: a build turn opens in the
             # exploring phase and the timeline says so, instead of the user
             # watching an undifferentiated run of list_files.
             carry["project_phase"] = "exploring"
             await self.events.emit(
-                state["run_id"], state["conversation_id"],
-                "project.phase", {"phase": "exploring", "step": iterations + 1},
+                state["run_id"],
+                state["conversation_id"],
+                "project.phase",
+                {"phase": "exploring", "step": iterations + 1},
             )
         if plan["taken"]:
             # The plan was requested this step. Its answers ride the manifest's
@@ -2512,24 +4964,34 @@ class ControlPlane:
                 # answer, and what follows is expected to write toward it.
                 carry["project_phase"] = "building"
                 await self.events.emit(
-                    state["run_id"], state["conversation_id"],
+                    state["run_id"],
+                    state["conversation_id"],
                     "project.phase",
-                    {"phase": "building", "step": iterations + 1, "files": plan["files"]},
+                    {
+                        "phase": "building",
+                        "step": iterations + 1,
+                        "files": plan["files"],
+                    },
                 )
                 # And written down: METIS.md rides into every step's context,
                 # so the plan survives any trace window or reset.
-                plan_recorder = getattr(getattr(self, "projects", None), "record_plan", None)
+                plan_recorder = getattr(
+                    getattr(self, "projects", None), "record_plan", None
+                )
                 if plan_recorder is not None:
                     await plan_recorder(
                         project_id,
                         {
                             "files": plan["files"],
+                            "slices": planned_slices,
                             "intent": plan["intent"] or "build",
                             "scope": plan["scope"] or "narrow",
                         },
                     )
         if carry.get("project_planned_files") and planned_scenarios:
             carry["project_planned_scenarios"] = planned_scenarios
+        if carry.get("project_planned_files") and planned_slices:
+            carry["project_planned_slices"] = planned_slices
         if spec_info and not state.get("project_spec"):
             carry["project_spec"] = spec_info
         # A build that wears the Metis design language starts from verified
@@ -2537,8 +4999,9 @@ class ControlPlane:
         # .env.example) so the model composes the vendored theme instead of
         # inventing one. Seeded entries ride the same overlay as model writes —
         # visible on the approval card, applied only through the same single
-        # approval — and stage_scaffold is idempotent, skipping every path the
-        # overlay or disk already has, so a degraded stage just seeds nothing.
+        # approval — and stage_scaffold is idempotent. Canonical appkit files
+        # already on disk are upgraded as approval-visible, SHA-pinned patches;
+        # a degraded stage still seeds nothing.
         #
         # The decision axis is the CAPABILITY the build needs, read from the
         # REQUEST, not from the plan. This is the Logivity lesson, live and then
@@ -2557,7 +5020,14 @@ class ControlPlane:
         # post-plan branch remains as a backstop for a whole-app build the
         # prompt regex missed. Seeding appkit does NOT count as model progress
         # (see _model_has_written), so plan-after-exploration is unaffected.
-        wants_web = wants_web_ui(state["prompt"]) and not _has_own_frontend(prompt_context)
+        wants_web = wants_web_ui(state["prompt"]) and not _has_own_frontend(
+            prompt_context
+        )
+        has_disk_scaffold = _project_has_scaffold(prompt_context)
+        plan_is_owned = bool(plan["taken"] or state.get("project_plan_taken"))
+        planned_intent = str(
+            plan.get("intent") or state.get("project_build_intent") or ""
+        )
         wants_scaffold = (
             not iterations
             and not _has_seeded_scaffold(staged)
@@ -2566,9 +5036,9 @@ class ControlPlane:
                 or (is_project_build_request(state["prompt"]) and wants_web)
             )
         ) or (
-            plan["taken"]
-            and plan["intent"] in ("build", "edit")
-            and (plan["scope"] == "whole_app" or wants_web)
+            plan_is_owned
+            and planned_intent in ("build", "edit")
+            and (plan.get("scope") == "whole_app" or wants_web or has_disk_scaffold)
             and not _has_seeded_scaffold(staged)
         )
         if wants_scaffold:
@@ -2586,28 +5056,126 @@ class ControlPlane:
                     "project.scaffold_staged",
                     {"files": seeded, "version": SCAFFOLD_VERSION},
                 )
-        # ── The orchestrator's turn, before the coder's ────────────────────
-        # Taken only once there is a plan to direct against and the turn is one
-        # that writes. A question is never directed: there is no file to name.
-        directed_intent = (carry.get("project_build_intent") or state.get("project_build_intent") or "")
-        planned_now = list(carry.get("project_planned_files") or state.get("project_planned_files") or planned or [])
-        if planned_now and directed_intent != "question" and _writes_files(
-            cast(AgentState, {**state, **carry})
+        cline_planned = list(
+            carry.get("project_planned_files")
+            or state.get("project_planned_files")
+            or planned
+            or []
+        )
+        cline_intent = str(
+            carry.get("project_build_intent")
+            or state.get("project_build_intent")
+            or plan.get("intent")
+            or ""
+        )
+        plan_taken = bool(
+            carry.get("project_plan_taken") or state.get("project_plan_taken")
+        )
+        if getattr(self.settings, "project_plan_only", False) and plan_taken:
+            # Evaluation mode: the real planner, normalization and topology
+            # gate have all run by now -- plan_taken is what says so, and
+            # without it this would stop on step one, before the loop has
+            # explored and before a plan was ever requested. Stop here,
+            # before any mirror, session, or coder inference, so planner
+            # reliability can be measured without paying for the build.
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.plan_only_stop",
+                {
+                    "files": list(cline_planned),
+                    "slices": [
+                        str(item.get("name") or "")
+                        for item in (
+                            carry.get("project_planned_slices")
+                            or state.get("project_planned_slices")
+                            or []
+                        )
+                    ],
+                    "intent": cline_intent,
+                    "engine": "clinecore" if self._uses_clinecore(state) else "legacy",
+                },
+            )
+            return {
+                **carry,
+                "project_pending_call": {},
+                "response_text": (
+                    "Plan-only evaluation mode: the build plan was taken and "
+                    "validated, and the run stopped before any coding session "
+                    f"was created. {len(cline_planned)} file(s) planned."
+                ),
+            }
+        if self._uses_clinecore(state) and cline_planned and cline_intent != "question":
+            # Planning/scaffolding stay host-owned; Cline replaces everything
+            # below this seam—the per-file direction and one-tool model step.
+            effective = cast(
+                AgentState,
+                {
+                    **state,
+                    **carry,
+                    "project_staged": staged,
+                    "project_planned_files": cline_planned,
+                },
+            )
+            return {
+                **carry,
+                **await self._project_clinecore_round(
+                    effective, prompt_context=prompt_context
+                ),
+            }
+        # ── Select one planned file before the coder's turn ────────────────
+        # Current compact plans make this deterministic from dependency order;
+        # a compatibility checkpoint can still ask ProjectDirectionV1. A
+        # question is never directed because there is no file to name.
+        directed_intent = (
+            carry.get("project_build_intent") or state.get("project_build_intent") or ""
+        )
+        planned_now = list(
+            carry.get("project_planned_files")
+            or state.get("project_planned_files")
+            or planned
+            or []
+        )
+        active_direction = dict(
+            carry.get("project_direction") or state.get("project_direction") or {}
+        )
+        active_focus = str(
+            carry.get("project_focus_path") or state.get("project_focus_path") or ""
+        )
+        if (
+            planned_now
+            and directed_intent != "question"
+            and not (
+                active_repair.get("kind") == "whole_file" and active_repair.get("path")
+            )
+            and not active_direction.get("path")
+            and not active_focus
+            and _writes_files(cast(AgentState, {**state, **carry}))
         ):
             direction = await self._project_direct(
                 cast(AgentState, {**state, **carry}),
-                prompt_context, staged, planned_now, iterations, spec_text=spec_text,
+                prompt_context,
+                staged,
+                planned_now,
+                iterations,
+                spec_text=spec_text,
             )
+            if "planner_chain_index" in direction:
+                carry["project_planner_chain_index"] = int(
+                    direction["planner_chain_index"]
+                )
             if direction.get("exhausted"):
                 missing = ", ".join(
                     f"`{item['path']}`" for item in direction["exhausted"][:6]
                 )
                 await self.events.emit(
-                    state["run_id"], state["conversation_id"],
+                    state["run_id"],
+                    state["conversation_id"],
                     "project.direction",
-                    {"step": iterations + 1, "exhausted": [
-                        item["path"] for item in direction["exhausted"]
-                    ]},
+                    {
+                        "step": iterations + 1,
+                        "exhausted": [item["path"] for item in direction["exhausted"]],
+                    },
                 )
                 staged_now = _model_has_written(staged)
                 return {
@@ -2664,7 +5232,8 @@ class ControlPlane:
                 carry["project_direction"] = {}
             elif direction.get("path"):
                 carry["project_direction"] = {
-                    key: direction[key] for key in ("path", "instruction", "reuse", "read")
+                    key: direction[key]
+                    for key in ("path", "instruction", "reuse", "read")
                 }
                 carry["project_direction_attempts"] = direction["attempts"]
                 # The existing narrowing machinery IS the coder's half of the
@@ -2674,6 +5243,11 @@ class ControlPlane:
                 # growing a second mechanism that could disagree with it.
                 carry["project_focus_path"] = direction["path"]
                 carry["project_consecutive_reads"] = 0
+                # This is a new, smaller strategy. Measure no-progress from
+                # the first directed attempt, not from exploration that led to
+                # the plan, or a freshly assigned coder would be switched out
+                # before it had one fair write.
+                carry["project_stall_steps"] = 0
                 # A stylesheet is the one target where the host can state the
                 # whole job as a list. Asking the model to derive it instead —
                 # "read the components and collect every className" — is asking
@@ -2687,16 +5261,71 @@ class ControlPlane:
                 trace = await self._prefetch_for_coder(
                     state, project_id, staged, direction, trace
                 )
+        # A directed coder cannot inspect the repository. Give it a bounded,
+        # machine-derived contract for this exact target instead: current
+        # target imports (for repairs), every earlier dependency in plan order,
+        # and the public appkit APIs that actually exist in the live overlay.
+        # The ranked disk map above remains useful for planning; this overlay-
+        # aware slice is what prevents the coder from inventing an integration
+        # name between two unapproved files.
+        direction_for_context = (
+            dict(carry.get("project_direction") or {})
+            if "project_direction" in carry
+            else dict(state.get("project_direction") or {})
+        )
+        interface_reader = getattr(self.projects, "interface_map", None)
+        if (
+            self.settings.project_repo_map_enabled
+            and interface_reader is not None
+            and direction_for_context.get("path")
+        ):
+            target_path = str(direction_for_context["path"])
+            if target_path in planned_now:
+                dependency_paths = planned_now[: planned_now.index(target_path)]
+            else:
+                dependency_paths = list(direction_for_context.get("read") or [])
+            try:
+                exact_interfaces = await interface_reader(
+                    project_id,
+                    target_path=target_path,
+                    dependency_paths=dependency_paths,
+                    staged=staged,
+                    max_chars=6_000 if cloud_context else 4_000,
+                )
+            except Exception:  # noqa: BLE001 - context sharpens, never gates
+                exact_interfaces = ""
+            if exact_interfaces:
+                prompt_context = dict(prompt_context)
+                ranked = str(prompt_context.get("repo_map") or "").rstrip()
+                prompt_context["repo_map"] = (
+                    f"{ranked}\n\n{exact_interfaces}" if ranked else exact_interfaces
+                )
         # The coder ladder for this run: [primary, backup, ...]. A lane that
         # fails to ANSWER (rate limit, quota, 5xx, timeout, a grammar the
         # backend refuses) advances the ladder and the same step is retried on
-        # the next rung — a malformed REPLY does not, because that is the
-        # model's own mistake and the loop's evidence path is how it corrects
-        # itself. The index is carried in state, so once a rung is found dead
-        # the rest of the turn never re-tries it.
+        # the next rung. A single malformed REPLY stays on the same model so
+        # the evidence loop can correct it; repeated malformed replies advance
+        # at the bounded threshold below. The index is carried in state, so a
+        # rung already found unproductive is not re-tried later in the turn.
         aliases = dict(state.get("model_aliases", {}))
         chain = _coder_chain(aliases)
         index = min(int(state.get("project_chain_index", 0)), len(chain) - 1)
+        if (
+            int(state.get("project_malformed_streak", 0))
+            >= _MALFORMED_MODEL_SWITCH_STEPS
+        ):
+            switched = await self._advance_coder_ladder(
+                state,
+                reason="repeated_malformed_reply",
+                detail=(
+                    f"{state.get('project_malformed_streak', 0)} consecutive "
+                    "project replies could not be decoded"
+                ),
+                step=iterations + 1,
+            )
+            if switched is not None:
+                carry.update(switched)
+                index = int(switched["project_chain_index"])
         step: ProjectAgentStepV1 | None = None
         while True:
             attempt_aliases = _chain_step_aliases(aliases, chain[index])
@@ -2714,7 +5343,11 @@ class ControlPlane:
                     AgentState,
                     {**state, **carry, "model_aliases": attempt_aliases},
                 ),
-                prompt_context, trace, staged, iterations, planned,
+                prompt_context,
+                trace,
+                staged,
+                iterations,
+                planned,
                 spec_text=spec_text,
             )
             try:
@@ -2739,10 +5372,18 @@ class ControlPlane:
                         return {
                             **carry,
                             **self._malformed_project_step(
-                                state, exc, iterations, staged
+                                cast(AgentState, {**state, **carry}),
+                                exc,
+                                iterations,
+                                staged,
                             ),
                         }
-                if index + 1 < len(chain):
+                next_index = _next_chain_index(chain, index, reason=reason)
+                if next_index is not None:
+                    skipped = [
+                        _chain_entry_label(entry, aliases)
+                        for entry in chain[index + 1 : next_index]
+                    ]
                     await self.events.emit(
                         state["run_id"],
                         state["conversation_id"],
@@ -2750,17 +5391,54 @@ class ControlPlane:
                         {
                             "role": "coder",
                             "step": iterations + 1,
-                            "from": _chain_entry_label(chain[index], aliases),
-                            "to": _chain_entry_label(chain[index + 1], aliases),
+                            "from": (
+                                _provider_failure_label(chain[index], reason=reason)
+                                or _chain_entry_label(chain[index], aliases)
+                            ),
+                            "to": _chain_entry_label(chain[next_index], aliases),
                             "reason": reason,
                             "detail": str(exc)[:300],
+                            **(
+                                {
+                                    "exhausted_provider": str(
+                                        chain[index].get("provider") or "local"
+                                    ),
+                                    "skipped": skipped,
+                                }
+                                if skipped
+                                else {}
+                            ),
                         },
                     )
-                    index += 1
+                    index = next_index
                     carry["project_chain_index"] = index
                     continue
                 # The ladder is exhausted; end the turn naming the real cause
                 # — which used to be the outcome after the FIRST failure.
+                if reason == "provider_exhausted":
+                    provider = str(chain[index].get("provider") or "local")
+                    await self.events.emit(
+                        state["run_id"],
+                        state["conversation_id"],
+                        "run.model_exhausted",
+                        {
+                            "role": "coder",
+                            "operation": "project_step",
+                            "step": iterations + 1,
+                            "model": _provider_failure_label(
+                                chain[index], reason=reason
+                            ),
+                            "provider": provider,
+                            "reason": reason,
+                            "skipped": [
+                                _chain_entry_label(entry, aliases)
+                                for entry in chain[index + 1 :]
+                                if str(entry.get("provider") or "local").casefold()
+                                == provider.casefold()
+                            ],
+                            "error": str(exc)[:300],
+                        },
+                    )
                 return {
                     **carry,
                     **await self._blocked_project_step(
@@ -2779,12 +5457,210 @@ class ControlPlane:
                 # evidence.
                 return {
                     **carry,
-                    **self._malformed_project_step(state, exc, iterations, staged),
+                    **self._malformed_project_step(
+                        cast(AgentState, {**state, **carry}),
+                        exc,
+                        iterations,
+                        staged,
+                    ),
                 }
         step_result = await self._project_step_result(
             state, step, iterations, project_context, planned
         )
         return {**carry, **step_result}
+
+    async def _advance_coder_ladder(
+        self,
+        state: AgentState,
+        *,
+        reason: str,
+        detail: str,
+        step: int,
+    ) -> dict[str, Any] | None:
+        """Move one rung after repeated model-local failure, visibly and once.
+
+        Backend outages already advance inside the call loop. This is the
+        companion policy for replies that arrived but did not make usable
+        progress: malformed envelopes, focused stalls, and refused tools.
+        """
+        aliases = dict(state.get("model_aliases", {}))
+        chain = _coder_chain(aliases)
+        current = min(int(state.get("project_chain_index", 0)), len(chain) - 1)
+        if current + 1 >= len(chain):
+            return None
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "run.model_fallback",
+            {
+                "role": "coder",
+                "step": step,
+                "from": _chain_entry_label(chain[current], aliases),
+                "to": _chain_entry_label(chain[current + 1], aliases),
+                "reason": reason,
+                "detail": detail[:300],
+                "strategy": dict(state.get("project_repair_strategy") or {}),
+            },
+        )
+        return {
+            "project_chain_index": current + 1,
+            "project_malformed_streak": 0,
+            "project_refused_streak": 0,
+            "project_stall_steps": 0,
+            "project_consecutive_reads": 0,
+        }
+
+    async def _project_planner_call(
+        self,
+        state: AgentState,
+        operation: str,
+        request: dict[str, Any],
+    ) -> Any:
+        """Call one planner operation through the same configured ladder.
+
+        Specification, manifest, and a compatibility direction use this single
+        dispatch seam: the first rung owns every judgment while healthy; a
+        failure is visible and advances only to another planner, never to an
+        undirected coder making scope decisions.
+        """
+        aliases = dict(state.get("model_aliases", {}))
+        chain = _planner_chain(aliases)
+        last: Exception | None = None
+        start = int(state.get("project_planner_chain_index", 0))
+        if start >= len(chain):
+            # Exhaustion is a turn-level fact, just like the coder's working
+            # rung.  Retrying the final dead planner before every spec,
+            # manifest and direction call can otherwise spend the whole turn
+            # on the same timeout after the fallback ladder is already known
+            # to be empty.
+            raise PermanentModelError(
+                "the planner model ladder is exhausted for this turn",
+                reason="planner_exhausted",
+            )
+        index = start
+        failed_index = start
+        last_reason = ""
+        while index < len(chain):
+            entry = chain[index]
+            attempt_aliases = _chain_step_aliases(aliases, entry, role="planner")
+            started = time.monotonic()
+            try:
+                method = getattr(self.model, operation)
+                reply = await method(request, model_aliases=attempt_aliases)
+                await ControlPlane._emit_planner_attempt(
+                    self,
+                    state,
+                    operation=operation,
+                    latency=time.monotonic() - started,
+                    chain_index=index,
+                    ok=True,
+                )
+                return reply
+            except Exception as exc:  # noqa: BLE001 - next planner is the fallback
+                last = exc
+                failed_index = index
+                last_reason = (
+                    getattr(exc, "reason", "")
+                    or classify_backend_unavailable(exc)
+                    or "invalid_planner_reply"
+                )
+                # Every inference attempt is recorded, not only the ones that
+                # parsed. A malformed reply still cost tokens and time, and a
+                # run whose planner failed twice must not report a planner
+                # bill of zero. Usage is read from the provider, which sets it
+                # when the transport succeeded -- so a JSON or schema failure
+                # after a completed call still carries its real cost.
+                await ControlPlane._emit_planner_attempt(
+                    self,
+                    state,
+                    operation=operation,
+                    latency=time.monotonic() - started,
+                    chain_index=index,
+                    ok=False,
+                    reason=last_reason,
+                    failure_stage=_planner_failure_stage(exc),
+                )
+                next_index = _next_chain_index(chain, index, reason=last_reason)
+                if next_index is None:
+                    break
+                state["project_planner_chain_index"] = next_index
+                skipped = [
+                    _chain_entry_label(item, aliases, role="planner")
+                    for item in chain[index + 1 : next_index]
+                ]
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "run.model_fallback",
+                    {
+                        "role": "planner",
+                        "operation": operation,
+                        "step": int(state.get("project_iterations", 0)) + 1,
+                        "from": (
+                            _provider_failure_label(entry, reason=last_reason)
+                            or _chain_entry_label(entry, aliases, role="planner")
+                        ),
+                        "to": _chain_entry_label(
+                            chain[next_index], aliases, role="planner"
+                        ),
+                        "reason": last_reason,
+                        "detail": str(exc)[:300],
+                        **(
+                            {
+                                "exhausted_provider": str(
+                                    entry.get("provider") or "local"
+                                ),
+                                "skipped": skipped,
+                            }
+                            if skipped
+                            else {}
+                        ),
+                    },
+                )
+                index = next_index
+        assert last is not None
+        if operation != "project_spec" or last_reason == "provider_exhausted":
+            # `len(chain)` is the durable exhausted sentinel. It is deliberately
+            # outside the valid rung indexes, so another required plan call does
+            # not retry a ladder already known to be dead. The optional spec
+            # rewrite is excluded: failure to produce that richer contract does
+            # not prove the same model cannot produce the smaller manifest, and
+            # must never prevent the required plan from being attempted. An
+            # explicit provider-wide cap is the exception: it proves every
+            # same-provider manifest call would be wasted too.
+            state["project_planner_chain_index"] = len(chain)
+            exhausted_entry = chain[failed_index]
+            provider = str(exhausted_entry.get("provider") or "local")
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "run.model_exhausted",
+                {
+                    "role": "planner",
+                    "operation": operation,
+                    "step": int(state.get("project_iterations", 0)) + 1,
+                    "model": (
+                        _provider_failure_label(exhausted_entry, reason=last_reason)
+                        or _chain_entry_label(exhausted_entry, aliases, role="planner")
+                    ),
+                    "reason": last_reason,
+                    "error": str(last)[:300],
+                    **(
+                        {
+                            "provider": provider,
+                            "skipped": [
+                                _chain_entry_label(item, aliases, role="planner")
+                                for item in chain[failed_index + 1 :]
+                                if str(item.get("provider") or "local").casefold()
+                                == provider.casefold()
+                            ],
+                        }
+                        if last_reason == "provider_exhausted"
+                        else {}
+                    ),
+                },
+            )
+        raise last
 
     async def _project_spec_rewrite(
         self,
@@ -2824,9 +5700,16 @@ class ControlPlane:
         rewriter = getattr(self.model, "project_spec", None)
         if rewriter is None:
             return None
-        cloud_context = state.get("model_aliases", {}).get("_provider") in ("oci", "cohere")
+        cloud_context = state.get("model_aliases", {}).get("_provider") in (
+            "oci",
+            "cohere",
+            "cline",
+        )
         try:
-            compiled = await rewriter(
+            compiled = await ControlPlane._project_planner_call(
+                self,
+                state,
+                "project_spec",
                 {
                     "user_request": prompt,
                     # The verified API facts, in front of the REWRITER too:
@@ -2846,7 +5729,6 @@ class ControlPlane:
                         else 0,
                     ),
                 },
-                model_aliases=state.get("model_aliases", {}),
             )
         except Exception:  # noqa: BLE001 - a lost rewrite only loses sharpening
             return None
@@ -2856,7 +5738,8 @@ class ControlPlane:
         info = {
             "spec": spec,
             "assumptions": [
-                str(item)[:300] for item in list(getattr(compiled, "assumptions", []))[:8]
+                str(item)[:300]
+                for item in list(getattr(compiled, "assumptions", []))[:8]
             ],
         }
         await self.events.emit(
@@ -2912,17 +5795,39 @@ class ControlPlane:
         planless build drifting through its step budget is how a configured
         model once spent thirty minutes producing a 35-byte __init__.py.
         """
+        if ControlPlane._uses_cline_direct(state):
+            # The direct path never reaches the planner. It is admitted under
+            # a contract -- write anywhere except the protected paths -- and
+            # the files that actually changed are discovered afterwards from
+            # the independent mirror diff. Reaching here at all would mean the
+            # direct flow had been bypassed.
+            contract = dict(state.get("project_contract") or {})
+            return {
+                "files": None,
+                "scenarios": [dict(item) for item in contract.get("acceptance") or []],
+                "slices": [],
+                "intent": "build",
+                "scope": "direct",
+                "taken": bool(contract),
+                "slices_synthesized": False,
+            }
         existing = list(state.get("project_planned_files") or [])
         if existing or state.get("project_plan_taken"):
             return {
                 "files": existing or None,
                 "scenarios": list(state.get("project_planned_scenarios") or []),
+                "slices": list(state.get("project_planned_slices") or []),
                 "intent": str(state.get("project_build_intent") or ""),
                 "scope": str(state.get("project_build_scope") or ""),
                 "taken": False,
             }
         unplanned: dict[str, Any] = {
-            "files": None, "scenarios": [], "intent": "", "scope": "", "taken": False
+            "files": None,
+            "scenarios": [],
+            "slices": [],
+            "intent": "",
+            "scope": "",
+            "taken": False,
         }
         # (the spec rewrite, when one applies, has already run — see
         # _project_spec_rewrite, which this method's request text comes from)
@@ -2956,18 +5861,44 @@ class ControlPlane:
         }
         intent = ""
         scope = ""
-        for _ in range(2):
+        # One bounded corrective replan, and only for a topology the host
+        # rejected. Attempts here are cheap planner calls; the expensive thing
+        # this protects is the coder session that must not start behind a bad
+        # plan. `attempt` remains the existing empty-manifest retry.
+        corrections_left = int(getattr(self.settings, "project_plan_corrections", 1))
+        correction = ""
+        # Planner quality, carried into the taken plan: a plan whose slices
+        # Metis supplied is not the same as one the planner got right.
+        plan_synthesized = False
+        for attempt in range(2):
+            if correction:
+                request = {**request, "plan_correction": correction}
             try:
-                plan = await self.model.project_plan_files(
-                    request, model_aliases=state.get("model_aliases", {})
+                plan = await ControlPlane._project_planner_call(
+                    self,
+                    state,
+                    "project_plan_files",
+                    request,
                 )
-            except Exception:  # noqa: BLE001 - a missing manifest only loses the gate
-                return unplanned
+            except Exception as exc:  # noqa: BLE001 - see plan_error below
+                # _project_planner_call never returns control to this caller
+                # mid-chain: any exception it raises here means every
+                # remaining planner rung was already tried and failed for
+                # this turn. `files` stays None so a non-ClineCore turn
+                # keeps its established "the gate merely could not apply"
+                # fallback unchanged; `plan_error` names the decisive
+                # failure so a ClineCore-selected turn -- which must never
+                # fall through to the legacy per-file loop on a failed plan
+                # -- can end the turn honestly instead of drifting unplanned.
+                return {**unplanned, "plan_error": str(exc)[:500]}
             # Scripted fakes still return a bare list; the real providers now
             # return the whole plan, scenarios and declared intent included.
             planned = getattr(plan, "files", plan)
             scenarios = [
                 item.model_dump(mode="json") for item in getattr(plan, "scenarios", [])
+            ][:MAX_PLAN_SCENARIOS]
+            slices = [
+                item.model_dump(mode="json") for item in getattr(plan, "slices", [])
             ][:8]
             # "" from a provider that does not declare — every caller falls
             # back to the regexes in that case, so a scripted or older
@@ -2976,7 +5907,177 @@ class ControlPlane:
             scope = str(getattr(plan, "scope", "") or "")
             # Bounded by the contract as well; this keeps the manifest inside
             # the same changeset budget the overlay itself enforces.
-            files = [str(path) for path in planned][: self.settings.project_staged_max_files]
+            files = [str(path) for path in planned][
+                : self.settings.project_staged_max_files
+            ]
+            # Unbound, exactly like the planner dispatch above: `self` here may
+            # be a scripted double that carries only the few attributes the
+            # manifest path reads.
+            # ── The synchronous topology gate ─────────────────────────────
+            # Everything below this point can open a ClineCore session, make
+            # a disposable mirror, and call a coder. A plan whose slices are
+            # horizontal must not get that far: the live failure spent
+            # 270,522 coder tokens on a tests-and-docs split that an external
+            # check only noticed afterwards. This runs in the same call, in
+            # process, before the plan is ever returned as taken.
+            if files and not slices and ControlPlane._uses_clinecore(state):
+                # A manifest with no slices used to fall through to a
+                # mechanical six-file partition. On a seven-file plan that
+                # produced "the first six files" plus a slice holding only
+                # README.md and requirements.txt -- a support-only slice the
+                # gate then rejected, for an architecture no model proposed.
+                #
+                # Small enough to build in one pass: synthesize exactly one
+                # slice owning the whole manifest, carrying every declared
+                # scenario, and judge it below like any other. Larger than
+                # that: the split is a real decision, so spend the single
+                # corrective attempt asking the planner to make it.
+                synthesized = synthesize_single_slice(files, scenarios)
+                if synthesized is not None:
+                    slices = [synthesized]
+                    plan_synthesized = True
+                    await self.events.emit(
+                        state["run_id"],
+                        state["conversation_id"],
+                        "project.plan_synthesized",
+                        {
+                            "reason": "planner_declared_no_slices",
+                            "files": list(files),
+                            "slice": {
+                                "name": synthesized["name"],
+                                "outcome": synthesized["outcome"],
+                                "owned_files": list(synthesized["owned_files"]),
+                                "integration_files": [],
+                                "scenario_names": list(synthesized["scenario_names"]),
+                            },
+                            "max_slice_files": MAX_SLICE_FILES,
+                            "attempt": attempt + 1,
+                        },
+                    )
+                elif corrections_left > 0:
+                    corrections_left -= 1
+                    correction = (
+                        f"This plan names {len(files)} files and declares no "
+                        "slices. A manifest this size has to be split into "
+                        "vertical slices, and how to split it is a design "
+                        "decision only the plan can make -- Metis will not "
+                        "invent one. Return the same manifest with explicit "
+                        "slices: each one an end-to-end outcome owning at "
+                        f"most {MAX_SLICE_FILES} files, in dependency order, "
+                        "with owned_files across all slices reproducing the "
+                        "manifest exactly and every slice naming the "
+                        "acceptance scenarios it satisfies. Do not make a "
+                        "slice that contains only tests, docs or dependency "
+                        "files."
+                    )
+                    continue
+                else:
+                    return {
+                        **unplanned,
+                        "plan_error": (
+                            f"the plan named {len(files)} files but declared "
+                            "no slices, and the corrective attempt did not "
+                            "add any. Metis will not partition a manifest "
+                            "this size on its own, because choosing the "
+                            "boundaries would be inventing an architecture "
+                            "the plan never proposed."
+                        )[:500],
+                        "plan_rejected": True,
+                    }
+            if files:
+                # Canonicalize first, judge second. A trailing tests/README
+                # slice is a predictable structural difference the host can
+                # fix exactly -- those files already belong to the outcome
+                # before them -- so rejecting the whole plan over it would
+                # spend a planner round on something arithmetic can settle.
+                # Normalization invents nothing and drops nothing; anything it
+                # cannot settle safely it refuses, and the refusal is judged
+                # by the same gate as any other bad plan.
+                declared_slices = [dict(item) for item in slices]
+                normalized = normalize_build_plan(files, slices)
+                if normalized.ok and normalized.applied:
+                    slices = [dict(item) for item in normalized.slices]
+                    await self.events.emit(
+                        state["run_id"],
+                        state["conversation_id"],
+                        "project.plan_normalized",
+                        {
+                            "original": [
+                                {
+                                    "name": str(item.get("name") or ""),
+                                    "owned_files": list(item.get("owned_files") or []),
+                                    "integration_files": list(
+                                        item.get("integration_files") or []
+                                    ),
+                                    "scenario_names": list(
+                                        item.get("scenario_names") or []
+                                    ),
+                                }
+                                for item in declared_slices
+                            ],
+                            "normalized": [
+                                {
+                                    "name": str(item.get("name") or ""),
+                                    "owned_files": list(item.get("owned_files") or []),
+                                    "integration_files": list(
+                                        item.get("integration_files") or []
+                                    ),
+                                    "scenario_names": list(
+                                        item.get("scenario_names") or []
+                                    ),
+                                }
+                                for item in slices
+                            ],
+                            "codes": list(normalized.codes),
+                            "moved": [dict(item) for item in normalized.moved],
+                            "attempt": attempt + 1,
+                        },
+                    )
+                # The EFFECTIVE plan, not just the declared one: a planner
+                # that declares no slices is partitioned into six-file chunks
+                # by the host, and a manifest whose tail is a README lands it
+                # in a chunk of its own. Validating only what the planner
+                # wrote would let that bypass the gate entirely.
+                verdict = (
+                    validate_effective_plan(files, slices, scenarios=scenarios)
+                    if normalized.ok
+                    else PlanValidation(
+                        ok=False,
+                        findings=(normalized.rejected,),
+                        codes=normalized.codes,
+                    )
+                )
+                if not verdict.ok:
+                    await self.events.emit(
+                        state["run_id"],
+                        state["conversation_id"],
+                        "project.plan_rejected",
+                        {
+                            "files": files,
+                            "slices": [str(item.get("name", "")) for item in slices],
+                            "scope": scope,
+                            "intent": intent,
+                            "attempt": attempt + 1,
+                            "codes": list(verdict.codes),
+                            "findings": list(verdict.findings)[:8],
+                            "corrections_left": corrections_left,
+                        },
+                    )
+                    if corrections_left > 0:
+                        corrections_left -= 1
+                        correction = verdict.correction_text()
+                        continue
+                    # Fail-fast, or the one correction was spent. Stop before
+                    # inference: plan_error is what makes a ClineCore turn end
+                    # honestly rather than drift into the per-file loop.
+                    return {
+                        **unplanned,
+                        "plan_error": (
+                            "the planner's slice plan was rejected: "
+                            + "; ".join(verdict.findings)
+                        )[:500],
+                        "plan_rejected": True,
+                    }
             if files or intent == "question":
                 # A declared question is a complete answer, not a failed plan:
                 # it is taken, it holds no files, and it turns the build gates
@@ -2988,20 +6089,208 @@ class ControlPlane:
                     {
                         "files": files,
                         "scenarios": [str(item.get("name", "")) for item in scenarios],
+                        "slices": [str(item.get("name", "")) for item in slices],
                         "intent": intent,
                         "scope": scope,
                         "after_steps": iterations,
+                        "slices_synthesized": plan_synthesized,
                     },
                 )
                 return {
                     "files": files,
                     "scenarios": scenarios,
+                    "slices": slices,
                     "intent": intent,
                     "scope": scope,
                     "taken": True,
+                    "slices_synthesized": plan_synthesized,
                 }
+            if attempt == 0:
+                aliases = dict(state.get("model_aliases", {}))
+                chain = _planner_chain(aliases)
+                current = int(state.get("project_planner_chain_index", 0))
+                if current + 1 < len(chain):
+                    await self.events.emit(
+                        state["run_id"],
+                        state["conversation_id"],
+                        "run.model_fallback",
+                        {
+                            "role": "planner",
+                            "operation": "project_plan_files",
+                            "step": iterations + 1,
+                            "from": _chain_entry_label(
+                                chain[current], aliases, role="planner"
+                            ),
+                            "to": _chain_entry_label(
+                                chain[current + 1], aliases, role="planner"
+                            ),
+                            "reason": "empty_manifest",
+                            "detail": (
+                                "planner returned no files and did not classify "
+                                "the request as a question"
+                            ),
+                        },
+                    )
+                    state["project_planner_chain_index"] = current + 1
         return {
-            "files": [], "scenarios": [], "intent": intent, "scope": scope, "taken": True
+            "files": [],
+            "scenarios": [],
+            "slices": [],
+            "intent": intent,
+            "scope": scope,
+            "taken": True,
+        }
+
+    async def _emit_planner_attempt(
+        self,
+        state: AgentState,
+        *,
+        operation: str,
+        latency: float,
+        chain_index: int,
+        ok: bool,
+        reason: str = "",
+        failure_stage: str = "",
+    ) -> None:
+        """Record one planner inference attempt, whether or not it parsed.
+
+        Coder sessions report tokens through the sidecar; planner calls had
+        no equivalent, so a run's total was really "coder only" and a ceiling
+        could be reached without ever counting the planner. Worse, only
+        successful calls were recorded at all -- a run whose planner returned
+        malformed JSON twice reported a planner bill of zero, which is not the
+        same fact as "the planner was free".
+
+        Usage is read from the provider, which records it when the transport
+        completes and BEFORE the reply is parsed, so a JSON or schema failure
+        still carries its real cost. Nothing from the reply itself is stored:
+        only the classified reason and which stage failed.
+        """
+
+        raw = getattr(self.model, "last_usage", None)
+        usage = dict(raw) if isinstance(raw, Mapping) else {}
+        aliases = dict(state.get("model_aliases") or {})
+        chain = _planner_chain(aliases)
+        index = max(0, min(int(chain_index), len(chain) - 1))
+        attempts = int(state.get("project_planner_attempts", 0)) + 1
+        payload = {
+            "role": "planner",
+            "operation": operation,
+            "model": _chain_entry_label(chain[index], aliases, role="planner"),
+            "provider": str(chain[index].get("provider") or "local"),
+            "chain_index": index,
+            "fallback": index > 0,
+            "attempt": attempts,
+            "ok": ok,
+            "latency_ms": round(max(0.0, latency) * 1000),
+            "usage": usage,
+            "usage_available": bool(usage),
+            **({"reason": reason} if reason else {}),
+            **({"failure_stage": failure_stage} if failure_stage else {}),
+        }
+        await self.events.emit(
+            state["run_id"], state["conversation_id"], "run.planner_attempt", payload
+        )
+        state["project_planner_attempts"] = attempts
+        state["project_planner_tokens"] = int(
+            state.get("project_planner_tokens", 0)
+        ) + max(0, int(usage.get("total_tokens") or 0))
+
+    async def _project_plan_failure_response(
+        self, state: AgentState, plan: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """End the turn honestly when formal planning has decisively failed.
+
+        Returns None when the turn should continue as it always has (either a
+        real plan was taken, or the manifest merely could not be requested
+        yet — files=None, taken=False — which is not a failure, just a gate
+        that has not applied). Otherwise returns the terminal response.
+
+        A build/edit routed through ClineCore must never fall through to the
+        legacy per-file loop when formal planning fails: that loop has no
+        plan to hold it to the full requested scope, and its own
+        verifier-driven repair can silently narrow to whatever one file
+        blocked first (see _staged_verify_retry). So for ClineCore, any of a
+        decisive planner-ladder failure (plan_error), an explicitly empty
+        plan, or a plan that omits a file the request explicitly required
+        ends the turn honestly, regardless of request shape. Legacy keeps
+        its narrower, pre-existing scope exactly as before.
+        """
+        planned = plan["files"]
+        plan_error = plan.get("plan_error")
+        empty_plan = planned == [] and plan["intent"] != "question"
+        uses_clinecore = self._uses_clinecore(state)
+        required_files = list(state.get("project_required_files") or [])
+        missing_required = (
+            [path for path in required_files if path not in (planned or [])]
+            if uses_clinecore and planned and plan["intent"] in ("", "build", "edit")
+            else []
+        )
+        # A topology the host rejected stops every engine, not just ClineCore.
+        # The whole point of the gate is that no model writes code behind a
+        # bad plan, and "the legacy loop may proceed unplanned" would reopen
+        # exactly that door.
+        plan_rejected = bool(plan.get("plan_rejected"))
+        plan_decisively_failed = (
+            plan_rejected
+            or (
+                uses_clinecore
+                and (plan_error is not None or empty_plan or bool(missing_required))
+            )
+            or (
+                not uses_clinecore
+                and empty_plan
+                and is_new_application_request(state["prompt"])
+            )
+        )
+        if not plan_decisively_failed:
+            return None
+        # Distinct from a manifest that merely could not be requested yet
+        # (files=None, taken=False) -- ending here costs nothing: no step
+        # was spent, nothing was staged.
+        reason = (
+            "invalid_slice_plan"
+            if plan_rejected
+            else "planner_exhausted"
+            if plan_error is not None
+            else "missing_required_files"
+            if missing_required
+            else "empty_manifest"
+        )
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.plan_failed",
+            {
+                "reason": reason,
+                "engine": "clinecore" if uses_clinecore else "legacy",
+                "attempts": 1 if plan_error is not None else 2,
+                "planner_chain_index": int(state.get("project_planner_chain_index", 0)),
+                **({"detail": str(plan_error)} if plan_error is not None else {}),
+                **({"missing": missing_required} if missing_required else {}),
+            },
+        )
+        detail = (
+            "the planner's slice plan was rejected before any code was written"
+            if plan_rejected
+            else "every configured planner failed to return a usable plan"
+            if plan_error is not None
+            else (
+                f"the plan omits {len(missing_required)} explicitly required "
+                f"file(s): {', '.join(missing_required[:8])}"
+            )
+            if missing_required
+            else "asked twice, it named no files"
+        )
+        return {
+            "response_text": (
+                f"I could not produce a build plan for this request — {detail} "
+                "— so the build was not started and nothing was written. "
+                "Rephrase or narrow the request, adjust the planner routing, "
+                "or switch to the cloud builder for a request of this size."
+            ),
+            "project_pending_call": {},
+            "project_plan_taken": True,
         }
 
     async def _project_direct(
@@ -3013,13 +6302,13 @@ class ControlPlane:
         iterations: int,
         spec_text: str = "",
     ) -> dict[str, Any]:
-        """Ask the ORCHESTRATOR which file is written next, and what it must say.
+        """Direct the next dependency-ordered file, with a legacy model fallback.
 
-        The controller around this is ordinary code and stays that way: it picks
-        nothing and writes nothing, it validates what the orchestrator names
-        against the plan and against an attempt cap, and it refuses a direction
-        it cannot honour rather than improvising one. Every judgement belongs to
-        the orchestrator; every rule belongs here.
+        A current compact manifest already owns the dependency order. The host
+        pins its first outstanding path, provides the compiled request plus
+        bounded exact bytes from earlier dependencies, and never pays for a
+        second planner call. A checkpoint without the explicit plan marker uses
+        the historical ProjectDirectionV1 path for compatibility.
 
         Returns {} when the turn is not directed, which is the signal to run the
         loop exactly as it ran before this existed.
@@ -3030,14 +6319,19 @@ class ControlPlane:
         if not owed:
             return {}
         attempts = dict(state.get("project_direction_attempts") or {})
-        # A path that has had its attempts is not offered again: the
-        # orchestrator can only choose among files the host is still willing to
-        # spend a step on, so a cap cannot be argued with.
-        available = [
-            path
-            for path in owed
-            if attempts.get(path, 0) < self.settings.project_orchestrator_max_attempts
-        ]
+        # `planned` is dependency order, not a bag of possible files. Offer the
+        # first outstanding file only: letting the direction call skip ahead is
+        # how entrypoints were written before the models, adapters and styles
+        # they import existed. The planner still owns the order; the host merely
+        # makes that order real. If the foundation reaches its attempt cap we
+        # stop instead of composing downstream files against a hole.
+        next_path = owed[0]
+        available = (
+            [next_path]
+            if attempts.get(next_path, 0)
+            < self.settings.project_orchestrator_max_attempts
+            else []
+        )
         # What the host has GIVEN UP on, named rather than merely withheld.
         #
         # This is the defect that broke a live revamp. The stylesheet everything
@@ -3055,7 +6349,7 @@ class ControlPlane:
                 "attempts": attempts.get(path, 0),
                 "reason": "directed to the attempt limit and never written",
             }
-            for path in owed
+            for path in owed[:1]
             if path not in available
         ]
         if not available:
@@ -3066,6 +6360,40 @@ class ControlPlane:
             # ending at the ceiling with the same work staged. Ending now says
             # the same thing sooner and names what is missing.
             return {"exhausted": blocked} if blocked else {}
+        if state.get("project_plan_taken"):
+            plan_index = planned.index(next_path)
+            instruction = (
+                f"Implement {next_path} as its part of the full user request and "
+                "the plan's acceptance scenarios. Reuse the exact public "
+                "interfaces in the prefetched staged files; do not invent "
+                "parallel adapters or change unrelated files."
+            )
+            # Dependency order makes the recent staged files the best bounded
+            # context for the next one. Supplying their exact overlay bytes is
+            # the persistent edit/observe loop; a prose summary or another
+            # planner call is not a substitute for current code.
+            prior = [path for path in planned[:plan_index] if path in staged][-5:]
+            attempts[next_path] = attempts.get(next_path, 0) + 1
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.direction",
+                {
+                    "step": iterations + 1,
+                    "path": next_path,
+                    "attempt": attempts[next_path],
+                    "reuse": prior,
+                    "read": prior,
+                    "source": "compact_manifest",
+                },
+            )
+            return {
+                "path": next_path,
+                "instruction": instruction,
+                "reuse": prior,
+                "read": prior,
+                "attempts": attempts,
+            }
         request = {
             "user_request": spec_text or state["prompt"],
             "project_context": prompt_context,
@@ -3089,7 +6417,8 @@ class ControlPlane:
                     )[:600],
                     "written": str(
                         (state.get("project_direction") or {}).get("path", "")
-                    ) in staged,
+                    )
+                    in staged,
                 }
                 if (state.get("project_direction") or {}).get("path")
                 else {}
@@ -3107,13 +6436,11 @@ class ControlPlane:
             "step": iterations + 1,
         }
         try:
-            direction = await self.model.project_direction(
+            direction = await ControlPlane._project_planner_call(
+                self,
+                state,
+                "project_direction",
                 request,
-                # The orchestrator's own seat, not the run's lane. Sending the
-                # run's aliases here would have quietly run the orchestrator on
-                # whatever the conversation was pinned to, which is the one
-                # thing this whole arc exists to stop.
-                model_aliases=_planner_aliases(state.get("model_aliases", {})),
             )
         except Exception as error:  # noqa: BLE001 - falls back, but never quietly
             # Falling back to the undirected loop is right. Doing it SILENTLY
@@ -3133,15 +6460,42 @@ class ControlPlane:
                     or isinstance(error, PermanentModelError),
                 },
             )
-            return {"failed": str(error)[:400]}
+            return {
+                "failed": str(error)[:400],
+                **(
+                    {
+                        "planner_chain_index": int(
+                            state.get("project_planner_chain_index", 0)
+                        )
+                    }
+                    if state.get("project_planner_chain_index")
+                    else {}
+                ),
+            }
         if getattr(direction, "done", False):
             await self.events.emit(
                 state["run_id"],
                 state["conversation_id"],
                 "project.direction",
-                {"step": iterations + 1, "done": True, "reason": str(direction.reason or "")[:400]},
+                {
+                    "step": iterations + 1,
+                    "done": True,
+                    "reason": str(direction.reason or "")[:400],
+                },
             )
-            return {"done": True, "reason": str(direction.reason or "")}
+            return {
+                "done": True,
+                "reason": str(direction.reason or ""),
+                **(
+                    {
+                        "planner_chain_index": int(
+                            state.get("project_planner_chain_index", 0)
+                        )
+                    }
+                    if state.get("project_planner_chain_index")
+                    else {}
+                ),
+            }
         path = str(getattr(direction, "path", "") or "")
         if path not in available:
             # Directing a file that is not owed, or one the host has stopped
@@ -3168,6 +6522,15 @@ class ControlPlane:
             "reuse": [str(item) for item in getattr(direction, "reuse", [])][:12],
             "read": [str(item) for item in getattr(direction, "read", [])][:6],
             "attempts": attempts,
+            **(
+                {
+                    "planner_chain_index": int(
+                        state.get("project_planner_chain_index", 0)
+                    )
+                }
+                if state.get("project_planner_chain_index")
+                else {}
+            ),
         }
 
     async def _style_gaps(
@@ -3195,19 +6558,24 @@ class ControlPlane:
         direction: dict[str, Any],
         trace: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Read, on the coder's behalf, what the orchestrator said it needs.
+        """Read, on the coder's behalf, what the current direction needs.
 
         This is the half of the split that makes closing reads fair rather than
         cruel. The coder is about to be told it may not look around; that is
         only reasonable if what it needs is already in front of it. The target
-        file's current contents come first — a repair or an edit is impossible
-        without them — then whatever the orchestrator named, bounded.
+        file's current contents must survive the trace bound — a repair or an
+        edit is impossible without them. References are fetched first and the
+        target last because the trace limiter retains newest evidence first.
 
         A read that fails is recorded as evidence exactly like the model's own
         would be, never raised: the direction is a plan, and a plan naming a
         file that does not exist is information, not an error.
         """
-        wanted = [direction["path"], *direction.get("read", [])]
+        target = str(direction["path"] or "")
+        wanted = [
+            *(path for path in direction.get("read", []) if str(path or "") != target),
+            target,
+        ]
         fetched = list(trace)
         seen: set[str] = set()
         for path in wanted:
@@ -3227,7 +6595,12 @@ class ControlPlane:
                 state["run_id"],
                 state["conversation_id"],
                 "project.tool_result",
-                {"tool": "read_file", "ok": result["ok"], "staged": False, "prefetched": True},
+                {
+                    "tool": "read_file",
+                    "ok": result["ok"],
+                    "staged": False,
+                    "prefetched": True,
+                },
             )
             fetched.append(
                 {"tool": "read_file", "arguments": {"path": path}, "result": result}
@@ -3310,12 +6683,33 @@ class ControlPlane:
         directed = dict(state.get("project_direction") or {})
         if directed.get("path"):
             remaining = [str(directed["path"])]
+        repair_strategy = dict(state.get("project_repair_strategy") or {})
+        repair_path = str(repair_strategy.get("path") or "")
+        if repair_strategy.get("kind") == "whole_file" and repair_path:
+            remaining = [repair_path]
+            directed = {
+                **directed,
+                "path": repair_path,
+                "instruction": (
+                    f"Rewrite the complete current contents of {repair_path}. "
+                    "The prior exact block or line range was refused. Use only "
+                    "replace_lines with start_line=1, end_line=1000000, and put "
+                    "the entire corrected file in replacement. Do not guess "
+                    "another partial patch or range."
+                ),
+                "reuse": list(directed.get("reuse") or []),
+                "read": [],
+            }
         # A gate the model cannot pass is worse than no gate. Once the overlay
         # has not changed for this many steps the manifest stops withholding
         # `complete`, so a stuck turn ends with an honest account of what it
         # could not do rather than grinding to the step budget with nothing.
         stalled = int(state.get("project_stall_steps", 0)) >= _MAX_STALL_STEPS
-        cloud_context = state.get("model_aliases", {}).get("_provider") in ("oci", "cohere")
+        cloud_context = state.get("model_aliases", {}).get("_provider") in (
+            "oci",
+            "cohere",
+            "cline",
+        )
         return {
             # The compiled spec, when one was taken, is what the build works
             # from; the user's own words stay beside it as the source of
@@ -3368,6 +6762,16 @@ class ControlPlane:
             # the overlay. Naming what is left is most of the work: a model told
             # only "you have staged 5 files" has no way to know it owes 13 more.
             "planned_files": list(planned or []),
+            # The compact plan deliberately carries no rich per-file prose.
+            # Its executable claims therefore travel with every coder step so
+            # the generic single-file direction still has the product behavior
+            # it must compose toward, not just a path and a filename.
+            "acceptance_scenarios": list(state.get("project_planned_scenarios") or []),
+            # Unlike the rolling tool trace, this is not allowed to age out:
+            # it is the exact slice and finding queue whose repair the current
+            # direction belongs to. A coder fallback therefore inherits one
+            # causal story instead of reconstructing a different one.
+            "verification_repair": dict(state.get("project_repair_context") or {}),
             "files_still_to_write": [] if stalled else remaining,
             "step": iterations + 1,
             "max_steps": self.settings.project_agent_max_steps,
@@ -3383,6 +6787,7 @@ class ControlPlane:
             and (not _model_has_written(staged) or bool(remaining))
             and not stalled,
             "plan_revisions_spent": revisions_spent,
+            "plan_taken": bool(state.get("project_plan_taken")),
             # Set only when the previous step was refused for the *shape* of its
             # arguments, which is the one failure resending the same tool can
             # fix. A semantic refusal must never land here: narrowing the
@@ -3390,6 +6795,10 @@ class ControlPlane:
             # model to a call that cannot succeed, and it re-sends it until the
             # budget runs out.
             "retry_tool": str(state.get("project_retry_tool", "") or ""),
+            # A semantic strategy switch, distinct from resending a malformed
+            # call. Tool-calling rosters and the local grammar both reduce this
+            # to one whole-file replace_lines move.
+            "repair_strategy": repair_strategy,
             # The write target the last refusal narrowed to. Outranked by
             # retry_tool, which knows the exact tool; released the moment the
             # manifest is satisfied or the turn stalls, both of which empty it.
@@ -3403,16 +6812,13 @@ class ControlPlane:
             # than merely stern.
             **(
                 {
-                    # The ORCHESTRATOR's instruction, in place of the fixed
-                    # sentence below. That sentence could only ever say "write
-                    # this file"; it could never say what the file should
-                    # contain, which is the thing a model narrowed to one file
-                    # still got wrong. Everything the coder is told about the
-                    # work is here, so it is quoted whole.
+                    # The compact plan's current direction (or a legacy
+                    # ProjectDirectionV1), quoted whole. The full compiled
+                    # request and acceptance scenarios remain in this request;
+                    # this field pins the single file and the write boundary.
                     "attention": _directed_attention(directed),
-                    # Named separately as well as inside the instruction: the
-                    # coder cannot see the repository, so anything not listed
-                    # here it will write from scratch.
+                    # Named separately as well as inside the instruction so
+                    # exact prefetched dependencies are visibly authoritative.
                     "reuse_existing": list(directed.get("reuse") or []),
                     # Reads are closed, and the request says so rather than
                     # leaving the model to discover it through a refusal.
@@ -3425,8 +6831,10 @@ class ControlPlane:
                     # while apply_patch and replace_lines sat unused beside it.
                     "target_exists": bool(
                         directed["path"] in staged
-                        or directed["path"] in set(
-                            (prompt_context.get("manifest") or {}).get("file_tree") or []
+                        or directed["path"]
+                        in set(
+                            (prompt_context.get("manifest") or {}).get("file_tree")
+                            or []
                         )
                     ),
                 }
@@ -3456,7 +6864,8 @@ class ControlPlane:
                         "you can refine it in a later step."
                     )
                 }
-                if int(state.get("project_consecutive_reads", 0)) >= _explore_nudge_at(state)
+                if int(state.get("project_consecutive_reads", 0))
+                >= _explore_nudge_at(state)
                 else {}
             ),
         }
@@ -3613,12 +7022,14 @@ class ControlPlane:
             "project_write_pin": [],
         }
 
-    def _staged_verify_retry(
+    async def _staged_verify_retry(
         self,
         state: AgentState,
         iterations: int,
         retries: int,
         errors: list[dict[str, str]],
+        *,
+        repair_files: list[str] | None = None,
     ) -> dict[str, Any]:
         """Send a completed-but-broken changeset back to the model to fix.
 
@@ -3628,7 +7039,108 @@ class ControlPlane:
         records the exact errors as evidence and loops back, so the next steps
         repair the files with apply_patch before the turn can finish.
         """
-        detail = "; ".join(f"{item['path']}: {item['error']}" for item in errors[:8])
+        # Every caller passes the same host-proven blocking subset used by the
+        # approval gate. Runtime advisories remain in verification events and on
+        # the review card, but never enter a repair queue or spend this budget.
+        # Findings without rung metadata still block through _blocks_approval's
+        # static default, preserving older/custom verifier compatibility.
+        known_paths = set(state.get("project_staged") or {}) | set(
+            ((state.get("project_context") or {}).get("manifest") or {}).get(
+                "file_tree", []
+            )
+        )
+        tracked_errors = _repairable_verifier_findings(errors, known_paths)
+        failing = list(
+            dict.fromkeys(str(item.get("path", "")) for item in tracked_errors)
+        )
+        target = failing[0] if failing else ""
+        if not target:
+            # The raw finding remains visible in project.staged_verified and on
+            # the blocked approval card.  It does not become a model task when
+            # it names only host-owned appkit, a pathless runtime failure, or a
+            # file that cannot be prefetched exactly.  Directing such a target
+            # can only spend repair turns on calls the workspace will refuse.
+            return {
+                "project_pending_call": {},
+                "project_retry_tool": "",
+                "project_write_pin": [],
+                "project_repair_strategy": {},
+                "project_direction": {},
+                "project_focus_path": "",
+                "project_repair_context": {},
+                "project_consecutive_reads": 0,
+                "response_text": (
+                    "Verification found a blocking problem, but it did not name "
+                    "an exact app-owned file Metis can safely repair. I stopped "
+                    "instead of directing a speculative or host-scaffold edit; "
+                    "the review below preserves the complete finding."
+                ),
+            }
+        target_errors = [
+            item for item in tracked_errors if str(item.get("path", "")) == target
+        ]
+        planned_before = list(state.get("project_planned_files") or [])
+        target_parts = Path(target).parts if target else ()
+        repair_expands_plan = bool(
+            planned_before
+            # An established, accepted plan may be expanded by one proven
+            # dependency (below). It must never be MANUFACTURED from one: a
+            # turn with no real plan (planned_before empty, formal planning
+            # never taken or already failed) has no accepted scope for a
+            # single blocked file to join, so a bare verifier finding here
+            # cannot become the whole plan. See project.plan_failed above for
+            # the honest-stop path that already ends a turn like that.
+            and target
+            and target not in planned_before
+            and target in known_paths
+            and target_parts
+            and target_parts[0] not in {".git", ".metis", "appkit"}
+            and ".." not in target_parts
+            and not Path(target).is_absolute()
+        )
+        planned = [*planned_before, target] if repair_expands_plan else planned_before
+        if repair_expands_plan:
+            # This is not speculative replanning: the deterministic verifier
+            # proved that an existing dependency outside the original manifest
+            # blocks the promised behavior. Add that exact repair target so the
+            # manifest gate and the directed repair agree. Without this bridge,
+            # the model is pinned to a file the host itself refuses to edit and
+            # cannot call revise_plan because directed repair closes that tool.
+            reason = (
+                f"Verification proved {target} blocks the planned changeset: "
+                f"{str(target_errors[0].get('error', 'blocking finding'))[:500]}"
+            )
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.plan_revised",
+                {
+                    "step": iterations + 1,
+                    "source": "verifier",
+                    "previous_files": planned_before,
+                    "proposed_files": planned,
+                    "removed_files": [],
+                    "retained_omissions": [],
+                    "files": planned,
+                    "reason": reason,
+                },
+            )
+            plan_recorder = getattr(
+                getattr(self, "projects", None), "record_plan", None
+            )
+            if plan_recorder is not None:
+                await plan_recorder(
+                    str(state.get("model_aliases", {}).get("_project_id", "")),
+                    {
+                        "files": planned,
+                        "intent": str(state.get("project_build_intent") or "build"),
+                        "scope": str(state.get("project_build_scope") or "narrow"),
+                        "reason": reason,
+                    },
+                )
+        detail = "; ".join(
+            f"{item['path']}: {item['error']}" for item in (target_errors or errors)[:8]
+        )
         trace = list(state.get("project_trace", []))
         trace.append(
             {
@@ -3653,32 +7165,205 @@ class ControlPlane:
         # which classes were missing and answered with fifteen reads. So the
         # repair is DIRECTED, exactly like a step the orchestrator ordered:
         # reads closed, the target pinned to the files that failed.
-        failing = list(dict.fromkeys(str(item.get("path", "")) for item in errors if item.get("path")))
-        directed: dict[str, Any] = {}
-        if failing:
-            directed = {
-                "path": failing[0],
-                "instruction": (
-                    f"Fix {failing[0]}. Verification found: {detail}. Patch it with "
-                    "apply_patch or replace_lines — the current staged text is in "
-                    "the tool trace above. Change nothing else."
-                ),
-                "reuse": [],
-                "read": [],
-                # The finding already names what is missing, and the brief quotes
-                # it verbatim, so the residual list rides along rather than being
-                # something the model has to re-derive from the error text.
-                "style_gaps": _gaps_from_findings(errors),
-            }
-        return {
+        directed = _repair_direction(target, tracked_errors)
+        previous_context = dict(state.get("project_repair_context") or {})
+        previous_findings = [
+            dict(item) for item in previous_context.get("findings") or []
+        ]
+        signature = _verifier_finding_signature(tracked_errors[:12])
+        previous_signature = str(previous_context.get("finding_signature") or "")
+        if not previous_signature and previous_findings:
+            previous_signature = _verifier_finding_signature(previous_findings)
+        files = list(
+            repair_files
+            or previous_context.get("files")
+            or [
+                path
+                for path in state.get("project_planned_files") or []
+                if path in (state.get("project_staged") or {})
+            ]
+            or []
+        )
+        if repair_expands_plan and target not in files:
+            files.append(target)
+        same_queue = bool(
+            previous_signature
+            and previous_signature == signature
+            and files == list(previous_context.get("files") or files)
+        )
+        unchanged = (
+            int(previous_context.get("unchanged_verifications", 0)) + 1
+            if same_queue
+            else 0
+        )
+        context = _repair_context(files, tracked_errors, unchanged=unchanged)
+        update: dict[str, Any] = {
             "project_trace": trace[-24:],
             "project_iterations": iterations + 1,
             "project_syntax_retries": retries + 1,
             "project_pending_call": {},
             "project_retry_tool": "",
-            "project_write_pin": failing[:1],
+            "project_write_pin": [target] if target else [],
+            "project_repair_strategy": {},
             "project_direction": directed,
-            "project_focus_path": failing[0] if failing else "",
+            "project_focus_path": target,
+            "project_consecutive_reads": 0,
+            "project_repair_context": context,
+        }
+        if repair_expands_plan:
+            update["project_planned_files"] = planned
+        if unchanged < _UNCHANGED_VERIFIER_MODEL_SWITCHES:
+            return update
+
+        switched = await self._advance_coder_ladder(
+            cast(AgentState, {**state, **update}),
+            reason="unchanged_verifier_findings",
+            detail=(
+                f"Verification returned the same {len(tracked_errors)} blocking "
+                "finding(s) "
+                f"after {unchanged} repair attempts; target {target or 'changeset'}"
+            ),
+            step=iterations + 1,
+        )
+        if switched is not None:
+            # The next coder receives the same slice, target and verbatim
+            # findings. Only its personal no-progress allowance resets.
+            context["unchanged_verifications"] = 0
+            update.update(switched)
+            update["project_repair_context"] = context
+            return update
+
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.repair_stalled",
+            {
+                "path": target,
+                "findings": len(tracked_errors),
+                "unchanged_verifications": unchanged,
+                "reason": "coder_ladder_exhausted",
+            },
+        )
+        return {
+            **update,
+            "project_direction": {},
+            "project_focus_path": "",
+            "project_write_pin": [],
+            "response_text": (
+                f"I stopped repairing `{target or 'the staged changeset'}` because "
+                f"the verifier returned the same {len(tracked_errors)} blocking "
+                "finding(s) "
+                f"after {unchanged} repair attempts and no configured coder backup "
+                "remains. The exact findings are preserved below; no further "
+                "cosmetic edits were attempted."
+            ),
+        }
+
+    async def _project_dependency_slice(
+        self,
+        state: AgentState,
+        project_id: str,
+        staged: dict[str, Any],
+        planned: list[str],
+        iterations: int,
+        *,
+        repair_active: bool,
+    ) -> dict[str, Any] | None:
+        """Verify one dependency-closed prefix before another layer builds on it.
+
+        A verifier-created direction is allowed to act before this method runs
+        again. Once its write lands, focus clears and the same stored slice is
+        rechecked immediately; no downstream planned file is directed while a
+        causal repair queue remains unproven.
+        """
+
+        if not planned or not _model_has_written(staged) or repair_active:
+            return None
+        context = dict(state.get("project_repair_context") or {})
+        slice_files = [str(path) for path in context.get("files") or []]
+        opening = not slice_files
+        if opening:
+            slice_files = dependency_slice_prefix(
+                planned,
+                set(staged),
+                verified_count=int(state.get("project_verified_prefix", 0)),
+                checkpoints=int(state.get("project_slice_verifications", 0)),
+            )
+        if not slice_files:
+            return None
+
+        verification = await self._verify_staged_changeset(
+            project_id,
+            staged,
+            planned=slice_files,
+            # Acceptance scenarios describe the complete product. Intermediate
+            # slices still run syntax, type, wiring, conformance and generic
+            # sandbox imports, but never fail for a route intentionally planned
+            # for a later slice.
+            scenarios=[],
+        )
+        await self._emit_staged_verification(state, verification)
+        blocking_findings = _blocking_findings(verification)
+        slice_number = int(state.get("project_slice_verifications", 0)) + int(opening)
+        await self.events.emit(
+            state["run_id"],
+            state["conversation_id"],
+            "project.slice_checked",
+            {
+                "files": slice_files,
+                "through": slice_files[-1],
+                "errors": len(verification["errors"]),
+                "warnings": len(verification["warnings"]),
+                "checkpoint": slice_number,
+                "repair": not opening,
+            },
+        )
+        retries = int(state.get("project_syntax_retries", 0))
+        if blocking_findings and retries < _MAX_STAGED_VERIFY_RETRIES:
+            update = await self._staged_verify_retry(
+                state,
+                iterations,
+                retries,
+                blocking_findings,
+                repair_files=slice_files,
+            )
+            update["project_slice_verifications"] = slice_number
+            return update
+        if blocking_findings:
+            return {
+                "project_pending_call": {},
+                "project_slice_verifications": slice_number,
+                "project_repair_context": {
+                    "files": slice_files,
+                    "findings": blocking_findings[:12],
+                },
+                "response_text": (
+                    f"I stopped at the dependency slice ending in "
+                    f"`{slice_files[-1]}` after the bounded repairs left "
+                    f"{len(blocking_findings)} blocking "
+                    "problem(s). I did not build later files on a foundation "
+                    "the verifier had already shown was broken."
+                ),
+            }
+        checked_paths = set(slice_files)
+        contiguous_checked = 0
+        for path in planned:
+            if path not in staged or path not in checked_paths:
+                break
+            contiguous_checked += 1
+        return {
+            "project_pending_call": {},
+            "project_verified_prefix": max(
+                int(state.get("project_verified_prefix", 0)), contiguous_checked
+            ),
+            "project_slice_verifications": slice_number,
+            "project_repair_context": {},
+            # Retry count is per causal slice. A clean boundary closes that
+            # queue; later independent findings receive their own bounded loop.
+            "project_syntax_retries": 0,
+            "project_direction": {},
+            "project_focus_path": "",
+            "project_write_pin": [],
             "project_consecutive_reads": 0,
         }
 
@@ -3700,6 +7385,23 @@ class ControlPlane:
                 "warnings": len(verification["warnings"]),
                 "ran": len(verification["checks"]),
                 "notes": verification["notes"],
+                # Counts alone made a timed-out build impossible to diagnose:
+                # there is no approval card yet, and the exact verifier result
+                # otherwise lives only in a transient checkpoint trace. Keep a
+                # bounded, structured finding queue in the durable timeline so
+                # evaluations and the UI can name the actual remaining work.
+                "findings": [
+                    {
+                        "path": str(item.get("path", ""))[:1_000],
+                        "error": str(item.get("error", ""))[:2_000],
+                        "severity": str(item.get("severity", ""))[:100],
+                        "kind": str(item.get("kind", ""))[:100],
+                    }
+                    for item in [
+                        *verification["errors"],
+                        *verification["warnings"],
+                    ][:12]
+                ],
             },
         )
 
@@ -3710,16 +7412,25 @@ class ControlPlane:
         *,
         full: bool = False,
         planned: list[str] | None = None,
+        required: list[str] | None = None,
         scenarios: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Verify a staged changeset and report each distinct defect once.
 
         The rungs themselves are in ``_verify_staged_rungs``; deduplication
         happens here so it cannot be missed by one of that method's several
-        early returns.
+        early returns. ``required`` is deliberately omitted by every mid-loop
+        caller: a slice or round short of a file another slice still owes is
+        normal, not a defect. Only the final approval gate knows the whole
+        request is now supposed to be satisfied, and only it passes it.
         """
         result = await self._verify_staged_rungs(
-            project_id, staged, full=full, planned=planned, scenarios=scenarios
+            project_id,
+            staged,
+            full=full,
+            planned=planned,
+            required=required,
+            scenarios=scenarios,
         )
         result["errors"] = _distinct_findings(result["errors"])
         result["warnings"] = _distinct_findings(result["warnings"])
@@ -3732,6 +7443,7 @@ class ControlPlane:
         *,
         full: bool = False,
         planned: list[str] | None = None,
+        required: list[str] | None = None,
         scenarios: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Check a staged changeset: every file parses, the files fit together,
@@ -3755,7 +7467,12 @@ class ControlPlane:
         genuine problem into "3 problem(s)" on the card. The count is what the
         user reads first, so it has to mean distinct defects.
         """
-        result: dict[str, Any] = {"errors": [], "warnings": [], "notes": [], "checks": []}
+        result: dict[str, Any] = {
+            "errors": [],
+            "warnings": [],
+            "notes": [],
+            "checks": [],
+        }
         if not staged:
             return result
         syntax = _from_rung(await self.projects.verify_staged_syntax(staged), "syntax")
@@ -3790,7 +7507,9 @@ class ControlPlane:
         # file parsed, and it answers a question no amount of running the code
         # can — whether this is the changeset the turn committed to.
         conformance = _from_rung(
-            await self.projects.verify_staged_conformance(project_id, staged, planned),
+            await self.projects.verify_staged_conformance(
+                project_id, staged, planned, required
+            ),
             "conformance",
         )
         result["errors"].extend(
@@ -3909,17 +7628,20 @@ class ControlPlane:
             if staged_now:
                 await self._emit_staged_verification(state, verification)
             verify_retries = int(state.get("project_syntax_retries", 0))
-            if verification["errors"] and verify_retries < _MAX_STAGED_VERIFY_RETRIES:
+            blocking_findings = _blocking_findings(verification)
+            if blocking_findings and verify_retries < _MAX_STAGED_VERIFY_RETRIES:
                 # A completion is only the model's claim that the work is done. The
                 # loop used to take that claim on trust, so a build that would not
                 # parse, would not import, or would not run could reach the approval
                 # card and the user's disk. Hand the exact errors back and let the
                 # model fix them with apply_patch before finishing. Bounded, so it
                 # terminates.
-                return self._staged_verify_retry(
-                    state, iterations, verify_retries, verification["errors"]
+                return await self._staged_verify_retry(
+                    state, iterations, verify_retries, blocking_findings
                 )
-            await self.projects.record_learnings(project_id, state["run_id"], step.learnings)
+            await self.projects.record_learnings(
+                project_id, state["run_id"], step.learnings
+            )
             response = step.response
             spec_assumptions = list(
                 (state.get("project_spec") or {}).get("assumptions") or []
@@ -3983,6 +7705,52 @@ class ControlPlane:
                 or "I have nothing further to add for this one.",
                 "artifacts": [],
             }
+        # ── Read-only until a plan exists ─────────────────────────────────
+        # Applies to every engine and every mode, including plan-only: the
+        # refusal is here, at the one seam every model-authored tool call
+        # passes through, rather than in a caller that could be bypassed.
+        if step.tool_call.name in PROJECT_WRITE_TOOLS:
+            denial = _write_authority_denied(state, planned)
+            if denial:
+                await self.events.emit(
+                    state["run_id"],
+                    state["conversation_id"],
+                    "project.step_refused",
+                    {
+                        "step": iterations + 1,
+                        "reason": "write_before_plan",
+                        "tool": step.tool_call.name,
+                        # The path is the model's own requested scope, which
+                        # the trace already carries; the attempted BYTES are
+                        # never recorded and never staged.
+                        "path": str(step.tool_call.arguments.get("path", ""))[:300],
+                    },
+                )
+                trace = list(state.get("project_trace", []))
+                trace.append(
+                    {
+                        "tool": step.tool_call.name,
+                        "arguments": {
+                            "path": str(step.tool_call.arguments.get("path", ""))[:300]
+                        },
+                        "result": {"ok": False, "error": denial},
+                    }
+                )
+                return {
+                    "project_context": project_context,
+                    "project_trace": trace[-24:],
+                    "project_iterations": iterations + 1,
+                    "project_malformed_streak": 0,
+                    "project_empty_finish_streak": 0,
+                    # Nothing is staged and nothing is pending: the attempted
+                    # call is dropped whole.
+                    "project_pending_call": {},
+                    "project_refused_streak": int(
+                        state.get("project_refused_streak", 0)
+                    )
+                    + 1,
+                    "artifacts": [],
+                }
         pending_verification: dict[str, Any] = {}
         if step.tool_call.name == "run_check":
             pending_verification = await self._verification_gate(project_id)
@@ -4013,7 +7781,7 @@ class ControlPlane:
         iterations: int,
         project_context: dict[str, Any],
     ) -> dict[str, Any]:
-        """Replace this turn's manifest with the one the evidence supports.
+        """Merge an evidence-backed correction into this turn's manifest.
 
         The manifest is a gate, and every gate the host holds shut needs a key
         the model can reach. Without one, a plan written before the project was
@@ -4024,73 +7792,131 @@ class ControlPlane:
         a row, and the turn ended having written nothing.
 
         Handled here rather than in the workspace because nothing about it
-        touches a file. It is a state edit, recorded as trace evidence like any
-        other tool result, so the next step sees both the new plan and the
-        reason for it. Bounded by _MAX_PLAN_REVISIONS: correcting a falsified
-        plan is the point; re-planning in place of writing is the failure mode
-        immediately next door, and it looks identical for the first two turns.
+        touches a file. Omitted paths are retained: a verifier repair is often
+        focused on one file, and that focus must not erase unrelated files the
+        same plan still owes. Removing a genuinely invalid, *unstaged* path is
+        a separate explicit operation (``remove_files`` plus a reason), so a
+        short repair response cannot silently weaken the completion contract.
+
+        Bounded by _MAX_PLAN_REVISIONS: correcting a falsified plan is the
+        point; re-planning in place of writing is the failure mode immediately
+        next door, and it looks identical for the first two turns.
         """
         revisions = int(state.get("project_plan_revisions", 0))
         previous = list(state.get("project_planned_files") or [])
-        reason = str(call.arguments.get("reason", "")).strip()[:600]
-        raw = call.arguments.get("files")
-        files = ProjectBuildPlanV1(
-            files=[str(item) for item in raw][:24] if isinstance(raw, list) else []
-        ).files[: self.settings.project_staged_max_files]
-        if revisions >= _MAX_PLAN_REVISIONS:
-            result = {
-                "ok": False,
-                "error": (
-                    f"The plan has already been revised {revisions} time(s), which "
-                    "is the limit for one turn. Work to the plan you have: write "
-                    f"the files still owed, or finish and say plainly what you "
-                    "could not do and why."
-                ),
-            }
+        revision_calls = int(state.get("project_plan_revision_calls", 0)) + 1
+
+        def refused(message: str, *, retry: bool = True) -> dict[str, Any]:
+            result = {"ok": False, "error": message}
             return {
                 "project_context": project_context,
                 "project_iterations": iterations + 1,
-                "project_plan_revision_calls": int(
-                    state.get("project_plan_revision_calls", 0)
-                ) + 1,
-                "project_malformed_streak": 0,
-                **self._project_evidence(
-                    state, call, result, int(state.get("project_checks_run", 0))
-                ),
-            }
-        if not isinstance(raw, list):
-            # Not a refusal of the intent — a refusal of the shape. Sending it
-            # back as an argument-shape error is what earns the next step a
-            # grammar narrowed to this tool's own required keys.
-            result = {
-                "ok": False,
-                "error": (
-                    "revise_plan needs files as an array of project-relative "
-                    "paths (send [] if this task needs no new files) and reason "
-                    "as what you found."
-                ),
-            }
-            return {
-                "project_context": project_context,
-                "project_iterations": iterations + 1,
-                "project_plan_revision_calls": int(
-                    state.get("project_plan_revision_calls", 0)
-                ) + 1,
+                "project_plan_revision_calls": revision_calls,
                 "project_malformed_streak": 0,
                 **self._project_evidence(
                     state,
                     call,
                     result,
                     int(state.get("project_checks_run", 0)),
-                    retry_tool="revise_plan",
+                    retry_tool="revise_plan" if retry else "",
                 ),
             }
+
+        if not state.get("project_plan_taken") and not previous:
+            return refused(
+                (
+                    "The planner has not established the initial file plan yet. "
+                    "Inspect the repository or write only after that plan is taken; "
+                    "revise_plan corrects an existing plan, it does not create one."
+                ),
+                retry=False,
+            )
+        reason = str(call.arguments.get("reason", "")).strip()[:600]
+        raw = call.arguments.get("files")
+        raw_removals = call.arguments.get("remove_files", [])
+        if revisions >= _MAX_PLAN_REVISIONS:
+            return refused(
+                (
+                    f"The plan has already been revised {revisions} time(s), which "
+                    "is the limit for one turn. Work to the plan you have: write "
+                    f"the files still owed, or finish and say plainly what you "
+                    "could not do and why."
+                ),
+                retry=False,
+            )
+        if not isinstance(raw, list):
+            # Not a refusal of the intent — a refusal of the shape. Sending it
+            # back as an argument-shape error is what earns the next step a
+            # grammar narrowed to this tool's own required keys.
+            return refused(
+                (
+                    "revise_plan needs files as an array of project-relative "
+                    "paths and reason as what you found. Omitted prior paths are "
+                    "retained; name proven-invalid paths separately in remove_files."
+                )
+            )
+        if not isinstance(raw_removals, list):
+            return refused(
+                "revise_plan needs remove_files as an array of project-relative "
+                "paths. Omit it when no prior commitment should be removed."
+            )
+
+        proposed = ProjectBuildPlanV1(files=[str(item) for item in raw][:24]).files[
+            : self.settings.project_staged_max_files
+        ]
+        remove_files = ProjectBuildPlanV1(
+            files=[str(item) for item in raw_removals][:24]
+        ).files
+        if remove_files and not reason:
+            return refused(
+                "Removing a planned path requires a concrete reason describing "
+                "the repository evidence that makes it invalid or unwritable."
+            )
+        unknown_removals = [path for path in remove_files if path not in previous]
+        if unknown_removals:
+            return refused(
+                "remove_files may name only paths in the current plan; these are "
+                f"not planned: {', '.join(unknown_removals[:8])}."
+            )
+        contradictory = [path for path in remove_files if path in proposed]
+        if contradictory:
+            return refused(
+                "A path cannot be both retained in files and removed in "
+                f"remove_files: {', '.join(contradictory[:8])}."
+            )
+        staged = state.get("project_staged") or {}
+        staged_removals = [path for path in remove_files if path in staged]
+        if staged_removals:
+            return refused(
+                "Already-staged paths cannot be removed from the plan because "
+                "their bytes would still be included in the approval changeset: "
+                f"{', '.join(staged_removals[:8])}. Repair them or keep them in "
+                "the manifest."
+            )
+
+        files, retained_omissions = _merge_project_plan_revision(
+            previous, proposed, remove_files
+        )
+        if len(files) > self.settings.project_staged_max_files:
+            return refused(
+                f"The merged plan would contain {len(files)} files, above this "
+                f"turn's {self.settings.project_staged_max_files}-file limit. "
+                "Keep the existing commitments and add fewer new paths."
+            )
         if files == previous:
             # A revision that changes nothing — the model restating the plan it
-            # already has, which one live run did twice in a row, spending a
-            # scarce revision each time to move nothing. Accept it, but do not
-            # count it and do not re-announce it: point the model back at the
-            # work instead.
+            # already has, or returning only the current repair focus. Accept
+            # it, but do not count it and do not clear the active repair queue:
+            # point the model back at the work instead.
+            retained_note = (
+                f" The host retained {len(retained_omissions)} omitted prior "
+                "commitment(s): "
+                f"{', '.join(retained_omissions[:8])}. To remove a genuinely "
+                "invalid unstaged path, name it explicitly in remove_files and "
+                "give the repository evidence in reason."
+                if retained_omissions
+                else ""
+            )
             result = {
                 "ok": True,
                 "output": {
@@ -4098,16 +7924,16 @@ class ControlPlane:
                     "note": (
                         "The plan is unchanged — these are the files it already "
                         "held. Stop revising and start writing: create the next "
-                        "owed file, or finish if the work is done."
+                        "owed file, or repair the current verifier finding."
+                        f"{retained_note}"
                     ),
+                    "retained_files": retained_omissions,
                 },
             }
             return {
                 "project_context": project_context,
                 "project_iterations": iterations + 1,
-                "project_plan_revision_calls": int(
-                    state.get("project_plan_revision_calls", 0)
-                ) + 1,
+                "project_plan_revision_calls": revision_calls,
                 "project_malformed_streak": 0,
                 **self._project_evidence(
                     state, call, result, int(state.get("project_checks_run", 0))
@@ -4121,6 +7947,9 @@ class ControlPlane:
                 "step": iterations + 1,
                 "revision": revisions + 1,
                 "previous_files": previous,
+                "proposed_files": proposed,
+                "removed_files": remove_files,
+                "retained_omissions": retained_omissions,
                 "files": files,
                 "reason": reason,
             },
@@ -4133,6 +7962,7 @@ class ControlPlane:
                 str(state.get("model_aliases", {}).get("_project_id", "")),
                 {
                     "files": files,
+                    "slices": [],
                     "intent": str(state.get("project_build_intent") or "build"),
                     "scope": str(state.get("project_build_scope") or "narrow"),
                     "reason": reason,
@@ -4142,9 +7972,11 @@ class ControlPlane:
             "ok": True,
             "output": {
                 "plan": files,
+                "removed_files": remove_files,
+                "retained_files": retained_omissions,
                 "note": (
-                    "The plan for this turn is now the list above; it is what "
-                    "your completion will be held against."
+                    "The merged plan for this turn is now the list above; it is "
+                    "what your completion will be held against."
                     if files
                     else "This turn now plans no new files. Finish with an "
                     "account of what you found, or use respond to answer."
@@ -4154,17 +7986,35 @@ class ControlPlane:
         evidence = self._project_evidence(
             state, call, result, int(state.get("project_checks_run", 0))
         )
+        active_direction = str((state.get("project_direction") or {}).get("path") or "")
+        active_focus = str(state.get("project_focus_path") or "")
+        removed_active_target = any(
+            path and path not in files for path in (active_direction, active_focus)
+        )
         return {
             "project_context": project_context,
             "project_iterations": iterations + 1,
-                "project_plan_revision_calls": int(
-                    state.get("project_plan_revision_calls", 0)
-                ) + 1,
+            "project_plan_revision_calls": revision_calls,
             "project_malformed_streak": 0,
             "project_empty_finish_streak": 0,
             **evidence,
             "project_planned_files": files,
+            "project_planned_slices": [],
             "project_plan_revisions": revisions + 1,
+            # The old dependency order no longer defines a meaningful clean
+            # prefix or repair slice. The staged bytes remain, but the new plan
+            # must establish its own verification frontier.
+            "project_verified_prefix": 0,
+            "project_coding_slice_files": [],
+            "project_coding_slice_rounds": 0,
+            "project_coding_slice_complete": False,
+            # A revised plan re-partitions ownership, so an attribution made
+            # against the old slice list no longer names a real scope.
+            "project_repair_slice": {},
+            "project_repair_hashes": {},
+            "project_repair_context": {},
+            "project_repair_strategy": {},
+            "project_syntax_retries": 0,
             # A corrected plan is progress, not a stall: the counter that
             # releases the manifest gate measures steps since the overlay last
             # moved, and holding a revision against it would push a turn that
@@ -4178,9 +8028,23 @@ class ControlPlane:
             # And the exploration counter: revising the plan is a decision, not
             # another read, so it breaks a run of reads rather than extending it.
             "project_consecutive_reads": 0,
-            # The scenarios described the old file list. Keeping them would
-            # replay the abandoned plan's claims against the new one.
-            "project_planned_scenarios": [],
+            # revise_plan is deliberately available on directed turns as the
+            # honest answer to an impossible instruction. If that correction
+            # removes the directed file, graph-state merging must not retain the
+            # old target and immediately demand an out-of-plan write.
+            **(
+                {
+                    "project_direction": {},
+                    "project_focus_path": "",
+                    "project_write_pin": [],
+                }
+                if removed_active_target
+                else {}
+            ),
+            # Acceptance scenarios are behavioral user commitments, not a
+            # cache of the old path list. revise_plan has no scenario-revision
+            # contract, so omitting this key deliberately preserves them in
+            # graph state for final conformance and sandbox verification.
         }
 
     async def _search_memories(self, prompt: str) -> list[str]:
@@ -4298,7 +8162,11 @@ class ControlPlane:
             # budget. A model spent 44 straight steps re-reading one file.
             blocked[target] = blocked.get(target, 0) + 1
             return self._project_evidence(
-                state, call, repeat, checks_run, blocked_targets=blocked,
+                state,
+                call,
+                repeat,
+                checks_run,
+                blocked_targets=blocked,
                 # The step bought no information: the answer was already in the
                 # model's own trace. This is the doom-loop signal.
                 unproductive=True,
@@ -4388,6 +8256,8 @@ class ControlPlane:
         staged_update: dict[str, Any] | None = None
         retry_tool = ""
         write_pin: list[str] = []
+        repair_strategy = dict(state.get("project_repair_strategy") or {})
+        strategy_changed = False
         # What this turn planned and still has not staged, so a refused write can
         # name the file the build actually owes instead of saying "a different
         # path" and letting the model guess at it.
@@ -4427,36 +8297,91 @@ class ControlPlane:
             # Only the raiser knows whether resending this tool could work. A
             # semantic refusal narrowed to the same tool is a trap, so the
             # classification comes from the exception, not from its wording.
-            if getattr(exc, "argument_shape", False):
+            requested_strategy = str(getattr(exc, "repair_strategy", "") or "")
+            if requested_strategy == "whole_file" and call.name in {
+                "apply_patch",
+                "replace_lines",
+            }:
+                next_strategy = {
+                    "kind": "whole_file",
+                    "path": str(call.arguments.get("path", "")),
+                    "trigger_tool": call.name,
+                    "detail": str(exc)[:400],
+                }
+                strategy_changed = next_strategy != repair_strategy
+                repair_strategy = next_strategy
+            elif getattr(exc, "argument_shape", False):
                 retry_tool = call.name
             elif getattr(exc, "wrong_target", False) and owed:
                 # Right tool, well-formed arguments, wrong file. The next step's
                 # grammar can carry the answer: the files still owed, plus the
                 # path just refused so revising it stays available.
                 write_pin = [*owed, str(call.arguments.get("path", ""))]
+        if strategy_changed:
+            await self.events.emit(
+                state["run_id"],
+                state["conversation_id"],
+                "project.recovery_strategy",
+                {
+                    "step": int(state.get("project_iterations", 0)) + 1,
+                    "path": repair_strategy["path"],
+                    "from": call.name,
+                    "to": "replace_lines:whole_file",
+                    "reason": "exact_edit_refused",
+                    "detail": str(result.get("error", ""))[:300],
+                },
+            )
         if is_check:
             checks_run += 1
             await self._emit_check_result(state, call, result)
         else:
+            output_payload = result.get("output")
+            event_path = str(
+                (
+                    output_payload.get("path")
+                    if isinstance(output_payload, dict) and result["ok"]
+                    else ""
+                )
+                or call.arguments.get("path")
+                or ""
+            ).strip()
+            event_payload: dict[str, Any] = {
+                "tool": call.name,
+                "ok": result["ok"],
+                "staged": staged_update is not None,
+                "staged_files": len(staged_update)
+                if staged_update is not None
+                else len(staged),
+            }
+            if event_path:
+                # Successful staged writes return the workspace-normalized path;
+                # refused writes retain the exact attempted target. Keeping it
+                # in the durable event is what lets evaluations distinguish
+                # sixteen files written once from one file patched sixteen
+                # times without persisting model-authored file contents.
+                event_payload["path"] = event_path
             await self.events.emit(
                 state["run_id"],
                 state["conversation_id"],
                 "project.tool_result",
-                {
-                    "tool": call.name,
-                    "ok": result["ok"],
-                    "staged": staged_update is not None,
-                    "staged_files": len(staged_update)
-                    if staged_update is not None
-                    else len(staged),
-                },
+                event_payload,
             )
         evidence = self._project_evidence(
-            state, call, result, checks_run,
-            retry_tool=retry_tool, write_pin=write_pin, blocked_targets=blocked,
+            state,
+            call,
+            result,
+            checks_run,
+            retry_tool=retry_tool,
+            write_pin=write_pin,
+            blocked_targets=blocked,
+            repair_strategy=repair_strategy,
         )
         if staged_update is not None:
             evidence["project_staged"] = staged_update
+            if str(call.arguments.get("path", "")) == str(
+                repair_strategy.get("path", "")
+            ):
+                evidence["project_repair_strategy"] = {}
         # Progress is measured in staged bytes, not in steps taken: a step that
         # changed the overlay resets the stall counter, anything else advances
         # it toward releasing the manifest gate.
@@ -4464,9 +8389,46 @@ class ControlPlane:
         evidence["project_stall_steps"] = (
             0 if changed else int(state.get("project_stall_steps", 0)) + 1
         )
-        evidence["project_refused_streak"] = (
+        refused_streak = (
             0 if result["ok"] else int(state.get("project_refused_streak", 0)) + 1
         )
+        evidence["project_refused_streak"] = refused_streak
+        repair_target = str((state.get("project_direction") or {}).get("path", ""))
+        if (
+            not is_check
+            and not result["ok"]
+            and refused_streak >= _REFUSED_MODEL_SWITCH_STEPS
+        ):
+            active_strategy = dict(evidence.get("project_repair_strategy") or {})
+            reason = (
+                "whole_file_repair_refused"
+                if active_strategy.get("kind") == "whole_file"
+                else (
+                    "repair_refused_twice"
+                    if repair_target and int(state.get("project_syntax_retries", 0)) > 0
+                    else "repeated_tool_refusal"
+                )
+            )
+            switched = await self._advance_coder_ladder(
+                cast(AgentState, {**state, **evidence}),
+                reason=reason,
+                detail=str(result.get("error", "")),
+                step=int(state.get("project_iterations", 0)) + 1,
+            )
+            if switched is not None:
+                evidence.update(switched)
+                reopened = dict(evidence.get("project_blocked_targets") or {})
+                path = str(call.arguments.get("path", ""))
+                for tool in ("create_file", "apply_patch", "replace_lines"):
+                    reopened.pop(f"{tool}:{path}", None)
+                evidence["project_blocked_targets"] = reopened
+            elif repair_target and int(state.get("project_syntax_retries", 0)) > 0:
+                evidence["response_text"] = (
+                    f"I stopped repairing `{repair_target}` after two rejected "
+                    "edits and no configured coder backup remained. Verification "
+                    "still blocks this changeset; the review below contains the "
+                    "exact finding instead of another repeated attempt."
+                )
         # A narrowed turn is released the moment its file lands, so the model
         # goes back to working from the whole plan. If it drifts again the next
         # owed file is narrowed to in turn — which is the auto-chunking, arrived
@@ -4474,10 +8436,9 @@ class ControlPlane:
         focus = str(state.get("project_focus_path", "") or "")
         if focus and staged_update is not None and focus in staged_update:
             evidence["project_focus_path"] = ""
-            # And the direction with it: this file is written, so the next step
-            # asks the orchestrator what comes next rather than re-sending an
-            # instruction that has already been carried out. Nothing here ends
-            # the turn — the ordinary finish path still owns that.
+            # And the direction with it: this file is written, so dependency
+            # order selects the next outstanding file rather than re-sending an
+            # instruction already carried out. Nothing here ends the turn.
             evidence["project_direction"] = {}
             # Except when the file is a stylesheet whose contract still fails.
             # The check is two regexes, so it can run the moment the file is
@@ -4507,8 +8468,10 @@ class ControlPlane:
             # byte is its act transition.
             evidence["project_phase"] = "building"
             await self.events.emit(
-                state["run_id"], state["conversation_id"],
-                "project.phase", {"phase": "building", "via": call.name},
+                state["run_id"],
+                state["conversation_id"],
+                "project.phase",
+                {"phase": "building", "via": call.name},
             )
         # project_consecutive_reads is set inside _project_evidence, so it lands
         # on every exit path (the repeat guard and the closed-target guard both
@@ -4619,12 +8582,11 @@ class ControlPlane:
         retry_tool: str = "",
         write_pin: list[str] | None = None,
         blocked_targets: dict[str, int] | None = None,
+        repair_strategy: dict[str, Any] | None = None,
         unproductive: bool = False,
     ) -> dict[str, Any]:
         trace = list(state.get("project_trace", []))
-        trace.append(
-            {"tool": call.name, "arguments": call.arguments, "result": result}
-        )
+        trace.append({"tool": call.name, "arguments": call.arguments, "result": result})
         # retry_tool and write_pin are written on every path, defaulting to
         # cleared. Graph state merges partial dicts, so a key left out keeps its
         # previous value — and a narrowing that outlives the refusal that
@@ -4641,6 +8603,11 @@ class ControlPlane:
             "project_checks_run": checks_run,
             "project_retry_tool": retry_tool,
             "project_write_pin": list(write_pin or []),
+            "project_repair_strategy": (
+                dict(repair_strategy)
+                if repair_strategy is not None
+                else dict(state.get("project_repair_strategy") or {})
+            ),
             "project_blocked_targets": (
                 blocked_targets
                 if blocked_targets is not None
@@ -4711,7 +8678,9 @@ class ControlPlane:
         )
         return {"approval_request": approval.model_dump(mode="json")}
 
-    async def _project_prepare_build_approval(self, state: AgentState) -> dict[str, Any]:
+    async def _project_prepare_build_approval(
+        self, state: AgentState
+    ) -> dict[str, Any]:
         """One approval for the turn's whole staged changeset.
 
         The card lists every file with its size and whether it is created or
@@ -4732,8 +8701,28 @@ class ControlPlane:
             staged,
             full=True,
             planned=state.get("project_planned_files") or [],
+            # The only verification call in the whole loop that passes this:
+            # a slice or mid-build round short of a file another slice still
+            # owes is normal, not a defect. Only here, at the final approval
+            # gate, is the whole request supposed to be satisfied.
+            required=state.get("project_required_files") or [],
             scenarios=state.get("project_planned_scenarios") or [],
         )
+        blocking_findings = _blocking_findings(verification)
+        known_paths = set(staged) | set(
+            ((state.get("project_context") or {}).get("manifest") or {}).get(
+                "file_tree", []
+            )
+        )
+        repair_findings = _repairable_verifier_findings(blocking_findings, known_paths)
+        planned = [str(path) for path in state.get("project_planned_files") or []]
+        repair_files = [path for path in planned if path in staged]
+        if not repair_files:
+            repair_files = [path for path in staged if _repairable_project_path(path)]
+        # Persist the final gate's machine-readable queue in the checkpoint
+        # beside the exact overlay it inspected. A follow-up no longer has to
+        # reverse-engineer defects from the approval card's prose summary.
+        repair_context = _repair_context(repair_files, repair_findings)
         summary = _annotate_summary(summary, verification)
         # A changeset the host has proven cannot work does not get an Approve
         # button. The user can still reject it or send a follow-up that fixes
@@ -4759,9 +8748,7 @@ class ControlPlane:
             run_id=state["run_id"],
             action_id=action_id,
             kind="project_apply_build",
-            title=(
-                f"Apply {len(files)} staged file change(s) to this project?"
-            ),
+            title=(f"Apply {len(files)} staged file change(s) to this project?"),
             summary=summary,
             risk_level=RiskLevel.R3,
             input_digest=digest,
@@ -4775,11 +8762,12 @@ class ControlPlane:
             "approval.required",
             approval.model_dump(mode="json"),
         )
-        return {"approval_request": approval.model_dump(mode="json")}
+        return {
+            "approval_request": approval.model_dump(mode="json"),
+            "project_repair_context": repair_context,
+        }
 
-    async def _prepare_verification_approval(
-        self, state: AgentState
-    ) -> dict[str, Any]:
+    async def _prepare_verification_approval(self, state: AgentState) -> dict[str, Any]:
         """Raise the one-time approval for a project's verification recipe.
 
         The summary is the plain-English explanation plus the boundary notice,
@@ -4802,7 +8790,10 @@ class ControlPlane:
         action_id = f"project-verify:{state['run_id']}:{fingerprint[:20]}"
         summary = "\n\n".join(
             part
-            for part in (str(view.get("explanation", "")), str(view.get("boundary", "")))
+            for part in (
+                str(view.get("explanation", "")),
+                str(view.get("boundary", "")),
+            )
             if part
         )
         approval = ApprovalRequestV1(
@@ -4844,7 +8835,9 @@ class ControlPlane:
             return default_routing_catalog()
         disabled = set(getattr(self.settings, "tool_disabled_slugs", []) or [])
         factory_enabled = bool(getattr(self.settings, "tool_factory_enabled", True))
-        definition_enabled = bool(getattr(self.settings, "tool_definition_enabled", True))
+        definition_enabled = bool(
+            getattr(self.settings, "tool_definition_enabled", True)
+        )
         build_index = await self.database.declarative_build_index()
         architecture_tool: ToolRoute | None = None
         tools: list[ToolRoute] = []
@@ -4863,7 +8856,10 @@ class ControlPlane:
             runnable = bool(build_index.get(definition.slug, {}).get("active"))
             # A tool is buildable whenever a defined-but-unbuilt version exists —
             # a fresh definition, or a pending upgrade alongside a runnable version.
-            buildable = await self.database.get_buildable_definition(definition.slug) is not None
+            buildable = (
+                await self.database.get_buildable_definition(definition.slug)
+                is not None
+            )
             tools.append(
                 ToolRoute(
                     slug=definition.slug,
@@ -4885,17 +8881,24 @@ class ControlPlane:
             definition_enabled=definition_enabled,
         )
 
-    async def _planner_tool_catalog(self, catalog: RoutingCatalog) -> list[dict[str, Any]]:
+    async def _planner_tool_catalog(
+        self, catalog: RoutingCatalog
+    ) -> list[dict[str, Any]]:
         """The bounded, identity-only catalog surfaced to the planner (name,
         description, intent, and host-derived state) — never capabilities."""
         if self.registry is None:
             return []
-        state_by_slug = {tool.slug: ("runnable" if tool.runnable else "buildable") for tool in catalog.tools}
+        state_by_slug = {
+            tool.slug: ("runnable" if tool.runnable else "buildable")
+            for tool in catalog.tools
+        }
         if catalog.architecture_tool is not None:
             state_by_slug.setdefault(catalog.architecture_tool.slug, "architecture")
         entries: list[dict[str, Any]] = []
         for entry in await self.registry.catalog():
-            entries.append({**entry, "state": state_by_slug.get(entry["slug"], "defined")})
+            entries.append(
+                {**entry, "state": state_by_slug.get(entry["slug"], "defined")}
+            )
         return entries
 
     def _route_kind(self, plan: PlanEnvelopeV1, catalog: RoutingCatalog) -> str:
@@ -4911,8 +8914,16 @@ class ControlPlane:
             return "tool_definition"
         arch = catalog.architecture_tool
         if arch is not None and plan.tool_slug == arch.slug:
-            return "architecture_existing" if plan.route == "existing_tool" else "architecture_factory"
-        return "declarative_existing" if plan.route == "existing_tool" else "declarative_factory"
+            return (
+                "architecture_existing"
+                if plan.route == "existing_tool"
+                else "architecture_factory"
+            )
+        return (
+            "declarative_existing"
+            if plan.route == "existing_tool"
+            else "declarative_factory"
+        )
 
     async def _plan(self, state: AgentState) -> dict[str, Any]:
         await self._guard(state)
@@ -4921,8 +8932,21 @@ class ControlPlane:
         # answer, and it is not a model's to give: there is nowhere to write.
         # Saying so costs one deterministic reply, where routing it onward
         # spends minutes and fails on whatever schema it lands in.
-        if not state.get("model_aliases", {}).get("_project_id") and (
-            is_project_build_instruction(state["prompt"])
+        #
+        # It runs first because it is the cheapest answer in the graph, but it
+        # yields to a named destination. A message whose own words file
+        # something against a record — "add these to the customer's notes" — is
+        # a record operation whatever the material under it happens to describe,
+        # and the two routes below own it. This is the ordering the live failure
+        # needed: a stated destination outranks an inferred one, and refusing on
+        # an inference while the user was pointing somewhere real is the one
+        # mistake this gate can make that costs the whole turn.
+        if (
+            not state.get("model_aliases", {}).get("_project_id")
+            and not queue_update.is_queue_update_request(
+                user_instruction(state["prompt"])
+            )
+            and is_project_build_instruction(state["prompt"])
         ):
             plan = PlanEnvelopeV1(
                 summary="A build request with no project open; explain how to open one.",
@@ -4970,7 +8994,8 @@ class ControlPlane:
             plan = PlanEnvelopeV1(
                 summary=(
                     "Answer only from retrieved Notion evidence."
-                    if not direct_reason else direct_reason
+                    if not direct_reason
+                    else direct_reason
                 ),
                 route="direct",
                 risk_level=RiskLevel.R0,
@@ -5018,7 +9043,10 @@ class ControlPlane:
         )
         plan = normalize_plan_semantics(plan, request, catalog)
         validate_plan_semantics(plan, request, catalog)
-        if plan.route in ("existing_tool", "tool_factory") and plan.tool_slug not in catalog.known_slugs:
+        if (
+            plan.route in ("existing_tool", "tool_factory")
+            and plan.tool_slug not in catalog.known_slugs
+        ):
             raise ValueError(f"unsupported planned tool: {plan.tool_slug}")
         route_kind = self._route_kind(plan, catalog)
         # Only the image-backed architecture tool pins an active version here;
@@ -5177,7 +9205,9 @@ class ControlPlane:
             "route_kind": route_kind,
         }
         if route_kind == "customer_execute":
-            result["customer_calls"] = [call.model_dump(mode="json") for call in actions]
+            result["customer_calls"] = [
+                call.model_dump(mode="json") for call in actions
+            ]
         return result
 
     async def _customer_route_unscoped(
@@ -5196,7 +9226,9 @@ class ControlPlane:
             "customer.scoped",
             {"account_id": account_id, "name": str(account.get("name", ""))},
         )
-        result = await self._customer_route({**state, "resolved_customer_id": account_id})
+        result = await self._customer_route(
+            {**state, "resolved_customer_id": account_id}
+        )
         result["resolved_customer_id"] = account_id
         return result
 
@@ -5270,14 +9302,17 @@ class ControlPlane:
         await self._guard(state)
         # Either the chip-scoped account or one resolved from an unscoped
         # message's text — the two paths converge here.
-        customer_id = (
-            state.get("model_aliases", {}).get("_customer_id")
-            or state.get("resolved_customer_id", "")
+        customer_id = state.get("model_aliases", {}).get("_customer_id") or state.get(
+            "resolved_customer_id", ""
         )
         lines: list[str] = []
         for raw in state.get("customer_calls", []) or []:
             name = raw.get("name")
-            if name == customer_tools.FILE_NOTE and customer_id and self.customers is not None:
+            if (
+                name == customer_tools.FILE_NOTE
+                and customer_id
+                and self.customers is not None
+            ):
                 title = (str(raw.get("title") or "").strip() or "Note")[:240]
                 row, duplicate = await self.database.capture_customer_source(
                     account_id=customer_id,
@@ -5300,7 +9335,9 @@ class ControlPlane:
                         proposal = None
                 if proposal is not None:
                     counts = self._extraction_counts(proposal)
-                    await self._emit_action_suggested(state, customer_id, proposal, counts)
+                    await self._emit_action_suggested(
+                        state, customer_id, proposal, counts
+                    )
                     lines.append(
                         f"Filed the note. Analysis found {counts['summary']} — "
                         "apply them to the profile?"
@@ -5315,7 +9352,9 @@ class ControlPlane:
                 and self.customers is not None
                 and customer_id
             ):
-                output = await self.customers.output(customer_id, "activity_tracker", None)
+                output = await self.customers.output(
+                    customer_id, "activity_tracker", None
+                )
                 lines.append(output.content.strip())
             elif name == customer_tools.APPLY_EXTRACTION and self.customers is not None:
                 pid = str(raw.get("proposal_id") or "").strip()
@@ -5361,7 +9400,9 @@ class ControlPlane:
         aliases = state.get("model_aliases", {})
         # Chip scope, or an account resolved from an unscoped message's text — so
         # "add two to-dos to MCIT" with no chip lands on MCIT just the same.
-        customer_id = aliases.get("_customer_id") or state.get("resolved_customer_id", "")
+        customer_id = aliases.get("_customer_id") or state.get(
+            "resolved_customer_id", ""
+        )
         data = await self.database.attention_data()
         actions = [
             action
@@ -5387,7 +9428,11 @@ class ControlPlane:
         # worse, filed against whichever account happened to be in the action
         # list. "File this: our build coder is kimi" is a thing worth keeping;
         # it is just not a customer note.
-        if note_intent and not accounts and not queue_update.reports_work(state["prompt"]):
+        if (
+            note_intent
+            and not accounts
+            and not queue_update.reports_work(state["prompt"])
+        ):
             return await self._keep_as_knowledge(state)
         if not actions and not accounts:
             if note_intent:
@@ -5575,7 +9620,9 @@ class ControlPlane:
         }
         known |= {
             _memory_key(item.content)
-            for item in await self.database.list_memory_proposals(ProposalStatus.PENDING)
+            for item in await self.database.list_memory_proposals(
+                ProposalStatus.PENDING
+            )
         }
         if key in known:
             return {"response_text": "I already have that one — nothing added."}
@@ -5655,7 +9702,11 @@ class ControlPlane:
                 occurred_at=None,
             )
             noted = True
-            if self.customers is not None and not duplicate and row.get("status") == "waiting":
+            if (
+                self.customers is not None
+                and not duplicate
+                and row.get("status") == "waiting"
+            ):
                 # A note filed from chat is extracted in the background on the
                 # pinned cloud model, so it is already waiting-for-review when
                 # you open the record — without spending this run's tokens.
@@ -5708,7 +9759,8 @@ class ControlPlane:
             parts.append(f"added {created} follow-up{'s' if created != 1 else ''}")
         return {
             "response_text": (
-                f"Done — {' and '.join(parts)}." if parts
+                f"Done — {' and '.join(parts)}."
+                if parts
                 else "Nothing was left to change; your record already matched."
             )
         }
@@ -5728,7 +9780,9 @@ class ControlPlane:
         await self._stage(
             state,
             "authoring",
-            "Writing the deck…" if document_format == "pptx" else "Writing the document…",
+            "Writing the deck…"
+            if document_format == "pptx"
+            else "Writing the document…",
         )
         policy = await self._policy_gate(
             state,
@@ -5771,7 +9825,11 @@ class ControlPlane:
                 f"Request:\n{state['prompt']}\n\n"
                 + (f"Conversation so far:\n{recent}\n\n" if recent else "")
                 + (f"Evidence to use:\n{evidence}\n\n" if evidence else "")
-                + (f"Attached material:\n{attachment_text[:20_000]}\n\n" if attachment_text else "")
+                + (
+                    f"Attached material:\n{attachment_text[:20_000]}\n\n"
+                    if attachment_text
+                    else ""
+                )
             ),
             role="planner",
             model_aliases=state.get("model_aliases", {}),
@@ -5864,9 +9922,7 @@ class ControlPlane:
         )
         profile = state.get("personal_profile", "")
         knowledge = state.get("knowledge_snippets", [])
-        knowledge_scope = state.get("model_aliases", {}).get(
-            "_knowledge_scope", "auto"
-        )
+        knowledge_scope = state.get("model_aliases", {}).get("_knowledge_scope", "auto")
         notion_only = knowledge_scope == "notion"
         if notion_only and not knowledge:
             return {
@@ -5998,9 +10054,7 @@ class ControlPlane:
                 {"delta": delta},
             )
 
-        show_reasoning = (
-            self.settings.stream_model_reasoning and not is_revision
-        )
+        show_reasoning = self.settings.stream_model_reasoning and not is_revision
         result = await self.model.generate(
             ModelRequestV1(
                 role="planner",
@@ -6096,9 +10150,7 @@ class ControlPlane:
         revisions = state.get("answer_revisions", 0)
         # Must match what `synthesize` actually put in the prompt: Notion-only mode
         # withholds attachments, so there is no document citation to ask for there.
-        notion_only = (
-            state.get("model_aliases", {}).get("_knowledge_scope") == "notion"
-        )
+        notion_only = state.get("model_aliases", {}).get("_knowledge_scope") == "notion"
         has_attachments = not notion_only and bool(
             state.get("attachment_text", "").strip()
         )
@@ -6106,7 +10158,9 @@ class ControlPlane:
             (float(item.get("score", 0.0)) for item in snippets), default=0.0
         )
         cited = bool(re.search(r"\[\d+\]", answer))
-        strong_retrieval = bool(snippets) and top_score >= self.settings.answer_grounding_min_score
+        strong_retrieval = (
+            bool(snippets) and top_score >= self.settings.answer_grounding_min_score
+        )
         # The claim gate. Citation counting asks "did the answer use the
         # evidence?", which a fabrication passes trivially by citing one real
         # record and inventing figures around it. This asks the stricter
@@ -6230,21 +10284,27 @@ class ControlPlane:
         await self._guard(state)
         await self._stage(state, "designing", "Designing the architecture…")
         context = _bounded_architecture_context(state)
-        spec = canonical_architecture_spec(await self.model.architecture_spec(
-            state["prompt"],
-            state.get("attachment_text", ""),
-            approved_context=context,
-            model_aliases=state.get("model_aliases", {}),
-        ))
+        spec = canonical_architecture_spec(
+            await self.model.architecture_spec(
+                state["prompt"],
+                state.get("attachment_text", ""),
+                approved_context=context,
+                model_aliases=state.get("model_aliases", {}),
+            )
+        )
         await self.events.emit(
             state["run_id"],
             state["conversation_id"],
             "architecture.spec_created",
             spec.model_dump(mode="json"),
         )
-        code, validation, profile, authored_by, fallback_reason = (
-            await self._author_diagram_code(state, spec)
-        )
+        (
+            code,
+            validation,
+            profile,
+            authored_by,
+            fallback_reason,
+        ) = await self._author_diagram_code(state, spec)
         await self.events.emit(
             state["run_id"],
             state["conversation_id"],
@@ -6282,7 +10342,9 @@ class ControlPlane:
         if self.registry is not None:
             definition = await self.registry.get(REFERENCE_ARCHITECTURE_SLUG)
         access = (
-            definition.capability_profile.model_access if definition is not None else None
+            definition.capability_profile.model_access
+            if definition is not None
+            else None
         )
 
         # v1 path — no runtime model access. Unchanged behavior.
@@ -6291,7 +10353,13 @@ class ControlPlane:
                 spec, model_aliases=state.get("model_aliases", {})
             )
             validation = validate_diagram_source(generated.diagram_code, spec, formats)
-            return generated.diagram_code, validation, "diagrams-render-v1", "canonical-v1", None
+            return (
+                generated.diagram_code,
+                validation,
+                "diagrams-render-v1",
+                "canonical-v1",
+                None,
+            )
 
         # v2 path — broker-author against the runtime allowlist, fall back safely.
         profile = definition.capability_profile.runtime_allowlists.get(
@@ -6342,7 +10410,10 @@ class ControlPlane:
         execution_risk: RiskLevel | str
         execution_permissions: list[str]
         if plan.route == "tool_factory":
-            pinned_image, candidate_hash = await self.reference_runner.candidate_identity()
+            (
+                pinned_image,
+                candidate_hash,
+            ) = await self.reference_runner.candidate_identity()
             portable = self.reference_runner.portable_manifest()
             execution_risk = portable["permissions"]["risk_level"]
             execution_permissions = _portable_policy_permissions(
@@ -6395,7 +10466,9 @@ class ControlPlane:
         validation_profile = state.get(
             "diagram_validation_profile", "diagrams-render-v1"
         )
-        validate_diagram_source_for(validation_profile, diagram_code, spec, ["svg", "png"])
+        validate_diagram_source_for(
+            validation_profile, diagram_code, spec, ["svg", "png"]
+        )
         execution_digest = hashlib.sha256(
             json.dumps(
                 {
@@ -6442,12 +10515,15 @@ class ControlPlane:
             all_results = [*eval_report.results, *suite_results]
             eval_report = EvalReportV1(
                 passed=all(result.passed for result in all_results),
-                score=sum(1 for result in all_results if result.passed) / len(all_results),
+                score=sum(1 for result in all_results if result.passed)
+                / len(all_results),
                 results=all_results,
                 static_checks=eval_report.static_checks
                 | {
                     "portable_integrity": True,
-                    "declared_eval_suite": all(result.passed for result in suite_results),
+                    "declared_eval_suite": all(
+                        result.passed for result in suite_results
+                    ),
                 },
             )
         artifacts: list[dict[str, Any]] = []
@@ -6573,10 +10649,15 @@ class ControlPlane:
         await self._guard(state)
         await self._stage(state, "drafting", "Drafting a tool definition…")
         if self.registry is None:
-            return {"response_text": "Tool creation isn't available in this environment."}
+            return {
+                "response_text": "Tool creation isn't available in this environment."
+            }
         # Defense in depth: routing already honors the kill-switches, but never let
         # a durable draft happen while the factory or definition entry is paused.
-        if not self.settings.tool_factory_enabled or not self.settings.tool_definition_enabled:
+        if (
+            not self.settings.tool_factory_enabled
+            or not self.settings.tool_definition_enabled
+        ):
             return {"response_text": "Tool creation is currently paused."}
         request = PlanningRequestV1(
             run_id=state["run_id"],
@@ -6638,7 +10719,9 @@ class ControlPlane:
         else:
             definition_policy.require_approval()
         definition, proposal = await self.database.create_tool_definition_proposal(
-            definition, source_run_id=state["run_id"], summary=f"Define {definition.name}"
+            definition,
+            source_run_id=state["run_id"],
+            summary=f"Define {definition.name}",
         )
         await self.events.emit(
             state["run_id"],
@@ -6649,8 +10732,7 @@ class ControlPlane:
         )
         if trusted_explicit_request:
             action_id = (
-                f"trusted-auto-definition:{proposal.id}:"
-                f"{definition.content_hash[:16]}"
+                f"trusted-auto-definition:{proposal.id}:{definition.content_hash[:16]}"
             )
             result = await self.database.decide_tool_definition_proposal(
                 proposal.id,
@@ -6687,7 +10769,9 @@ class ControlPlane:
                 "nothing is built or run until you approve the build (Gate 2)."
             ),
             risk_level=RiskLevel.R3,
-            input_digest=hashlib.sha256(definition.content_hash.encode("utf-8")).hexdigest(),
+            input_digest=hashlib.sha256(
+                definition.content_hash.encode("utf-8")
+            ).hexdigest(),
             permissions=_definition_permissions(definition),
         )
         approval = await self.database.create_approval(approval)
@@ -6721,7 +10805,9 @@ class ControlPlane:
         if not self.settings.tool_factory_enabled:
             return aborted | {"response_text": "Tool building is currently paused."}
         if tool_slug in (self.settings.tool_disabled_slugs or []):
-            return aborted | {"response_text": f"The tool '{tool_slug}' is currently disabled."}
+            return aborted | {
+                "response_text": f"The tool '{tool_slug}' is currently disabled."
+            }
         definition = await self.database.get_buildable_definition(tool_slug)
         if definition is None:
             return aborted | {
@@ -6742,7 +10828,9 @@ class ControlPlane:
             # The model writes the tool's run() code; it is AST-gated, optionally
             # Grok-reviewed, then evaluated by actually executing it.
             try:
-                implementation, code_review = await self._author_and_review(state, definition)
+                implementation, code_review = await self._author_and_review(
+                    state, definition
+                )
             except (authored_code.AuthoredCodeError, AuthoredReviewRejected) as exc:
                 return aborted | {
                     "response_text": f"I couldn't safely author '{definition.name}': {exc}"
@@ -6770,9 +10858,8 @@ class ControlPlane:
             implementation=implementation,
             code_review=code_review,
         )
-        if (
-            self.registry is not None
-            and self.registry.trusted_auto_activation_eligible(definition)
+        if self.registry is not None and self.registry.trusted_auto_activation_eligible(
+            definition
         ):
             # Gate 1 already approved the capability profile, so host-owned evaluation
             # inside the trusted boundary is enough to activate this exact build.
@@ -6832,7 +10919,10 @@ class ControlPlane:
             risk_level=RiskLevel.R3,
             tool_version_id=build.id,
             input_digest=hashlib.sha256(build.id.encode("utf-8")).hexdigest(),
-            permissions=[PolicyPermission.TOOL_ACTIVATION.value, *_definition_permissions(definition)],
+            permissions=[
+                PolicyPermission.TOOL_ACTIVATION.value,
+                *_definition_permissions(definition),
+            ],
         )
         approval = await self.database.create_approval(approval)
         await self.events.emit(
@@ -6886,9 +10976,10 @@ class ControlPlane:
             output, meta = await self._run_authored(state, definition, build)
         else:
             tool_input = self._prepare_tool_input(definition, state)
-            if definition.route_facts.input_pipeline == "attachment_text" and not str(
-                tool_input.get("text", "")
-            ).strip():
+            if (
+                definition.route_facts.input_pipeline == "attachment_text"
+                and not str(tool_input.get("text", "")).strip()
+            ):
                 # Nothing to work on. This tool's deterministic fallback is
                 # written to never fail, which means an empty input produced a
                 # confident card reading "Untitled Project" three times over —
@@ -6917,7 +11008,9 @@ class ControlPlane:
                 model_aliases=state.get("model_aliases", {}),
             )
             output, meta = await readme_summary.run(definition, tool_input, broker)
-        ok, problems = tool_contracts.matches_contract(output, definition.output_contract)
+        ok, problems = tool_contracts.matches_contract(
+            output, definition.output_contract
+        )
         await self.events.emit(
             state["run_id"],
             state["conversation_id"],
@@ -6955,7 +11048,11 @@ class ControlPlane:
             {"slug": definition.slug, "chars": len(code)},
         )
         review = await self._review_authored_code(state, definition, code)
-        improved = _extract_python_source(review.get("improved_code", "")) if review.get("improved_code") else ""
+        improved = (
+            _extract_python_source(review.get("improved_code", ""))
+            if review.get("improved_code")
+            else ""
+        )
         if improved and improved != code:
             try:
                 authored_code.validate_authored_source(improved)
@@ -6989,9 +11086,18 @@ class ControlPlane:
     ) -> dict[str, Any]:
         """Optional OCI Grok review — opt-in and fail-soft. Any error/unavailability
         means 'not reviewed'; the AST-gate remains the load-bearing control."""
-        review = {"reviewed": False, "reviewer": "", "safe": True, "improved_code": "", "reasons": []}
+        review = {
+            "reviewed": False,
+            "reviewer": "",
+            "safe": True,
+            "improved_code": "",
+            "reasons": [],
+        }
         reviewer = self.reviewer
-        if reviewer is None or not getattr(reviewer, "tool_review_available", lambda: False)():
+        if (
+            reviewer is None
+            or not getattr(reviewer, "tool_review_available", lambda: False)()
+        ):
             return review
         await self._stage(state, "reviewing", "Reviewing the tool code for safety…")
         task = {
@@ -7052,7 +11158,9 @@ class ControlPlane:
         every value. Restating translates labels, never values — every number
         must survive it, which is checked rather than trusted.
         """
-        restated = await cast(Any, self.model)._structured(
+        restated = await cast(
+            Any, self.model
+        )._structured(
             ToolInputRestatementV1,
             system_prompt=(
                 "You relabel a request into the exact wording one tool's own "
@@ -7072,7 +11180,11 @@ class ControlPlane:
                 # Its own code is the only place the parser's real vocabulary
                 # lives. The description said "fixed costs"; the regex wanted
                 # "fixed cost", and one plural was the whole failure.
-                + (f"\n\nIts source:\n{implementation[:4_000]}" if implementation else "")
+                + (
+                    f"\n\nIts source:\n{implementation[:4_000]}"
+                    if implementation
+                    else ""
+                )
                 + "\n\nRequest:\n"
                 + _substantive_prompt(state)
             ),
@@ -7185,7 +11297,9 @@ class ControlPlane:
         access = definition.capability_profile.model_access
         results: list[EvalResultV1] = []
         for fixture in fixtures:
-            scripted = ScriptedModel([fixture.broker_reply] * max(1, access.max_calls_per_run))
+            scripted = ScriptedModel(
+                [fixture.broker_reply] * max(1, access.max_calls_per_run)
+            )
             broker = ModelBroker(
                 model=scripted,
                 access=access,
@@ -7209,12 +11323,19 @@ class ControlPlane:
                     ),
                     model_call_budget=access.max_calls_per_run if access.enabled else 0,
                 )
-                checks = self._check_properties(definition, output, fixture.expected_properties)
+                checks = self._check_properties(
+                    definition, output, fixture.expected_properties
+                )
                 checks["runs_without_error"] = True
                 results.append(
-                    EvalResultV1(case_id=fixture.name, passed=all(checks.values()), checks=checks)
+                    EvalResultV1(
+                        case_id=fixture.name, passed=all(checks.values()), checks=checks
+                    )
                 )
-            except (authored_code.AuthoredExecutionError, authored_code.AuthoredCodeError) as exc:
+            except (
+                authored_code.AuthoredExecutionError,
+                authored_code.AuthoredCodeError,
+            ) as exc:
                 results.append(
                     EvalResultV1(
                         case_id=fixture.name,
@@ -7224,11 +11345,18 @@ class ControlPlane:
                     )
                 )
         if not results:
-            results = [EvalResultV1(case_id="no-eval-cases", passed=False, message="no eval cases")]
+            results = [
+                EvalResultV1(
+                    case_id="no-eval-cases", passed=False, message="no eval cases"
+                )
+            ]
         passed = all(result.passed for result in results)
         score = sum(1 for result in results if result.passed) / len(results)
         return EvalReportV1(
-            passed=passed, score=score, results=results, static_checks={"authored_code": True}
+            passed=passed,
+            score=score,
+            results=results,
+            static_checks={"authored_code": True},
         )
 
     def _prepare_tool_input(
@@ -7258,8 +11386,12 @@ class ControlPlane:
                 tool_slug=definition.slug,
                 model_aliases={},
             )
-            output, meta = await readme_summary.run(definition, fixture.tool_input, broker)
-            checks = self._check_properties(definition, output, fixture.expected_properties)
+            output, meta = await readme_summary.run(
+                definition, fixture.tool_input, broker
+            )
+            checks = self._check_properties(
+                definition, output, fixture.expected_properties
+            )
             results.append(
                 EvalResultV1(
                     case_id=fixture.name,
@@ -7295,7 +11427,9 @@ class ControlPlane:
         checks: dict[str, bool] = {}
         for prop in expected:
             if prop == "output_matches_contract":
-                ok, _ = tool_contracts.matches_contract(output, definition.output_contract)
+                ok, _ = tool_contracts.matches_contract(
+                    output, definition.output_contract
+                )
                 checks[prop] = ok
             elif prop == "title_non_empty":
                 checks[prop] = bool(str(output.get("title", "")).strip())
@@ -7451,7 +11585,9 @@ class ControlPlane:
         suspend, same answer endpoint — the difference is where the answer
         lands: back in the loop as the call's result, not in synthesize."""
         call = ProjectToolCallV1.model_validate(state.get("project_pending_call", {}))
-        question = str(call.arguments.get("question", "")).strip() or "Could you clarify?"
+        question = (
+            str(call.arguments.get("question", "")).strip() or "Could you clarify?"
+        )
         options = [
             text
             for option in (call.arguments.get("options") or [])
@@ -7498,8 +11634,12 @@ class ControlPlane:
             state["run_id"],
             state["conversation_id"],
             "project.tool_result",
-            {"tool": call.name, "ok": True, "staged": False,
-             "staged_files": len(state.get("project_staged") or {})},
+            {
+                "tool": call.name,
+                "ok": True,
+                "staged": False,
+                "staged_files": len(state.get("project_staged") or {}),
+            },
         )
         return self._project_evidence(
             state, call, result, int(state.get("project_checks_run", 0))
@@ -7676,7 +11816,9 @@ class ControlPlane:
             applied = list(report.get("applied", []))
             skipped = list(report.get("skipped", []))
             planned_files = list(state.get("project_planned_files") or [])
-            plan_recorder = getattr(getattr(self, "projects", None), "record_plan", None)
+            plan_recorder = getattr(
+                getattr(self, "projects", None), "record_plan", None
+            )
             if planned_files and plan_recorder is not None:
                 # The written plan now shows what actually landed — checked
                 # boxes for applied files — so a follow-up turn (or the user)
@@ -7685,6 +11827,7 @@ class ControlPlane:
                     project_id,
                     {
                         "files": planned_files,
+                        "slices": list(state.get("project_planned_slices") or []),
                         "intent": str(state.get("project_build_intent") or "build"),
                         "scope": str(state.get("project_build_scope") or "narrow"),
                     },
@@ -7742,9 +11885,22 @@ class ControlPlane:
                 "skipped": len(report.get("skipped", [])),
             },
         )
+        coding_session_id = str(state.get("project_coding_session_id") or "")
+        if coding_session_id:
+            await self._release_project_coding_session(
+                state,
+                coding_session_id,
+                (
+                    CodingSessionState.COMPLETED
+                    if approved
+                    else CodingSessionState.ABORTED
+                ),
+            )
         return {
             "response_text": text,
             "project_staged": {},
+            "project_coding_session_id": "",
+            "project_coding_cleanup_ids": [],
             "project_pending_call": {},
             "approval_request": {},
             "approval_decision": {},
@@ -7785,7 +11941,11 @@ class ControlPlane:
                         "requested; review the new one before it can run"
                     )
                 output = await self.projects.execute(project_id, call)
-                result: dict[str, Any] = {"ok": True, "approved": True, "output": output}
+                result: dict[str, Any] = {
+                    "ok": True,
+                    "approved": True,
+                    "output": output,
+                }
                 checks_run += 1
             except Exception as exc:
                 result = {"ok": False, "approved": True, "error": str(exc)[:1_000]}
@@ -8064,7 +12224,9 @@ class ControlPlane:
             _memory_key(item)
             for item in await self.database.search_memories(state["prompt"], limit=50)
         }
-        for proposal in await self.database.list_memory_proposals(ProposalStatus.PENDING):
+        for proposal in await self.database.list_memory_proposals(
+            ProposalStatus.PENDING
+        ):
             known.add(_memory_key(proposal.content))
         created = 0
         for candidate in harvest.candidates:
@@ -8124,9 +12286,17 @@ def initial_state(
         project_checks_run=0,
         project_retry_tool="",
         project_write_pin=[],
+        project_repair_strategy={},
         project_blocked_targets={},
         project_planned_files=[],
         project_planned_scenarios=[],
+        project_planned_slices=[],
+        project_planner_tokens=0,
+        project_planner_attempts=0,
+        project_repair_no_change=0,
+        project_repair_slice={},
+        project_repair_hashes={},
+        project_required_files=[],
         project_plan_taken=False,
         project_build_intent="",
         project_build_scope="",
@@ -8135,6 +12305,16 @@ def initial_state(
         project_pending_reads=[],
         project_consecutive_reads=0,
         project_chain_index=0,
+        project_planner_chain_index=0,
+        project_coding_session_id="",
+        project_coding_cleanup_ids=[],
+        project_coding_rounds=0,
+        project_coding_slice_rounds=0,
+        project_coding_slice_files=[],
+        project_coding_slice_complete=False,
+        project_coding_findings=[],
+        project_coding_finding_signature="",
+        project_coding_unchanged_findings=0,
         project_phase="",
         project_focus_path="",
         project_direction={},
@@ -8149,6 +12329,9 @@ def initial_state(
         project_empty_finish_streak=0,
         project_syntax_retries=0,
         project_verify_bonus_steps=0,
+        project_verified_prefix=0,
+        project_slice_verifications=0,
+        project_repair_context={},
         answer_revisions=0,
         answer_critique="",
         grounding={},
@@ -8181,6 +12364,18 @@ class AuthoredReviewRejected(RuntimeError):
 # cannot hold this contract right now.
 _MAX_MALFORMED_PROJECT_STEPS = 3
 
+# Repeating a model-local failure twice is enough evidence to change the model,
+# when another coder rung exists. The older three-strike stop remains the bound
+# when there is no backup. These thresholds change strategy before termination;
+# they never manufacture an unbounded retry.
+_MALFORMED_MODEL_SWITCH_STEPS = 2
+_FOCUSED_NO_PROGRESS_SWITCH_STEPS = 3
+_REFUSED_MODEL_SWITCH_STEPS = 2
+# A successful write is not repair progress when the verifier says exactly the
+# same thing afterward. Give each coder two such attempts, then move to the next
+# configured rung (or stop with the finding queue intact when none remains).
+_UNCHANGED_VERIFIER_MODEL_SWITCHES = 2
+
 
 # Empty "finishes" the host will decline on a build-instruction turn before it
 # lets one stand. Each decline hands the model the fact that nothing is staged;
@@ -8189,13 +12384,12 @@ _MAX_MALFORMED_PROJECT_STEPS = 3
 _MAX_EMPTY_PROJECT_FINISHES = 2
 
 
-# Fix-and-recheck cycles the host runs when a completed changeset does not hold
-# up — a file that will not parse, an import that resolves nowhere, a project
-# that will not run in the sandbox. One shared budget, whichever rung found it:
-# each cycle hands the model the exact errors, and after the budget the
-# changeset is offered anyway with those errors on the approval card, so the
-# user is never silently handed broken code and the model is never looped.
-_MAX_STAGED_VERIFY_RETRIES = 2
+# Fix-and-recheck cycles across the complete changeset. The old global budget of
+# two could repair at most two files even when a verifier named fifteen precise
+# problems. Twelve is still hard-bounded, while allowing a realistic multi-file
+# build to work through one target at a time; repeated *refused* edits have the
+# tighter two-strike model-switch/stop rule in the execute path.
+_MAX_STAGED_VERIFY_RETRIES = 12
 
 
 # Refusals one "tool:path" target may collect before the loop closes it for the
@@ -8378,10 +12572,41 @@ _PROVABLE_RUNTIME_FAILURES = (
 
 def _blocks_approval(finding: dict[str, Any]) -> bool:
     """Whether this finding is strong enough to withhold the Approve button."""
+    # Severity is the sandbox's deliberate distinction for acceptance checks:
+    # a wrong status or crash is an error, while a response-content miss is a
+    # warning because the scenario itself may be underspecified.  Honour that
+    # classification before rung defaults (findings produced in isolation do
+    # not necessarily carry one), then make every non-warning acceptance
+    # failure a veto.  Matching exception-name substrings here used to let both
+    # wrong HTTP statuses and sqlite3.ProgrammingError reach approval.
+    if finding.get("severity") == "warning":
+        return False
+    if finding.get("kind") == "acceptance":
+        return True
+    if finding.get("kind") == "test":
+        # These are repository-authored tests executed against the exact
+        # materialized overlay in the reviewed networkless container.  Missing
+        # sandbox dependencies are downgraded to warnings before this point;
+        # an actual red regression is therefore deterministic repair evidence.
+        return True
     if finding.get("rung", "syntax") in _STATIC_RUNGS:
         return True
     error = str(finding.get("error", ""))
     return any(marker in error for marker in _PROVABLE_RUNTIME_FAILURES)
+
+
+def _blocking_findings(verification: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return exactly the verifier findings that can veto this changeset.
+
+    Repair, slice progression, completion, and approval must all answer the same
+    question. Keeping the filter here prevents an environment-shaped runtime
+    advisory from consuming model repair turns even though the approval gate
+    would permit the identical changeset. The raw ``errors`` collection remains
+    untouched for event counts and review-card diagnostics.
+    """
+    return [
+        item for item in (verification.get("errors") or []) if _blocks_approval(item)
+    ]
 
 
 # The count Metis puts at the front of every blocked reason it writes, read
@@ -8414,9 +12639,7 @@ def _note_regression(
     """
     if reason is None or prior <= 0:
         return reason
-    current = len(
-        [item for item in (verification.get("errors") or []) if _blocks_approval(item)]
-    )
+    current = len(_blocking_findings(verification))
     if current <= prior:
         return reason
     return (
@@ -8450,9 +12673,7 @@ def _blocking_reason(verification: dict[str, Any]) -> str | None:
     could not run — refusing on a check that never happened would make an
     unavailable sandbox indistinguishable from broken code.
     """
-    errors = [
-        item for item in (verification.get("errors") or []) if _blocks_approval(item)
-    ]
+    errors = _blocking_findings(verification)
     if not errors:
         return None
     first = errors[0]
@@ -8578,10 +12799,12 @@ def _annotate_summary(summary: str, verification: dict[str, Any]) -> str:
     # code — is an "error" for the count but must not be dressed up as a defect,
     # or a perfectly good build reads as broken (measured: one such build showed
     # "7 problems" for a single correct `raise` seen from seven import paths).
-    blocking = [item for item in errors if _blocks_approval(item)]
+    blocking = _blocking_findings(verification)
     advisory = [item for item in errors if not _blocks_approval(item)]
     if blocking:
-        listed = "\n".join(f"- `{item['path']}`: {item['error']}" for item in blocking[:12])
+        listed = "\n".join(
+            f"- `{item['path']}`: {item['error']}" for item in blocking[:12]
+        )
         blocks.append(
             f"⚠️ {len(blocking)} problem(s) would stop this project working — review "
             f"before applying:\n{listed}"
@@ -8613,7 +12836,9 @@ def _annotate_summary(summary: str, verification: dict[str, Any]) -> str:
             f"proven defect:\n{listed}"
         )
     if warnings:
-        listed = "\n".join(f"- `{item['path']}`: {item['error']}" for item in warnings[:6])
+        listed = "\n".join(
+            f"- `{item['path']}`: {item['error']}" for item in warnings[:6]
+        )
         blocks.append(f"Worth a look:\n{listed}")
     blocks.extend(f"Note: {note}." for note in verification.get("notes") or [])
     if not blocks:
@@ -8631,18 +12856,47 @@ def _direct_fast_path_reason(state: AgentState) -> str:
     prompt = state.get("prompt", "").strip().lower()
     if state.get("model_aliases", {}).get("_customer_id"):
         return "Answer directly within the selected customer account scope."
+    # The cues below are read off the user's own instruction. A bare "build"
+    # anywhere in a pasted email or meeting note used to disqualify the fast
+    # path, which is how "summarize this" for a note about someone else's build
+    # plans became a full planner turn.
+    instruction = user_instruction(prompt)
     unsafe_routing_cues = (
-        "reference architecture", "architecture diagram", "create a tool",
-        "build", "create", "new tool", "into a tool", "toolify",
-        "reusable tool", "readme summary", "run command", "execute command",
-        "edit the project", "change the code", "implement", "deploy",
+        "reference architecture",
+        "architecture diagram",
+        "create a tool",
+        "build",
+        "create",
+        "new tool",
+        "into a tool",
+        "toolify",
+        "reusable tool",
+        "readme summary",
+        "run command",
+        "execute command",
+        "edit the project",
+        "change the code",
+        "implement",
+        "deploy",
     )
-    if any(cue in prompt for cue in unsafe_routing_cues):
+    if any(cue in instruction for cue in unsafe_routing_cues):
         return ""
     direct_cues = (
-        "rewrite", "rephrase", "summarize", "summarise", "translate", "draft",
-        "explain", "brainstorm", "compare", "review this", "improve this",
-        "what is", "how do", "help me", "answer",
+        "rewrite",
+        "rephrase",
+        "summarize",
+        "summarise",
+        "translate",
+        "draft",
+        "explain",
+        "brainstorm",
+        "compare",
+        "review this",
+        "improve this",
+        "what is",
+        "how do",
+        "help me",
+        "answer",
     )
     if state.get("attachment_text", "").strip() or any(
         prompt.startswith(cue) for cue in direct_cues
@@ -8697,7 +12951,8 @@ def _describe_capabilities(definition: ToolDefinitionV1) -> str:
         )
     elif profile.runtime_allowlists:
         parts.append(
-            "may execute generated code matching " + ", ".join(sorted(profile.runtime_allowlists.values()))
+            "may execute generated code matching "
+            + ", ".join(sorted(profile.runtime_allowlists.values()))
         )
     else:
         parts.append("executes no generated code")
@@ -8732,7 +12987,10 @@ def _render_summary_card(
     if stack:
         lines.append("**Stack:** " + ", ".join(str(item) for item in stack))
     if meta.get("authored_by") != "model":
-        lines += ["", f"_(Summarized deterministically — {meta.get('fallback_reason') or 'model unavailable'}.)_"]
+        lines += [
+            "",
+            f"_(Summarized deterministically — {meta.get('fallback_reason') or 'model unavailable'}.)_",
+        ]
     return "\n".join(lines).strip()
 
 
@@ -8740,9 +12998,7 @@ def _portable_policy_permissions(permissions: dict[str, Any]) -> list[str]:
     """Translate the reviewed portable manifest into fail-closed policy claims."""
 
     claims = [
-        "network:none"
-        if permissions.get("network") == "none"
-        else "network:access",
+        "network:none" if permissions.get("network") == "none" else "network:access",
         "read:run-inputs",
         "write:run-artifacts",
     ]

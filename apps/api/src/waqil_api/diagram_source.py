@@ -193,8 +193,13 @@ _V2_ALLOWED_IMPORTS = {
 _V2_ALLOWED_CALL_NAMES = {"Blank", "Cluster", "Diagram", "Edge", "Path", "str"}
 _V2_ALLOWED_ATTRS = {"resolve", "parent"}  # Path(__file__).resolve().parent
 _V2_ALLOWED_DIAGRAM_KWARGS = {
-    "filename", "outformat", "show", "direction",
-    "graph_attr", "node_attr", "edge_attr",
+    "filename",
+    "outformat",
+    "show",
+    "direction",
+    "graph_attr",
+    "node_attr",
+    "edge_attr",
 }
 _V2_ALLOWED_EDGE_KWARGS = {"label", "color", "style", "minlen", "reverse"}
 
@@ -231,8 +236,10 @@ class _V2Auditor(ast.NodeVisitor):
             if func.id not in _V2_ALLOWED_CALL_NAMES:
                 self.violations.append(f"disallowed call: {func.id}(...)")
             if func.id == "Blank":
-                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(
-                    node.args[0].value, str
+                if (
+                    node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
                 ):
                     self.node_labels.append(node.args[0].value)
                 else:
@@ -310,7 +317,9 @@ def validate_diagram_source_v2(
     if not encoded or len(encoded) > 100_000:
         raise DiagramSourceError("source must contain 1 to 100000 UTF-8 bytes")
     if "\x00" in source or "\r" in source:
-        raise DiagramSourceError("source must use LF line endings and contain no NUL bytes")
+        raise DiagramSourceError(
+            "source must use LF line endings and contain no NUL bytes"
+        )
     try:
         tree = ast.parse(source, filename="diagram.py", mode="exec")
     except SyntaxError as exc:
@@ -333,9 +342,7 @@ def validate_diagram_source_v2(
             f"source is missing {len(missing)} required component node(s)"
         )
     if len(auditor.node_labels) != len(spec.components):
-        raise DiagramSourceError(
-            "source must declare exactly one node per component"
-        )
+        raise DiagramSourceError("source must declare exactly one node per component")
     if auditor.edge_count != len(spec.edges):
         raise DiagramSourceError(
             f"source declares {auditor.edge_count} edge(s); spec has {len(spec.edges)}"
@@ -365,7 +372,9 @@ def validate_diagram_source(
     if not encoded or len(encoded) > 100_000:
         raise DiagramSourceError("source must contain 1 to 100000 UTF-8 bytes")
     if "\x00" in source or "\r" in source:
-        raise DiagramSourceError("source must use LF line endings and contain no NUL bytes")
+        raise DiagramSourceError(
+            "source must use LF line endings and contain no NUL bytes"
+        )
     try:
         actual = ast.parse(source, filename="diagram.py", mode="exec")
     except SyntaxError as exc:

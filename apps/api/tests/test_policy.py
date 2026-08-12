@@ -136,9 +136,7 @@ def test_root_graph_applies_direct_sandbox_and_activation_policy_gates(
     assert _wait(client, direct["run_id"], {"completed", "failed"})["status"] == (
         "completed"
     )
-    direct_events = client.get(
-        f"/api/v1/runs/{direct['run_id']}/events?after=0"
-    ).text
+    direct_events = client.get(f"/api/v1/runs/{direct['run_id']}/events?after=0").text
     assert '"action":"conversation.respond"' in direct_events
     assert '"disposition":"allow"' in direct_events
 
@@ -167,9 +165,7 @@ def test_root_graph_applies_direct_sandbox_and_activation_policy_gates(
     assert resumed.status_code == 200
     completed = _wait(client, candidate["run_id"], {"completed", "failed"})
     assert completed["status"] == "completed", completed
-    events = client.get(
-        f"/api/v1/runs/{candidate['run_id']}/events?after=0"
-    ).text
+    events = client.get(f"/api/v1/runs/{candidate['run_id']}/events?after=0").text
     assert '"action":"tool.execute"' in events
     assert '"action":"tool.activate"' in events
     assert '"disposition":"require_approval"' in events

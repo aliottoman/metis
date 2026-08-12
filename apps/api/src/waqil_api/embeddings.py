@@ -14,6 +14,7 @@ explicitly consented to index. Auth is read from ~/.oci/config
 `import oci` is deliberately lazy (inside methods) so this module — and the
 whole API — imports cleanly when the heavy SDK is not installed.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,9 +54,14 @@ def _parse_grok_review(text: str) -> dict[str, Any]:
     improved = parsed.get("improved_code")
     return {
         "safe": bool(parsed.get("safe", True)),
-        "reasons": [str(r)[:300] for r in reasons][:12] if isinstance(reasons, list) else [],
-        "improved_code": improved if isinstance(improved, str) and improved.strip() else "",
+        "reasons": [str(r)[:300] for r in reasons][:12]
+        if isinstance(reasons, list)
+        else [],
+        "improved_code": improved
+        if isinstance(improved, str) and improved.strip()
+        else "",
     }
+
 
 # Transient failures worth retrying, matched on text because the SDK wraps
 # socket errors and throttling in its own exception types.
@@ -257,7 +263,10 @@ class CohereRetrieval:
     def tool_review_available(self) -> bool:
         """True only if the Grok code reviewer is opted-in AND cloud is configured.
         Enabling it sends tool CODE to xAI Grok (us-chicago-1) — cloud egress."""
-        return bool(getattr(self._settings, "allow_tool_code_review", False)) and self.available()
+        return (
+            bool(getattr(self._settings, "allow_tool_code_review", False))
+            and self.available()
+        )
 
     def grok_review(self, code: str, task: dict[str, Any]) -> dict[str, Any]:
         """Ask xAI Grok (OCI GenAI, us-chicago-1, on-demand) to review authored
@@ -279,7 +288,7 @@ class CohereRetrieval:
             "logic and an injected `model()` bridge — no network, files, os, eval, "
             "exec, imports outside a small allowlist, or dunder access. Review the "
             "code for safety and correctness against the task. Reply with ONLY a "
-            "JSON object: {\"safe\": bool, \"reasons\": [string], \"improved_code\": "
+            'JSON object: {"safe": bool, "reasons": [string], "improved_code": '
             "string}. Set improved_code to a better full `run(inputs, model)` "
             "source if you can improve it (same constraints), else an empty string. "
             "Never add capabilities the constraints forbid."

@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Iterator, TypeVar
+from typing import Any, Callable, Iterator, Sequence, TypeVar
 
 from .contracts import (
     PROJECT_MODES,
@@ -37,6 +37,18 @@ from .contracts import (
     ToolV1,
     ToolVersionV1,
     UploadV1,
+)
+from .coding_contracts import (
+    CodingCleanupFailureV1,
+    CodingCleanupHoldV1,
+    CodingCleanupPlanV1,
+    CodingCleanupStatus,
+    CodingModelRouteV1,
+    CodingSessionCreateV1,
+    CodingSessionState,
+    CodingSessionUpdateV1,
+    CodingSessionV1,
+    TERMINAL_CODING_STATES,
 )
 
 T = TypeVar("T")
@@ -84,6 +96,28 @@ def _corpus_source(row: sqlite3.Row) -> CorpusSourceV1:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _coding_session(row: sqlite3.Row) -> CodingSessionV1:
+    data = dict(row)
+    data["model_route"] = CodingModelRouteV1.model_validate_json(
+        data.pop("model_route_json")
+    )
+    data["workspace_snapshot"] = json.loads(data.pop("workspace_snapshot_json"))
+    cleanup_sidecar_ids_json = data.pop("cleanup_sidecar_ids_json", "[]")
+    cleanup_sidecar_ids = json.loads(cleanup_sidecar_ids_json)
+    if not isinstance(cleanup_sidecar_ids, list) or any(
+        not isinstance(item, str) for item in cleanup_sidecar_ids
+    ):
+        raise ValueError("coding cleanup sidecar ids must be a JSON string array")
+    data["cleanup_sidecar_ids"] = cleanup_sidecar_ids
+    ancestry = json.loads(data.pop("sidecar_ancestry_json", "[]") or "[]")
+    if not isinstance(ancestry, list) or any(
+        not isinstance(item, str) for item in ancestry
+    ):
+        raise ValueError("coding sidecar ancestry must be a JSON string array")
+    data["sidecar_ancestry"] = ancestry
+    return CodingSessionV1.model_validate(data)
 
 
 SCHEMA_V1 = """
@@ -955,6 +989,77 @@ FROM answer_atoms a, json_each(a.entities_json) j
 WHERE trim(j.value) != '';
 """
 
+SCHEMA_V23 = """
+-- Durable ownership for a local coding-engine session.  Cline's checkpoint is
+-- useful recovery state, but this row is the authority that binds it to the
+-- exact Metis run, project mirror, staged overlay, model route, and event
+-- cursor.  Credentials are intentionally absent from the schema.
+CREATE TABLE IF NOT EXISTS coding_sessions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    protocol_version TEXT NOT NULL DEFAULT '1' CHECK(protocol_version = '1'),
+    sidecar_session_id TEXT UNIQUE,
+    event_cursor INTEGER NOT NULL DEFAULT 0 CHECK(event_cursor >= 0),
+    workspace_path TEXT NOT NULL,
+    workspace_snapshot_json TEXT NOT NULL,
+    baseline_digest TEXT NOT NULL,
+    overlay_digest TEXT NOT NULL,
+    model_route_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN (
+        'starting','running','idle','restoring','aborting',
+        'aborted','completed','failed'
+    )),
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_coding_sessions_run
+    ON coding_sessions(run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_coding_sessions_project
+    ON coding_sessions(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_coding_sessions_resumable
+    ON coding_sessions(updated_at DESC)
+    WHERE state IN ('starting','running','idle','restoring','aborting');
+"""
+
+SCHEMA_V24 = """
+-- Cleanup is a durable, retryable ownership transition rather than a best-
+-- effort epilogue.  Intent and every sidecar identity are committed before
+-- deletion; only the final transaction marks the audit row released.
+ALTER TABLE coding_sessions ADD COLUMN cleanup_status TEXT NOT NULL DEFAULT 'active'
+    CHECK(cleanup_status IN ('active','pending','retry','held','clean'));
+ALTER TABLE coding_sessions ADD COLUMN cleanup_target_state TEXT
+    CHECK(cleanup_target_state IS NULL OR cleanup_target_state IN (
+        'aborted','completed','failed'
+    ));
+ALTER TABLE coding_sessions ADD COLUMN cleanup_attempts INTEGER NOT NULL DEFAULT 0
+    CHECK(cleanup_attempts >= 0);
+ALTER TABLE coding_sessions ADD COLUMN cleanup_next_attempt_at TEXT;
+ALTER TABLE coding_sessions ADD COLUMN cleanup_last_error TEXT;
+ALTER TABLE coding_sessions ADD COLUMN cleanup_sidecar_ids_json TEXT NOT NULL DEFAULT '[]'
+    CHECK(json_valid(cleanup_sidecar_ids_json));
+ALTER TABLE coding_sessions ADD COLUMN released_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_coding_sessions_cleanup_due
+    ON coding_sessions(cleanup_status, cleanup_next_attempt_at, updated_at)
+    WHERE cleanup_status IN ('active','pending','retry');
+"""
+
+SCHEMA_V25 = """
+-- Every sidecar identity a session has ever owned, committed when the identity
+-- is minted rather than assembled at cleanup time. A model-switch fork's event
+-- journal outlived its run because the fork id was only ever a per-round
+-- argument: the round was refused on a path that passed the parent id alone,
+-- and nothing afterwards knew the child existed. Kept separate from
+-- cleanup_sidecar_ids_json, which means "ids committed to this cleanup
+-- attempt" and must stay empty while cleanup is still active.
+ALTER TABLE coding_sessions ADD COLUMN sidecar_ancestry_json TEXT NOT NULL DEFAULT '[]'
+    CHECK(json_valid(sidecar_ancestry_json));
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -978,6 +1083,9 @@ MIGRATIONS: dict[int, str] = {
     20: SCHEMA_V20,
     21: SCHEMA_V21,
     22: SCHEMA_V22,
+    23: SCHEMA_V23,
+    24: SCHEMA_V24,
+    25: SCHEMA_V25,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -994,7 +1102,9 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
         def operation() -> None:
-            conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+            conn = sqlite3.connect(
+                self.path, check_same_thread=False, isolation_level=None
+            )
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
@@ -1008,7 +1118,9 @@ class Database:
             )
             applied = {
                 int(row[0])
-                for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+                for row in conn.execute(
+                    "SELECT version FROM schema_migrations"
+                ).fetchall()
             }
             if applied and max(applied) > SUPPORTED_SCHEMA_VERSION:
                 conn.close()
@@ -1091,19 +1203,27 @@ class Database:
                 return list(
                     self._connection()
                     .execute(
-                        "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?", (limit,)
+                        "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?",
+                        (limit,),
                     )
                     .fetchall()
                 )
 
-        return [ConversationV1.model_validate(dict(row)) for row in await self._call(operation)]
+        return [
+            ConversationV1.model_validate(dict(row))
+            for row in await self._call(operation)
+        ]
 
     async def get_conversation(self, conversation_id: str) -> ConversationV1 | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         return ConversationV1.model_validate(dict(row)) if row else None
@@ -1153,10 +1273,14 @@ class Database:
     ) -> ConversationProjectV1 | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM conversation_projects WHERE conversation_id = ?",
-                    (conversation_id,),
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM conversation_projects WHERE conversation_id = ?",
+                        (conversation_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         return ConversationProjectV1.model_validate(dict(row)) if row else None
@@ -1170,6 +1294,596 @@ class Database:
                 )
 
         await self._call(operation)
+
+    async def create_coding_session(
+        self, value: CodingSessionCreateV1
+    ) -> CodingSessionV1:
+        """Bind one sidecar session to an existing Metis run and mirror.
+
+        The run/conversation relationship is checked explicitly.  Two separate
+        foreign keys only prove both rows exist; without this check a recovery
+        record could attach one conversation's workspace to another one's run.
+        """
+
+        session_id, timestamp = _id("coding"), _now()
+        route_json = value.model_route.model_dump_json(by_alias=True)
+        snapshot_json = value.workspace_snapshot.model_dump_json(by_alias=True)
+
+        def operation() -> sqlite3.Row:
+            with self._transaction() as conn:
+                run = conn.execute(
+                    "SELECT conversation_id FROM runs WHERE id = ?", (value.run_id,)
+                ).fetchone()
+                if run is None:
+                    raise LookupError("run not found")
+                if run["conversation_id"] != value.conversation_id:
+                    raise ValueError("run does not belong to conversation")
+                conn.execute(
+                    """INSERT INTO coding_sessions
+                    (id, run_id, conversation_id, project_id, protocol_version,
+                     sidecar_session_id, event_cursor, workspace_path,
+                     workspace_snapshot_json, baseline_digest, overlay_digest,
+                     model_route_json, state,
+                     last_error, created_at, updated_at, started_at, finished_at)
+                    VALUES (?, ?, ?, ?, '1', NULL, 0, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)""",
+                    (
+                        session_id,
+                        value.run_id,
+                        value.conversation_id,
+                        value.project_id,
+                        str(value.workspace_path),
+                        snapshot_json,
+                        value.baseline_digest,
+                        value.overlay_digest,
+                        route_json,
+                        value.state.value,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                assert row is not None
+                return row
+
+        return _coding_session(await self._call(operation))
+
+    async def get_coding_session(self, session_id: str) -> CodingSessionV1 | None:
+        def operation() -> sqlite3.Row | None:
+            with self._lock:
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                    )
+                    .fetchone()
+                )
+
+        row = await self._call(operation)
+        return _coding_session(row) if row is not None else None
+
+    async def list_coding_sessions(
+        self,
+        *,
+        run_id: str | None = None,
+        resumable_only: bool = False,
+        limit: int = 100,
+    ) -> list[CodingSessionV1]:
+        if not 1 <= limit <= 1_000:
+            raise ValueError("limit must be between 1 and 1000")
+
+        def operation() -> list[sqlite3.Row]:
+            clauses: list[str] = []
+            arguments: list[Any] = []
+            if run_id is not None:
+                clauses.append("run_id = ?")
+                arguments.append(run_id)
+            if resumable_only:
+                clauses.append(
+                    "state IN ('starting','running','idle','restoring','aborting')"
+                )
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            arguments.append(limit)
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM coding_sessions"
+                        + where
+                        + " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                        arguments,
+                    )
+                    .fetchall()
+                )
+
+        return [_coding_session(row) for row in await self._call(operation)]
+
+    async def begin_coding_cleanup(
+        self,
+        session_id: str,
+        value: CodingCleanupPlanV1,
+        *,
+        lease_until: datetime,
+    ) -> CodingSessionV1:
+        """Commit artifact identities before attempting any irreversible deletion."""
+
+        if lease_until.tzinfo is None:
+            raise ValueError("cleanup lease_until must be timezone-aware")
+        lease_until = lease_until.astimezone(UTC)
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if existing is None:
+                    raise LookupError("coding session not found")
+                status = CodingCleanupStatus(existing["cleanup_status"])
+                existing_target = existing["cleanup_target_state"]
+                if status is CodingCleanupStatus.CLEAN:
+                    if existing_target != value.target_state.value:
+                        raise ValueError(
+                            "clean coding session has a different target state"
+                        )
+                    return existing
+                if status is CodingCleanupStatus.HELD:
+                    raise ValueError("held coding cleanup requires explicit recovery")
+                if (
+                    existing_target is not None
+                    and existing_target != value.target_state.value
+                ):
+                    raise ValueError("coding cleanup target state cannot change")
+                ancestry_ids: list[str] = _loads(existing["sidecar_ancestry_json"], [])
+                if not isinstance(ancestry_ids, list) or any(
+                    not isinstance(item, str) for item in ancestry_ids
+                ):
+                    ancestry_ids = []
+                persisted_ids: list[str] = _loads(
+                    existing["cleanup_sidecar_ids_json"], []
+                )
+                if not isinstance(persisted_ids, list) or any(
+                    not isinstance(item, str) for item in persisted_ids
+                ):
+                    raise ValueError(
+                        "coding cleanup sidecar ids must be a JSON string array"
+                    )
+                sidecar_ids = tuple(
+                    dict.fromkeys(
+                        item
+                        for item in (
+                            existing["sidecar_session_id"],
+                            *ancestry_ids,
+                            *persisted_ids,
+                            *value.sidecar_session_ids,
+                        )
+                        if item
+                    )
+                )
+                if len(sidecar_ids) > 64:
+                    raise ValueError("coding cleanup has too many sidecar sessions")
+                conn.execute(
+                    """UPDATE coding_sessions SET cleanup_status = 'pending',
+                    cleanup_target_state = ?, cleanup_attempts = cleanup_attempts + 1,
+                    cleanup_next_attempt_at = ?, cleanup_last_error = NULL,
+                    cleanup_sidecar_ids_json = ?, released_at = NULL, updated_at = ?
+                    WHERE id = ?""",
+                    (
+                        value.target_state.value,
+                        lease_until.isoformat(),
+                        _json(sidecar_ids),
+                        timestamp,
+                        session_id,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                assert row is not None
+                return row
+
+        return _coding_session(await self._call(operation))
+
+    async def fail_coding_cleanup(
+        self,
+        session_id: str,
+        value: CodingCleanupFailureV1,
+    ) -> CodingSessionV1:
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if existing is None:
+                    raise LookupError("coding session not found")
+                if existing["cleanup_status"] != CodingCleanupStatus.PENDING.value:
+                    raise ValueError("only pending coding cleanup can be retried")
+                if existing["cleanup_target_state"] is None:
+                    raise ValueError("pending coding cleanup has no target state")
+                conn.execute(
+                    """UPDATE coding_sessions SET cleanup_status = 'retry',
+                    cleanup_next_attempt_at = ?, cleanup_last_error = ?, updated_at = ?
+                    WHERE id = ?""",
+                    (
+                        value.next_attempt_at.isoformat(),
+                        value.error,
+                        timestamp,
+                        session_id,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                assert row is not None
+                return row
+
+        return _coding_session(await self._call(operation))
+
+    async def complete_coding_cleanup(
+        self,
+        session_id: str,
+        *,
+        released_at: datetime,
+    ) -> CodingSessionV1:
+        if released_at.tzinfo is None:
+            raise ValueError("released_at must be timezone-aware")
+        released_at = released_at.astimezone(UTC)
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if existing is None:
+                    raise LookupError("coding session not found")
+                if existing["cleanup_status"] == CodingCleanupStatus.CLEAN.value:
+                    return existing
+                if existing["cleanup_status"] != CodingCleanupStatus.PENDING.value:
+                    raise ValueError("only pending coding cleanup can be completed")
+                target_state = existing["cleanup_target_state"]
+                if target_state not in {
+                    state.value for state in TERMINAL_CODING_STATES
+                }:
+                    raise ValueError("pending coding cleanup has no terminal target")
+                conn.execute(
+                    """UPDATE coding_sessions SET state = ?,
+                    finished_at = COALESCE(finished_at, ?), cleanup_status = 'clean',
+                    cleanup_next_attempt_at = NULL, cleanup_last_error = NULL,
+                    released_at = ?, updated_at = ? WHERE id = ?""",
+                    (
+                        target_state,
+                        timestamp,
+                        released_at.isoformat(),
+                        timestamp,
+                        session_id,
+                    ),
+                )
+                row = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                assert row is not None
+                return row
+
+        return _coding_session(await self._call(operation))
+
+    async def hold_coding_cleanup(
+        self,
+        session_id: str,
+        value: CodingCleanupHoldV1,
+    ) -> CodingSessionV1:
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if existing is None:
+                    raise LookupError("coding session not found")
+                if existing["cleanup_status"] == CodingCleanupStatus.CLEAN.value:
+                    raise ValueError("clean coding session cannot be held")
+                if existing["cleanup_status"] not in {
+                    CodingCleanupStatus.ACTIVE.value,
+                    CodingCleanupStatus.HELD.value,
+                }:
+                    raise ValueError("started coding cleanup cannot be held")
+                existing_target = existing["cleanup_target_state"]
+                if (
+                    existing_target is not None
+                    and existing_target != value.target_state.value
+                ):
+                    raise ValueError("coding cleanup target state cannot change")
+                conn.execute(
+                    """UPDATE coding_sessions SET cleanup_status = 'held',
+                    cleanup_target_state = ?, cleanup_next_attempt_at = NULL,
+                    cleanup_last_error = ?, released_at = NULL, updated_at = ?
+                    WHERE id = ?""",
+                    (value.target_state.value, value.reason, timestamp, session_id),
+                )
+                row = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                assert row is not None
+                return row
+
+        return _coding_session(await self._call(operation))
+
+    async def list_coding_cleanup_candidates(
+        self,
+        *,
+        now: datetime,
+        limit: int = 100,
+    ) -> list[CodingSessionV1]:
+        """Return due artifacts after a verdict, or decided approval plus cleanup intent."""
+
+        if now.tzinfo is None:
+            raise ValueError("cleanup candidate time must be timezone-aware")
+        now = now.astimezone(UTC)
+        if not 1 <= limit <= 1_000:
+            raise ValueError("limit must be between 1 and 1000")
+
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute(
+                        """SELECT c.* FROM coding_sessions c
+                        JOIN runs r ON r.id = c.run_id
+                        WHERE (
+                            r.status IN ('completed','failed','cancelled')
+                            OR (
+                                c.cleanup_status IN ('pending','retry')
+                                AND EXISTS (
+                                    SELECT 1 FROM approvals decided
+                                    WHERE decided.run_id = c.run_id
+                                    AND decided.status IN ('approve','reject','draft')
+                                )
+                            )
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM approvals a
+                            WHERE a.run_id = c.run_id AND a.status = 'pending'
+                        )
+                        AND (
+                            c.cleanup_status = 'active'
+                            OR (
+                                c.cleanup_status IN ('pending','retry')
+                                AND (
+                                    c.cleanup_next_attempt_at IS NULL
+                                    OR c.cleanup_next_attempt_at <= ?
+                                )
+                            )
+                        )
+                        ORDER BY COALESCE(c.cleanup_next_attempt_at, c.updated_at), c.rowid
+                        LIMIT ?""",
+                        (now.isoformat(), limit),
+                    )
+                    .fetchall()
+                )
+
+        return [_coding_session(row) for row in await self._call(operation)]
+
+    async def record_coding_sidecar_ancestry(
+        self, session_id: str, sidecar_ids: Sequence[str]
+    ) -> None:
+        """Commit a newly minted sidecar identity to the session, immediately.
+
+        Ancestry has to be durable at the moment an identity is created, not
+        assembled at cleanup time from whatever the last round happened to
+        return. A live measured leak: a continuation minted a recovery fork,
+        the round was then refused on an error path that passed only the
+        parent id, and the fork's event journal was never released.
+
+        Idempotent and additive: it only ever unions, never regresses, and it
+        does not disturb cleanup status, target or attempts.
+        """
+
+        wanted = [str(item) for item in sidecar_ids if item]
+        if not wanted:
+            return
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if existing is None:
+                    raise LookupError("coding session not found")
+                persisted: list[str] = _loads(existing["sidecar_ancestry_json"], [])
+                if not isinstance(persisted, list) or any(
+                    not isinstance(item, str) for item in persisted
+                ):
+                    persisted = []
+                merged = tuple(
+                    dict.fromkeys(
+                        item
+                        for item in (
+                            existing["sidecar_session_id"],
+                            *persisted,
+                            *wanted,
+                        )
+                        if item
+                    )
+                )
+                if len(merged) > 64:
+                    raise ValueError("coding session has too many sidecar identities")
+                if list(merged) == list(persisted):
+                    return
+                conn.execute(
+                    """UPDATE coding_sessions SET sidecar_ancestry_json = ?,
+                    updated_at = ? WHERE id = ?""",
+                    (_json(merged), _now(), session_id),
+                )
+
+        await self._call(operation)
+
+    async def list_coding_sidecar_identities(self) -> set[str]:
+        """Every sidecar identity any durable session still answers for.
+
+        The union of the current identity and the recorded ancestry, across
+        all sessions regardless of state — a failed session is still
+        recoverable until its cleanup is committed, and its journal is what a
+        recovery reads.
+        """
+
+        def operation() -> list[sqlite3.Row]:
+            with self._lock:
+                return list(
+                    self._connection()
+                    .execute(
+                        "SELECT sidecar_session_id, sidecar_ancestry_json, "
+                        "cleanup_sidecar_ids_json FROM coding_sessions"
+                    )
+                    .fetchall()
+                )
+
+        identities: set[str] = set()
+        for row in await self._call(operation):
+            current = row["sidecar_session_id"]
+            if current:
+                identities.add(str(current))
+            for column in ("sidecar_ancestry_json", "cleanup_sidecar_ids_json"):
+                recorded: Any = _loads(row[column], [])
+                if isinstance(recorded, list):
+                    identities.update(
+                        str(item) for item in recorded if isinstance(item, str)
+                    )
+        return identities
+
+    async def list_coding_workspace_paths(self) -> set[Path]:
+        def operation() -> list[str]:
+            with self._lock:
+                return [
+                    str(row["workspace_path"])
+                    for row in self._connection()
+                    .execute("SELECT workspace_path FROM coding_sessions")
+                    .fetchall()
+                ]
+
+        return {Path(value) for value in await self._call(operation)}
+
+    async def update_coding_session(
+        self, session_id: str, value: CodingSessionUpdateV1
+    ) -> CodingSessionV1:
+        """Atomically advance durable sidecar state without regressing cursors."""
+
+        updates = value.model_dump(exclude_unset=True)
+        if not updates:
+            existing = await self.get_coding_session(session_id)
+            if existing is None:
+                raise LookupError("coding session not found")
+            return existing
+        timestamp = _now()
+
+        def operation() -> sqlite3.Row:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if existing is None:
+                    raise LookupError("coding session not found")
+                cursor = updates.get("event_cursor")
+                replacing_sidecar = bool(
+                    "sidecar_session_id" in updates
+                    and existing["sidecar_session_id"] is not None
+                    and updates["sidecar_session_id"] != existing["sidecar_session_id"]
+                )
+                if (
+                    "sidecar_session_id" in updates
+                    and updates["sidecar_session_id"] is None
+                    and existing["sidecar_session_id"] is not None
+                ):
+                    raise ValueError("a bound sidecar session id cannot be cleared")
+                if replacing_sidecar and (cursor != 0 or "model_route" not in updates):
+                    raise ValueError(
+                        "replacing a sidecar session requires event_cursor=0 and its model route"
+                    )
+                if (
+                    cursor is not None
+                    and cursor < existing["event_cursor"]
+                    and not replacing_sidecar
+                ):
+                    raise ValueError(
+                        "coding session event cursor cannot move backwards"
+                    )
+
+                assignments = ["updated_at = ?"]
+                arguments: list[Any] = [timestamp]
+                for name in (
+                    "sidecar_session_id",
+                    "event_cursor",
+                    "last_error",
+                ):
+                    if name in updates:
+                        assignments.append(f"{name} = ?")
+                        arguments.append(updates[name])
+                if "workspace_snapshot" in updates:
+                    snapshot = value.workspace_snapshot
+                    assert snapshot is not None
+                    if snapshot.project_root != Path(existing["workspace_path"]):
+                        raise ValueError(
+                            "workspace snapshot cannot change a coding session's mirror path"
+                        )
+                    if snapshot.asset_id != existing["project_id"]:
+                        raise ValueError(
+                            "workspace snapshot cannot change a coding session's project"
+                        )
+                    assignments.extend(
+                        [
+                            "baseline_digest = ?",
+                            "overlay_digest = ?",
+                            "workspace_snapshot_json = ?",
+                        ]
+                    )
+                    arguments.extend(
+                        [
+                            value.baseline_digest,
+                            value.overlay_digest,
+                            snapshot.model_dump_json(by_alias=True),
+                        ]
+                    )
+                if "model_route" in updates:
+                    route = CodingModelRouteV1.model_validate(updates["model_route"])
+                    assignments.append("model_route_json = ?")
+                    arguments.append(route.model_dump_json(by_alias=True))
+                if "state" in updates:
+                    state = CodingSessionState(updates["state"])
+                    assignments.append("state = ?")
+                    arguments.append(state.value)
+                    if (
+                        state is CodingSessionState.RUNNING
+                        and existing["started_at"] is None
+                    ):
+                        assignments.append("started_at = ?")
+                        arguments.append(timestamp)
+                    if state in TERMINAL_CODING_STATES:
+                        assignments.append("finished_at = ?")
+                        arguments.append(timestamp)
+                    elif existing["finished_at"] is not None:
+                        # Explicit recovery of a failed/aborted session starts a
+                        # new lifecycle while retaining the original timestamps.
+                        assignments.append("finished_at = NULL")
+                arguments.append(session_id)
+                conn.execute(
+                    f"UPDATE coding_sessions SET {', '.join(assignments)} WHERE id = ?",
+                    arguments,
+                )
+                row = conn.execute(
+                    "SELECT * FROM coding_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                assert row is not None
+                return row
+
+        try:
+            return _coding_session(await self._call(operation))
+        except sqlite3.IntegrityError as error:
+            if "sidecar_session_id" in str(error):
+                raise ValueError("sidecar session is already bound") from error
+            raise
 
     async def add_message(
         self,
@@ -1383,10 +2097,14 @@ class Database:
     async def get_conversation_summary(self, conversation_id: str) -> str:
         def operation() -> str:
             with self._lock:
-                row = self._connection().execute(
-                    "SELECT summary FROM conversation_summaries WHERE conversation_id = ?",
-                    (conversation_id,),
-                ).fetchone()
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT summary FROM conversation_summaries WHERE conversation_id = ?",
+                        (conversation_id,),
+                    )
+                    .fetchone()
+                )
                 return row["summary"] if row else ""
 
         return await self._call(operation)
@@ -1397,9 +2115,9 @@ class Database:
         messages = await self.recent_messages(
             conversation_id, limit=20, max_characters=max_characters
         )
-        summary = "\n".join(
-            f"{item['role']}: {item['content']}" for item in messages
-        )[-max_characters:]
+        summary = "\n".join(f"{item['role']}: {item['content']}" for item in messages)[
+            -max_characters:
+        ]
         timestamp = _now()
 
         def operation() -> None:
@@ -1433,7 +2151,15 @@ class Database:
             with self._transaction() as conn:
                 conn.execute(
                     "INSERT INTO uploads VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (upload_id, sha256, filename, media_type, size, blob_path, timestamp),
+                    (
+                        upload_id,
+                        sha256,
+                        filename,
+                        media_type,
+                        size,
+                        blob_path,
+                        timestamp,
+                    ),
                 )
 
         await self._call(operation)
@@ -1449,9 +2175,11 @@ class Database:
     async def get_upload_record(self, upload_id: str) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM uploads WHERE id = ?", (upload_id,)
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute("SELECT * FROM uploads WHERE id = ?", (upload_id,))
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         return dict(row) if row else None
@@ -1464,9 +2192,14 @@ class Database:
 
         def operation() -> bool:
             with self._lock:
-                count = self._connection().execute(
-                    f"SELECT COUNT(*) FROM uploads WHERE id IN ({placeholders})", unique
-                ).fetchone()[0]
+                count = (
+                    self._connection()
+                    .execute(
+                        f"SELECT COUNT(*) FROM uploads WHERE id IN ({placeholders})",
+                        unique,
+                    )
+                    .fetchone()[0]
+                )
                 return count == len(unique)
 
         return await self._call(operation)
@@ -1526,9 +2259,11 @@ class Database:
     async def get_run(self, run_id: str) -> RunV1 | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM runs WHERE id = ?", (run_id,)
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute("SELECT * FROM runs WHERE id = ?", (run_id,))
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if not row:
@@ -1536,7 +2271,11 @@ class Database:
         data = dict(row)
         data["cancel_requested"] = bool(data["cancel_requested"])
         data["result"] = _loads(data.pop("result_json"), None)
-        for field in ("model_aliases_json", "prompt_versions_json", "tool_versions_json"):
+        for field in (
+            "model_aliases_json",
+            "prompt_versions_json",
+            "tool_versions_json",
+        ):
             data.pop(field, None)
         return RunV1.model_validate(data)
 
@@ -1545,12 +2284,16 @@ class Database:
 
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    """SELECT r.*, m.content AS prompt, m.attachments_json
+                return (
+                    self._connection()
+                    .execute(
+                        """SELECT r.*, m.content AS prompt, m.attachments_json
                     FROM runs r JOIN messages m ON m.id = r.user_message_id
                     WHERE r.id = ?""",
-                    (run_id,),
-                ).fetchone()
+                        (run_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if not row:
@@ -1584,16 +2327,21 @@ class Database:
         A run waiting on the user has made no model call for as long as they
         have taken to answer, so the idle clock must not treat it as finished.
         """
+
         def operation() -> int:
             with self._lock:
-                row = self._connection().execute(
-                    "SELECT COUNT(*) FROM runs WHERE status IN (?, ?, ?)",
-                    (
-                        RunStatus.QUEUED.value,
-                        RunStatus.RUNNING.value,
-                        RunStatus.AWAITING_APPROVAL.value,
-                    ),
-                ).fetchone()
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT COUNT(*) FROM runs WHERE status IN (?, ?, ?)",
+                        (
+                            RunStatus.QUEUED.value,
+                            RunStatus.RUNNING.value,
+                            RunStatus.AWAITING_APPROVAL.value,
+                        ),
+                    )
+                    .fetchone()
+                )
                 return int(row[0]) if row else 0
 
         return await self._call(operation) > 0
@@ -1840,10 +2588,14 @@ class Database:
     async def get_idempotency_result(self, action_id: str) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
-                    (action_id,),
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
+                        (action_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         return _loads(row["result_json"], {}) if row else None
@@ -1872,9 +2624,11 @@ class Database:
     async def get_artifact_record(self, artifact_id: str) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM artifacts WHERE id = ?", (artifact_id,)
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,))
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         return dict(row) if row else None
@@ -1904,14 +2658,18 @@ class Database:
     async def is_tool_hash_rejected(self, slug: str, content_hash: str) -> bool:
         def operation() -> bool:
             with self._lock:
-                row = self._connection().execute(
-                    """SELECT 1 FROM tool_proposals p
+                row = (
+                    self._connection()
+                    .execute(
+                        """SELECT 1 FROM tool_proposals p
                     JOIN tools t ON t.id = p.tool_id
                     JOIN tool_versions v ON v.id = p.tool_version_id
                     WHERE t.slug = ? AND v.content_hash = ? AND p.status = 'rejected'
                     LIMIT 1""",
-                    (slug, content_hash),
-                ).fetchone()
+                        (slug, content_hash),
+                    )
+                    .fetchone()
+                )
                 return row is not None
 
         return await self._call(operation)
@@ -1920,7 +2678,9 @@ class Database:
         def operation() -> list[sqlite3.Row]:
             with self._lock:
                 return list(
-                    self._connection().execute("SELECT * FROM tools ORDER BY slug").fetchall()
+                    self._connection()
+                    .execute("SELECT * FROM tools ORDER BY slug")
+                    .fetchall()
                 )
 
         return [ToolV1.model_validate(dict(row)) for row in await self._call(operation)]
@@ -1951,11 +2711,15 @@ class Database:
     ) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    """SELECT * FROM tool_versions
+                return (
+                    self._connection()
+                    .execute(
+                        """SELECT * FROM tool_versions
                     WHERE id = ? AND tool_id = ?""",
-                    (version_id, tool_id),
-                ).fetchone()
+                        (version_id, tool_id),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if not row:
@@ -1970,11 +2734,15 @@ class Database:
     ) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    """SELECT v.* FROM tools t JOIN tool_versions v
+                return (
+                    self._connection()
+                    .execute(
+                        """SELECT v.* FROM tools t JOIN tool_versions v
                     ON v.id = t.active_version_id WHERE t.id = ?""",
-                    (tool_id,),
-                ).fetchone()
+                        (tool_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if not row:
@@ -2075,7 +2843,9 @@ class Database:
                         (manifest.name, manifest.description, timestamp, tool["id"]),
                     )
                     tool.update(
-                        name=manifest.name, description=manifest.description, updated_at=timestamp
+                        name=manifest.name,
+                        description=manifest.description,
+                        updated_at=timestamp,
                     )
                 else:
                     tool = {
@@ -2178,9 +2948,13 @@ class Database:
     async def get_tool_proposal(self, proposal_id: str) -> ToolProposalV1 | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM tool_proposals WHERE id = ?", (proposal_id,)
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM tool_proposals WHERE id = ?", (proposal_id,)
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if not row:
@@ -2247,23 +3021,33 @@ class Database:
     async def get_pending_approval(self, run_id: str) -> ApprovalRequestV1 | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    """SELECT request_json FROM approvals
+                return (
+                    self._connection()
+                    .execute(
+                        """SELECT request_json FROM approvals
                     WHERE run_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1""",
-                    (run_id,),
-                ).fetchone()
+                        (run_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
-        return ApprovalRequestV1.model_validate_json(row["request_json"]) if row else None
+        return (
+            ApprovalRequestV1.model_validate_json(row["request_json"]) if row else None
+        )
 
     async def get_latest_approval_record(self, run_id: str) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    """SELECT status, request_json, decision_json, decided_at
+                return (
+                    self._connection()
+                    .execute(
+                        """SELECT status, request_json, decision_json, decided_at
                     FROM approvals WHERE run_id = ? ORDER BY created_at DESC LIMIT 1""",
-                    (run_id,),
-                ).fetchone()
+                        (run_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if not row:
@@ -2305,7 +3089,12 @@ class Database:
                 cursor = conn.execute(
                     """UPDATE approvals SET status = ?, decision_json = ?, decided_at = ?
                     WHERE id = ? AND status = 'pending'""",
-                    (decision, _json({"decision": decision, "reason": reason}), timestamp, approval_id),
+                    (
+                        decision,
+                        _json({"decision": decision, "reason": reason}),
+                        timestamp,
+                        approval_id,
+                    ),
                 )
                 return cursor.rowcount > 0
 
@@ -2369,7 +3158,11 @@ class Database:
                     WHERE id = ?""",
                     (decision, reason, timestamp, proposal_id),
                 )
-                result = {"proposal_id": proposal_id, "status": decision, "applied": True}
+                result = {
+                    "proposal_id": proposal_id,
+                    "status": decision,
+                    "applied": True,
+                }
                 conn.execute(
                     "INSERT INTO idempotency_actions VALUES (?, ?, ?)",
                     (action_id, _json(result), timestamp),
@@ -2379,20 +3172,26 @@ class Database:
         return await self._call(operation)
 
     async def search_memories(self, query: str, limit: int = 5) -> list[str]:
-        tokens = [token for token in query.replace('"', " ").split() if len(token) > 2][:12]
+        tokens = [token for token in query.replace('"', " ").split() if len(token) > 2][
+            :12
+        ]
         if not tokens:
             return []
         expression = " OR ".join(f'"{token}"' for token in tokens)
 
         def operation() -> list[str]:
             with self._lock:
-                rows = self._connection().execute(
-                    """SELECT m.content FROM memory_fts f
+                rows = (
+                    self._connection()
+                    .execute(
+                        """SELECT m.content FROM memory_fts f
                     JOIN memory_items m ON m.rowid = f.rowid
                     WHERE memory_fts MATCH ? AND m.active = 1
                     ORDER BY bm25(memory_fts) LIMIT ?""",
-                    (expression, limit),
-                ).fetchall()
+                        (expression, limit),
+                    )
+                    .fetchall()
+                )
                 return [row["content"] for row in rows]
 
         try:
@@ -2509,9 +3308,13 @@ class Database:
     async def get_memory_consent(self) -> tuple[bool, str | None]:
         def operation() -> tuple[bool, str | None]:
             with self._lock:
-                row = self._connection().execute(
-                    "SELECT cloud_consent, consent_reason FROM memory_settings WHERE id = 1"
-                ).fetchone()
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT cloud_consent, consent_reason FROM memory_settings WHERE id = 1"
+                    )
+                    .fetchone()
+                )
                 if not row:
                     return False, None
                 return bool(row["cloud_consent"]), row["consent_reason"]
@@ -2555,12 +3358,16 @@ class Database:
 
         def operation() -> list[dict[str, str]]:
             with self._lock:
-                rows = self._connection().execute(
-                    """SELECT m.id, m.content, v.content_hash FROM memory_items m
+                rows = (
+                    self._connection()
+                    .execute(
+                        """SELECT m.id, m.content, v.content_hash FROM memory_items m
                     LEFT JOIN memory_vectors v ON v.memory_id = m.id
                     WHERE m.active = 1 ORDER BY m.created_at DESC LIMIT ?""",
-                    (limit,),
-                ).fetchall()
+                        (limit,),
+                    )
+                    .fetchall()
+                )
                 return [
                     {"id": row["id"], "content": row["content"]}
                     for row in rows
@@ -2634,11 +3441,15 @@ class Database:
 
         def operation() -> dict[str, str]:
             with self._lock:
-                rows = self._connection().execute(
-                    f"""SELECT id, content FROM memory_items
+                rows = (
+                    self._connection()
+                    .execute(
+                        f"""SELECT id, content FROM memory_items
                     WHERE active = 1 AND id IN ({placeholders})""",
-                    tuple(ids),
-                ).fetchall()
+                        tuple(ids),
+                    )
+                    .fetchall()
+                )
                 return {row["id"]: row["content"] for row in rows}
 
         return await self._call(operation)
@@ -2683,11 +3494,19 @@ class Database:
 
         await self._call(operation)
         return CorpusSourceV1(
-            id=source_id, root_path=root_path, label=label, kind=kind,
+            id=source_id,
+            root_path=root_path,
+            label=label,
+            kind=kind,
             provider=provider,
-            consent=False, status="pending", file_count=0, chunk_count=0,
-            last_indexed_at=None, last_error=None,
-            created_at=timestamp, updated_at=timestamp,
+            consent=False,
+            status="pending",
+            file_count=0,
+            chunk_count=0,
+            last_indexed_at=None,
+            last_error=None,
+            created_at=timestamp,
+            updated_at=timestamp,
         )
 
     async def list_corpus_sources(self) -> list[CorpusSourceV1]:
@@ -2718,10 +3537,14 @@ class Database:
     ) -> CorpusSourceV1 | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM corpus_sources WHERE provider = ? ORDER BY created_at LIMIT 1",
-                    (provider,),
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM corpus_sources WHERE provider = ? ORDER BY created_at LIMIT 1",
+                        (provider,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         return _corpus_source(row) if row else None
@@ -2769,8 +3592,12 @@ class Database:
                         (reason, timestamp, source_id),
                     )
                 else:
-                    conn.execute("DELETE FROM corpus_files WHERE source_id = ?", (source_id,))
-                    conn.execute("DELETE FROM corpus_chunks WHERE source_id = ?", (source_id,))
+                    conn.execute(
+                        "DELETE FROM corpus_files WHERE source_id = ?", (source_id,)
+                    )
+                    conn.execute(
+                        "DELETE FROM corpus_chunks WHERE source_id = ?", (source_id,)
+                    )
                     conn.execute(
                         """UPDATE corpus_sources SET consent = 0, consent_reason = ?,
                         status = 'revoked', file_count = 0, chunk_count = 0,
@@ -2811,10 +3638,14 @@ class Database:
 
         def operation() -> dict[str, str]:
             with self._lock:
-                rows = self._connection().execute(
-                    "SELECT rel_path, content_hash FROM corpus_files WHERE source_id = ?",
-                    (source_id,),
-                ).fetchall()
+                rows = (
+                    self._connection()
+                    .execute(
+                        "SELECT rel_path, content_hash FROM corpus_files WHERE source_id = ?",
+                        (source_id,),
+                    )
+                    .fetchall()
+                )
             return {row["rel_path"]: row["content_hash"] for row in rows}
 
         return await self._call(operation)
@@ -2857,7 +3688,15 @@ class Database:
                     """INSERT INTO corpus_files
                     (id, source_id, rel_path, content_hash, lang, chunk_count, indexed_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (file_id, source_id, rel_path, content_hash, lang, len(chunks), timestamp),
+                    (
+                        file_id,
+                        source_id,
+                        rel_path,
+                        content_hash,
+                        lang,
+                        len(chunks),
+                        timestamp,
+                    ),
                 )
                 for chunk in chunks:
                     conn.execute(
@@ -2866,9 +3705,16 @@ class Database:
                          embedding, dim, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            _id("ck"), source_id, file_id, rel_path,
-                            chunk.get("symbol"), chunk.get("start_line"),
-                            chunk["text"], chunk["embedding"], chunk["dim"], timestamp,
+                            _id("ck"),
+                            source_id,
+                            file_id,
+                            rel_path,
+                            chunk.get("symbol"),
+                            chunk.get("start_line"),
+                            chunk["text"],
+                            chunk["embedding"],
+                            chunk["dim"],
+                            timestamp,
                         ),
                     )
                 for node in graph_nodes:
@@ -2878,9 +3724,16 @@ class Database:
                          start_line, end_line, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            _id("cgn"), source_id, file_id, rel_path,
-                            node["kind"], node["name"], node["qualname"],
-                            node["start_line"], node["end_line"], timestamp,
+                            _id("cgn"),
+                            source_id,
+                            file_id,
+                            rel_path,
+                            node["kind"],
+                            node["name"],
+                            node["qualname"],
+                            node["start_line"],
+                            node["end_line"],
+                            timestamp,
                         ),
                     )
                 for edge in graph_edges:
@@ -2890,9 +3743,16 @@ class Database:
                          dst_raw, line, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            _id("cge"), source_id, file_id, rel_path,
-                            edge["kind"], edge["src"], edge["dst_name"],
-                            edge["dst_raw"], edge["line"], timestamp,
+                            _id("cge"),
+                            source_id,
+                            file_id,
+                            rel_path,
+                            edge["kind"],
+                            edge["src"],
+                            edge["dst_name"],
+                            edge["dst_raw"],
+                            edge["line"],
+                            timestamp,
                         ),
                     )
                 for node in entity_nodes:
@@ -2901,8 +3761,13 @@ class Database:
                         (id, source_id, file_id, rel_path, name, kind, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            _id("en"), source_id, file_id, rel_path,
-                            node["name"], node["kind"], timestamp,
+                            _id("en"),
+                            source_id,
+                            file_id,
+                            rel_path,
+                            node["name"],
+                            node["kind"],
+                            timestamp,
                         ),
                     )
                 for edge in entity_edges:
@@ -2912,8 +3777,13 @@ class Database:
                          dst_name, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            _id("ee"), source_id, file_id, rel_path,
-                            edge["src_name"], edge["relation"], edge["dst_name"],
+                            _id("ee"),
+                            source_id,
+                            file_id,
+                            rel_path,
+                            edge["src_name"],
+                            edge["relation"],
+                            edge["dst_name"],
                             timestamp,
                         ),
                     )
@@ -2960,8 +3830,14 @@ class Database:
                     last_indexed_at = COALESCE(?, last_indexed_at), updated_at = ?
                     WHERE id = ?""",
                     (
-                        status, counts["files"], counts["chunks"], embed_model,
-                        last_error, indexed_at, timestamp, source_id,
+                        status,
+                        counts["files"],
+                        counts["chunks"],
+                        embed_model,
+                        last_error,
+                        indexed_at,
+                        timestamp,
+                        source_id,
                     ),
                 )
                 return conn.execute(
@@ -3000,15 +3876,19 @@ class Database:
 
         def operation() -> list[dict[str, Any]]:
             with self._lock:
-                rows = self._connection().execute(
-                    f"""SELECT c.id, c.source_id, c.rel_path, c.symbol,
+                rows = (
+                    self._connection()
+                    .execute(
+                        f"""SELECT c.id, c.source_id, c.rel_path, c.symbol,
                     c.start_line, c.text, s.label AS source_label,
                     s.provider AS source_provider
                     FROM corpus_chunks c
                     JOIN corpus_sources s ON s.id = c.source_id
                     WHERE c.id IN ({placeholders})""",
-                    tuple(ids),
-                ).fetchall()
+                        tuple(ids),
+                    )
+                    .fetchall()
+                )
             return [dict(row) for row in rows]
 
         return await self._call(operation)
@@ -3050,7 +3930,13 @@ class Database:
         made *by* any definition named `name`. Restricted to consented sources."""
         name = (name or "").strip()
         if not name:
-            return {"name": name, "definitions": [], "callers": [], "callees": [], "imports": []}
+            return {
+                "name": name,
+                "definitions": [],
+                "callers": [],
+                "callees": [],
+                "imports": [],
+            }
 
         def operation() -> dict[str, Any]:
             with self._lock:
@@ -3160,16 +4046,20 @@ class Database:
 
         def operation() -> list[dict[str, Any]]:
             with self._lock:
-                rows = self._connection().execute(
-                    f"""SELECT c.id, c.source_id, c.rel_path, c.symbol,
+                rows = (
+                    self._connection()
+                    .execute(
+                        f"""SELECT c.id, c.source_id, c.rel_path, c.symbol,
                     c.start_line, c.text, s.label AS source_label,
                     s.provider AS source_provider FROM corpus_chunks c
                     JOIN corpus_sources s ON s.id = c.source_id
                     WHERE s.consent = 1 AND s.status = 'indexed'
                     AND c.symbol IN ({symbol_ph}) {clause}
                     LIMIT ?""",
-                    (*symbols, *exclude_ids, limit),
-                ).fetchall()
+                        (*symbols, *exclude_ids, limit),
+                    )
+                    .fetchall()
+                )
             return [dict(row) for row in rows]
 
         return await self._call(operation)
@@ -3195,8 +4085,10 @@ class Database:
 
         def operation() -> list[dict[str, Any]]:
             with self._lock:
-                rows = self._connection().execute(
-                    f"""SELECT c.id, c.source_id, c.rel_path, c.symbol,
+                rows = (
+                    self._connection()
+                    .execute(
+                        f"""SELECT c.id, c.source_id, c.rel_path, c.symbol,
                     c.start_line, c.text, s.label AS source_label,
                     s.provider AS source_provider FROM corpus_chunks c
                     JOIN corpus_sources s ON s.id = c.source_id
@@ -3204,8 +4096,10 @@ class Database:
                     AND ({document_clause}) {clause}
                     ORDER BY c.rel_path, c.start_line
                     LIMIT ?""",
-                    (*document_parameters, *exclude_ids, limit),
-                ).fetchall()
+                        (*document_parameters, *exclude_ids, limit),
+                    )
+                    .fetchall()
+                )
             return [dict(row) for row in rows]
 
         return await self._call(operation)
@@ -3393,10 +4287,14 @@ class Database:
     ) -> ToolImprovementProposalV1 | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM tool_improvement_proposals WHERE id = ?",
-                    (proposal_id,),
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM tool_improvement_proposals WHERE id = ?",
+                        (proposal_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if not row:
@@ -3443,9 +4341,14 @@ class Database:
     ) -> ToolRevisionRequestV1 | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM tool_revision_requests WHERE id = ?", (request_id,)
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM tool_revision_requests WHERE id = ?",
+                        (request_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if not row:
@@ -3540,9 +4443,13 @@ class Database:
                         )
                     report = _loads(target["eval_report_json"], None)
                     if not report or report.get("passed") is not True:
-                        raise ValueError("target revision must have a passing evaluation report")
+                        raise ValueError(
+                            "target revision must have a passing evaluation report"
+                        )
                     if target["content_hash"] == proposal["content_hash"]:
-                        raise ValueError("target revision must differ from the pinned base version")
+                        raise ValueError(
+                            "target revision must differ from the pinned base version"
+                        )
 
                     tool = conn.execute(
                         "SELECT active_version_id FROM tools WHERE id = ?",
@@ -3633,9 +4540,7 @@ class Database:
     # ── Tool Factory v2: tool definitions ────────────────────────────────────
 
     @staticmethod
-    def _tool_definition_from_storage(
-        payload: str, status: str
-    ) -> ToolDefinitionV1:
+    def _tool_definition_from_storage(payload: str, status: str) -> ToolDefinitionV1:
         """Read immutable definition content with its current lifecycle status.
 
         The content-addressed JSON intentionally stays byte-stable after review;
@@ -3649,27 +4554,35 @@ class Database:
     async def list_tool_definitions(self) -> list[ToolDefinitionV1]:
         def operation() -> list[ToolDefinitionV1]:
             with self._lock:
-                rows = self._connection().execute(
-                    "SELECT definition_json, status FROM tool_definitions "
-                    "ORDER BY slug, created_at"
-                ).fetchall()
+                rows = (
+                    self._connection()
+                    .execute(
+                        "SELECT definition_json, status FROM tool_definitions "
+                        "ORDER BY slug, created_at"
+                    )
+                    .fetchall()
+                )
             return [
-                self._tool_definition_from_storage(row["definition_json"], row["status"])
+                self._tool_definition_from_storage(
+                    row["definition_json"], row["status"]
+                )
                 for row in rows
             ]
 
         return await self._call(operation)
 
-    async def get_active_tool_definition(
-        self, slug: str
-    ) -> ToolDefinitionV1 | None:
+    async def get_active_tool_definition(self, slug: str) -> ToolDefinitionV1 | None:
         def operation() -> ToolDefinitionV1 | None:
             with self._lock:
-                row = self._connection().execute(
-                    "SELECT definition_json, status FROM tool_definitions "
-                    "WHERE slug = ? AND active = 1",
-                    (slug,),
-                ).fetchone()
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT definition_json, status FROM tool_definitions "
+                        "WHERE slug = ? AND active = 1",
+                        (slug,),
+                    )
+                    .fetchone()
+                )
             return (
                 self._tool_definition_from_storage(
                     row["definition_json"], row["status"]
@@ -3683,19 +4596,29 @@ class Database:
     async def list_active_tool_definitions(self) -> list[ToolDefinitionV1]:
         def operation() -> list[ToolDefinitionV1]:
             with self._lock:
-                rows = self._connection().execute(
-                    "SELECT definition_json, status FROM tool_definitions "
-                    "WHERE active = 1 ORDER BY slug"
-                ).fetchall()
+                rows = (
+                    self._connection()
+                    .execute(
+                        "SELECT definition_json, status FROM tool_definitions "
+                        "WHERE active = 1 ORDER BY slug"
+                    )
+                    .fetchall()
+                )
             return [
-                self._tool_definition_from_storage(row["definition_json"], row["status"])
+                self._tool_definition_from_storage(
+                    row["definition_json"], row["status"]
+                )
                 for row in rows
             ]
 
         return await self._call(operation)
 
     async def upsert_tool_definition(
-        self, definition: ToolDefinitionV1, *, activate: bool, source_run_id: str | None = None
+        self,
+        definition: ToolDefinitionV1,
+        *,
+        activate: bool,
+        source_run_id: str | None = None,
     ) -> ToolDefinitionV1:
         """Insert a definition version (idempotent by slug+content_hash). When
         ``activate`` is set it becomes the sole active version for its slug."""
@@ -3762,7 +4685,9 @@ class Database:
 
     # Gate-1 definition proposals.
 
-    def _definition_proposal_from_row(self, row: dict[str, Any]) -> ToolDefinitionProposalV1:
+    def _definition_proposal_from_row(
+        self, row: dict[str, Any]
+    ) -> ToolDefinitionProposalV1:
         return ToolDefinitionProposalV1(
             id=row["id"],
             definition_id=row["definition_id"],
@@ -3872,18 +4797,27 @@ class Database:
                 params = (status,)
             query += "ORDER BY p.created_at DESC"
             with self._lock:
-                return [dict(row) for row in self._connection().execute(query, params).fetchall()]
+                return [
+                    dict(row)
+                    for row in self._connection().execute(query, params).fetchall()
+                ]
 
         rows = await self._call(operation)
         return [self._definition_proposal_from_row(row) for row in rows]
 
-    async def get_tool_definition_by_id(self, definition_id: str) -> ToolDefinitionV1 | None:
+    async def get_tool_definition_by_id(
+        self, definition_id: str
+    ) -> ToolDefinitionV1 | None:
         def operation() -> dict[str, str] | None:
             with self._lock:
-                row = self._connection().execute(
-                    "SELECT definition_json, status FROM tool_definitions WHERE id = ?",
-                    (definition_id,),
-                ).fetchone()
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT definition_json, status FROM tool_definitions WHERE id = ?",
+                        (definition_id,),
+                    )
+                    .fetchone()
+                )
             return dict(row) if row else None
 
         row = await self._call(operation)
@@ -3911,7 +4845,8 @@ class Database:
                 if existing:
                     return _loads(existing["result_json"], {})
                 prop = conn.execute(
-                    "SELECT * FROM tool_definition_proposals WHERE id = ?", (proposal_id,)
+                    "SELECT * FROM tool_definition_proposals WHERE id = ?",
+                    (proposal_id,),
                 ).fetchone()
                 if not prop:
                     raise KeyError("tool definition proposal not found")
@@ -3936,7 +4871,8 @@ class Database:
                         )
                     else:
                         conn.execute(
-                            "UPDATE tool_definitions SET active = 0 WHERE slug = ?", (slug,)
+                            "UPDATE tool_definitions SET active = 0 WHERE slug = ?",
+                            (slug,),
                         )
                         conn.execute(
                             "UPDATE tool_definitions SET status = 'defined', active = 1 "
@@ -3989,17 +4925,22 @@ class Database:
     async def get_buildable_definition(self, slug: str) -> ToolDefinitionV1 | None:
         """The newest 'defined' definition for a slug that still needs building
         (no active/evaluated build for its content hash). Serves `tool_factory`."""
+
         def operation() -> dict[str, str] | None:
             with self._lock:
-                row = self._connection().execute(
-                    "SELECT d.definition_json, d.status FROM tool_definitions d "
-                    "WHERE d.slug = ? AND d.status = 'defined' AND NOT EXISTS ("
-                    "  SELECT 1 FROM tool_definition_builds b "
-                    "  WHERE b.definition_id = d.id "
-                    "  AND b.status IN ('active','evaluated','superseded')"
-                    ") ORDER BY d.created_at DESC LIMIT 1",
-                    (slug,),
-                ).fetchone()
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT d.definition_json, d.status FROM tool_definitions d "
+                        "WHERE d.slug = ? AND d.status = 'defined' AND NOT EXISTS ("
+                        "  SELECT 1 FROM tool_definition_builds b "
+                        "  WHERE b.definition_id = d.id "
+                        "  AND b.status IN ('active','evaluated','superseded')"
+                        ") ORDER BY d.created_at DESC LIMIT 1",
+                        (slug,),
+                    )
+                    .fetchone()
+                )
             return dict(row) if row else None
 
         row = await self._call(operation)
@@ -4011,14 +4952,19 @@ class Database:
 
     async def get_runnable_definition(self, slug: str) -> ToolDefinitionV1 | None:
         """The definition tied to the slug's active build (runnable)."""
+
         def operation() -> dict[str, str] | None:
             with self._lock:
-                row = self._connection().execute(
-                    "SELECT d.definition_json, d.status FROM tool_definitions d "
-                    "JOIN tool_definition_builds b ON b.definition_id = d.id "
-                    "WHERE d.slug = ? AND b.status = 'active' LIMIT 1",
-                    (slug,),
-                ).fetchone()
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT d.definition_json, d.status FROM tool_definitions d "
+                        "JOIN tool_definition_builds b ON b.definition_id = d.id "
+                        "WHERE d.slug = ? AND b.status = 'active' LIMIT 1",
+                        (slug,),
+                    )
+                    .fetchone()
+                )
             return dict(row) if row else None
 
         row = await self._call(operation)
@@ -4031,12 +4977,17 @@ class Database:
     async def get_runnable_build(self, slug: str) -> ToolDefinitionBuildV1 | None:
         """The slug's active build — carries the pinned authored implementation for
         code-authoring tools (empty for declarative)."""
+
         def operation() -> dict[str, Any] | None:
             with self._lock:
-                row = self._connection().execute(
-                    "SELECT * FROM tool_definition_builds WHERE slug = ? AND status = 'active' LIMIT 1",
-                    (slug,),
-                ).fetchone()
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM tool_definition_builds WHERE slug = ? AND status = 'active' LIMIT 1",
+                        (slug,),
+                    )
+                    .fetchone()
+                )
             return dict(row) if row else None
 
         row = await self._call(operation)
@@ -4045,6 +4996,7 @@ class Database:
     async def declarative_build_index(self) -> dict[str, dict[str, bool]]:
         """Per-slug build presence: {slug: {"active": bool, "evaluated": bool}}.
         Drives declarative routing (runnable/buildable) and the browser."""
+
         def operation() -> list[sqlite3.Row]:
             with self._lock:
                 return list(
@@ -4066,13 +5018,17 @@ class Database:
     async def is_definition_hash_rejected(self, slug: str, content_hash: str) -> bool:
         def operation() -> bool:
             with self._lock:
-                row = self._connection().execute(
-                    "SELECT 1 FROM tool_definition_builds "
-                    "WHERE slug = ? AND content_hash = ? AND status = 'rejected' "
-                    "UNION SELECT 1 FROM tool_definitions "
-                    "WHERE slug = ? AND content_hash = ? AND status = 'retired' LIMIT 1",
-                    (slug, content_hash, slug, content_hash),
-                ).fetchone()
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT 1 FROM tool_definition_builds "
+                        "WHERE slug = ? AND content_hash = ? AND status = 'rejected' "
+                        "UNION SELECT 1 FROM tool_definitions "
+                        "WHERE slug = ? AND content_hash = ? AND status = 'retired' LIMIT 1",
+                        (slug, content_hash, slug, content_hash),
+                    )
+                    .fetchone()
+                )
                 return row is not None
 
         return await self._call(operation)
@@ -4170,7 +5126,10 @@ class Database:
                 params = (status,)
             query += "ORDER BY created_at DESC"
             with self._lock:
-                return [dict(r) for r in self._connection().execute(query, params).fetchall()]
+                return [
+                    dict(r)
+                    for r in self._connection().execute(query, params).fetchall()
+                ]
 
         rows = await self._call(operation)
         return [self._definition_build_from_row(row) for row in rows]
@@ -4255,17 +5214,28 @@ class Database:
                     (id, name, aliases_json, industry, region, status, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, 'active', ?, ?)""",
                     (
-                        account_id, name.strip(), _json(aliases), industry.strip(),
-                        region.strip(), timestamp, timestamp,
+                        account_id,
+                        name.strip(),
+                        _json(aliases),
+                        industry.strip(),
+                        region.strip(),
+                        timestamp,
+                        timestamp,
                     ),
                 )
 
         await self._call(operation)
-        return (await self.get_customer_account(account_id))  # type: ignore[return-value]
+        return await self.get_customer_account(account_id)  # type: ignore[return-value]
 
     async def update_customer_account(
-        self, account_id: str, *, name: str, aliases: list[str],
-        industry: str, region: str, status: str
+        self,
+        account_id: str,
+        *,
+        name: str,
+        aliases: list[str],
+        industry: str,
+        region: str,
+        status: str,
     ) -> dict[str, Any] | None:
         timestamp = _now()
 
@@ -4275,13 +5245,22 @@ class Database:
                     """UPDATE customer_accounts SET name = ?, aliases_json = ?,
                     industry = ?, region = ?, status = ?, updated_at = ? WHERE id = ?""",
                     (
-                        name.strip(), _json(aliases), industry.strip(), region.strip(),
-                        status, timestamp, account_id,
+                        name.strip(),
+                        _json(aliases),
+                        industry.strip(),
+                        region.strip(),
+                        status,
+                        timestamp,
+                        account_id,
                     ),
                 )
                 return cursor.rowcount > 0
 
-        return await self.get_customer_account(account_id) if await self._call(operation) else None
+        return (
+            await self.get_customer_account(account_id)
+            if await self._call(operation)
+            else None
+        )
 
     async def delete_customer_account(self, account_id: str) -> bool:
         """Delete an account and its strictly account-scoped customer data."""
@@ -4298,8 +5277,10 @@ class Database:
     async def get_customer_account(self, account_id: str) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    """SELECT a.*,
+                return (
+                    self._connection()
+                    .execute(
+                        """SELECT a.*,
                     (SELECT COUNT(*) FROM customer_actions x
                      WHERE x.account_id = a.id AND x.status = 'open') AS open_actions,
                     (SELECT COUNT(*) FROM customer_sources s
@@ -4309,8 +5290,10 @@ class Database:
                     (SELECT MAX(i.occurred_at) FROM customer_interactions i
                      WHERE i.account_id = a.id) AS last_interaction_at
                     FROM customer_accounts a WHERE a.id = ?""",
-                    (account_id,),
-                ).fetchone()
+                        (account_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if row is None:
@@ -4323,11 +5306,14 @@ class Database:
         def operation() -> list[str]:
             with self._lock:
                 return [
-                    str(row["id"]) for row in self._connection().execute(
+                    str(row["id"])
+                    for row in self._connection()
+                    .execute(
                         """SELECT id FROM customer_accounts
                         ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
                                  updated_at DESC"""
-                    ).fetchall()
+                    )
+                    .fetchall()
                 ]
 
         values = await asyncio.gather(
@@ -4336,8 +5322,14 @@ class Database:
         return [item for item in values if item is not None]
 
     async def capture_customer_source(
-        self, *, account_id: str, source_kind: str, title: str, content: str,
-        source_ref: str, occurred_at: str | None
+        self,
+        *,
+        account_id: str,
+        source_kind: str,
+        title: str,
+        content: str,
+        source_ref: str,
+        occurred_at: str | None,
     ) -> tuple[dict[str, Any], bool]:
         source_id, timestamp = _id("csrc"), _now()
         digest = hashlib.sha256(content.strip().encode("utf-8")).hexdigest()
@@ -4357,8 +5349,16 @@ class Database:
                      source_ref, occurred_at, status, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?)""",
                     (
-                        source_id, account_id, source_kind, title.strip(), content.strip(),
-                        digest, source_ref.strip(), occurred_at, timestamp, timestamp,
+                        source_id,
+                        account_id,
+                        source_kind,
+                        title.strip(),
+                        content.strip(),
+                        digest,
+                        source_ref.strip(),
+                        occurred_at,
+                        timestamp,
+                        timestamp,
                     ),
                 )
                 return conn.execute(
@@ -4371,16 +5371,25 @@ class Database:
     async def get_customer_source(self, source_id: str) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM customer_sources WHERE id = ?", (source_id,)
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM customer_sources WHERE id = ?", (source_id,)
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         return dict(row) if row else None
 
     async def create_customer_proposal(
-        self, *, source_id: str, account_id: str, extraction: dict[str, Any],
-        model: str, prompt_version: str
+        self,
+        *,
+        source_id: str,
+        account_id: str,
+        extraction: dict[str, Any],
+        model: str,
+        prompt_version: str,
     ) -> dict[str, Any]:
         proposal_id, timestamp = _id("cup"), _now()
 
@@ -4392,8 +5401,13 @@ class Database:
                      prompt_version, created_at, decided_at)
                     VALUES (?, ?, ?, 'review', ?, ?, ?, ?, NULL)""",
                     (
-                        proposal_id, source_id, account_id, _json(extraction),
-                        model, prompt_version, timestamp,
+                        proposal_id,
+                        source_id,
+                        account_id,
+                        _json(extraction),
+                        model,
+                        prompt_version,
+                        timestamp,
                     ),
                 )
                 conn.execute(
@@ -4410,10 +5424,14 @@ class Database:
     async def get_customer_proposal(self, proposal_id: str) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM customer_update_proposals WHERE id = ?",
-                    (proposal_id,),
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM customer_update_proposals WHERE id = ?",
+                        (proposal_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if row is None:
@@ -4422,16 +5440,23 @@ class Database:
         value["extraction"] = _loads(value.pop("extraction_json"), {})
         return value
 
-    async def get_open_proposal_for_source(self, source_id: str) -> dict[str, Any] | None:
+    async def get_open_proposal_for_source(
+        self, source_id: str
+    ) -> dict[str, Any] | None:
         """The latest still-open ('review') proposal for a source, so an
         auto-analyzed note can be opened for review without its proposal id."""
+
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM customer_update_proposals WHERE source_id = ? "
-                    "AND status = 'review' ORDER BY created_at DESC LIMIT 1",
-                    (source_id,),
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM customer_update_proposals WHERE source_id = ? "
+                        "AND status = 'review' ORDER BY created_at DESC LIMIT 1",
+                        (source_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if row is None:
@@ -4454,7 +5479,8 @@ class Database:
                 if proposal is None or proposal["status"] != "review":
                     return False
                 source = conn.execute(
-                    "SELECT * FROM customer_sources WHERE id = ?", (proposal["source_id"],)
+                    "SELECT * FROM customer_sources WHERE id = ?",
+                    (proposal["source_id"],),
                 ).fetchone()
                 if source is None:
                     return False
@@ -4467,8 +5493,13 @@ class Database:
                     (id, account_id, source_id, title, occurred_at, summary, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        interaction_id, proposal["account_id"], source["id"],
-                        source["title"], occurred_at, extraction.get("summary", ""), timestamp,
+                        interaction_id,
+                        proposal["account_id"],
+                        source["id"],
+                        source["title"],
+                        occurred_at,
+                        extraction.get("summary", ""),
+                        timestamp,
                     ),
                 )
                 for person in extraction.get("people", []):
@@ -4483,9 +5514,14 @@ class Database:
                                 THEN excluded.organization ELSE organization END,
                             evidence_json = excluded.evidence_json, updated_at = excluded.updated_at""",
                         (
-                            _id("cp"), proposal["account_id"], person["name"],
-                            person.get("role", ""), person.get("organization", ""),
-                            _json(person.get("evidence", {})), timestamp, timestamp,
+                            _id("cp"),
+                            proposal["account_id"],
+                            person["name"],
+                            person.get("role", ""),
+                            person.get("organization", ""),
+                            _json(person.get("evidence", {})),
+                            timestamp,
+                            timestamp,
                         ),
                     )
                 for fact in extraction.get("facts", []):
@@ -4495,9 +5531,14 @@ class Database:
                          confidence, evidence_json, created_at)
                         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)""",
                         (
-                            _id("cfact"), proposal["account_id"], interaction_id,
-                            fact["kind"], fact["content"], float(fact.get("confidence", 0.8)),
-                            _json(fact.get("evidence", {})), timestamp,
+                            _id("cfact"),
+                            proposal["account_id"],
+                            interaction_id,
+                            fact["kind"],
+                            fact["content"],
+                            float(fact.get("confidence", 0.8)),
+                            _json(fact.get("evidence", {})),
+                            timestamp,
                         ),
                     )
                 for action in extraction.get("actions", []):
@@ -4507,10 +5548,15 @@ class Database:
                          status, evidence_json, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)""",
                         (
-                            _id("cact"), proposal["account_id"], interaction_id,
-                            action["description"], action.get("owner", ""),
-                            action.get("due_at"), _json(action.get("evidence", {})),
-                            timestamp, timestamp,
+                            _id("cact"),
+                            proposal["account_id"],
+                            interaction_id,
+                            action["description"],
+                            action.get("owner", ""),
+                            action.get("due_at"),
+                            _json(action.get("evidence", {})),
+                            timestamp,
+                            timestamp,
                         ),
                     )
                 conn.execute(
@@ -4541,8 +5587,13 @@ class Database:
         def operation() -> dict[str, list[dict[str, Any]]]:
             with self._lock:
                 conn = self._connection()
+
                 def rows(query: str) -> list[dict[str, Any]]:
-                    return [dict(row) for row in conn.execute(query, (account_id,)).fetchall()]
+                    return [
+                        dict(row)
+                        for row in conn.execute(query, (account_id,)).fetchall()
+                    ]
+
                 return {
                     "interactions": rows(
                         "SELECT * FROM customer_interactions WHERE account_id = ? "
@@ -4563,13 +5614,15 @@ class Database:
                         "SELECT * FROM customer_sources WHERE account_id = ? ORDER BY created_at DESC"
                     ),
                     "wins": [
-                        self._win_row(item) for item in rows(
+                        self._win_row(item)
+                        for item in rows(
                             "SELECT * FROM customer_wins WHERE account_id = ? "
                             "ORDER BY COALESCE(won_at, created_at) DESC"
                         )
                     ],
                     "notes": [
-                        self._note_row(item) for item in rows(
+                        self._note_row(item)
+                        for item in rows(
                             "SELECT * FROM customer_notes WHERE account_id = ? "
                             "ORDER BY pinned DESC, updated_at DESC"
                         )
@@ -4610,9 +5663,12 @@ class Database:
 
         def operation() -> sqlite3.Row | None:
             with self._transaction() as conn:
-                if conn.execute(
-                    "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
-                ).fetchone() is None:
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
+                    ).fetchone()
+                    is None
+                ):
                     return None
                 conn.execute(
                     """INSERT INTO customer_facts
@@ -4653,9 +5709,12 @@ class Database:
     async def delete_customer_fact(self, fact_id: str) -> bool:
         def operation() -> bool:
             with self._transaction() as conn:
-                return conn.execute(
-                    "DELETE FROM customer_facts WHERE id = ?", (fact_id,)
-                ).rowcount > 0
+                return (
+                    conn.execute(
+                        "DELETE FROM customer_facts WHERE id = ?", (fact_id,)
+                    ).rowcount
+                    > 0
+                )
 
         return await self._call(operation)
 
@@ -4666,9 +5725,12 @@ class Database:
 
         def operation() -> sqlite3.Row | None:
             with self._transaction() as conn:
-                if conn.execute(
-                    "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
-                ).fetchone() is None:
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
+                    ).fetchone()
+                    is None
+                ):
                     return None
                 conn.execute(
                     """INSERT INTO customer_actions
@@ -4676,8 +5738,13 @@ class Database:
                      status, evidence_json, created_at, updated_at)
                     VALUES (?, ?, NULL, ?, ?, ?, 'open', '{}', ?, ?)""",
                     (
-                        action_id, account_id, description.strip(), owner.strip(),
-                        due_at, timestamp, timestamp,
+                        action_id,
+                        account_id,
+                        description.strip(),
+                        owner.strip(),
+                        due_at,
+                        timestamp,
+                        timestamp,
                     ),
                 )
                 conn.execute(
@@ -4692,8 +5759,13 @@ class Database:
         return dict(row) if row else None
 
     async def edit_customer_action(
-        self, action_id: str, *, description: str, owner: str,
-        due_at: str | None, status: str,
+        self,
+        action_id: str,
+        *,
+        description: str,
+        owner: str,
+        due_at: str | None,
+        status: str,
     ) -> dict[str, Any] | None:
         timestamp = _now()
 
@@ -4703,8 +5775,12 @@ class Database:
                     """UPDATE customer_actions SET description = ?, owner = ?,
                     due_at = ?, status = ?, updated_at = ? WHERE id = ?""",
                     (
-                        description.strip(), owner.strip(), due_at, status,
-                        timestamp, action_id,
+                        description.strip(),
+                        owner.strip(),
+                        due_at,
+                        status,
+                        timestamp,
+                        action_id,
                     ),
                 )
                 if not cursor.rowcount:
@@ -4719,9 +5795,12 @@ class Database:
     async def delete_customer_action(self, action_id: str) -> bool:
         def operation() -> bool:
             with self._transaction() as conn:
-                return conn.execute(
-                    "DELETE FROM customer_actions WHERE id = ?", (action_id,)
-                ).rowcount > 0
+                return (
+                    conn.execute(
+                        "DELETE FROM customer_actions WHERE id = ?", (action_id,)
+                    ).rowcount
+                    > 0
+                )
 
         return await self._call(operation)
 
@@ -4734,9 +5813,12 @@ class Database:
 
         def operation() -> sqlite3.Row | None:
             with self._transaction() as conn:
-                if conn.execute(
-                    "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
-                ).fetchone() is None:
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
+                    ).fetchone()
+                    is None
+                ):
                     return None
                 conn.execute(
                     """INSERT INTO customer_people
@@ -4748,8 +5830,13 @@ class Database:
                         organization = excluded.organization,
                         updated_at = excluded.updated_at""",
                     (
-                        person_id, account_id, name.strip(), role.strip(),
-                        organization.strip(), timestamp, timestamp,
+                        person_id,
+                        account_id,
+                        name.strip(),
+                        role.strip(),
+                        organization.strip(),
+                        timestamp,
+                        timestamp,
                     ),
                 )
                 return conn.execute(
@@ -4777,8 +5864,11 @@ class Database:
                     """UPDATE customer_people SET name = ?, role = ?,
                     organization = ?, updated_at = ? WHERE id = ?""",
                     (
-                        name.strip(), role.strip(), organization.strip(),
-                        timestamp, person_id,
+                        name.strip(),
+                        role.strip(),
+                        organization.strip(),
+                        timestamp,
+                        person_id,
                     ),
                 )
                 if not cursor.rowcount:
@@ -4793,14 +5883,22 @@ class Database:
     async def delete_customer_person(self, person_id: str) -> bool:
         def operation() -> bool:
             with self._transaction() as conn:
-                return conn.execute(
-                    "DELETE FROM customer_people WHERE id = ?", (person_id,)
-                ).rowcount > 0
+                return (
+                    conn.execute(
+                        "DELETE FROM customer_people WHERE id = ?", (person_id,)
+                    ).rowcount
+                    > 0
+                )
 
         return await self._call(operation)
 
     async def update_customer_source(
-        self, source_id: str, *, title: str, content: str, source_kind: str,
+        self,
+        source_id: str,
+        *,
+        title: str,
+        content: str,
+        source_kind: str,
         occurred_at: str | None,
     ) -> dict[str, Any] | None:
         """Correct a captured note.
@@ -4822,8 +5920,13 @@ class Database:
                     content_hash = ?, source_kind = ?, occurred_at = ?,
                     updated_at = ? WHERE id = ?""",
                     (
-                        title.strip(), content.strip(), digest, source_kind,
-                        occurred_at, timestamp, source_id,
+                        title.strip(),
+                        content.strip(),
+                        digest,
+                        source_kind,
+                        occurred_at,
+                        timestamp,
+                        source_id,
                     ),
                 )
                 if not cursor.rowcount:
@@ -4838,9 +5941,12 @@ class Database:
     async def delete_customer_source(self, source_id: str) -> bool:
         def operation() -> bool:
             with self._transaction() as conn:
-                return conn.execute(
-                    "DELETE FROM customer_sources WHERE id = ?", (source_id,)
-                ).rowcount > 0
+                return (
+                    conn.execute(
+                        "DELETE FROM customer_sources WHERE id = ?", (source_id,)
+                    ).rowcount
+                    > 0
+                )
 
         return await self._call(operation)
 
@@ -4853,16 +5959,25 @@ class Database:
         return value
 
     async def create_customer_note(
-        self, account_id: str, *, title: str, body: str, pinned: bool,
-        origin: str, origin_ref: str,
+        self,
+        account_id: str,
+        *,
+        title: str,
+        body: str,
+        pinned: bool,
+        origin: str,
+        origin_ref: str,
     ) -> dict[str, Any] | None:
         note_id, timestamp = _id("cnote"), _now()
 
         def operation() -> sqlite3.Row | None:
             with self._transaction() as conn:
-                if conn.execute(
-                    "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
-                ).fetchone() is None:
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
+                    ).fetchone()
+                    is None
+                ):
                     return None
                 conn.execute(
                     """INSERT INTO customer_notes
@@ -4870,8 +5985,15 @@ class Database:
                      created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        note_id, account_id, title.strip(), body.strip(),
-                        int(pinned), origin, origin_ref.strip(), timestamp, timestamp,
+                        note_id,
+                        account_id,
+                        title.strip(),
+                        body.strip(),
+                        int(pinned),
+                        origin,
+                        origin_ref.strip(),
+                        timestamp,
+                        timestamp,
                     ),
                 )
                 conn.execute(
@@ -4909,9 +6031,12 @@ class Database:
     async def delete_customer_note(self, note_id: str) -> bool:
         def operation() -> bool:
             with self._transaction() as conn:
-                return conn.execute(
-                    "DELETE FROM customer_notes WHERE id = ?", (note_id,)
-                ).rowcount > 0
+                return (
+                    conn.execute(
+                        "DELETE FROM customer_notes WHERE id = ?", (note_id,)
+                    ).rowcount
+                    > 0
+                )
 
         return await self._call(operation)
 
@@ -4940,7 +6065,9 @@ class Database:
         def operation() -> list[dict[str, Any]]:
             with self._lock:
                 return [
-                    dict(row) for row in self._connection().execute(
+                    dict(row)
+                    for row in self._connection()
+                    .execute(
                         """SELECT * FROM (
                         SELECT 'account' AS kind, a.id AS id, a.id AS account_id,
                                a.name AS account_name, a.name AS title,
@@ -4990,7 +6117,8 @@ class Database:
                             at DESC
                         LIMIT :limit""",
                         {"q": pattern, "limit": limit + 1},
-                    ).fetchall()
+                    )
+                    .fetchall()
                 ]
 
         rows = await self._call(operation)
@@ -5003,8 +6131,15 @@ class Database:
         return value
 
     async def create_customer_win(
-        self, account_id: str, *, title: str, brief: str, services: list[str],
-        dac_shape: str, yearly_arr: float | None, won_at: str | None,
+        self,
+        account_id: str,
+        *,
+        title: str,
+        brief: str,
+        services: list[str],
+        dac_shape: str,
+        yearly_arr: float | None,
+        won_at: str | None,
         source_ref: str,
     ) -> dict[str, Any]:
         win_id, timestamp = _id("cwin"), _now()
@@ -5017,9 +6152,17 @@ class Database:
                      yearly_arr, won_at, source_ref, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        win_id, account_id, title.strip(), brief.strip(),
-                        _json(services), dac_shape.strip(), yearly_arr, won_at,
-                        source_ref.strip(), timestamp, timestamp,
+                        win_id,
+                        account_id,
+                        title.strip(),
+                        brief.strip(),
+                        _json(services),
+                        dac_shape.strip(),
+                        yearly_arr,
+                        won_at,
+                        source_ref.strip(),
+                        timestamp,
+                        timestamp,
                     ),
                 )
                 conn.execute(
@@ -5028,11 +6171,18 @@ class Database:
                 )
 
         await self._call(operation)
-        return (await self.get_customer_win(win_id))  # type: ignore[return-value]
+        return await self.get_customer_win(win_id)  # type: ignore[return-value]
 
     async def update_customer_win(
-        self, win_id: str, *, title: str, brief: str, services: list[str],
-        dac_shape: str, yearly_arr: float | None, won_at: str | None,
+        self,
+        win_id: str,
+        *,
+        title: str,
+        brief: str,
+        services: list[str],
+        dac_shape: str,
+        yearly_arr: float | None,
+        won_at: str | None,
         source_ref: str,
     ) -> dict[str, Any] | None:
         timestamp = _now()
@@ -5044,14 +6194,22 @@ class Database:
                     services_json = ?, dac_shape = ?, yearly_arr = ?, won_at = ?,
                     source_ref = ?, updated_at = ? WHERE id = ?""",
                     (
-                        title.strip(), brief.strip(), _json(services),
-                        dac_shape.strip(), yearly_arr, won_at, source_ref.strip(),
-                        timestamp, win_id,
+                        title.strip(),
+                        brief.strip(),
+                        _json(services),
+                        dac_shape.strip(),
+                        yearly_arr,
+                        won_at,
+                        source_ref.strip(),
+                        timestamp,
+                        win_id,
                     ),
                 )
                 return cursor.rowcount > 0
 
-        return await self.get_customer_win(win_id) if await self._call(operation) else None
+        return (
+            await self.get_customer_win(win_id) if await self._call(operation) else None
+        )
 
     async def delete_customer_win(self, win_id: str) -> bool:
         def operation() -> bool:
@@ -5066,12 +6224,16 @@ class Database:
     async def get_customer_win(self, win_id: str) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    """SELECT w.*, a.name AS account_name FROM customer_wins w
+                return (
+                    self._connection()
+                    .execute(
+                        """SELECT w.*, a.name AS account_name FROM customer_wins w
                     JOIN customer_accounts a ON a.id = w.account_id
                     WHERE w.id = ?""",
-                    (win_id,),
-                ).fetchone()
+                        (win_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         return self._win_row(row) if row else None
@@ -5091,9 +6253,17 @@ class Database:
         return await self._call(operation)
 
     async def upsert_win_valuation(
-        self, win_id: str, *, estimated_yearly_arr: float | None, currency: str,
-        lines: list[dict[str, Any]], explanation: str, confidence: str,
-        unpriced: list[str], rates_verified: bool, model_used: str | None,
+        self,
+        win_id: str,
+        *,
+        estimated_yearly_arr: float | None,
+        currency: str,
+        lines: list[dict[str, Any]],
+        explanation: str,
+        confidence: str,
+        unpriced: list[str],
+        rates_verified: bool,
+        model_used: str | None,
         prompt_version: str,
     ) -> dict[str, Any]:
         """Store the latest estimate for a win, replacing any earlier one.
@@ -5125,23 +6295,36 @@ class Database:
                         status = 'proposed',
                         updated_at = excluded.updated_at""",
                     (
-                        valuation_id, win_id, estimated_yearly_arr, currency,
-                        _json(lines), explanation.strip(), confidence,
-                        _json(unpriced), int(rates_verified), model_used,
-                        prompt_version, timestamp, timestamp,
+                        valuation_id,
+                        win_id,
+                        estimated_yearly_arr,
+                        currency,
+                        _json(lines),
+                        explanation.strip(),
+                        confidence,
+                        _json(unpriced),
+                        int(rates_verified),
+                        model_used,
+                        prompt_version,
+                        timestamp,
+                        timestamp,
                     ),
                 )
 
         await self._call(operation)
-        return (await self.get_win_valuation(win_id))  # type: ignore[return-value]
+        return await self.get_win_valuation(win_id)  # type: ignore[return-value]
 
     async def get_win_valuation(self, win_id: str) -> dict[str, Any] | None:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM customer_win_valuations WHERE win_id = ?",
-                    (win_id,),
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM customer_win_valuations WHERE win_id = ?",
+                        (win_id,),
+                    )
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         return dict(row) if row else None
@@ -5160,7 +6343,11 @@ class Database:
                 )
                 return cursor.rowcount > 0
 
-        return await self.get_win_valuation(win_id) if await self._call(operation) else None
+        return (
+            await self.get_win_valuation(win_id)
+            if await self._call(operation)
+            else None
+        )
 
     async def win_valuations_for(self, win_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Every stored estimate for the given wins, keyed by win id."""
@@ -5170,10 +6357,14 @@ class Database:
         def operation() -> list[sqlite3.Row]:
             with self._lock:
                 placeholders = ",".join("?" for _ in win_ids)
-                return self._connection().execute(
-                    f"SELECT * FROM customer_win_valuations WHERE win_id IN ({placeholders})",
-                    tuple(win_ids),
-                ).fetchall()
+                return (
+                    self._connection()
+                    .execute(
+                        f"SELECT * FROM customer_win_valuations WHERE win_id IN ({placeholders})",
+                        tuple(win_ids),
+                    )
+                    .fetchall()
+                )
 
         return {str(row["win_id"]): dict(row) for row in await self._call(operation)}
 
@@ -5189,7 +6380,8 @@ class Database:
             with self._lock:
                 conn = self._connection()
                 wins = [
-                    dict(row) for row in conn.execute(
+                    dict(row)
+                    for row in conn.execute(
                         """SELECT w.title, w.yearly_arr, a.name AS account_name
                         FROM customer_wins w
                         JOIN customer_accounts a ON a.id = w.account_id
@@ -5198,7 +6390,8 @@ class Database:
                     ).fetchall()
                 ]
                 closed = [
-                    dict(row) for row in conn.execute(
+                    dict(row)
+                    for row in conn.execute(
                         """SELECT c.description, a.name AS account_name
                         FROM customer_actions c
                         JOIN customer_accounts a ON a.id = c.account_id
@@ -5273,7 +6466,9 @@ class Database:
             with self._lock:
                 marks = ",".join("?" for _ in wanted)
                 return [
-                    dict(row) for row in self._connection().execute(
+                    dict(row)
+                    for row in self._connection()
+                    .execute(
                         f"""SELECT a.*, COUNT(e.entity) AS overlap
                             FROM answer_atoms a
                             JOIN answer_atom_entities e ON e.atom_id = a.id
@@ -5283,7 +6478,8 @@ class Database:
                             ORDER BY overlap DESC, a.created_at DESC
                             LIMIT ?""",
                         [*wanted, exclude, limit],
-                    ).fetchall()
+                    )
+                    .fetchall()
                 ]
 
         return await self._call(operation)
@@ -5295,13 +6491,16 @@ class Database:
         def operation() -> list[dict[str, Any]]:
             with self._lock:
                 return [
-                    dict(row) for row in self._connection().execute(
+                    dict(row)
+                    for row in self._connection()
+                    .execute(
                         """SELECT e.entity, COUNT(*) AS atoms
                            FROM answer_atom_entities e
                            JOIN answer_atoms a ON a.id = e.atom_id
                            WHERE a.status = 'active'
                            GROUP BY e.entity ORDER BY atoms DESC, e.entity LIMIT 60"""
-                    ).fetchall()
+                    )
+                    .fetchall()
                 ]
 
         return await self._call(operation)
@@ -5363,14 +6562,18 @@ class Database:
         def operation() -> list[tuple[str, float]]:
             with self._lock:
                 try:
-                    rows = self._connection().execute(
-                        """SELECT a.id AS id, bm25(answer_atoms_fts) AS rank
+                    rows = (
+                        self._connection()
+                        .execute(
+                            """SELECT a.id AS id, bm25(answer_atoms_fts) AS rank
                            FROM answer_atoms_fts
                            JOIN answer_atoms a ON a.rowid = answer_atoms_fts.rowid
                            WHERE answer_atoms_fts MATCH ? AND a.status = 'active'
                            ORDER BY rank LIMIT ?""",
-                        (cleaned, limit),
-                    ).fetchall()
+                            (cleaned, limit),
+                        )
+                        .fetchall()
+                    )
                 except sqlite3.OperationalError:
                     # A malformed FTS expression must narrow retrieval, not
                     # fail the turn that asked for it.
@@ -5383,11 +6586,14 @@ class Database:
         def operation() -> list[dict[str, Any]]:
             with self._lock:
                 return [
-                    dict(row) for row in self._connection().execute(
+                    dict(row)
+                    for row in self._connection()
+                    .execute(
                         """SELECT v.atom_id, v.vector FROM answer_atom_vectors v
                            JOIN answer_atoms a ON a.id = v.atom_id
                            WHERE a.status = 'active'"""
-                    ).fetchall()
+                    )
+                    .fetchall()
                 ]
 
         return await self._call(operation)
@@ -5396,12 +6602,15 @@ class Database:
         def operation() -> list[dict[str, Any]]:
             with self._lock:
                 return [
-                    dict(row) for row in self._connection().execute(
+                    dict(row)
+                    for row in self._connection()
+                    .execute(
                         """SELECT a.id, a.question, a.paraphrases_json, a.answer
                            FROM answer_atoms a
                            LEFT JOIN answer_atom_vectors v ON v.atom_id = a.id
                            WHERE a.status = 'active' AND v.atom_id IS NULL"""
-                    ).fetchall()
+                    )
+                    .fetchall()
                 ]
 
         return await self._call(operation)
@@ -5430,9 +6639,10 @@ class Database:
             with self._lock:
                 marks = ",".join("?" for _ in ids)
                 return [
-                    dict(row) for row in self._connection().execute(
-                        f"SELECT * FROM answer_atoms WHERE id IN ({marks})", ids
-                    ).fetchall()
+                    dict(row)
+                    for row in self._connection()
+                    .execute(f"SELECT * FROM answer_atoms WHERE id IN ({marks})", ids)
+                    .fetchall()
                 ]
 
         return await self._call(operation)
@@ -5450,14 +6660,16 @@ class Database:
                 conn = self._connection()
                 now = _now()
                 pending_memories = [
-                    dict(row) for row in conn.execute(
+                    dict(row)
+                    for row in conn.execute(
                         """SELECT id, kind, content, confidence, created_at, source_run_id
                         FROM memory_proposals WHERE status = 'pending'
                         ORDER BY created_at DESC LIMIT 50"""
                     ).fetchall()
                 ]
                 waiting_notes = [
-                    dict(row) for row in conn.execute(
+                    dict(row)
+                    for row in conn.execute(
                         """SELECT s.id, s.title, s.account_id, s.created_at,
                                   a.name AS account_name
                         FROM customer_sources s
@@ -5467,7 +6679,8 @@ class Database:
                     ).fetchall()
                 ]
                 open_actions = [
-                    dict(row) for row in conn.execute(
+                    dict(row)
+                    for row in conn.execute(
                         """SELECT c.id, c.description, c.owner, c.due_at, c.created_at,
                                   c.account_id, a.name AS account_name
                         FROM customer_actions c
@@ -5482,7 +6695,8 @@ class Database:
                     ).fetchall()
                 ]
                 waiting_runs = [
-                    dict(row) for row in conn.execute(
+                    dict(row)
+                    for row in conn.execute(
                         """SELECT r.id, r.conversation_id, r.created_at,
                                   m.content AS prompt
                         FROM runs r
@@ -5491,26 +6705,41 @@ class Database:
                         ORDER BY r.created_at DESC LIMIT 25"""
                     ).fetchall()
                 ]
-                tool_proposals = [
-                    dict(row) for row in conn.execute(
-                        """SELECT id, summary, risk_level, created_at
+                tool_proposals = (
+                    [
+                        dict(row)
+                        for row in conn.execute(
+                            """SELECT id, summary, risk_level, created_at
                         FROM tool_definition_proposals
                         WHERE status = 'pending' ORDER BY created_at DESC LIMIT 25"""
-                    ).fetchall()
-                ] if self._has_table(conn, "tool_definition_proposals") else []
-                stale_sources = [
-                    dict(row) for row in conn.execute(
-                        """SELECT id, label, status, consent FROM corpus_sources
+                        ).fetchall()
+                    ]
+                    if self._has_table(conn, "tool_definition_proposals")
+                    else []
+                )
+                stale_sources = (
+                    [
+                        dict(row)
+                        for row in conn.execute(
+                            """SELECT id, label, status, consent FROM corpus_sources
                         WHERE status IN ('pending','error') LIMIT 25"""
-                    ).fetchall()
-                ] if self._has_table(conn, "corpus_sources") else []
-                pending_answers = [
-                    dict(row) for row in conn.execute(
-                        """SELECT id, question, created_at FROM answer_atoms
+                        ).fetchall()
+                    ]
+                    if self._has_table(conn, "corpus_sources")
+                    else []
+                )
+                pending_answers = (
+                    [
+                        dict(row)
+                        for row in conn.execute(
+                            """SELECT id, question, created_at FROM answer_atoms
                            WHERE status = 'pending'
                            ORDER BY created_at DESC LIMIT 25"""
-                    ).fetchall()
-                ] if self._has_table(conn, "answer_atoms") else []
+                        ).fetchall()
+                    ]
+                    if self._has_table(conn, "answer_atoms")
+                    else []
+                )
                 deferrals = {
                     str(row["item_key"]): str(row["deferred_until"])
                     for row in conn.execute(
@@ -5587,7 +6816,8 @@ class Database:
                 # arrives with the customer it belongs to; overdue first, then
                 # due-soon, then the undated backlog.
                 actions = [
-                    dict(row) for row in conn.execute(
+                    dict(row)
+                    for row in conn.execute(
                         """SELECT c.*, a.name AS account_name
                         FROM customer_actions c
                         JOIN customer_accounts a ON a.id = c.account_id
@@ -5601,7 +6831,8 @@ class Database:
                     ).fetchall()
                 ]
                 ids = [
-                    str(row["id"]) for row in conn.execute(
+                    str(row["id"])
+                    for row in conn.execute(
                         "SELECT id FROM customer_accounts ORDER BY updated_at DESC LIMIT 5"
                     ).fetchall()
                 ]
@@ -5617,15 +6848,19 @@ class Database:
                     ).fetchall()
                 ]
                 recent_wins = [
-                    dict(row) for row in conn.execute(
+                    dict(row)
+                    for row in conn.execute(
                         """SELECT w.*, a.name AS account_name FROM customer_wins w
                         JOIN customer_accounts a ON a.id = w.account_id
                         ORDER BY COALESCE(w.won_at, w.created_at) DESC LIMIT 6"""
                     ).fetchall()
                 ]
                 return {
-                    **dict(counts), "priority_actions": actions, "ids": ids,
-                    **dict(win_totals), "win_services": win_services,
+                    **dict(counts),
+                    "priority_actions": actions,
+                    "ids": ids,
+                    **dict(win_totals),
+                    "win_services": win_services,
                     "recent_wins": recent_wins,
                 }
 
@@ -5647,26 +6882,24 @@ class Database:
                 wins_by_service[service] = wins_by_service.get(service, 0) + 1
         value["wins_by_service"] = wins_by_service
         value["dac_wins"] = dac_wins
-        value["recent_wins"] = [
-            self._win_row(item) for item in value["recent_wins"]
-        ]
+        value["recent_wins"] = [self._win_row(item) for item in value["recent_wins"]]
         return value
 
     async def customer_settings(self) -> dict[str, Any]:
         def operation() -> sqlite3.Row | None:
             with self._lock:
-                return self._connection().execute(
-                    "SELECT * FROM customer_settings WHERE id = 1"
-                ).fetchone()
+                return (
+                    self._connection()
+                    .execute("SELECT * FROM customer_settings WHERE id = 1")
+                    .fetchone()
+                )
 
         row = await self._call(operation)
         if row:
             value = dict(row)
             value.pop("id", None)
             return value
-        return {
-            "tracker_url": "", "activity_template": "", "updated_at": None
-        }
+        return {"tracker_url": "", "activity_template": "", "updated_at": None}
 
     async def save_customer_settings(
         self, tracker_url: str, activity_template: str
@@ -5704,6 +6937,9 @@ class Database:
 
         await self._call(operation)
         return {
-            "id": output_id, "account_id": account_id, "kind": kind,
-            "content": content, "created_at": timestamp,
+            "id": output_id,
+            "account_id": account_id,
+            "kind": kind,
+            "content": content,
+            "created_at": timestamp,
         }
