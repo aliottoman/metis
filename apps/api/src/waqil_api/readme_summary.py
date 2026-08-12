@@ -9,6 +9,7 @@ prompt template lives in the approved definition (immutable); this module only
 fills its parameters and — crucially — never fails the run: any broker error,
 budget exhaustion, or malformed reply degrades to a deterministic host summary.
 """
+
 from __future__ import annotations
 
 import json
@@ -38,7 +39,10 @@ async def run(
     fallback = _deterministic_summary(text)
 
     if not access.enabled or broker is None or not getattr(broker, "enabled", False):
-        return fallback, {"authored_by": "deterministic-fallback", "fallback_reason": "no model access"}
+        return fallback, {
+            "authored_by": "deterministic-fallback",
+            "fallback_reason": "no model access",
+        }
 
     try:
         raw = await broker.call(
@@ -105,11 +109,18 @@ def _parse_reply(raw: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def _coerce_output(candidate: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
+def _coerce_output(
+    candidate: dict[str, Any], fallback: dict[str, Any]
+) -> dict[str, Any]:
     """Force a (possibly partial) parsed reply into the output contract's shape,
     filling any missing/ill-typed field from the deterministic fallback."""
+
     def as_str(value: Any, default: str) -> str:
-        return value.strip()[:2_000] if isinstance(value, str) and value.strip() else default
+        return (
+            value.strip()[:2_000]
+            if isinstance(value, str) and value.strip()
+            else default
+        )
 
     def as_list(value: Any, default: list[str]) -> list[str]:
         if isinstance(value, list):
@@ -153,14 +164,18 @@ def _deterministic_summary(text: str) -> dict[str, Any]:
     body_lines = [
         line.strip()
         for line in lines
-        if line.strip() and not line.strip().startswith("#") and not line.strip().startswith(("-", "*"))
+        if line.strip()
+        and not line.strip().startswith("#")
+        and not line.strip().startswith(("-", "*"))
     ]
     body = " ".join(body_lines)
     sentences = re.split(r"(?<=[.!?])\s+", body)
     purpose = (sentences[0] if sentences and sentences[0] else title)[:2_000]
     summary = (" ".join(sentences[:3]) if sentences else purpose)[:2_000] or purpose
 
-    components = _bullets_under(lines, ("component", "module", "service", "part", "feature"))
+    components = _bullets_under(
+        lines, ("component", "module", "service", "part", "feature")
+    )
     stack = _stack_terms(lines)
     return {
         "title": title,
@@ -198,7 +213,14 @@ def _bullets_under(lines: list[str], heading_terms: tuple[str, ...]) -> list[str
     ]
 
 
-_STACK_TERMS = ("built with", "tech stack", "stack", "technologies", "requirements", "dependencies")
+_STACK_TERMS = (
+    "built with",
+    "tech stack",
+    "stack",
+    "technologies",
+    "requirements",
+    "dependencies",
+)
 
 
 def _stack_terms(lines: list[str]) -> list[str]:
@@ -218,7 +240,11 @@ def _stack_terms(lines: list[str]) -> list[str]:
                 ),
                 "",
             )
-        terms = [term.strip()[:120] for term in re.split(r"[,/;]| and ", payload) if term.strip()]
+        terms = [
+            term.strip()[:120]
+            for term in re.split(r"[,/;]| and ", payload)
+            if term.strip()
+        ]
         cleaned = [term for term in terms if 0 < len(term) < 40]
         if cleaned:
             return cleaned

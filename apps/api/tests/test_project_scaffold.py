@@ -9,6 +9,7 @@ what the project actually carries.
 from __future__ import annotations
 
 import ast
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -85,25 +86,74 @@ def test_wants_oci_responses_reads_extraction_intent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stage_scaffold_seeds_once_and_respects_disk(tmp_path: Path) -> None:
+async def test_stage_scaffold_upgrades_owned_files_with_a_drift_guard(
+    tmp_path: Path,
+) -> None:
     service, asset_id, project = await _service(tmp_path)
-    # A file already on disk is never re-staged: this project carries an old
-    # (hand-written) money module, so seeding must leave that path alone.
     (project / "appkit").mkdir()
-    (project / "appkit" / "money.py").write_text("LEGACY = True\n", encoding="utf-8")
+    old_init = 'SCAFFOLD_VERSION = "0.1.0"\n'
+    old_money = "LEGACY = True\n"
+    (project / "appkit" / "__init__.py").write_text(old_init, encoding="utf-8")
+    (project / "appkit" / "money.py").write_text(old_money, encoding="utf-8")
+    # Optional modules already carried by the scaffold remain capabilities on
+    # a later turn, even when this turn's prompt does not mention them.
+    (project / "appkit" / "oci_responses.py").write_text(
+        "OLD_OCI = True\n", encoding="utf-8"
+    )
+    (project / "appkit" / "web.py").write_text("OLD_WEB = True\n", encoding="utf-8")
+    (project / "appkit" / "extra.py").write_text("mine = True\n", encoding="utf-8")
+    (project / ".env.example").write_text("MY_SETTING=\n", encoding="utf-8")
 
-    staged, added = await service.stage_scaffold(asset_id, {}, {"oci_responses"})
-    assert "appkit/money.py" not in added
-    assert "appkit/oci_responses.py" in added
-    assert ".env.example" in added
-    entry = staged["appkit/oci_responses.py"]
-    assert entry["origin"] == "create"
-    assert entry["base_sha256"] == ""
-    assert entry["bytes"] > 0
+    staged, added = await service.stage_scaffold(asset_id, {}, set())
+    assert {
+        "appkit/__init__.py",
+        "appkit/money.py",
+        "appkit/oci_responses.py",
+        "appkit/web.py",
+        "appkit/static/theme.css",
+    }.issubset(added)
+    assert ".env.example" not in staged
+    assert "appkit/extra.py" not in staged
 
-    again, added_again = await service.stage_scaffold(asset_id, staged, {"oci_responses"})
+    entry = staged["appkit/money.py"]
+    assert entry["origin"] == "patch"
+    assert entry["base_sha256"] == hashlib.sha256(old_money.encode("utf-8")).hexdigest()
+    assert "LEGACY" not in entry["content"]
+    init_entry = staged["appkit/__init__.py"]
+    assert init_entry["origin"] == "patch"
+    assert (
+        init_entry["base_sha256"]
+        == hashlib.sha256(old_init.encode("utf-8")).hexdigest()
+    )
+    assert 'SCAFFOLD_VERSION = "0.2.0"' in init_entry["content"]
+    assert staged["appkit/oci_responses.py"]["origin"] == "patch"
+    assert staged["appkit/web.py"]["origin"] == "patch"
+    assert staged["appkit/static/theme.css"]["origin"] == "create"
+    summary, _, _ = service.staged_summary(staged)
+    assert "modify `appkit/money.py`" in summary
+
+    again, added_again = await service.stage_scaffold(asset_id, staged, set())
     assert added_again == []
     assert again == staged
+
+    # Approval only covers the bytes that were visible when staged. A later
+    # disk edit is reported and preserved instead of being overwritten.
+    drifted = "CHANGED_AFTER_STAGING = True\n"
+    (project / "appkit" / "money.py").write_text(drifted, encoding="utf-8")
+    outcome = await service.materialize_staged(asset_id, staged)
+    assert {item["path"] for item in outcome["skipped"]} == {"appkit/money.py"}
+    assert (project / "appkit" / "money.py").read_text(encoding="utf-8") == drifted
+    assert (project / ".env.example").read_text(encoding="utf-8") == "MY_SETTING=\n"
+    assert (project / "appkit" / "extra.py").read_text(
+        encoding="utf-8"
+    ) == "mine = True\n"
+
+    retry, retry_added = await service.stage_scaffold(asset_id, {}, set())
+    assert retry_added == ["appkit/money.py"]
+    assert (await service.materialize_staged(asset_id, retry))["skipped"] == []
+    settled, settled_added = await service.stage_scaffold(asset_id, {}, set())
+    assert settled_added == []
+    assert settled == {}
 
 
 @pytest.mark.asyncio
@@ -167,7 +217,8 @@ async def test_inspect_api_reaches_the_vendored_appkit(tmp_path: Path) -> None:
     found = await service.execute_staged(
         asset_id,
         ProjectToolCallV1(
-            name="inspect_api", arguments={"module": "appkit.money", "symbol": "sum_money"}
+            name="inspect_api",
+            arguments={"module": "appkit.money", "symbol": "sum_money"},
         ),
         {},
     )
@@ -182,13 +233,17 @@ async def test_inspect_api_reaches_the_vendored_appkit(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_inspect_api_still_refuses_the_projects_own_modules(tmp_path: Path) -> None:
+async def test_inspect_api_still_refuses_the_projects_own_modules(
+    tmp_path: Path,
+) -> None:
     """The redirect is for appkit only; read_file still owns project code."""
     service, asset_id, _ = await _service(tmp_path)
     with pytest.raises(ProjectWorkspaceError):
         await service.execute_staged(
             asset_id,
-            ProjectToolCallV1(name="inspect_api", arguments={"module": "definitely_not_real_pkg"}),
+            ProjectToolCallV1(
+                name="inspect_api", arguments={"module": "definitely_not_real_pkg"}
+            ),
             {},
         )
 
@@ -251,13 +306,40 @@ def test_the_scaffold_note_hands_over_the_theme_and_its_vocabulary() -> None:
     assert "theme.css" not in silent
 
 
+def test_the_scaffold_note_gives_the_exact_upload_contract() -> None:
+    note = scaffold_note(has_oci=False)
+    for public_name in (
+        "IMAGE_MIMES",
+        "DOCUMENT_MIMES",
+        "UploadError",
+        "SavedUpload",
+        "sniff_mime(data)",
+    ):
+        assert public_name in note
+    assert "max_bytes=10 * 1024 * 1024, allowed_mimes=IMAGE_MIMES" in note
+    assert "default is image-only" in note
+    assert "save_upload(upload, allowed_mimes=DOCUMENT_MIMES)" in note
+    assert "PDF, and plain UTF-8 text" in note
+    assert "HTTP 415" in note
+    assert "SUPPORTED_MIME_TYPES" not in note
+    assert "await save_upload(upload) ->" not in note
+
+
 def test_the_vendored_theme_is_the_metis_palette_not_a_generic_one() -> None:
     """Pins the identity itself. These exact values are the workspace's own —
     warm greige paper, the one hairline, the lavender-grey muted ink, the
     purple field — so a well-meaning rewrite to some other palette fails here
     rather than shipping quietly into every future build."""
     css = scaffold_sources(frozenset({"web_ui"}))["appkit/static/theme.css"]
-    for token in ("#f7f4ef", "#ede9e1", "#211f1d", "#7b7789", "#dfdacf", "#c29ce0", "#39594d"):
+    for token in (
+        "#f7f4ef",
+        "#ede9e1",
+        "#211f1d",
+        "#7b7789",
+        "#dfdacf",
+        "#c29ce0",
+        "#39594d",
+    ):
         assert token in css, token
     # Flat panels: the blur was retired for legibility and must stay retired.
     assert "backdrop-filter" not in css

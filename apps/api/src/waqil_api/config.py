@@ -4,10 +4,10 @@ import ipaddress
 import json
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal, Self
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -57,9 +57,7 @@ class Settings(BaseSettings):
     max_upload_bytes: int = Field(
         default=10 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024
     )
-    max_text_attachment_bytes: int = Field(
-        default=64 * 1024, ge=1024, le=512 * 1024
-    )
+    max_text_attachment_bytes: int = Field(default=64 * 1024, ge=1024, le=512 * 1024)
     # Routes project builds to a hosted Ollama model, over tool-calling
     # decode: Ollama Cloud ignores `format` grammars (measured on three model
     # families — a live Ledger build died on three unreadable replies proving
@@ -109,13 +107,15 @@ class Settings(BaseSettings):
 
     # The Cline gateway: one key reaching both the ClinePass open-weight coding
     # models and the Anthropic/xAI models behind the same endpoint. The split
-    # of defaults is the measured one — asked the same planning question, Opus
-    # answered correctly in 17 output tokens where the open-weight models spent
-    # 186 to 1,129 — so the orchestrator seat takes the model that thinks in few
-    # tokens and the coder seat takes the one on the subscription.
+    # of defaults stays entirely on the subscription. In two production-shaped
+    # 16-file manifest runs GLM 5.2 returned neither a typed call nor usable text,
+    # while Qwen3.7 Plus completed both plans, so Qwen owns specification,
+    # planning and per-file direction and GLM is its bounded fallback. DeepSeek
+    # V4 Pro writes. Paid Anthropic/xAI routes remain explicit choices, never a
+    # default that fails with HTTP 402 for an otherwise healthy subscription.
     cline_api_key: str = ""
     cline_base_url: str = "https://api.cline.bot/api/v1"
-    cline_orchestrator_model: str = "anthropic/claude-opus-4.5"
+    cline_orchestrator_model: str = "cline-pass/qwen3.7-plus"
     cline_coder_model: str = "cline-pass/deepseek-v4-pro"
     cline_max_output_tokens: int = Field(default=32_768, ge=256, le=200_000)
 
@@ -127,7 +127,9 @@ class Settings(BaseSettings):
     # refused before it is read into memory rather than after a round trip.
     cohere_transcribe_model: str = "cohere-transcribe-03-2026"
     cohere_transcribe_language: str = "en"
-    cohere_transcribe_max_bytes: int = Field(default=25 * 1024 * 1024, ge=1024, le=25 * 1024 * 1024)
+    cohere_transcribe_max_bytes: int = Field(
+        default=25 * 1024 * 1024, ge=1024, le=25 * 1024 * 1024
+    )
 
     # Cloud retrieval (OCI Cohere embed, rerank, Command A). Opt-in; any unmet
     # precondition falls back to local keyword search. Vectors are stored locally.
@@ -226,6 +228,81 @@ class Settings(BaseSettings):
     project_staged_max_files: int = Field(default=48, ge=1, le=256)
     project_staged_max_bytes: int = Field(default=4_000_000, ge=10_000, le=32_000_000)
 
+    # ClineCore is the sole engine for new project runs. It remains a local
+    # child process: only its configured model provider leaves the machine.
+    # The old loop survives only inside ControlPlane for frozen legacy
+    # checkpoints created before this migration; it is no longer selectable.
+    project_coding_engine: Literal["legacy", "clinecore"] = "clinecore"
+    cline_sidecar_node_executable: str = "node"
+    # None resolves to the pinned workspace package; an explicit override must
+    # be absolute so launch never depends on an ambient working directory.
+    cline_sidecar_entrypoint: Path | None = None
+    cline_sidecar_start_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
+    cline_sidecar_request_timeout_seconds: float = Field(
+        default=900.0, ge=10.0, le=3_600.0
+    )
+    # How many times a rejected slice topology may be handed back to the
+    # planner with its exact findings before the turn stops. One correction is
+    # cheap (a planner call, no coder session) and fixes the ordinary case: a
+    # planner that sliced tests or docs on their own. Zero is fail-fast, which
+    # is what a qualification run wants — a corrected plan there would hide
+    # the planner defect the run exists to measure.
+    project_plan_corrections: int = Field(default=1, ge=0, le=2)
+    # Evaluator-only: run the real planner, normalization and topology gate,
+    # then stop before any mirror, coding session, or coder inference. It
+    # exists to measure planner reliability cheaply -- the expensive half of a
+    # build is everything after the plan -- and is refused outside a
+    # test-backend configuration so a production run can never be silently
+    # turned into a plan that never builds.
+    project_plan_only: bool = False
+    # The simplified path: one persistent Cline Plan->Act session owns
+    # inspection, ordering, editing, checks and repair; Metis stays the
+    # contract, security, verification, persistence and approval boundary.
+    # The planner/slice path is retained, frozen, behind project_build_path
+    # so an in-flight checkpoint and a rollback both keep working.
+    project_build_path: Literal["cline_direct", "planner_slices"] = "cline_direct"
+    # Slices are opt-in checkpoints for explicitly large work, never inferred
+    # from file count and never a reason to refuse ordinary work.
+    project_slices_enabled: bool = False
+    # How many host-owned checks one coding session may ask for. A check is
+    # cheap next to an inference round, but it is not free.
+    project_run_check_budget: int = Field(default=12, ge=0, le=60)
+    project_run_check_timeout_seconds: float = Field(default=300.0, ge=10.0, le=900.0)
+    cline_sidecar_max_iterations: int = Field(default=24, ge=1, le=200)
+    # Host-owned convergence bounds around Cline's internal tool loop: one
+    # implementation round plus at most three exact verifier-guided repairs,
+    # and an honest stop when the normalized finding signature repeats.
+    cline_sidecar_max_rounds: int = Field(default=4, ge=1, le=8)
+    cline_sidecar_unchanged_findings_limit: int = Field(default=2, ge=1, le=3)
+    cline_sidecar_shutdown_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    cline_sidecar_max_frame_bytes: int = Field(
+        default=1024 * 1024, ge=4_096, le=16 * 1024 * 1024
+    )
+    # Replay may prepend one synthetic overflow marker. Keep the host queue at
+    # least one slot larger than the sidecar journal so a full replay cannot
+    # fail closed before the consumer sees its subscribe response.
+    cline_sidecar_event_queue_size: int = Field(default=256, ge=3, le=10_000)
+    # Artifact cleanup is host-only maintenance: it performs no provider/model
+    # call. A full day protects a just-created mirror that crashed before its
+    # coding-session ownership row could be committed.
+    cline_cleanup_interval_seconds: float = Field(default=60.0, ge=5.0, le=3_600.0)
+    cline_orphan_workspace_age_seconds: int = Field(
+        default=86_400,
+        ge=3_600,
+        le=2_592_000,
+    )
+    # The same conservative shape for event journals. A live measured leak: a
+    # model-switch fork's journal outlived its run because the fork identity
+    # was only ever a per-round argument, so terminal cleanup deleted the
+    # parent's journal and never knew the child's. Ancestry is durable now;
+    # this age gate is the backstop for a crash between minting an identity
+    # and committing it, and it never touches a referenced journal.
+    cline_orphan_journal_age_seconds: int = Field(
+        default=86_400,
+        ge=3_600,
+        le=2_592_000,
+    )
+
     # Reviewed verification checks. The agent may only name a check declared in
     # the project's own .metis/verify.json, and the recipe is approved once by
     # fingerprint; runs per turn are bounded so a failing check cannot loop.
@@ -307,7 +384,9 @@ class Settings(BaseSettings):
     # build turn verifies two or three times, and a stop between them would pay
     # the ten-second boot repeatedly to reclaim 1.7 GB for a few seconds. Metis
     # only ever stops a machine it started itself. 0 leaves it running.
-    project_sandbox_release_after_idle_seconds: int = Field(default=600, ge=0, le=86_400)
+    project_sandbox_release_after_idle_seconds: int = Field(
+        default=600, ge=0, le=86_400
+    )
 
     # Containers whose child directories become Assets on an explicit scan.
     # NoDecode accepts a single path, a separated list, or a JSON array.
@@ -397,6 +476,33 @@ class Settings(BaseSettings):
             raise ValueError("model_backend must be auto, ollama, or deterministic")
         return value
 
+    @field_validator("cline_sidecar_node_executable")
+    @classmethod
+    def valid_sidecar_executable(cls, value: str) -> str:
+        if not value.strip() or any(character in value for character in "\r\n\x00"):
+            raise ValueError("cline_sidecar_node_executable must be a non-empty line")
+        return value
+
+    @model_validator(mode="after")
+    def legacy_engine_is_test_only(self) -> Self:
+        if self.project_plan_only and not self.allow_test_backends:
+            raise ValueError(
+                "project_plan_only is an evaluation mode and requires "
+                "allow_test_backends"
+            )
+        if self.project_coding_engine == "legacy" and not self.allow_test_backends:
+            raise ValueError(
+                "the legacy project coding engine is retired; use clinecore"
+            )
+        return self
+
+    @field_validator("cline_sidecar_entrypoint")
+    @classmethod
+    def absolute_sidecar_entrypoint(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_absolute():
+            raise ValueError("cline_sidecar_entrypoint must be absolute")
+        return value
+
     @field_validator("oci_responses_base_url")
     @classmethod
     def valid_oci_responses_base_url(cls, value: str) -> str:
@@ -406,14 +512,18 @@ class Settings(BaseSettings):
             or not parsed.hostname
             or not parsed.hostname.endswith(".oci.oraclecloud.com")
         ):
-            raise ValueError("OCI Responses must use an HTTPS oci.oraclecloud.com endpoint")
+            raise ValueError(
+                "OCI Responses must use an HTTPS oci.oraclecloud.com endpoint"
+            )
         return value.rstrip("/")
 
     @field_validator("reference_runner_mode")
     @classmethod
     def valid_runner_mode(cls, value: str) -> str:
         if value not in {"podman", "local", "deterministic"}:
-            raise ValueError("reference_runner_mode must be podman, local, or deterministic")
+            raise ValueError(
+                "reference_runner_mode must be podman, local, or deterministic"
+            )
         return value
 
     @field_validator("asset_roots", mode="before")
@@ -430,7 +540,9 @@ class Settings(BaseSettings):
             try:
                 decoded = json.loads(raw)
             except json.JSONDecodeError as exc:
-                raise ValueError("asset_roots must be a path or a JSON path array") from exc
+                raise ValueError(
+                    "asset_roots must be a path or a JSON path array"
+                ) from exc
             if not isinstance(decoded, list):
                 raise ValueError("asset_roots JSON value must be an array")
             return decoded
@@ -454,6 +566,47 @@ class Settings(BaseSettings):
     @property
     def run_dir(self) -> Path:
         return self.data_dir / "runs"
+
+    @property
+    def cline_sidecar_path(self) -> Path:
+        return self.cline_sidecar_entrypoint or (
+            self.repo_root / "apps" / "cline-sidecar" / "dist" / "src" / "index.js"
+        )
+
+    @property
+    def cline_sidecar_data_dir(self) -> Path:
+        return self.data_dir / "coding-sessions"
+
+    @property
+    def cline_event_journal_dir(self) -> Path:
+        """Metis's own bounded event journals, written by the sidecar.
+
+        Named here because it is the ONLY directory the journal sweep is
+        allowed to touch: the SDK's session store lives beside it under the
+        same parent, and a sweep that wandered into that would delete
+        transcripts a recovery still needs.
+        """
+        return self.cline_sidecar_data_dir / "metis-events-v1"
+
+    @property
+    def coding_workspace_dir(self) -> Path:
+        """Private parent for disposable project mirrors owned by Metis."""
+        return self.data_dir / "coding-workspaces"
+
+    @property
+    def cline_sidecar_command(self) -> tuple[str, ...]:
+        replay_events = min(4_096, self.cline_sidecar_event_queue_size - 1)
+        return (
+            self.cline_sidecar_node_executable,
+            str(self.cline_sidecar_path),
+            "--stdio",
+            "--runtime",
+            "cline",
+            "--data-dir",
+            str(self.cline_sidecar_data_dir.resolve()),
+            "--max-replay-events",
+            str(replay_events),
+        )
 
     @property
     def uploads_mirror_dir(self) -> Path:
@@ -493,7 +646,11 @@ class Settings(BaseSettings):
     @property
     def project_sandbox_runner(self) -> Path:
         return (
-            self.repo_root / "infra" / "sandbox" / "project-verify" / "run_project_verify.py"
+            self.repo_root
+            / "infra"
+            / "sandbox"
+            / "project-verify"
+            / "run_project_verify.py"
         )
 
     @property
@@ -553,6 +710,8 @@ class Settings(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.blob_dir.mkdir(parents=True, exist_ok=True)
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.cline_sidecar_data_dir.mkdir(parents=True, exist_ok=True)
+        self.coding_workspace_dir.mkdir(parents=True, exist_ok=True)
         self.tool_bundle_dir.mkdir(parents=True, exist_ok=True)
         self.corpus_dir.mkdir(parents=True, exist_ok=True)
         self.notion_mirror_dir.mkdir(parents=True, exist_ok=True)

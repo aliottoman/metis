@@ -20,12 +20,12 @@ _MAIN = (
 
 _HTML = (
     "<!doctype html>\n"
-    "<link rel=\"stylesheet\" href=\"/static/styles.css\">\n"
-    "<script src=\"/static/app.js\"></script>\n"
-    "<img src=\"https://example.com/logo.png\">\n"
-    "<img src=\"data:image/png;base64,AAAA\">\n"
-    "<a href=\"#top\">top</a>\n"
-    "<img src=\"{{ dynamic_url }}\">\n"
+    '<link rel="stylesheet" href="/static/styles.css">\n'
+    '<script src="/static/app.js"></script>\n'
+    '<img src="https://example.com/logo.png">\n'
+    '<img src="data:image/png;base64,AAAA">\n'
+    '<a href="#top">top</a>\n'
+    '<img src="{{ dynamic_url }}">\n'
 )
 
 
@@ -35,9 +35,16 @@ def _staged(files: dict[str, str]) -> dict[str, dict[str, str]]:
 
 def _reference_findings(files: dict[str, str], project_paths: list[str] = []):
     findings = staged_wiring_errors(
-        _staged(files), project_paths=project_paths, requirements="fastapi\npython-multipart\n"
+        _staged(files),
+        project_paths=project_paths,
+        requirements="fastapi\npython-multipart\n",
     )
-    return [f for f in findings if "no file in this project provides" in f["error"] and "references" in f["error"]]
+    return [
+        f
+        for f in findings
+        if "no file in this project provides" in f["error"]
+        and "references" in f["error"]
+    ]
 
 
 def test_mounted_references_resolve_and_missing_ones_block() -> None:
@@ -70,9 +77,9 @@ def test_relative_references_resolve_against_the_referencing_file() -> None:
 def test_unmounted_absolute_paths_and_externals_never_false_alarm() -> None:
     files = {
         "static/index.html": (
-            "<script src=\"/generated/config.js\"></script>\n"  # dynamic route
-            "<img src=\"//cdn.example.com/x.png\">\n"
-            "<link href=\"mailto:someone@example.com\">\n"
+            '<script src="/generated/config.js"></script>\n'  # dynamic route
+            '<img src="//cdn.example.com/x.png">\n'
+            '<link href="mailto:someone@example.com">\n'
         ),
     }
     assert _reference_findings(files) == []
@@ -96,7 +103,7 @@ def test_an_inline_svg_data_uri_is_not_a_missing_asset() -> None:
     files = {
         "static/theme.css": (
             ".grain {\n"
-            "  background-image: url(\"data:image/svg+xml,%3Csvg "
+            '  background-image: url("data:image/svg+xml,%3Csvg '
             "xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E"
             "%3CfeTurbulence baseFrequency='0.8'/%3E%3C/filter%3E"
             "%3Crect filter='url(%23n)'/%3E%3C/svg%3E\");\n"

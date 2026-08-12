@@ -14,6 +14,7 @@ Frames (one JSON object per line):
   host → child : {"frame":"model_response","content":"..."}  | {"frame":...,"error":"..."}
   child → host : {"frame":"result","output":{...}}  | {"frame":"error","error":"..."}
 """
+
 import builtins as _builtins
 import json
 import sys
@@ -39,7 +40,9 @@ def _model(params):
     # still a failed call, and treating it as an empty answer hides the failure
     # inside the tool's own output.
     if "error" in message:
-        raise RuntimeError(f"model call rejected: {message['error'] or 'unknown error'}")
+        raise RuntimeError(
+            f"model call rejected: {message['error'] or 'unknown error'}"
+        )
     content = message.get("content")
     if not isinstance(content, str):
         raise RuntimeError("model channel returned no text")
@@ -50,7 +53,9 @@ def _make_safe_import(allowed: set) -> callable:
     def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
         root = name.split(".")[0]
         if level != 0 or (name not in allowed and root not in allowed):
-            raise ImportError(f"import of {name!r} is not permitted in an authored tool")
+            raise ImportError(
+                f"import of {name!r} is not permitted in an authored tool"
+            )
         return _REAL_IMPORT(name, globals, locals, fromlist, level)
 
     return _safe_import
@@ -94,7 +99,9 @@ def main() -> None:
         json.dumps(output)  # ensure serializable before framing
         _frame_out({"frame": "result", "output": output})
     except Exception as exc:  # noqa: BLE001 — report, never leak a traceback
-        _frame_out({"frame": "error", "error": f"{type(exc).__name__}: {str(exc)[:500]}"})
+        _frame_out(
+            {"frame": "error", "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
+        )
 
 
 if __name__ == "__main__":

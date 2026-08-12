@@ -15,6 +15,7 @@ Deferral is a first-class outcome beside approve and reject. Without it a queue
 becomes a list of things you have decided not to do and cannot silence, which
 is how a review surface stops being opened at all.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -31,14 +32,14 @@ from .database import Database
 # a customer outranks the app's own housekeeping — the queue is ordered by who
 # is waiting, not by which subsystem produced the row.
 _BASE_WEIGHT = {
-    "run_approval": 90,      # a run is stopped mid-flight, holding its work
-    "customer_action": 80,   # a promise to someone outside this machine
-    "customer_note": 60,     # captured intelligence not yet in the record
-    "tool_proposal": 45,     # a capability waiting to become real
-    "answer_atom": 40,       # reusable knowledge, one review from being real
-    "memory": 35,            # improves future answers; nothing breaks meanwhile
-    "asset_trust": 25,       # a reviewed recipe waiting to be trusted
-    "stale_source": 20,      # knowledge is thinner than it could be
+    "run_approval": 90,  # a run is stopped mid-flight, holding its work
+    "customer_action": 80,  # a promise to someone outside this machine
+    "customer_note": 60,  # captured intelligence not yet in the record
+    "tool_proposal": 45,  # a capability waiting to become real
+    "answer_atom": 40,  # reusable knowledge, one review from being real
+    "memory": 35,  # improves future answers; nothing breaks meanwhile
+    "asset_trust": 25,  # a reviewed recipe waiting to be trusted
+    "stale_source": 20,  # knowledge is thinner than it could be
 }
 
 _KIND_LABEL = {
@@ -328,9 +329,13 @@ class MorningBrief:
         for win in changes.get("wins", []):
             arr = win.get("yearly_arr")
             amount = f" (${arr:,.0f} ARR)" if arr else ""
-            changed.append(f"Recorded a win: {win['title']} — {win['account_name']}{amount}")
+            changed.append(
+                f"Recorded a win: {win['title']} — {win['account_name']}{amount}"
+            )
         for action in changes.get("closed_actions", []):
-            changed.append(f"Closed: {action['description']} — {action['account_name']}")
+            changed.append(
+                f"Closed: {action['description']} — {action['account_name']}"
+            )
         if changes.get("runs_completed"):
             changed.append(f"{changes['runs_completed']} runs completed")
         if changes.get("memories_kept"):
@@ -393,9 +398,7 @@ class MorningBrief:
         except Exception as error:  # noqa: BLE001 - the facts are the brief; prose is a bonus
             # Surfaced, not swallowed: a brief that quietly loses its prose
             # every morning is indistinguishable from one that never had any.
-            brief = brief.model_copy(
-                update={"narrative": "", "recommendation": ""}
-            )
+            brief = brief.model_copy(update={"narrative": "", "recommendation": ""})
             self.last_error = f"{type(error).__name__}: {str(error)[:200]}"
         self._cached, self._cached_at = brief, now
         return brief

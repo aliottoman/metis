@@ -7,6 +7,7 @@ single Mac. This lets a user pin one model for every role instead, so nothing
 ever swaps mid-session. Stored as a small local JSON file the user owns,
 mirroring `profile.py`.
 """
+
 from __future__ import annotations
 
 import json
@@ -54,6 +55,27 @@ HOSTED_MODEL_TOOL_CALLING: dict[str, bool] = {
     "glm-5.2:cloud": True,
     "deepseek-v4-flash:cloud": True,
 }
+
+
+# Cline's subscription-backed catalog, exposed by the API so the web client
+# never has to guess which names are included in ClinePass. These all passed a
+# live ProjectDirectionV1 tool-call probe on 2026-08-10. Paid Anthropic/xAI
+# routes deliberately stay out of this list: they remain valid explicit model
+# IDs, but presenting them beside subscription models made a zero-credit lane
+# look healthy until the first HTTP 402.
+CLINEPASS_MODELS: tuple[str, ...] = (
+    "cline-pass/qwen3.7-plus",
+    "cline-pass/glm-5.2",
+    "cline-pass/kimi-k3",
+    "cline-pass/kimi-k2.7-code",
+    "cline-pass/kimi-k2.6",
+    "cline-pass/deepseek-v4-pro",
+    "cline-pass/deepseek-v4-flash",
+    "cline-pass/minimax-m3",
+    "cline-pass/mimo-v2.5-pro",
+    "cline-pass/mimo-v2.5",
+    "cline-pass/qwen3.7-max",
+)
 
 
 def hosted_model_capability_error(model: str) -> str:
@@ -119,6 +141,7 @@ class ModelPreferenceStore:
             oci_available=self.oci_available,
             cohere_available=self.cohere_available,
             cline_available=self.cline_available,
+            cline_models=list(CLINEPASS_MODELS) if self.cline_available else [],
         )
 
     @staticmethod
@@ -334,7 +357,20 @@ class ModelPreferenceStore:
                 )
             elif role == "coder":
                 fallbacks: list[dict[str, str | None]] = []
-                if self.cohere_available and preference.provider != "cohere":
+                if preference.provider == "cline":
+                    # The configured Cline coder is the implicit first rung.
+                    # An env override may choose one of these safety models as
+                    # that primary; do not retry the identical model while
+                    # reporting that a fallback occurred.
+                    fallbacks.extend(
+                        {"provider": "cline", "model": model}
+                        for model in (
+                            "cline-pass/kimi-k3",
+                            "cline-pass/kimi-k2.7-code",
+                        )
+                        if model != self._settings.cline_coder_model
+                    )
+                elif self.cohere_available and preference.provider != "cohere":
                     fallbacks.append({"provider": "cohere", "model": None})
                 if self._settings.coder_model != aliases["coder"]:
                     fallbacks.append(
@@ -342,4 +378,21 @@ class ModelPreferenceStore:
                     )
                 if fallbacks:
                     aliases["_fallbacks_coder"] = json.dumps(fallbacks)
+        if preference.provider == "cline" and not preference.role_chains.get("planner"):
+            # Two production-shaped 16-file manifests returned no usable GLM
+            # reply while Qwen completed both. The configured model remains
+            # first so WAQIL_CLINE_ORCHESTRATOR_MODEL is still authoritative;
+            # the measured default's safety rung is GLM, de-duplicated when an
+            # environment override already selected it.
+            planner_models = list(
+                dict.fromkeys(
+                    (
+                        self._settings.cline_orchestrator_model,
+                        "cline-pass/glm-5.2",
+                    )
+                )
+            )
+            aliases["_chain_planner"] = json.dumps(
+                [{"provider": "cline", "model": model} for model in planner_models]
+            )
         return aliases

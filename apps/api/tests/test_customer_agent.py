@@ -85,17 +85,26 @@ def test_record_activity_routes_to_the_action_node(client: TestClient) -> None:
     assert result["route_kind"] == "queue_update"
 
 
-def test_activity_bundled_with_a_note_routes_whole_to_the_action_node(client: TestClient) -> None:
+def test_activity_bundled_with_a_note_routes_whole_to_the_action_node(
+    client: TestClient,
+) -> None:
     """queue_update handles the note and the action together, so the bundle
     routes there rather than splitting across two nodes."""
-    result = _route(client, _account(client, "Act B"), _step(ct.FILE_NOTE, ct.RECORD_ACTIVITY))
+    result = _route(
+        client, _account(client, "Act B"), _step(ct.FILE_NOTE, ct.RECORD_ACTIVITY)
+    )
     assert result["route_kind"] == "queue_update"
 
 
 def test_multi_action_without_activity_executes_in_order(client: TestClient) -> None:
-    result = _route(client, _account(client, "Multi A"), _step(ct.FILE_NOTE, ct.RECORD_WIN))
+    result = _route(
+        client, _account(client, "Multi A"), _step(ct.FILE_NOTE, ct.RECORD_WIN)
+    )
     assert result["route_kind"] == "customer_execute"
-    assert [c["name"] for c in result["customer_calls"]] == [ct.FILE_NOTE, ct.RECORD_WIN]
+    assert [c["name"] for c in result["customer_calls"]] == [
+        ct.FILE_NOTE,
+        ct.RECORD_WIN,
+    ]
 
 
 def test_a_routing_failure_falls_back_to_answering(client: TestClient) -> None:
@@ -143,7 +152,12 @@ def _note_with_action(client: TestClient, account_id: str, content: str) -> str:
     extraction turns an 'Action:' line into one proposed action."""
     src = client.post(
         "/api/v1/customers/sources",
-        json={"account_id": account_id, "source_kind": "note", "title": "Call", "content": content},
+        json={
+            "account_id": account_id,
+            "source_kind": "note",
+            "title": "Call",
+            "content": content,
+        },
     )
     assert src.status_code == 201, src.text
     proposal = client.post(f"/api/v1/customers/sources/{src.json()['id']}/analyze")
@@ -151,11 +165,15 @@ def _note_with_action(client: TestClient, account_id: str, content: str) -> str:
     return str(proposal.json()["id"])
 
 
-def test_apply_endpoint_commits_an_extraction_to_the_profile(client: TestClient) -> None:
+def test_apply_endpoint_commits_an_extraction_to_the_profile(
+    client: TestClient,
+) -> None:
     """One-click apply: nothing is on the profile until Apply is called, then the
     proposed items land — and a second apply is refused, so it can't write twice."""
     account_id = _account(client, "Apply A")
-    proposal_id = _note_with_action(client, account_id, "Action: send the pricing by Friday")
+    proposal_id = _note_with_action(
+        client, account_id, "Action: send the pricing by Friday"
+    )
 
     # It's still a proposal — the record is untouched.
     assert client.get(f"/api/v1/customers/{account_id}").json()["actions"] == []
@@ -167,10 +185,15 @@ def test_apply_endpoint_commits_an_extraction_to_the_profile(client: TestClient)
     assert any("pricing" in a["description"].lower() for a in actions)
 
     # Decided now — applying again is a conflict, not a double write.
-    assert client.post(f"/api/v1/customers/proposals/{proposal_id}/apply").status_code == 409
+    assert (
+        client.post(f"/api/v1/customers/proposals/{proposal_id}/apply").status_code
+        == 409
+    )
 
 
-def test_apply_extraction_handler_commits_the_named_proposal(client: TestClient) -> None:
+def test_apply_extraction_handler_commits_the_named_proposal(
+    client: TestClient,
+) -> None:
     """The agent's apply_extraction tool commits the proposal it was handed."""
     account_id = _account(client, "Apply Agent")
     proposal_id = _note_with_action(client, account_id, "Action: schedule the QBR")
@@ -194,16 +217,22 @@ def test_apply_extraction_handler_commits_the_named_proposal(client: TestClient)
     assert any("qbr" in a["description"].lower() for a in actions)
 
 
-def test_filing_a_note_on_cloud_surfaces_a_one_click_apply_card(client: TestClient) -> None:
+def test_filing_a_note_on_cloud_surfaces_a_one_click_apply_card(
+    client: TestClient,
+) -> None:
     """The keystone: filing a note analyses it in the same turn and emits the
     apply-card event — the write still gated behind the user's tap."""
     account_id = _account(client, "Card A")
     cp = client.app.state.runtime.control_plane  # type: ignore[attr-defined]
-    cp.customers._cloud_pinned = lambda: True  # analyse in-turn  # type: ignore[attr-defined]
+    cp.customers._cloud_pinned = lambda: (
+        True
+    )  # analyse in-turn  # type: ignore[attr-defined]
 
     emitted: list[tuple[str, dict]] = []
 
-    async def _capture(run_id: str, thread_id: str, event_type: str, payload=None, *_a, **_k):
+    async def _capture(
+        run_id: str, thread_id: str, event_type: str, payload=None, *_a, **_k
+    ):
         emitted.append((event_type, payload or {}))
 
     cp.events.emit = _capture  # type: ignore[attr-defined]
@@ -228,7 +257,9 @@ def test_filing_a_note_on_cloud_surfaces_a_one_click_apply_card(client: TestClie
     assert client.get(f"/api/v1/customers/{account_id}").json()["actions"] == []
 
 
-def test_unscoped_named_account_routes_through_the_agent_auto_scoped(client: TestClient) -> None:
+def test_unscoped_named_account_routes_through_the_agent_auto_scoped(
+    client: TestClient,
+) -> None:
     """The unification: 'add a note to <acronym>' with no chip resolves the
     account, emits the auto-scope event, and runs the SAME agent scoped to it —
     so scoped and unscoped behave identically from here on."""
@@ -239,11 +270,17 @@ def test_unscoped_named_account_routes_through_the_agent_auto_scoped(client: Tes
 
     seen: list[tuple[str, dict]] = []
 
-    async def _capture(run_id: str, thread_id: str, event_type: str, payload=None, *_a, **_k):
+    async def _capture(
+        run_id: str, thread_id: str, event_type: str, payload=None, *_a, **_k
+    ):
         seen.append((event_type, payload or {}))
 
-    async def _route_file_note(_schema: object, **_kwargs: object) -> CustomerAgentStepV1:
-        return CustomerAgentStepV1(calls=[CustomerToolCallV1(name="file_note", title="Note")])
+    async def _route_file_note(
+        _schema: object, **_kwargs: object
+    ) -> CustomerAgentStepV1:
+        return CustomerAgentStepV1(
+            calls=[CustomerToolCallV1(name="file_note", title="Note")]
+        )
 
     cp.events.emit = _capture  # type: ignore[attr-defined]
     cp.model._structured = _route_file_note  # type: ignore[attr-defined]

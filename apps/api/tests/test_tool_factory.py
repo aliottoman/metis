@@ -4,6 +4,7 @@ Exercises the real ControlPlane._author_diagram_code decision (v1 copy path,
 model-authored v2 path, and the canonical fallback when the model produces
 invalid code) using lightweight fakes, plus the v1->v2 builtin seed upgrade.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -22,7 +23,10 @@ from waqil_api.contracts import (
 )
 from waqil_api.control_plane import ControlPlane, _extract_python_source
 from waqil_api.database import Database
-from waqil_api.diagram_source import canonical_diagram_source, canonical_diagram_source_v2
+from waqil_api.diagram_source import (
+    canonical_diagram_source,
+    canonical_diagram_source_v2,
+)
 from waqil_api.tool_registry import REFERENCE_ARCHITECTURE_SLUG, ToolRegistry
 
 
@@ -33,7 +37,9 @@ _SPEC = ArchitectureSpecV1(
         ArchitectureComponentV1(id="api", label="API Server", kind="ApplicationServer"),
     ],
     edges=[ArchitectureEdgeV1(source="web", target="api", label="HTTP")],
-    boundaries=[ArchitectureBoundaryV1(id="cloud", label="Cloud", component_ids=["api"])],
+    boundaries=[
+        ArchitectureBoundaryV1(id="cloud", label="Cloud", component_ids=["api"])
+    ],
 )
 
 
@@ -41,7 +47,9 @@ class _Events:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict]] = []
 
-    async def emit(self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None):
+    async def emit(
+        self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None
+    ):
         self.events.append((event_type, payload or {}))
 
 
@@ -52,11 +60,15 @@ class _Model:
     def __init__(self, broker_reply: str) -> None:
         self._broker_reply = broker_reply
 
-    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+    async def generate(
+        self, request, on_token=None, *, model_aliases=None, on_reasoning=None
+    ):
         return ModelResultV1(model="fake", content=self._broker_reply)
 
     async def diagram_code(self, spec, *, model_aliases=None):
-        return DiagramCodeV1(diagram_code=canonical_diagram_source(spec, ["svg", "png"]))
+        return DiagramCodeV1(
+            diagram_code=canonical_diagram_source(spec, ["svg", "png"])
+        )
 
 
 async def _registry_with_active():
@@ -104,7 +116,9 @@ async def test_invalid_model_code_falls_back_to_canonical() -> None:
     db, registry = await _registry_with_active()
     # The model returns garbage (what the deterministic backend does) -> fallback.
     events = _Events()
-    cp = _fake_control_plane(registry, _Model("Local deterministic response: nonsense"), events)
+    cp = _fake_control_plane(
+        registry, _Model("Local deterministic response: nonsense"), events
+    )
     code, validation, profile, authored_by, reason = await _author(cp, _STATE)
     assert authored_by == "canonical-fallback"
     assert reason is not None  # records why it fell back
@@ -134,7 +148,9 @@ def test_extract_python_source_strips_fences() -> None:
     assert _extract_python_source(fenced) == "from pathlib import Path\nx = 1\n"
     assert _extract_python_source("raw = 1") == "raw = 1\n"
     prose_led = "Here is the function:\n```python\ndef run(inputs, model):\n    return {}\n```\nUsage notes follow."
-    assert _extract_python_source(prose_led) == "def run(inputs, model):\n    return {}\n"
+    assert (
+        _extract_python_source(prose_led) == "def run(inputs, model):\n    return {}\n"
+    )
 
 
 @pytest.mark.asyncio

@@ -166,8 +166,9 @@ def parse_json_output(text: Any) -> Any:
         # inside this function — a stack trace pointing at the scaffold for a
         # missing await in the caller. Name the actual mistake instead.
         hint = (
-            " — extract_document() and generate() are async, so the call needs"
-            " `await`" if type(text).__name__ == "coroutine" else ""
+            " — extract_document() and generate() are async, so the call needs `await`"
+            if type(text).__name__ == "coroutine"
+            else ""
         )
         raise ExtractionError(
             f"parse_json_output expects the reply text, got {type(text).__name__}{hint}"

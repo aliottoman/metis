@@ -51,9 +51,11 @@ async def test_event_sequences_and_tool_activation_are_idempotent(tmp_path) -> N
         tool, version, proposal = await database.create_tool_candidate(
             manifest, report, run.id, "/bundle"
         )
-        replay_tool, replay_version, replay_proposal = await database.create_tool_candidate(
-            manifest, report, run.id, "/bundle"
-        )
+        (
+            replay_tool,
+            replay_version,
+            replay_proposal,
+        ) = await database.create_tool_candidate(manifest, report, run.id, "/bundle")
         assert (replay_tool.id, replay_version.id, replay_proposal.id) == (
             tool.id,
             version.id,
@@ -105,7 +107,9 @@ async def test_event_sequences_and_tool_activation_are_idempotent(tmp_path) -> N
 
 
 @pytest.mark.asyncio
-async def test_migrations_upgrade_real_v1_are_idempotent_and_reject_future(tmp_path) -> None:
+async def test_migrations_upgrade_real_v1_are_idempotent_and_reject_future(
+    tmp_path,
+) -> None:
     path = tmp_path / "legacy-v1.db"
     connection = sqlite3.connect(path)
     connection.executescript(SCHEMA_V1)
@@ -131,9 +135,12 @@ async def test_migrations_upgrade_real_v1_are_idempotent_and_reject_future(tmp_p
     await reopened.close()
 
     connection = sqlite3.connect(path)
-    versions = [row[0] for row in connection.execute(
-        "SELECT version FROM schema_migrations ORDER BY version"
-    )]
+    versions = [
+        row[0]
+        for row in connection.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        )
+    ]
     objects = {
         row[0]
         for row in connection.execute(
@@ -253,7 +260,9 @@ async def test_rollback_atomically_selects_prior_immutable_version(tmp_path) -> 
         assert result == replay
         assert result["prior_version_id"] == second.id
         assert (await database.list_tools())[0].active_version_id == first.id
-        states = {item.id: item.state for item in await database.list_tool_versions(tool.id)}
+        states = {
+            item.id: item.state for item in await database.list_tool_versions(tool.id)
+        }
         assert states[first.id] == ToolState.ACTIVE
         assert states[second.id] == ToolState.APPROVED
     finally:
@@ -322,7 +331,9 @@ async def test_tool_improvement_decisions_queue_or_activate_exact_evaluated_revi
         )
         assert queued == replay
         assert queued["outcome"] == "revision_queued"
-        request = await database.get_tool_revision_request(queued["revision_request_id"])
+        request = await database.get_tool_revision_request(
+            queued["revision_request_id"]
+        )
         assert request is not None
         assert request.status == "queued"
         assert request.base_version_id == base.id
@@ -347,7 +358,9 @@ async def test_tool_improvement_decisions_queue_or_activate_exact_evaluated_revi
                 next_run.id, "Keep the database private"
             )
         )[0]
-        candidate_message = await database.add_message(conversation.id, "user", "repair")
+        candidate_message = await database.add_message(
+            conversation.id, "user", "repair"
+        )
         candidate_run = await database.create_run(
             conversation.id,
             candidate_message.id,

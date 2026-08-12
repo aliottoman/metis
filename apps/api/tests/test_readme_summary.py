@@ -5,6 +5,7 @@ a deterministic host fallback, then an output-contract check. These tests prove
 it (a) uses a valid model reply, (b) NEVER fails — it degrades to a deterministic
 summary on any broker/parse problem, and (c) always emits a contract-valid output.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -18,7 +19,9 @@ class _Events:
     def __init__(self) -> None:
         self.events: list[str] = []
 
-    async def emit(self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None):
+    async def emit(
+        self, run_id, conversation_id, event_type, payload=None, checkpoint_id=None
+    ):
         self.events.append(event_type)
 
 
@@ -28,7 +31,9 @@ class _BoomModel:
 
 
 def _definition():
-    draft = ToolDefinitionDraftV1(name="Readme Summary", description="summarize a readme")
+    draft = ToolDefinitionDraftV1(
+        name="Readme Summary", description="summarize a readme"
+    )
     return tool_authoring.harden_draft(draft, slug="readme-summary", max_broker_calls=4)
 
 
@@ -55,7 +60,9 @@ async def test_valid_model_reply_is_used() -> None:
         '"stack": ["Rust"], "summary": "Widget is a small CLI written in Rust."}'
     )
     output, meta = await readme_summary.run(
-        definition, {"text": _README}, _broker(ScriptedModel([reply]), definition, events)
+        definition,
+        {"text": _README},
+        _broker(ScriptedModel([reply]), definition, events),
     )
     assert meta["authored_by"] == "model"
     assert output["title"] == "Widget"
@@ -69,7 +76,9 @@ async def test_valid_model_reply_is_used() -> None:
 async def test_malformed_reply_falls_back_to_deterministic() -> None:
     definition = _definition()
     output, meta = await readme_summary.run(
-        definition, {"text": _README}, _broker(ScriptedModel(["not json at all"]), definition, _Events())
+        definition,
+        {"text": _README},
+        _broker(ScriptedModel(["not json at all"]), definition, _Events()),
     )
     assert meta["authored_by"] == "deterministic-fallback"
     # The deterministic summary still satisfies the contract and reads the README.
@@ -100,7 +109,9 @@ async def test_budget_exhaustion_degrades_cleanly() -> None:
     # Spend the single call, then run — the interpreter must fall back, not raise.
     await broker.call(template_id="summarize", role="reviewer", params={"text": "x"})
     with pytest.raises(BrokerBudgetExceeded):
-        await broker.call(template_id="summarize", role="reviewer", params={"text": "y"})
+        await broker.call(
+            template_id="summarize", role="reviewer", params={"text": "y"}
+        )
     output, meta = await readme_summary.run(definition, {"text": _README}, broker)
     assert meta["authored_by"] == "deterministic-fallback"
     ok, _ = tool_contracts.matches_contract(output, definition.output_contract)
@@ -112,7 +123,9 @@ async def test_partial_reply_is_coerced_and_completed() -> None:
     definition = _definition()
     # Only a title; the rest must be filled from the deterministic fallback.
     output, _ = await readme_summary.run(
-        definition, {"text": _README}, _broker(ScriptedModel(['{"title": "Custom Title"}']), definition, _Events())
+        definition,
+        {"text": _README},
+        _broker(ScriptedModel(['{"title": "Custom Title"}']), definition, _Events()),
     )
     assert output["title"] == "Custom Title"
     ok, _ = tool_contracts.matches_contract(output, definition.output_contract)
@@ -144,7 +157,10 @@ async def test_no_model_access_uses_fallback() -> None:
 def test_contract_checker_accepts_valid_object() -> None:
     schema = {
         "type": "object",
-        "properties": {"a": {"type": "string"}, "b": {"type": "array", "items": {"type": "string"}}},
+        "properties": {
+            "a": {"type": "string"},
+            "b": {"type": "array", "items": {"type": "string"}},
+        },
         "required": ["a", "b"],
         "additionalProperties": False,
     }
@@ -155,7 +171,10 @@ def test_contract_checker_accepts_valid_object() -> None:
 def test_contract_checker_flags_missing_and_wrong_types() -> None:
     schema = {
         "type": "object",
-        "properties": {"a": {"type": "string"}, "b": {"type": "array", "items": {"type": "string"}}},
+        "properties": {
+            "a": {"type": "string"},
+            "b": {"type": "array", "items": {"type": "string"}},
+        },
         "required": ["a", "b"],
         "additionalProperties": False,
     }

@@ -6,6 +6,7 @@ import {
   createMemoryProposal,
   decideToolImprovement,
   getConversation,
+  getHealth,
   getNotionConnection,
   getToolImprovementEvidence,
   listRecoverableRuns,
@@ -25,6 +26,40 @@ function jsonResponse(value: unknown, status = 200): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+test("normalizes advanced project coding readiness from health details", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => jsonResponse({
+    status: "degraded",
+    version: "0.1.0",
+    database: true,
+    reference_runner: "deterministic",
+    details: {
+      model: { reachable: true },
+      project_coding_engine: {
+        configured: "clinecore",
+        ready: false,
+        sidecar_built: false,
+        sidecar_readable: false,
+        reason: "Advanced project coding is selected, but its local coding service has not been built.",
+      },
+    },
+  });
+
+  try {
+    const health = await getHealth();
+    assert.equal(health.status, "degraded");
+    assert.deepEqual(health.project_coding_engine, {
+      configured: "clinecore",
+      ready: false,
+      sidecar_built: false,
+      sidecar_readable: false,
+      reason: "Advanced project coding is selected, but its local coding service has not been built.",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("hydrates persisted message run IDs and selects the latest run for replay", async () => {
   const originalFetch = globalThis.fetch;
@@ -200,6 +235,51 @@ test("pins OCI provider and native tools in model preferences", async () => {
     });
     assert.equal(preference.provider, "oci");
     assert.equal(preference.oci_available, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("pins ClinePass and keeps its backend-owned catalog and role ladders", async () => {
+  const originalFetch = globalThis.fetch;
+  let body: unknown;
+  globalThis.fetch = async (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return jsonResponse({
+      mode: "split",
+      model: null,
+      provider: "cline",
+      oci_tools: [],
+      role_chains: {
+        planner: [{ provider: "cline", model: "cline-pass/qwen3.7-plus" }],
+      },
+      cline_available: true,
+      cline_models: [
+        "cline-pass/qwen3.7-plus",
+        "cline-pass/glm-5.2",
+        "cline-pass/deepseek-v4-pro",
+      ],
+    });
+  };
+  try {
+    const preference = await setModelPreference("split", null, "cline", []);
+    assert.deepEqual(body, {
+      mode: "split",
+      model: null,
+      provider: "cline",
+      oci_tools: [],
+    });
+    assert.equal(preference.provider, "cline");
+    assert.equal(preference.cline_available, true);
+    assert.deepEqual(preference.cline_models, [
+      "cline-pass/qwen3.7-plus",
+      "cline-pass/glm-5.2",
+      "cline-pass/deepseek-v4-pro",
+    ]);
+    assert.equal(
+      preference.role_chains.planner?.[0]?.model,
+      "cline-pass/qwen3.7-plus",
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

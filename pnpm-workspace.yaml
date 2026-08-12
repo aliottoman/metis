@@ -1,6 +1,9 @@
 packages:
+  - apps/cline-sidecar
   - apps/web
 
 confirmModulesPurge: false
 allowBuilds:
+  # Its audited postinstall only checks peer version-scheme compatibility.
+  protobufjs: true
   sharp: true

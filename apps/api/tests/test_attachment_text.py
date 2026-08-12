@@ -27,7 +27,12 @@ def packaged(files: dict[str, str]) -> bytes:
 def png_image(width: int = 2, height: int = 3) -> bytes:
     def chunk(kind: bytes, payload: bytes) -> bytes:
         checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
-        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+        return (
+            struct.pack(">I", len(payload))
+            + kind
+            + payload
+            + struct.pack(">I", checksum)
+        )
 
     header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
     scanlines = b"".join(b"\x00" + (b"\x00" * width * 4) for _ in range(height))
@@ -51,7 +56,11 @@ def text_pdf(text: str) -> bytes:
             b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
         ),
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Length "
+        + str(len(stream)).encode()
+        + b" >>\nstream\n"
+        + stream
+        + b"\nendstream",
     ]
     result = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
     offsets = [0]
@@ -77,14 +86,19 @@ def text_pdf(text: str) -> bytes:
 def test_supported_text_and_source_files_are_bounded() -> None:
     assert supports_attachment("notes.md", "text/markdown")
     assert supports_attachment("analysis.ipynb", "application/json")
-    assert extract_attachment_text(
-        "notes.md", "text/markdown", b"hello\r\nworld", max_bytes=64
-    ) == "hello\nworld"
+    assert (
+        extract_attachment_text(
+            "notes.md", "text/markdown", b"hello\r\nworld", max_bytes=64
+        )
+        == "hello\nworld"
+    )
     with pytest.raises(AttachmentTextTooLargeError):
         extract_attachment_text("notes.md", "text/plain", b"too long", max_bytes=3)
 
 
-@pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext is unavailable")
+@pytest.mark.skipif(
+    shutil.which("pdftotext") is None, reason="pdftotext is unavailable"
+)
 def test_pdf_text_is_extracted_with_page_provenance() -> None:
     extracted = extract_attachment_text(
         "brief.pdf",
@@ -97,12 +111,14 @@ def test_pdf_text_is_extracted_with_page_provenance() -> None:
 
 
 def test_docx_pptx_and_xlsx_are_normalized_without_optional_packages() -> None:
-    docx = packaged({
-        "word/document.xml": (
-            '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Hello DOCX</w:t>'
-            "</w:r></w:p></w:body></w:document>"
-        )
-    })
+    docx = packaged(
+        {
+            "word/document.xml": (
+                '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Hello DOCX</w:t>'
+                "</w:r></w:p></w:body></w:document>"
+            )
+        }
+    )
     assert "Hello DOCX" in extract_attachment_text(
         "brief.docx",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -110,12 +126,14 @@ def test_docx_pptx_and_xlsx_are_normalized_without_optional_packages() -> None:
         max_bytes=1_000,
     )
 
-    pptx = packaged({
-        "ppt/slides/slide1.xml": (
-            '<p:sld xmlns:p="urn:p" xmlns:a="urn:a"><p:cSld><a:p><a:r>'
-            "<a:t>Slide copy</a:t></a:r></a:p></p:cSld></p:sld>"
-        )
-    })
+    pptx = packaged(
+        {
+            "ppt/slides/slide1.xml": (
+                '<p:sld xmlns:p="urn:p" xmlns:a="urn:a"><p:cSld><a:p><a:r>'
+                "<a:t>Slide copy</a:t></a:r></a:p></p:cSld></p:sld>"
+            )
+        }
+    )
     presentation = extract_attachment_text(
         "deck.pptx",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -124,15 +142,17 @@ def test_docx_pptx_and_xlsx_are_normalized_without_optional_packages() -> None:
     )
     assert "Slide 1" in presentation and "Slide copy" in presentation
 
-    xlsx = packaged({
-        "xl/sharedStrings.xml": (
-            '<sst xmlns="urn:x"><si><t>Revenue</t></si></sst>'
-        ),
-        "xl/worksheets/sheet1.xml": (
-            '<worksheet xmlns="urn:x"><sheetData><row><c t="s"><v>0</v></c>'
-            "<c><v>42</v></c></row></sheetData></worksheet>"
-        ),
-    })
+    xlsx = packaged(
+        {
+            "xl/sharedStrings.xml": (
+                '<sst xmlns="urn:x"><si><t>Revenue</t></si></sst>'
+            ),
+            "xl/worksheets/sheet1.xml": (
+                '<worksheet xmlns="urn:x"><sheetData><row><c t="s"><v>0</v></c>'
+                "<c><v>42</v></c></row></sheetData></worksheet>"
+            ),
+        }
+    )
     workbook = extract_attachment_text(
         "data.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -159,11 +179,15 @@ def test_raster_images_are_validated_and_represented_as_bounded_metadata() -> No
 def test_invalid_or_unsafe_packages_are_rejected() -> None:
     unsafe = packaged({"../word/document.xml": "<document />"})
     with pytest.raises(AttachmentExtractionError, match="unsafe path"):
-        extract_attachment_text("brief.docx", "application/octet-stream", unsafe, max_bytes=100)
+        extract_attachment_text(
+            "brief.docx", "application/octet-stream", unsafe, max_bytes=100
+        )
 
     corrupt_buffer = io.BytesIO()
     with zipfile.ZipFile(corrupt_buffer, "w", zipfile.ZIP_STORED) as archive:
         archive.writestr("word/document.xml", "<document>known-payload</document>")
     corrupt = corrupt_buffer.getvalue().replace(b"known-payload", b"broken-payload")
     with pytest.raises(AttachmentExtractionError, match="corrupt or unsupported"):
-        extract_attachment_text("brief.docx", "application/octet-stream", corrupt, max_bytes=100)
+        extract_attachment_text(
+            "brief.docx", "application/octet-stream", corrupt, max_bytes=100
+        )

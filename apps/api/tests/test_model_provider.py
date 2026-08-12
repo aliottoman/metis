@@ -105,7 +105,9 @@ def test_json_extraction_uses_first_complete_object_and_ignores_model_chatter() 
 
 
 @pytest.mark.asyncio
-async def test_malformed_structured_response_gets_one_direct_schema_repair(settings) -> None:
+async def test_malformed_structured_response_gets_one_direct_schema_repair(
+    settings,
+) -> None:
     repaired = {
         "schema_version": "1",
         "summary": "Respond directly.",
@@ -123,7 +125,7 @@ async def test_malformed_structured_response_gets_one_direct_schema_repair(setti
     result = await provider._structured(
         PlanEnvelopeV1,
         system_prompt=PLANNER_SYSTEM,
-        user_prompt="<planning-input>{\"prompt\":\"hello\"}</planning-input>",
+        user_prompt='<planning-input>{"prompt":"hello"}</planning-input>',
     )
     assert result.route == "direct"
     assert fake.calls == 2
@@ -162,9 +164,12 @@ async def test_the_schema_on_the_wire_is_projected_not_the_contract(settings) ->
     assert not value_constraints(sent)
     assert "maxLength" not in json.dumps(sent)
     # The contract itself is untouched — Pydantic still enforces the bound.
-    assert ProjectBuildStepWireV1.model_json_schema()["properties"]["response"][
-        "maxLength"
-    ] == 40_000
+    assert (
+        ProjectBuildStepWireV1.model_json_schema()["properties"]["response"][
+            "maxLength"
+        ]
+        == 40_000
+    )
 
 
 def test_the_wire_schemas_close_the_tool_arguments_object() -> None:
@@ -202,9 +207,7 @@ def test_the_wire_schemas_close_the_tool_arguments_object() -> None:
 async def test_invalid_north_code_gets_exactly_one_semantic_repair(settings) -> None:
     spec = ArchitectureSpecV1(
         title="Local service",
-        components=[
-            ArchitectureComponentV1(id="api", label="API", kind="service")
-        ],
+        components=[ArchitectureComponentV1(id="api", label="API", kind="service")],
     )
     repaired_code = canonical_diagram_source(spec, ["svg", "png"])
     fake = FakeChat(
@@ -232,7 +235,9 @@ async def test_invalid_north_code_gets_exactly_one_semantic_repair(settings) -> 
 
 
 @pytest.mark.asyncio
-async def test_hallucinated_active_tool_route_is_normalized_without_a_repair(settings) -> None:
+async def test_hallucinated_active_tool_route_is_normalized_without_a_repair(
+    settings,
+) -> None:
     """The host rebuilds the route from local policy on the *first* reply.
 
     It always could — normalize_plan_payload is the authority on route, risk and
@@ -344,7 +349,9 @@ def test_planning_attachment_evidence_is_bounded_and_shape_only() -> None:
         "component_relationships",
         "deployment_configuration",
     ]
-    assert all("permission" not in signal and "network" not in signal for signal in signals)
+    assert all(
+        "permission" not in signal and "network" not in signal for signal in signals
+    )
 
 
 def test_vague_readme_request_routes_from_attachment_shape_evidence() -> None:
@@ -404,7 +411,9 @@ def test_attachment_instructions_cannot_initiate_or_authorize_a_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ollama_planner_receives_explicitly_untrusted_attachment_evidence() -> None:
+async def test_ollama_planner_receives_explicitly_untrusted_attachment_evidence() -> (
+    None
+):
     class CapturingProvider(OllamaModelProvider):
         def __init__(self):
             self.captured = None
@@ -554,7 +563,11 @@ async def test_oci_responses_uses_native_tools_without_service_memory(settings) 
     )
     provider = CapturingOCIProvider(
         cloud_settings,
-        [SimpleNamespace(output_text="Cloud answer", model="xai.grok-4.3", id="resp_1")],
+        [
+            SimpleNamespace(
+                output_text="Cloud answer", model="xai.grok-4.3", id="resp_1"
+            )
+        ],
     )
     result = await provider.generate(
         ModelRequestV1(
@@ -606,7 +619,10 @@ async def test_oci_project_agent_uses_local_function_contracts(settings) -> None
                         type="function_call",
                         name="finish_project_task",
                         arguments=json.dumps(
-                            {"response": "Mapped the entrypoint.", "learnings": ["src/main.ts is the entrypoint."]}
+                            {
+                                "response": "Mapped the entrypoint.",
+                                "learnings": ["src/main.ts is the entrypoint."],
+                            }
                         ),
                     )
                 ],
@@ -674,7 +690,9 @@ async def test_routed_provider_pins_selection_from_saved_run_aliases(settings) -
         def __init__(self, name):
             self.name = name
 
-        async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+        async def generate(
+            self, request, on_token=None, *, model_aliases=None, on_reasoning=None
+        ):
             from waqil_api.contracts import ModelResultV1
 
             return ModelResultV1(model=self.name, content=self.name)
@@ -683,8 +701,12 @@ async def test_routed_provider_pins_selection_from_saved_run_aliases(settings) -
     cloud = FakeProvider("cloud")
     routed = RoutedModelProvider(local, cloud)
     request = ModelRequestV1(role="planner", system_prompt="s", user_prompt="u")
-    assert (await routed.generate(request, model_aliases={"_provider": "local"})).model == "local"
-    assert (await routed.generate(request, model_aliases={"_provider": "oci"})).model == "cloud"
+    assert (
+        await routed.generate(request, model_aliases={"_provider": "local"})
+    ).model == "local"
+    assert (
+        await routed.generate(request, model_aliases={"_provider": "oci"})
+    ).model == "cloud"
 
 
 @pytest.mark.asyncio
@@ -806,7 +828,9 @@ async def test_thinking_is_never_requested_from_a_model_without_it(settings) -> 
 
 
 @pytest.mark.asyncio
-async def test_a_trailing_end_of_turn_marker_does_not_waste_a_repair_pass(settings) -> None:
+async def test_a_trailing_end_of_turn_marker_does_not_waste_a_repair_pass(
+    settings,
+) -> None:
     """The exact shape that ended a real project build.
 
     The model emitted one correct step object, then '<EOS_TOKEN>' and a sentence
@@ -839,7 +863,9 @@ async def test_a_trailing_end_of_turn_marker_does_not_waste_a_repair_pass(settin
 
 
 @pytest.mark.asyncio
-async def test_a_grammar_rejection_fails_fast_instead_of_buying_a_repair(settings) -> None:
+async def test_a_grammar_rejection_fails_fast_instead_of_buying_a_repair(
+    settings,
+) -> None:
     """A backend that will not compile the grammar refused the request before the
     model ran. Asking again identically is guaranteed to fail the same way, and
     the second failure is what used to hide the first: the caller received
@@ -873,7 +899,9 @@ async def test_a_grammar_rejection_fails_fast_instead_of_buying_a_repair(setting
 
 
 @pytest.mark.asyncio
-async def test_the_preflight_names_every_schema_the_backend_will_not_compile(settings) -> None:
+async def test_the_preflight_names_every_schema_the_backend_will_not_compile(
+    settings,
+) -> None:
     """The check that turns three days of bisecting into two seconds. It has to
     ask the backend, because whether a schema compiles is a property of the
     runtime — the same schemas build on MLX and are refused by llama.cpp."""
@@ -930,7 +958,9 @@ async def test_local_project_step_forbids_completion_on_a_build_turn() -> None:
             # coder_model present so the transport fork (hosted vs grammar)
             # can resolve a model name; a local name keeps the grammar path.
             self.settings = SimpleNamespace(
-                max_output_tokens=8192, project_write_max_output_tokens=32_768, coder_model="qwen3-coder:30b"
+                max_output_tokens=8192,
+                project_write_max_output_tokens=32_768,
+                coder_model="qwen3-coder:30b",
             )
 
         async def _structured(self, schema, **kwargs):
@@ -973,7 +1003,9 @@ async def test_a_refused_argument_shape_narrows_the_next_step_to_that_tool() -> 
             # coder_model present so the transport fork (hosted vs grammar)
             # can resolve a model name; a local name keeps the grammar path.
             self.settings = SimpleNamespace(
-                max_output_tokens=8192, project_write_max_output_tokens=32_768, coder_model="qwen3-coder:30b"
+                max_output_tokens=8192,
+                project_write_max_output_tokens=32_768,
+                coder_model="qwen3-coder:30b",
             )
 
         async def _structured(self, schema, **kwargs):
@@ -1004,12 +1036,16 @@ async def test_a_refused_argument_shape_narrows_the_next_step_to_that_tool() -> 
     assert step.tool_call is not None and step.tool_call.name == "apply_patch"
 
     # An unknown or empty retry tool leaves the normal selection alone.
-    await provider.project_step({"build_turn": False, "user_request": "x", "retry_tool": ""})
+    await provider.project_step(
+        {"build_turn": False, "user_request": "x", "retry_tool": ""}
+    )
     assert provider.captured["constraint"] is None
 
 
 @pytest.mark.asyncio
-async def test_a_refused_write_target_pins_the_next_step_to_the_files_still_owed() -> None:
+async def test_a_refused_write_target_pins_the_next_step_to_the_files_still_owed() -> (
+    None
+):
     """A live build spent 43 create_file calls to produce 11 files, re-sending
     paths it had already staged. After that refusal the next grammar can only
     name a file the build still owes — or the refused path, so revising it with
@@ -1023,7 +1059,9 @@ async def test_a_refused_write_target_pins_the_next_step_to_the_files_still_owed
             # coder_model present so the transport fork (hosted vs grammar)
             # can resolve a model name; a local name keeps the grammar path.
             self.settings = SimpleNamespace(
-                max_output_tokens=8192, project_write_max_output_tokens=32_768, coder_model="qwen3-coder:30b"
+                max_output_tokens=8192,
+                project_write_max_output_tokens=32_768,
+                coder_model="qwen3-coder:30b",
             )
 
         async def _structured(self, schema, **kwargs):
@@ -1045,10 +1083,10 @@ async def test_a_refused_write_target_pins_the_next_step_to_the_files_still_owed
 
     constraint = provider.captured["constraint"]
     assert constraint["properties"]["tool"]["enum"] == [
-            "create_file",
-            "apply_patch",
-            "replace_lines",
-        ]
+        "create_file",
+        "apply_patch",
+        "replace_lines",
+    ]
     assert constraint["properties"]["arguments"]["properties"]["path"]["enum"] == [
         "app/config.py",
         "README.md",
@@ -1070,11 +1108,15 @@ async def test_a_refused_write_target_pins_the_next_step_to_the_files_still_owed
             "retry_tool": "create_file",
         }
     )
-    assert provider.captured["constraint"]["properties"]["tool"]["enum"] == ["create_file"]
+    assert provider.captured["constraint"]["properties"]["tool"]["enum"] == [
+        "create_file"
+    ]
     assert "refused for its arguments" in provider.captured["system_prompt"]
 
     # With nothing owed there is nothing to pin to, and the normal grammar returns.
-    await provider.project_step({"build_turn": True, "user_request": "x", "write_pin": []})
+    await provider.project_step(
+        {"build_turn": True, "user_request": "x", "write_pin": []}
+    )
     assert provider.captured["constraint"] is None
 
 
@@ -1091,12 +1133,16 @@ async def test_the_step_prompt_names_the_files_the_build_still_owes() -> None:
             # coder_model present so the transport fork (hosted vs grammar)
             # can resolve a model name; a local name keeps the grammar path.
             self.settings = SimpleNamespace(
-                max_output_tokens=8192, project_write_max_output_tokens=32_768, coder_model="qwen3-coder:30b"
+                max_output_tokens=8192,
+                project_write_max_output_tokens=32_768,
+                coder_model="qwen3-coder:30b",
             )
 
         async def _structured(self, schema, **kwargs):
             self.captured = {"schema": schema, **kwargs}
-            return ProjectAgentStepWireV1(status="complete", response="done", learnings=[])
+            return ProjectAgentStepWireV1(
+                status="complete", response="done", learnings=[]
+            )
 
     provider = CapturingProvider()
     await provider.project_step(
@@ -1128,12 +1174,16 @@ async def test_a_finished_manifest_tells_the_model_it_is_done() -> None:
             # coder_model present so the transport fork (hosted vs grammar)
             # can resolve a model name; a local name keeps the grammar path.
             self.settings = SimpleNamespace(
-                max_output_tokens=8192, project_write_max_output_tokens=32_768, coder_model="qwen3-coder:30b"
+                max_output_tokens=8192,
+                project_write_max_output_tokens=32_768,
+                coder_model="qwen3-coder:30b",
             )
 
         async def _structured(self, schema, **kwargs):
             self.captured = {"schema": schema, **kwargs}
-            return ProjectAgentStepWireV1(status="complete", response="done", learnings=[])
+            return ProjectAgentStepWireV1(
+                status="complete", response="done", learnings=[]
+            )
 
     provider = CapturingProvider()
     await provider.project_step(
@@ -1171,7 +1221,9 @@ async def test_a_stale_oci_alias_degrades_instead_of_breaking_the_run(settings) 
             self.name = name
             self.available = available
 
-        async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+        async def generate(
+            self, request, on_token=None, *, model_aliases=None, on_reasoning=None
+        ):
             from waqil_api.contracts import ModelResultV1
 
             return ModelResultV1(model=self.name, content=self.name)
@@ -1189,7 +1241,9 @@ async def test_a_stale_oci_alias_degrades_instead_of_breaking_the_run(settings) 
     ).model == "cohere"
 
     # Lane off, no Cohere: local carries it.
-    routed = RoutedModelProvider(FakeProvider("local"), FakeProvider("cloud", available=False))
+    routed = RoutedModelProvider(
+        FakeProvider("local"), FakeProvider("cloud", available=False)
+    )
     assert (
         await routed.generate(request, model_aliases={"_provider": "oci"})
     ).model == "local"

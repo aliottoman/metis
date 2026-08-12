@@ -2,13 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, AsyncIterator, Literal
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from .asset_library import AssetLibraryError
@@ -109,6 +119,7 @@ from .contracts import (
     PersonalProfileV1,
     PersonalProfileUpdateV1,
     ProjectOpenV1,
+    ProjectProtectionsV1,
     ProjectVerificationV1,
     ProjectWorkspaceV1,
     MessageAcceptedV1,
@@ -158,7 +169,9 @@ def runtime(request: Request) -> AppRuntime:
 
 
 def not_found(kind: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{kind} not found")
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail=f"{kind} not found"
+    )
 
 
 # Which provider each continuous project mode rides on. A mode absent from
@@ -218,9 +231,31 @@ async def health(request: Request) -> HealthV1:
         app.settings.reference_runner_mode == "deterministic"
         or app.settings.reference_sandbox_runner.is_file()
     )
+    coding_engine = app.settings.project_coding_engine
+    sidecar_path = app.settings.cline_sidecar_path
+    sidecar_built = sidecar_path.is_file()
+    sidecar_readable = sidecar_built and os.access(sidecar_path, os.R_OK)
+    coding_engine_ready = app.coding_engine_ready
+    coding_engine_reason = app.coding_engine_readiness_error
+    if coding_engine == "clinecore" and not sidecar_built:
+        coding_engine_reason = (
+            "Vertical-slice project coding is unavailable because its local service "
+            "has not been built."
+        )
+    elif coding_engine == "clinecore" and not sidecar_readable:
+        coding_engine_reason = (
+            "Vertical-slice project coding is unavailable because its local service "
+            "cannot be read."
+        )
+    coding_info = app.coding_engine_info
     return HealthV1(
         status="ok"
-        if database_ok and app.checkpointer is not None and model_health.get("reachable")
+        if (
+            database_ok
+            and app.checkpointer is not None
+            and model_health.get("reachable")
+            and coding_engine_ready
+        )
         else "degraded",
         version="0.1.0",
         database=database_ok,
@@ -231,6 +266,18 @@ async def health(request: Request) -> HealthV1:
             "runner_available": runner_available,
             "deep_worker_available": app.deep_worker_factory is not None,
             "model": model_health,
+            "project_coding_engine": {
+                "configured": coding_engine,
+                "ready": coding_engine_ready,
+                "sidecar_built": sidecar_built,
+                "sidecar_readable": sidecar_readable,
+                "reason": coding_engine_reason,
+                "handshake": (
+                    coding_info.model_dump(mode="json", by_alias=True)
+                    if coding_info is not None
+                    else None
+                ),
+            },
         },
     )
 
@@ -314,9 +361,7 @@ async def attention_feed(request: Request, top: int = 3) -> AttentionFeedV1:
 
 
 @router.post("/attention/defer", response_model=AttentionFeedV1)
-async def defer_attention(
-    body: AttentionDeferV1, request: Request
-) -> AttentionFeedV1:
+async def defer_attention(body: AttentionDeferV1, request: Request) -> AttentionFeedV1:
     """Snooze an item. Deferring is a decision, not a dismissal — the item
     returns on its own date instead of being silently dropped."""
     app = runtime(request)
@@ -418,7 +463,9 @@ async def batch_attention(
                     if body.decision == "approve"
                     else ProposalStatus.REJECTED
                 )
-                await app.database.decide_memory_proposal(record_id, mapped, body.reason)
+                await app.database.decide_memory_proposal(
+                    record_id, mapped, body.reason
+                )
                 memory_approved = memory_approved or body.decision == "approve"
             elif kind == "customer_action" and body.decision == "approve":
                 await app.database.update_customer_action(record_id, status="done")
@@ -466,7 +513,8 @@ async def list_customer_accounts(request: Request) -> list[CustomerAccountV1]:
 
 
 @router.post(
-    "/customers", response_model=CustomerAccountV1,
+    "/customers",
+    response_model=CustomerAccountV1,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_customer_account(
@@ -515,7 +563,8 @@ async def delete_customer_account(account_id: str, request: Request) -> Response
 
 
 @router.post(
-    "/customers/sources", response_model=CustomerSourceV1,
+    "/customers/sources",
+    response_model=CustomerSourceV1,
     status_code=status.HTTP_201_CREATED,
 )
 async def capture_customer_source(
@@ -629,9 +678,7 @@ def _person_contract(value: dict[str, Any]) -> CustomerPersonV1:
     return CustomerPersonV1.model_validate(value)
 
 
-@router.patch(
-    "/customers/actions/{action_id}", response_model=CustomerActionV1
-)
+@router.patch("/customers/actions/{action_id}", response_model=CustomerActionV1)
 async def update_customer_action(
     action_id: str, body: CustomerActionStatusV1, request: Request
 ) -> CustomerActionV1:
@@ -649,7 +696,8 @@ async def update_customer_action(
 
 
 @router.post(
-    "/customers/{account_id}/actions", response_model=CustomerActionV1,
+    "/customers/{account_id}/actions",
+    response_model=CustomerActionV1,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_customer_action(
@@ -682,9 +730,7 @@ async def edit_customer_action(
     return _action_contract(value)
 
 
-@router.delete(
-    "/customers/actions/{action_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/customers/actions/{action_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_customer_action(action_id: str, request: Request) -> Response:
     if not await runtime(request).database.delete_customer_action(action_id):
         raise not_found("customer action")
@@ -692,7 +738,8 @@ async def delete_customer_action(action_id: str, request: Request) -> Response:
 
 
 @router.post(
-    "/customers/{account_id}/facts", response_model=CustomerFactV1,
+    "/customers/{account_id}/facts",
+    response_model=CustomerFactV1,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_customer_fact(
@@ -726,7 +773,8 @@ async def delete_customer_fact(fact_id: str, request: Request) -> Response:
 
 
 @router.post(
-    "/customers/{account_id}/people", response_model=CustomerPersonV1,
+    "/customers/{account_id}/people",
+    response_model=CustomerPersonV1,
     status_code=status.HTTP_201_CREATED,
 )
 async def add_customer_person(
@@ -789,9 +837,7 @@ async def update_customer_source(
     )
 
 
-@router.delete(
-    "/customers/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/customers/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_customer_source(source_id: str, request: Request) -> Response:
     if not await runtime(request).database.delete_customer_source(source_id):
         raise not_found("customer source")
@@ -802,7 +848,8 @@ async def delete_customer_source(source_id: str, request: Request) -> Response:
 
 
 @router.post(
-    "/customers/{account_id}/notes", response_model=CustomerNoteV1,
+    "/customers/{account_id}/notes",
+    response_model=CustomerNoteV1,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_customer_note(
@@ -842,7 +889,8 @@ async def delete_customer_note(note_id: str, request: Request) -> Response:
 
 
 @router.post(
-    "/customers/{account_id}/wins", response_model=CustomerWinV1,
+    "/customers/{account_id}/wins",
+    response_model=CustomerWinV1,
     status_code=status.HTTP_201_CREATED,
 )
 async def record_customer_win(
@@ -926,7 +974,9 @@ async def accept_customer_win_valuation(
         ) from None
 
 
-@router.post("/customers/wins/{win_id}/valuation/dismiss", response_model=WinValuationV1)
+@router.post(
+    "/customers/wins/{win_id}/valuation/dismiss", response_model=WinValuationV1
+)
 async def dismiss_customer_win_valuation(
     win_id: str, request: Request
 ) -> WinValuationV1:
@@ -987,7 +1037,9 @@ async def put_customer_settings(
     body: CustomerSettingsUpdateV1, request: Request
 ) -> CustomerSettingsV1:
     if body.tracker_url and not body.tracker_url.startswith(("https://", "http://")):
-        raise HTTPException(status_code=422, detail="tracker URL must be an HTTP(S) URL")
+        raise HTTPException(
+            status_code=422, detail="tracker URL must be an HTTP(S) URL"
+        )
     return CustomerSettingsV1.model_validate(
         await runtime(request).database.save_customer_settings(
             body.tracker_url, body.activity_template
@@ -996,7 +1048,8 @@ async def put_customer_settings(
 
 
 @router.post(
-    "/customers/{account_id}/outputs", response_model=CustomerOutputV1,
+    "/customers/{account_id}/outputs",
+    response_model=CustomerOutputV1,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_customer_output(
@@ -1027,7 +1080,9 @@ async def scan_assets(request: Request) -> list[AssetV1]:
     try:
         return await runtime(request).assets.scan()
     except AssetLibraryError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 @router.post("/assets/create", response_model=AssetV1)
@@ -1036,25 +1091,27 @@ async def create_asset(body: AssetCreateV1, request: Request) -> AssetV1:
     try:
         return await runtime(request).assets.create(body.name)
     except AssetLibraryError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 @router.post("/assets/{asset_id}/manifest/generate", response_model=AssetV1)
 async def generate_asset_manifest(asset_id: str, request: Request) -> AssetV1:
-    """Draft .metis/asset.json with Command A+ for an asset that has none.
+    """Draft .metis/asset.json with the selected model for an asset that has none.
 
     Generation is not trust: the written recipe arrives launch_configured but
     NOT launch_approved, so the existing fingerprint review — the command
     shown in full, approved by a human — still stands between this draft and
-    anything executing. Cohere sees a bounded, read-only description of the
-    folder; no .env content, no symlink traversal.
+    anything executing. The selected model sees a bounded, read-only
+    description of the folder; no .env content, no symlink traversal.
     """
     app = runtime(request)
-    provider = getattr(app.model, "cohere", None)
-    if provider is None or not provider.available:
+    draft = getattr(app.model, "draft_asset_recipe", None)
+    if draft is None:
         raise HTTPException(
             status_code=503,
-            detail="Recipe generation uses Cohere Command A+ and requires WAQIL_COHERE_API_KEY",
+            detail="the selected model backend cannot generate a launch recipe",
         )
     try:
         project = await app.assets.project_path(asset_id)
@@ -1070,7 +1127,12 @@ async def generate_asset_manifest(asset_id: str, request: Request) -> AssetV1:
     except RecipeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
-        recipe = await provider.draft_asset_recipe(context)
+        recipe = await draft(
+            context,
+            model_aliases=app.model_preference.resolve_aliases(),
+        )
+    except LocalModelSessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ModelProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     try:
@@ -1103,9 +1165,7 @@ async def start_asset(
                 for key in view.env_keys
             }
             # Detection walks the project tree, so it runs off the event loop.
-            environment = await asyncio.to_thread(
-                asset_environment, app.settings, root
-            )
+            environment = await asyncio.to_thread(asset_environment, app.settings, root)
             projected = {
                 name: value
                 for name, value in environment.items()
@@ -1115,7 +1175,9 @@ async def start_asset(
             projected = {}
         return await app.assets.start(asset_id, {**projected, **provided})
     except AssetLibraryError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 @router.post("/assets/{asset_id}/approval", response_model=AssetV1)
@@ -1123,7 +1185,9 @@ async def approve_asset(asset_id: str, request: Request) -> AssetV1:
     try:
         return await runtime(request).assets.approve(asset_id)
     except AssetLibraryError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 @router.delete("/assets/{asset_id}/approval", response_model=AssetV1)
@@ -1131,7 +1195,9 @@ async def revoke_asset_approval(asset_id: str, request: Request) -> AssetV1:
     try:
         return await runtime(request).assets.revoke(asset_id)
     except AssetLibraryError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 @router.post("/assets/{asset_id}/stop", response_model=AssetV1)
@@ -1139,7 +1205,9 @@ async def stop_asset(asset_id: str, request: Request) -> AssetV1:
     try:
         return await runtime(request).assets.stop(asset_id)
     except AssetLibraryError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 @router.put("/assets/{asset_id}/env", response_model=AssetV1)
@@ -1150,7 +1218,9 @@ async def write_asset_env(
     try:
         return await runtime(request).assets.write_env(asset_id, body.values)
     except AssetLibraryError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 @router.get("/assets/{asset_id}/logs", response_model=AssetLogsV1)
@@ -1158,7 +1228,9 @@ async def asset_logs(asset_id: str, request: Request) -> AssetLogsV1:
     try:
         return await runtime(request).assets.logs(asset_id)
     except AssetLibraryError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 # ── Explicit project workspaces ─────────────────────────────────────────────
@@ -1176,7 +1248,9 @@ async def open_project(
 ) -> ProjectWorkspaceV1:
     app = runtime(request)
     if app.projects is None:
-        raise HTTPException(status_code=503, detail="project workspaces are unavailable")
+        raise HTTPException(
+            status_code=503, detail="project workspaces are unavailable"
+        )
     try:
         # `mode` is persisted with the conversation on first send. Opening is a
         # project-level operation and Grok bootstraps only if local context is absent.
@@ -1185,16 +1259,61 @@ async def open_project(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.get(
-    "/projects/{project_id}/verification", response_model=ProjectVerificationV1
-)
+@router.get("/projects/{project_id}/protections")
+async def get_project_protections(project_id: str, request: Request) -> dict[str, Any]:
+    app = runtime(request)
+    if app.projects is None:
+        raise HTTPException(
+            status_code=503, detail="project workspaces are unavailable"
+        )
+    try:
+        root = await app.projects.assets.project_path(project_id)
+        stored = app.projects.read_project_settings(root)
+        preview = await app.projects.preview_project_settings(
+            project_id, stored["protected_files"]
+        )
+    except (AssetLibraryError, ProjectWorkspaceError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**stored, **preview}
+
+
+@router.put("/projects/{project_id}/protections")
+async def put_project_protections(
+    project_id: str, body: ProjectProtectionsV1, request: Request
+) -> dict[str, Any]:
+    """Set the persistent protections. A person does this, never a model.
+
+    Only the HTTP surface can reach it: no project tool writes here, so a
+    coding session cannot widen its own envelope by editing settings.
+    """
+
+    app = runtime(request)
+    if app.projects is None:
+        raise HTTPException(
+            status_code=503, detail="project workspaces are unavailable"
+        )
+    try:
+        stored = await app.projects.write_project_settings(
+            project_id, body.protected_files
+        )
+        preview = await app.projects.preview_project_settings(
+            project_id, stored["protected_files"]
+        )
+    except (AssetLibraryError, ProjectWorkspaceError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**stored, **preview}
+
+
+@router.get("/projects/{project_id}/verification", response_model=ProjectVerificationV1)
 async def get_project_verification(
     project_id: str, request: Request
 ) -> ProjectVerificationV1:
     """The declared checks, their plain-English explanation, and approval state."""
     app = runtime(request)
     if app.projects is None:
-        raise HTTPException(status_code=503, detail="project workspaces are unavailable")
+        raise HTTPException(
+            status_code=503, detail="project workspaces are unavailable"
+        )
     try:
         return await app.projects.verification_view(project_id)
     except (AssetLibraryError, ProjectWorkspaceError) as exc:
@@ -1209,7 +1328,9 @@ async def approve_project_verification(
 ) -> ProjectVerificationV1:
     app = runtime(request)
     if app.projects is None:
-        raise HTTPException(status_code=503, detail="project workspaces are unavailable")
+        raise HTTPException(
+            status_code=503, detail="project workspaces are unavailable"
+        )
     try:
         return await app.projects.approve_verification(project_id)
     except (
@@ -1228,7 +1349,9 @@ async def revoke_project_verification(
 ) -> ProjectVerificationV1:
     app = runtime(request)
     if app.projects is None:
-        raise HTTPException(status_code=503, detail="project workspaces are unavailable")
+        raise HTTPException(
+            status_code=503, detail="project workspaces are unavailable"
+        )
     try:
         return await app.projects.revoke_verification(project_id)
     except (
@@ -1263,7 +1386,9 @@ async def get_conversation(conversation_id: str, request: Request) -> Conversati
     return value
 
 
-@router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_conversation(conversation_id: str, request: Request) -> Response:
     if not await runtime(request).database.delete_conversation(conversation_id):
         raise not_found("conversation")
@@ -1330,24 +1455,30 @@ async def create_message(
     if await app.database.get_conversation(conversation_id) is None:
         raise not_found("conversation")
     if not await app.database.validate_upload_ids(body.attachment_ids):
-        raise HTTPException(status_code=422, detail="one or more attachment IDs are invalid")
+        raise HTTPException(
+            status_code=422, detail="one or more attachment IDs are invalid"
+        )
     attachment_records = await asyncio.gather(
         *(app.database.get_upload_record(item) for item in body.attachment_ids)
     )
     try:
-        extracted = await asyncio.gather(*(
-            asyncio.to_thread(
-                _extract_upload_record,
-                item,
-                app.settings.max_text_attachment_bytes,
+        extracted = await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    _extract_upload_record,
+                    item,
+                    app.settings.max_text_attachment_bytes,
+                )
+                for item in attachment_records
+                if item is not None
             )
-            for item in attachment_records
-            if item is not None
-        ))
+        )
     except AttachmentTextTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     except (AttachmentExtractionError, OSError) as exc:
-        raise HTTPException(status_code=422, detail=f"attachment text could not be read: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"attachment text could not be read: {exc}"
+        ) from exc
     total_attachment_bytes = sum(len(item.encode("utf-8")) for item in extracted)
     if total_attachment_bytes > app.settings.max_text_attachment_bytes:
         raise HTTPException(
@@ -1370,7 +1501,9 @@ async def create_message(
     project_fields_supplied = bool(
         {"project_id", "project_mode"} & body.model_fields_set
     )
-    if project_fields_supplied and (body.project_id is None) != (body.project_mode is None):
+    if project_fields_supplied and (body.project_id is None) != (
+        body.project_mode is None
+    ):
         raise HTTPException(
             status_code=422,
             detail="project_id and project_mode must be supplied together",
@@ -1378,7 +1511,9 @@ async def create_message(
     project_session = None
     if project_fields_supplied and body.project_id and body.project_mode:
         if app.projects is None:
-            raise HTTPException(status_code=503, detail="project workspaces are unavailable")
+            raise HTTPException(
+                status_code=503, detail="project workspaces are unavailable"
+            )
         _require_project_mode_available(app, body.project_mode)
         try:
             await app.projects.context(body.project_id)
@@ -1397,12 +1532,28 @@ async def create_message(
             {
                 "_project_id": project_session.project_id,
                 "_project_mode": project_session.mode,
+                # Freeze the coding engine with the run. Changing the feature
+                # flag later must not make a recoverable legacy checkpoint
+                # resume under a different filesystem/session protocol.
+                "_coding_engine": app.settings.project_coding_engine,
+                # Frozen for the same reason: a run that started on the direct
+                # path must finish on it, and a rollback must not strand an
+                # in-flight checkpoint on a design it was not planned under.
+                "_build_path": (
+                    app.settings.project_build_path
+                    if app.settings.project_coding_engine == "clinecore"
+                    else "planner_slices"
+                ),
                 # A continuous mode pins its own provider by definition. Any
-                # other mode runs on whatever the preference chose, except
-                # that a leftover "oci" preference outside its own mode still
-                # collapses to local — the behaviour this line has always had.
+                # other mode runs on whatever the preference chose. Cline and
+                # Cohere are ordinary selected lanes; a leftover OCI preference
+                # outside Grok's explicit mode still collapses to local.
                 "_provider": PROJECT_MODE_PROVIDER.get(project_session.mode)
-                or ("cohere" if model_aliases.get("_provider") == "cohere" else "local"),
+                or (
+                    model_aliases.get("_provider")
+                    if model_aliases.get("_provider") in ("cohere", "cline")
+                    else "local"
+                ),
             }
         )
         # Opening a project shifts the coder to the hosted model by default.
@@ -1412,7 +1563,10 @@ async def create_message(
         # shift only means something on the local provider — the OCI and
         # Cohere transports name their own models. An explicit coder chain
         # outranks it entirely: its first entry IS the user's coder choice.
-        if model_aliases["_provider"] == "local" and "_chain_coder" not in model_aliases:
+        if (
+            model_aliases["_provider"] == "local"
+            and "_chain_coder" not in model_aliases
+        ):
             try:
                 cloud_coder = app.model_preference.project_coder()
             except ValueError as error:
@@ -1423,7 +1577,7 @@ async def create_message(
             if cloud_coder:
                 model_aliases["coder"] = cloud_coder
     if (
-        model_aliases.get("_provider") not in ("oci", "cohere")
+        model_aliases.get("_provider") not in ("oci", "cohere", "cline")
         and app.settings.model_backend != "deterministic"
     ):
         try:
@@ -1535,9 +1689,7 @@ async def run_events(
 
 
 @router.post("/runs/{run_id}/decisions", response_model=RunV1)
-async def decide_run(
-    run_id: str, body: ApprovalDecisionV1, request: Request
-) -> RunV1:
+async def decide_run(run_id: str, body: ApprovalDecisionV1, request: Request) -> RunV1:
     app = runtime(request)
     run = await app.database.get_run(run_id)
     if run is None:
@@ -1548,7 +1700,9 @@ async def decide_run(
     if approval is None:
         raise HTTPException(status_code=409, detail="run has no pending approval")
     if body.approval_id is not None and body.approval_id != approval.id:
-        raise HTTPException(status_code=409, detail="approval ID does not match pending action")
+        raise HTTPException(
+            status_code=409, detail="approval ID does not match pending action"
+        )
     if body.decision == Decision.APPROVE and approval.blocked_reason:
         # Enforced here rather than only in the UI: the button being hidden is a
         # courtesy, this is the rule. Rejecting a blocked approval stays legal.
@@ -1557,7 +1711,7 @@ async def decide_run(
         record = await app.database.get_run_execution_record(run_id)
         aliases = record.get("model_aliases", {}) if record else {}
         if (
-            aliases.get("_provider") not in ("oci", "cohere")
+            aliases.get("_provider") not in ("oci", "cohere", "cline")
             and app.settings.model_backend != "deterministic"
         ):
             pinned_model = str(aliases.get("planner") or "")
@@ -1591,13 +1745,11 @@ async def decide_run(
             approval_id=approval.id, decision=body.decision, reason=body.reason
         ),
     )
-    return (await app.database.get_run(run_id))  # type: ignore[return-value]
+    return await app.database.get_run(run_id)  # type: ignore[return-value]
 
 
 @router.post("/runs/{run_id}/answers", response_model=RunV1)
-async def answer_run(
-    run_id: str, body: ElicitationAnswerV1, request: Request
-) -> RunV1:
+async def answer_run(run_id: str, body: ElicitationAnswerV1, request: Request) -> RunV1:
     """Answer an ask_user pause and resume the same turn.
 
     The twin of decide_run for the input pause: the reply becomes the ask_user
@@ -1647,7 +1799,7 @@ async def answer_run(
         {"elicitation_id": pending.id, "option": answer.option, "text": answer.text},
     )
     await app.control_plane.resume_elicitation(run_id, run.conversation_id, answer)
-    return (await app.database.get_run(run_id))  # type: ignore[return-value]
+    return await app.database.get_run(run_id)  # type: ignore[return-value]
 
 
 @router.post("/runs/{run_id}/cancel", response_model=RunV1)
@@ -1664,7 +1816,7 @@ async def cancel_run(run_id: str, request: Request) -> RunV1:
         RunStatus.CANCELLED,
     }:
         raise HTTPException(status_code=409, detail="run could not be cancelled")
-    return (await app.database.get_run(run_id))  # type: ignore[return-value]
+    return await app.database.get_run(run_id)  # type: ignore[return-value]
 
 
 @router.post("/runs/{run_id}/feedback", status_code=status.HTTP_201_CREATED)
@@ -1712,8 +1864,12 @@ async def upload_file(
         )
     filename = _SAFE_FILENAME.sub("_", raw_name).strip(". ")[:240] or "upload.bin"
     if any(filename.lower().endswith(suffix) for suffix in _ARCHIVE_SUFFIXES):
-        raise HTTPException(status_code=415, detail="archive uploads are not supported in v1")
-    media_type = (file.content_type or "application/octet-stream").split(";", 1)[0].lower()
+        raise HTTPException(
+            status_code=415, detail="archive uploads are not supported in v1"
+        )
+    media_type = (
+        (file.content_type or "application/octet-stream").split(";", 1)[0].lower()
+    )
     if not supports_attachment(filename, media_type):
         raise HTTPException(
             status_code=415,
@@ -1781,13 +1937,17 @@ async def transcribe_audio(
     if not media_type.startswith("audio/") and not media_type.startswith("video/"):
         # A browser records webm/ogg containers and labels some of them
         # video/*, so the family check is deliberately wider than "audio".
-        raise HTTPException(status_code=415, detail="only audio recordings are accepted")
+        raise HTTPException(
+            status_code=415, detail="only audio recordings are accepted"
+        )
     try:
         audio = await file.read(app.settings.cohere_transcribe_max_bytes + 1)
     finally:
         await file.close()
     if len(audio) > app.settings.cohere_transcribe_max_bytes:
-        raise HTTPException(status_code=413, detail="recording is too long to transcribe")
+        raise HTTPException(
+            status_code=413, detail="recording is too long to transcribe"
+        )
     filename = Path(file.filename or "dictation.webm").name
     if needs_transcoding(filename, media_type):
         # The browser chose this container, not the user: Safari and the
@@ -1876,7 +2036,9 @@ async def activate_tool_version(
     manifest = record["manifest"]
     image_ref = manifest.get("runner_image")
     if not image_ref:
-        raise HTTPException(status_code=409, detail="version has no pinned runner image")
+        raise HTTPException(
+            status_code=409, detail="version has no pinned runner image"
+        )
     try:
         app.reference_runner.verify_snapshot(
             record["bundle_path"], record["content_hash"], image_ref
@@ -1910,15 +2072,15 @@ async def list_tool_definitions(request: Request) -> list[ToolDefinitionRecordV1
     return await app.registry.records()
 
 
-@router.get(
-    "/tool-definition-proposals", response_model=list[ToolDefinitionProposalV1]
-)
+@router.get("/tool-definition-proposals", response_model=list[ToolDefinitionProposalV1])
 async def list_tool_definition_proposals(
     request: Request,
     proposal_status: Annotated[str | None, Query(alias="status")] = None,
 ) -> list[ToolDefinitionProposalV1]:
     """Gate-1 inbox: drafted definitions and their approve/reject history."""
-    return await runtime(request).database.list_tool_definition_proposals(proposal_status)
+    return await runtime(request).database.list_tool_definition_proposals(
+        proposal_status
+    )
 
 
 @router.get("/tool-definition-builds", response_model=list[ToolDefinitionBuildV1])
@@ -1943,7 +2105,9 @@ async def list_tool_proposals(
 )
 async def list_tool_improvement_proposals(
     request: Request,
-    proposal_status: Annotated[str | None, Query(alias="status")] = ProposalStatus.PENDING,
+    proposal_status: Annotated[
+        str | None, Query(alias="status")
+    ] = ProposalStatus.PENDING,
 ) -> list[ToolImprovementProposalV1]:
     return await runtime(request).database.list_tool_improvements(proposal_status)
 
@@ -2110,7 +2274,9 @@ async def _decide_tool_from_endpoint(
             await asyncio.sleep(0.01)
     else:
         mapped = (
-            ProposalStatus.APPROVED if decision == "approve" else ProposalStatus.REJECTED
+            ProposalStatus.APPROVED
+            if decision == "approve"
+            else ProposalStatus.REJECTED
         )
         try:
             await app.database.decide_tool_proposal(
@@ -2121,14 +2287,16 @@ async def _decide_tool_from_endpoint(
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return (await app.database.get_tool_proposal(proposal_id))  # type: ignore[return-value]
+    return await app.database.get_tool_proposal(proposal_id)  # type: ignore[return-value]
 
 
 @router.post("/tool-proposals/{proposal_id}/approve", response_model=ToolProposalV1)
 async def approve_tool_proposal(
     proposal_id: str, body: ProposalDecisionV1, request: Request
 ) -> ToolProposalV1:
-    return await _decide_tool_from_endpoint(request, proposal_id, "approve", body.reason)
+    return await _decide_tool_from_endpoint(
+        request, proposal_id, "approve", body.reason
+    )
 
 
 @router.post("/tool-proposals/{proposal_id}/reject", response_model=ToolProposalV1)
@@ -2141,7 +2309,9 @@ async def reject_tool_proposal(
 @router.get("/memory/proposals", response_model=list[MemoryProposalV1])
 async def list_memory_proposals(
     request: Request,
-    proposal_status: Annotated[str | None, Query(alias="status")] = ProposalStatus.PENDING,
+    proposal_status: Annotated[
+        str | None, Query(alias="status")
+    ] = ProposalStatus.PENDING,
 ) -> list[MemoryProposalV1]:
     return await runtime(request).database.list_memory_proposals(proposal_status)
 
@@ -2165,7 +2335,9 @@ async def create_memory_proposal(
     )
 
 
-@router.post("/memory/proposals/{proposal_id}/decision", response_model=MemoryProposalV1)
+@router.post(
+    "/memory/proposals/{proposal_id}/decision", response_model=MemoryProposalV1
+)
 async def decide_memory_proposal(
     proposal_id: str, body: MemoryDecisionV1, request: Request
 ) -> MemoryProposalV1:
@@ -2249,7 +2421,9 @@ async def configure_notion(
 
 
 @router.post("/corpus/notion/sync", response_model=NotionSyncResultV1)
-async def sync_notion(request: Request, background: BackgroundTasks) -> NotionSyncResultV1:
+async def sync_notion(
+    request: Request, background: BackgroundTasks
+) -> NotionSyncResultV1:
     app = runtime(request)
     try:
         result = await app.notion.sync()
@@ -2260,7 +2434,9 @@ async def sync_notion(request: Request, background: BackgroundTasks) -> NotionSy
     # Map the freshly-synced pages into customer records in the background, so
     # the sync response is not held up by per-account extraction.
     if app.customers is not None:
-        background.add_task(app.customers.ingest_notion_documents, app.notion.last_synced_documents())
+        background.add_task(
+            app.customers.ingest_notion_documents, app.notion.last_synced_documents()
+        )
     return result
 
 

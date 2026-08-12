@@ -3,6 +3,7 @@ the tool's code → it is AST-gated, capability-approved, evaluated by execution
 trusted-auto-activated, then run (calling the local model at runtime), through
 the real HTTP surface.
 """
+
 from __future__ import annotations
 
 import time
@@ -44,7 +45,9 @@ def _upload(client: TestClient) -> str:
     ).json()["id"]
 
 
-def _send(client: TestClient, conversation: str, content: str, attachments: list[str]) -> str:
+def _send(
+    client: TestClient, conversation: str, content: str, attachments: list[str]
+) -> str:
     r = client.post(
         f"/api/v1/conversations/{conversation}/messages",
         json={"content": content, "attachment_ids": attachments},
@@ -69,7 +72,8 @@ def _approve(client: TestClient, run_id: str) -> None:
 
 def _authored_record(client: TestClient) -> dict:
     return next(
-        item for item in client.get("/api/v1/tool-definitions").json()
+        item
+        for item in client.get("/api/v1/tool-definitions").json()
         if item["definition"]["archetype"] == "code-authoring"
     )
 
@@ -80,12 +84,23 @@ def test_authors_builds_and_runs_a_tool_for_a_new_task(tmp_path) -> None:
         upload = _upload(client)
 
         # An explicit task no specific archetype covers takes the trusted fast path.
-        run1 = _send(client, conversation, "turn this into a tool: count word frequency in the attached text", [upload])
-        assert _wait(client, run1, {"completed", "failed", "awaiting_approval"})["status"] == "completed"
+        run1 = _send(
+            client,
+            conversation,
+            "turn this into a tool: count word frequency in the attached text",
+            [upload],
+        )
+        assert (
+            _wait(client, run1, {"completed", "failed", "awaiting_approval"})["status"]
+            == "completed"
+        )
 
         record = _authored_record(client)
         slug = record["definition"]["slug"]
-        assert record["definition"]["capability_profile"]["code_allowlist"] == "pure-python-authored-v1"
+        assert (
+            record["definition"]["capability_profile"]["code_allowlist"]
+            == "pure-python-authored-v1"
+        )
         assert record["runnable"] is True
 
         # The model authored code is AST-gated, evaluated, and pinned in that run.
@@ -93,13 +108,21 @@ def test_authors_builds_and_runs_a_tool_for_a_new_task(tmp_path) -> None:
         built = next(b for b in builds if b["slug"] == slug)
         assert built["eval_report"]["passed"] is True
         assert built["status"] == "active"
-        assert "def run(inputs, model)" in built["implementation"]  # real authored code pinned
+        assert (
+            "def run(inputs, model)" in built["implementation"]
+        )  # real authored code pinned
 
         # Run it — the authored code executes AND calls the local model at runtime.
-        run2 = _send(client, conversation, f"{slug.replace('-', ' ')} of this", [upload])
-        assert _wait(client, run2, {"completed", "failed", "awaiting_approval"})["status"] == "completed"
+        run2 = _send(
+            client, conversation, f"{slug.replace('-', ' ')} of this", [upload]
+        )
+        assert (
+            _wait(client, run2, {"completed", "failed", "awaiting_approval"})["status"]
+            == "completed"
+        )
         answer = [
-            m for m in client.get(f"/api/v1/conversations/{conversation}/messages").json()
+            m
+            for m in client.get(f"/api/v1/conversations/{conversation}/messages").json()
             if m["role"] == "assistant"
         ][-1]["content"]
         assert "word_count" in answer  # the authored tool's typed output surfaced

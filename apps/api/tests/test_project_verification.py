@@ -4,6 +4,7 @@ These deliberately execute real child processes: the whole value of the feature
 is that a check's exit code and output are genuine evidence, so a suite that
 faked the subprocess would prove nothing about the part that matters.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,7 +37,9 @@ def _write_recipe(project: Path, checks: list[dict]) -> None:
     )
 
 
-async def _service(tmp_path: Path, **overrides) -> tuple[ProjectWorkspaceService, str, Path]:
+async def _service(
+    tmp_path: Path, **overrides
+) -> tuple[ProjectWorkspaceService, str, Path]:
     projects_root = tmp_path / "Projects"
     project = projects_root / "demo"
     project.mkdir(parents=True)
@@ -163,7 +166,9 @@ async def test_agent_cannot_supply_or_extend_a_command(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_a_hanging_check_is_stopped_and_reported(tmp_path: Path) -> None:
-    service, project_id, project = await _service(tmp_path, project_verify_timeout_seconds=5)
+    service, project_id, project = await _service(
+        tmp_path, project_verify_timeout_seconds=5
+    )
     _write_recipe(
         project,
         [
@@ -216,7 +221,9 @@ async def test_noisy_output_is_bounded_but_keeps_both_ends(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_a_missing_program_reports_why_instead_of_crashing(tmp_path: Path) -> None:
+async def test_a_missing_program_reports_why_instead_of_crashing(
+    tmp_path: Path,
+) -> None:
     service, project_id, project = await _service(tmp_path)
     _write_recipe(
         project, [{"name": "test", "command": ["metis-definitely-not-installed"]}]
@@ -258,7 +265,9 @@ async def test_shell_string_commands_are_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_approval_view_explains_the_recipe_in_plain_english(tmp_path: Path) -> None:
+async def test_approval_view_explains_the_recipe_in_plain_english(
+    tmp_path: Path,
+) -> None:
     service, project_id, project = await _service(tmp_path)
     _write_recipe(
         project,
@@ -317,13 +326,20 @@ def test_check_run_waits_for_recipe_approval_then_runs(tmp_path: Path) -> None:
         model_backend="deterministic",
         reference_runner_mode="deterministic",
         allow_test_backends=True,
+        # This exercises the frozen legacy per-file loop, not the direct
+        # path: name it, because routing follows the project selection and
+        # no longer depends on how the request happens to be worded.
+        project_build_path="planner_slices",
     )
     with TestClient(create_app(settings)) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
 
         view = client.get(f"/api/v1/projects/{project_id}/verification").json()
         assert view["configured"] is True and view["approved"] is False

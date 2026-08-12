@@ -4,6 +4,7 @@ The loop may run for dozens of steps, but the doctrine holds at exactly one
 place: nothing reaches the real tree except through the one batch approval,
 and what it writes is byte-for-byte what the card showed.
 """
+
 from __future__ import annotations
 
 import ast
@@ -26,6 +27,8 @@ from waqil_api.control_plane import (
     _sandbox_verdict,
 )
 from waqil_api.contracts import (
+    ApprovalDecisionV1,
+    ApprovalRequestV1,
     ProjectAgentStepWireV1,
     ProjectBuildStepWireV1,
     ProjectToolCallV1,
@@ -47,6 +50,63 @@ async def _empty_context(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return {"manifest": {"file_tree": []}, "metis_md": ""}
 
 
+@pytest.mark.asyncio
+async def test_applying_a_build_records_compact_manifest_progress() -> None:
+    from waqil_api.control_plane import ControlPlane
+
+    recorded: list[dict[str, Any]] = []
+
+    async def materialize(project_id, staged):
+        return {"applied": ["app/config.py"], "skipped": []}
+
+    async def record_plan(project_id, plan, *, done=None):
+        recorded.append({"plan": plan, "done": done})
+
+    async def ensure_manifest(project_id):
+        return ""
+
+    async def policy_gate(*args, **kwargs):
+        return SimpleNamespace(enforce=lambda: None)
+
+    plane = object.__new__(ControlPlane)
+    plane.projects = SimpleNamespace(
+        materialize_staged=materialize,
+        record_plan=record_plan,
+        ensure_asset_manifest=ensure_manifest,
+    )
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane._policy_gate = policy_gate
+    state = {
+        "run_id": "run_x",
+        "conversation_id": "conv_x",
+        "model_aliases": {"_project_id": "asset_x"},
+        "response_text": "Build ready.",
+        "project_staged": {"app/config.py": {"content": "VALUE = 1\n"}},
+        "project_planned_files": ["app/config.py"],
+        "project_build_intent": "build",
+        "project_build_scope": "whole_app",
+    }
+    request = ApprovalRequestV1(
+        id="approval_x",
+        run_id="run_x",
+        action_id="project:apply:x",
+        kind="project_apply_build",
+        title="Apply",
+        summary="Apply staged build",
+        risk_level="R3",
+        input_digest="digest",
+    )
+    decision = ApprovalDecisionV1(
+        approval_id="approval_x", decision="approve", reason="test"
+    )
+
+    await ControlPlane._apply_project_build(plane, state, request, decision)
+
+    assert recorded[0]["plan"]["files"] == ["app/config.py"]
+    assert "instructions" not in recorded[0]["plan"]
+    assert recorded[0]["done"] == ["app/config.py"]
+
+
 def _settings(tmp_path: Path, **overrides: Any) -> Settings:
     return Settings(
         _env_file=None,
@@ -56,8 +116,33 @@ def _settings(tmp_path: Path, **overrides: Any) -> Settings:
         model_backend="deterministic",
         reference_runner_mode="deterministic",
         allow_test_backends=True,
+        # This suite is the retained local regression archive for the retired
+        # one-tool loop. Production settings reject this route.
+        project_coding_engine="legacy",
         **overrides,
     )
+
+
+def test_project_plan_accepts_bounded_vertical_slice_contract() -> None:
+    from waqil_api.contracts import ProjectBuildPlanV1
+
+    plan = ProjectBuildPlanV1(
+        files=["app/models.py", "app/routes/items.py", "tests/test_items.py"],
+        slices=[
+            {
+                "name": "Items workflow",
+                "outcome": "A user can create and list items end to end.",
+                "files": [
+                    "app/models.py",
+                    "app/routes/items.py",
+                    "tests/test_items.py",
+                ],
+                "scenario_names": ["create item"],
+            }
+        ],
+    )
+
+    assert plan.slices[0].files == plan.files
 
 
 def _project(tmp_path: Path) -> Path:
@@ -145,7 +230,9 @@ async def test_a_block_copied_from_a_read_can_be_patched_back(tmp_path: Path) ->
         {},
     )
     read, _ = await service.execute_staged(
-        asset_id, ProjectToolCallV1(name="read_file", arguments={"path": "src/app.ts"}), staged
+        asset_id,
+        ProjectToolCallV1(name="read_file", arguments={"path": "src/app.ts"}),
+        staged,
     )
 
     assert read["truncated"] is False
@@ -174,7 +261,7 @@ async def test_a_block_copied_from_a_read_can_be_patched_back(tmp_path: Path) ->
 async def test_a_staged_file_is_found_however_the_model_spells_the_path(
     tmp_path: Path,
 ) -> None:
-    """"./app/x.py" and "app/x.py" are the same file. The overlay is keyed by the
+    """ "./app/x.py" and "app/x.py" are the same file. The overlay is keyed by the
     canonical form the write produced, so a lookup on the raw argument used to
     miss the model's own staged work and report the file as unavailable."""
     _project(tmp_path)
@@ -183,7 +270,8 @@ async def test_a_staged_file_is_found_however_the_model_spells_the_path(
     _, staged = await service.execute_staged(
         asset_id,
         ProjectToolCallV1(
-            name="create_file", arguments={"path": "src/new.ts", "content": "const x = 1;\n"}
+            name="create_file",
+            arguments={"path": "src/new.ts", "content": "const x = 1;\n"},
         ),
         {},
     )
@@ -197,13 +285,17 @@ async def test_a_staged_file_is_found_however_the_model_spells_the_path(
 
 
 @pytest.mark.asyncio
-async def test_a_patch_that_matches_nothing_is_shown_the_real_text(tmp_path: Path) -> None:
+async def test_a_patch_that_matches_nothing_is_shown_the_real_text(
+    tmp_path: Path,
+) -> None:
     """A zero match is usually a model patching a file it never read, inventing
     the block it expects to find — a live build burned four steps that way. The
     host is holding the real text, so it sends the opening of it back instead of
     asking for a read that costs another whole step."""
     project = _project(tmp_path)
-    (project / "notes.md").write_text("# Notes\n\nThe real first line.\n", encoding="utf-8")
+    (project / "notes.md").write_text(
+        "# Notes\n\nThe real first line.\n", encoding="utf-8"
+    )
     service, asset_id = await _service(_settings(tmp_path))
 
     with pytest.raises(ProjectWorkspaceError) as error:
@@ -228,7 +320,9 @@ async def test_a_patch_that_matches_nothing_is_shown_the_real_text(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_creating_a_staged_path_again_points_at_apply_patch(tmp_path: Path) -> None:
+async def test_creating_a_staged_path_again_points_at_apply_patch(
+    tmp_path: Path,
+) -> None:
     """A refusal that names no alternative gets repeated. One model spent eight
     consecutive steps re-creating a file it had already staged."""
     _project(tmp_path)
@@ -237,7 +331,8 @@ async def test_creating_a_staged_path_again_points_at_apply_patch(tmp_path: Path
     _, staged = await service.execute_staged(
         asset_id,
         ProjectToolCallV1(
-            name="create_file", arguments={"path": "src/new.ts", "content": "const x = 1;\n"}
+            name="create_file",
+            arguments={"path": "src/new.ts", "content": "const x = 1;\n"},
         ),
         {},
     )
@@ -245,7 +340,8 @@ async def test_creating_a_staged_path_again_points_at_apply_patch(tmp_path: Path
         await service.execute_staged(
             asset_id,
             ProjectToolCallV1(
-                name="create_file", arguments={"path": "src/new.ts", "content": "const y = 2;\n"}
+                name="create_file",
+                arguments={"path": "src/new.ts", "content": "const y = 2;\n"},
             ),
             staged,
         )
@@ -256,7 +352,9 @@ async def test_creating_a_staged_path_again_points_at_apply_patch(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_a_missing_required_argument_is_flagged_as_fixable(tmp_path: Path) -> None:
+async def test_a_missing_required_argument_is_flagged_as_fixable(
+    tmp_path: Path,
+) -> None:
     """Missing keys are the one refusal resending the same tool can fix, so they
     are the only ones that earn a narrowed grammar on the next step."""
     _project(tmp_path)
@@ -275,7 +373,8 @@ async def test_a_missing_required_argument_is_flagged_as_fixable(tmp_path: Path)
         await service.execute_staged(
             asset_id,
             ProjectToolCallV1(
-                name="apply_patch", arguments={"path": "src/app.ts", "patch": "@@ -1 +1 @@"}
+                name="apply_patch",
+                arguments={"path": "src/app.ts", "patch": "@@ -1 +1 @@"},
             ),
             {},
         )
@@ -287,7 +386,9 @@ async def test_a_missing_required_argument_is_flagged_as_fixable(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_overlay_reads_show_staged_work_and_disk_stays_clean(tmp_path: Path) -> None:
+async def test_overlay_reads_show_staged_work_and_disk_stays_clean(
+    tmp_path: Path,
+) -> None:
     project = _project(tmp_path)
     service, asset_id = await _service(_settings(tmp_path))
 
@@ -304,12 +405,16 @@ async def test_overlay_reads_show_staged_work_and_disk_stays_clean(tmp_path: Pat
 
     # The model observes its own staged file exactly as it would a real one.
     read, _ = await service.execute_staged(
-        asset_id, ProjectToolCallV1(name="read_file", arguments={"path": "src/new.ts"}), staged
+        asset_id,
+        ProjectToolCallV1(name="read_file", arguments={"path": "src/new.ts"}),
+        staged,
     )
     assert read["staged"] is True and "export const x = 1;" in read["content"]
 
     listing, _ = await service.execute_staged(
-        asset_id, ProjectToolCallV1(name="list_files", arguments={"path": "src"}), staged
+        asset_id,
+        ProjectToolCallV1(name="list_files", arguments={"path": "src"}),
+        staged,
     )
     assert listing["files"] == ["src/main.ts", "src/new.ts"]
 
@@ -361,7 +466,9 @@ async def test_overlay_patch_chains_and_shadows_the_disk_copy(tmp_path: Path) ->
 
     # Search must see only the staged text, never the shadowed disk copy.
     found, _ = await service.execute_staged(
-        asset_id, ProjectToolCallV1(name="search_code", arguments={"query": "Hello"}), staged
+        asset_id,
+        ProjectToolCallV1(name="search_code", arguments={"query": "Hello"}),
+        staged,
     )
     assert found["matches"] == []
 
@@ -412,7 +519,9 @@ async def test_overlay_enforces_jail_and_budgets(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_materialize_skips_files_that_drifted_after_staging(tmp_path: Path) -> None:
+async def test_materialize_skips_files_that_drifted_after_staging(
+    tmp_path: Path,
+) -> None:
     """Approval covered the staged bytes, not whatever landed on disk since."""
     project = _project(tmp_path)
     service, asset_id = await _service(_settings(tmp_path))
@@ -447,7 +556,9 @@ async def test_materialize_skips_files_that_drifted_after_staging(tmp_path: Path
     report = await service.materialize_staged(asset_id, staged)
     assert report["applied"] == []
     assert {item["path"] for item in report["skipped"]} == {"src/main.ts", "src/new.ts"}
-    assert (project / "src" / "main.ts").read_text(encoding="utf-8") == "// rewritten by hand\n"
+    assert (project / "src" / "main.ts").read_text(
+        encoding="utf-8"
+    ) == "// rewritten by hand\n"
     assert (project / "src" / "new.ts").read_text(encoding="utf-8") == "already here\n"
 
 
@@ -458,10 +569,13 @@ def test_staged_build_loops_observes_and_applies_once(tmp_path: Path) -> None:
     project = _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -486,10 +600,13 @@ def test_staged_build_loops_observes_and_applies_once(tmp_path: Path) -> None:
         assert "create `src/build/alpha.txt`" in approval["summary"]
         assert "create `src/build/nested/beta.txt`" in approval["summary"]
 
-        assert client.post(
-            f"/api/v1/runs/{run_id}/decisions",
-            json={"approval_id": approval["id"], "decision": "approve"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/runs/{run_id}/decisions",
+                json={"approval_id": approval["id"], "decision": "approve"},
+            ).status_code
+            == 200
+        )
         run = _drive(client, run_id, {"completed", "failed"})
         assert run["status"] == "completed"
 
@@ -514,10 +631,13 @@ def test_rejected_build_writes_nothing(tmp_path: Path) -> None:
     project = _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -533,10 +653,13 @@ def test_rejected_build_writes_nothing(tmp_path: Path) -> None:
         approval = next(
             item["approval"] for item in recoverable if item["run"]["id"] == run_id
         )
-        assert client.post(
-            f"/api/v1/runs/{run_id}/decisions",
-            json={"approval_id": approval["id"], "decision": "reject"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/runs/{run_id}/decisions",
+                json={"approval_id": approval["id"], "decision": "reject"},
+            ).status_code
+            == 200
+        )
         run = _drive(client, run_id, {"completed", "failed"})
         assert run["status"] == "completed"
         assert not (project / "src" / "build").exists()
@@ -562,10 +685,13 @@ def test_finishing_short_of_the_planned_files_is_declined_until_they_exist(
     project = _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -585,10 +711,13 @@ def test_finishing_short_of_the_planned_files_is_declined_until_they_exist(
         )
         # The card offers both planned files, not the one the model stopped at.
         assert "alpha.txt" in approval["summary"] and "beta.txt" in approval["summary"]
-        assert client.post(
-            f"/api/v1/runs/{run_id}/decisions",
-            json={"approval_id": approval["id"], "decision": "approve"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/runs/{run_id}/decisions",
+                json={"approval_id": approval["id"], "decision": "approve"},
+            ).status_code
+            == 200
+        )
         run = _drive(client, run_id, {"completed", "failed"})
         assert run["status"] == "completed"
 
@@ -675,7 +804,9 @@ def test_reference_notes_are_read_from_disk_whole(tmp_path: Path) -> None:
     (reference / "oci-responses-api.md").write_text("A" * 400, encoding="utf-8")
     (reference / "README.md").write_text("index, not facts", encoding="utf-8")
 
-    notes = _reference_notes("build an oci responses demo", reference, max_characters=5_000)
+    notes = _reference_notes(
+        "build an oci responses demo", reference, max_characters=5_000
+    )
 
     assert [note["source"] for note in notes] == ["reference/oci-responses-api.md"]
     assert notes[0]["text"] == "A" * 400
@@ -743,10 +874,13 @@ def test_a_build_turn_receives_the_reference(
 
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -775,10 +909,13 @@ def test_a_write_that_does_not_parse_is_refused_at_stage_time(tmp_path: Path) ->
     project = _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -798,10 +935,13 @@ def test_a_write_that_does_not_parse_is_refused_at_stage_time(tmp_path: Path) ->
         # The changeset offered is clean, so the card is approvable.
         assert approval["blocked_reason"] is None
         assert "would stop this project working" not in approval["summary"]
-        assert client.post(
-            f"/api/v1/runs/{run_id}/decisions",
-            json={"approval_id": approval["id"], "decision": "approve"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/runs/{run_id}/decisions",
+                json={"approval_id": approval["id"], "decision": "approve"},
+            ).status_code
+            == 200
+        )
         run = _drive(client, run_id, {"completed", "failed"})
         assert run["status"] == "completed"
 
@@ -815,6 +955,10 @@ def test_a_write_that_does_not_parse_is_refused_at_stage_time(tmp_path: Path) ->
         writes = _tool_results(client, run_id, "create_file")
         assert [write["ok"] for write in writes] == [False, True]
         assert writes[0]["staged"] is False
+        assert [write["path"] for write in writes] == [
+            "app/broken.py",
+            "app/broken.py",
+        ]
 
 
 def test_a_staged_import_that_resolves_nowhere_is_sent_back_and_fixed(
@@ -827,10 +971,13 @@ def test_a_staged_import_that_resolves_nowhere_is_sent_back_and_fixed(
     project = _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -849,10 +996,13 @@ def test_a_staged_import_that_resolves_nowhere_is_sent_back_and_fixed(
         )
         # The gate ran and came back clean, so the card carries no warning.
         assert "would stop this project working" not in approval["summary"]
-        assert client.post(
-            f"/api/v1/runs/{run_id}/decisions",
-            json={"approval_id": approval["id"], "decision": "approve"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/runs/{run_id}/decisions",
+                json={"approval_id": approval["id"], "decision": "approve"},
+            ).status_code
+            == 200
+        )
         run = _drive(client, run_id, {"completed", "failed"})
         assert run["status"] == "completed"
 
@@ -870,10 +1020,13 @@ def test_a_model_that_only_writes_unparseable_code_stages_nothing(
     project = _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -904,10 +1057,13 @@ def test_a_changeset_with_a_hard_error_cannot_be_approved(tmp_path: Path) -> Non
     project = _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -941,10 +1097,13 @@ def test_a_changeset_with_a_hard_error_cannot_be_approved(tmp_path: Path) -> Non
         assert not (project / "app" / "main.py").exists()
 
         # Rejecting the same blocked approval stays available.
-        assert client.post(
-            f"/api/v1/runs/{run_id}/decisions",
-            json={"approval_id": approval["id"], "decision": "reject"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/runs/{run_id}/decisions",
+                json={"approval_id": approval["id"], "decision": "reject"},
+            ).status_code
+            == 200
+        )
         run = _drive(client, run_id, {"completed", "failed"})
         assert not (project / "app" / "main.py").exists()
 
@@ -986,7 +1145,9 @@ def test_coercion_widens_shape_not_authority() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_backend_refusal_ends_the_turn_at_once_and_records_the_real_cause() -> None:
+async def test_a_backend_refusal_ends_the_turn_at_once_and_records_the_real_cause() -> (
+    None
+):
     """A permanent backend failure is not a model mistake and must not be
     retried as one. Feeding it back three times produced six doomed calls and a
     message blaming the model, while the only description of the actual fault
@@ -1003,7 +1164,9 @@ async def test_a_backend_refusal_ends_the_turn_at_once_and_records_the_real_caus
 
     plane = SimpleNamespace(events=RecordingEvents())
     state = {"run_id": "run_x", "conversation_id": "conv_x"}
-    staged = {"src/a.ts": {"content": "x", "origin": "create", "base_sha256": "", "bytes": 1}}
+    staged = {
+        "src/a.ts": {"content": "x", "origin": "create", "base_sha256": "", "bytes": 1}
+    }
 
     result = await ControlPlane._blocked_project_step(
         plane,
@@ -1025,16 +1188,22 @@ async def test_a_backend_refusal_ends_the_turn_at_once_and_records_the_real_caus
     assert event_type == "project.step_blocked"
     assert payload["reason"] == "grammar_compile"
     assert "failed to parse grammar" in payload["detail"]
-    assert isinstance(json.dumps(payload), str)  # the write happens inside a transaction
+    assert isinstance(
+        json.dumps(payload), str
+    )  # the write happens inside a transaction
 
 
 @pytest.mark.asyncio
-async def test_unreadable_steps_become_evidence_then_end_the_turn(tmp_path: Path) -> None:
+async def test_unreadable_steps_become_evidence_then_end_the_turn(
+    tmp_path: Path,
+) -> None:
     """One bad step is recoverable; a run of them ends the turn with the work."""
     from waqil_api.control_plane import _MAX_MALFORMED_PROJECT_STEPS, ControlPlane
 
     state: dict[str, Any] = {"project_trace": [], "project_malformed_streak": 0}
-    staged = {"src/a.ts": {"content": "x", "origin": "create", "base_sha256": "", "bytes": 1}}
+    staged = {
+        "src/a.ts": {"content": "x", "origin": "create", "base_sha256": "", "bytes": 1}
+    }
 
     for attempt in range(1, _MAX_MALFORMED_PROJECT_STEPS):
         result = ControlPlane._malformed_project_step(
@@ -1061,10 +1230,13 @@ def test_step_budget_still_offers_the_staged_work(tmp_path: Path) -> None:
     settings = _settings(tmp_path, project_agent_max_steps=4)
     with TestClient(create_app(settings)) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -1081,10 +1253,13 @@ def test_step_budget_still_offers_the_staged_work(tmp_path: Path) -> None:
             item["approval"] for item in recoverable if item["run"]["id"] == run_id
         )
         assert approval["kind"] == "project_apply_build"
-        assert client.post(
-            f"/api/v1/runs/{run_id}/decisions",
-            json={"approval_id": approval["id"], "decision": "approve"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/runs/{run_id}/decisions",
+                json={"approval_id": approval["id"], "decision": "approve"},
+            ).status_code
+            == 200
+        )
         run = _drive(client, run_id, {"completed", "failed"})
         assert run["status"] == "completed"
         messages = client.get(
@@ -1105,7 +1280,11 @@ def test_a_repeated_read_returns_a_correction_instead_of_the_same_bytes() -> Non
     call = ProjectToolCallV1(name="list_files", arguments={"path": ""})
     state = {
         "project_trace": [
-            {"tool": "read_file", "arguments": {"path": "a.py"}, "result": {"ok": True}},
+            {
+                "tool": "read_file",
+                "arguments": {"path": "a.py"},
+                "result": {"ok": True},
+            },
             {"tool": "list_files", "arguments": {"path": ""}, "result": {"ok": True}},
         ]
     }
@@ -1122,7 +1301,11 @@ def test_a_first_time_read_is_not_treated_as_a_repeat() -> None:
 
     state = {
         "project_trace": [
-            {"tool": "list_files", "arguments": {"path": "app"}, "result": {"ok": True}},
+            {
+                "tool": "list_files",
+                "arguments": {"path": "app"},
+                "result": {"ok": True},
+            },
         ]
     }
 
@@ -1149,7 +1332,9 @@ def test_a_repeated_write_or_check_still_runs() -> None:
             ]
         }
         assert (
-            _repeated_project_call(state, ProjectToolCallV1(name=name, arguments=arguments))
+            _repeated_project_call(
+                state, ProjectToolCallV1(name=name, arguments=arguments)
+            )
             is None
         )
 
@@ -1169,7 +1354,8 @@ def test_a_previously_failed_read_may_be_retried() -> None:
 
     assert (
         _repeated_project_call(
-            state, ProjectToolCallV1(name="read_file", arguments={"path": "app/main.py"})
+            state,
+            ProjectToolCallV1(name="read_file", arguments={"path": "app/main.py"}),
         )
         is None
     )
@@ -1181,10 +1367,13 @@ def test_a_completion_that_staged_nothing_says_so(tmp_path: Path) -> None:
     _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -1210,10 +1399,13 @@ def test_a_completion_with_staged_work_carries_no_disclaimer(tmp_path: Path) -> 
     _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -1231,10 +1423,13 @@ def test_a_completion_with_staged_work_carries_no_disclaimer(tmp_path: Path) -> 
         approval = next(
             item["approval"] for item in recoverable if item["run"]["id"] == run_id
         )
-        assert client.post(
-            f"/api/v1/runs/{run_id}/decisions",
-            json={"approval_id": approval["id"], "decision": "approve"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/runs/{run_id}/decisions",
+                json={"approval_id": approval["id"], "decision": "approve"},
+            ).status_code
+            == 200
+        )
         run = _drive(client, run_id, {"completed", "failed"})
         assert run["status"] == "completed"
 
@@ -1256,10 +1451,13 @@ def test_a_fabricated_build_completion_is_declined_then_the_files_get_written(
     project = _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -1282,15 +1480,20 @@ def test_a_fabricated_build_completion_is_declined_then_the_files_get_written(
             item["approval"] for item in recoverable if item["run"]["id"] == run_id
         )
         assert approval["kind"] == "project_apply_build"
-        assert client.post(
-            f"/api/v1/runs/{run_id}/decisions",
-            json={"approval_id": approval["id"], "decision": "approve"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/runs/{run_id}/decisions",
+                json={"approval_id": approval["id"], "decision": "approve"},
+            ).status_code
+            == 200
+        )
         run = _drive(client, run_id, {"completed", "failed"})
         assert run["status"] == "completed"
 
         # The file the model only wrote after being declined is on disk.
-        assert (project / "app" / "main.py").read_text(encoding="utf-8") == "print('hi')\n"
+        assert (project / "app" / "main.py").read_text(
+            encoding="utf-8"
+        ) == "print('hi')\n"
 
 
 def test_a_build_that_never_writes_is_declined_a_bounded_number_of_times(
@@ -1303,10 +1506,13 @@ def test_a_build_that_never_writes_is_declined_a_bounded_number_of_times(
     _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -1345,10 +1551,13 @@ def test_a_bare_empty_completion_is_challenged_regardless_of_phrasing(
     _project(tmp_path)
     with TestClient(create_app(_settings(tmp_path))) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -1394,9 +1603,18 @@ def test_premature_finish_records_evidence_and_loops_back() -> None:
     "payload",
     [
         # The exact reply that ended a real run three times over.
-        {"status": "tool", "tool_call": {"name": "read_file", "parameters": {"path": "a.py"}}},
+        {
+            "status": "tool",
+            "tool_call": {"name": "read_file", "parameters": {"path": "a.py"}},
+        },
         {"status": "tool", "tool_call": {"name": "list_files", "params": {"path": ""}}},
-        {"status": "tool", "tool_call": {"name": "create_file", "inputs": {"path": "x", "content": "y"}}},
+        {
+            "status": "tool",
+            "tool_call": {
+                "name": "create_file",
+                "inputs": {"path": "x", "content": "y"},
+            },
+        },
         {"name": "read_file", "parameters": {"path": "a.py"}},
     ],
 )
@@ -1426,7 +1644,11 @@ def test_both_argument_keys_at_once_stays_a_refusal() -> None:
 
     with pytest.raises(Exception):
         ProjectToolCallV1.model_validate(
-            {"name": "read_file", "arguments": {"path": "real.py"}, "parameters": {"path": "decoy"}}
+            {
+                "name": "read_file",
+                "arguments": {"path": "real.py"},
+                "parameters": {"path": "decoy"},
+            }
         )
 
 
@@ -1449,7 +1671,8 @@ def test_the_wire_schema_is_flat_so_the_grammar_does_not_collapse() -> None:
     from waqil_api.contracts import PROJECT_TOOL_REQUIRED_ARGUMENTS
 
     assert set(schema["properties"]["tool"]["enum"]) == {
-        "", *PROJECT_TOOL_REQUIRED_ARGUMENTS,
+        "",
+        *PROJECT_TOOL_REQUIRED_ARGUMENTS,
     }
 
 
@@ -1583,15 +1806,20 @@ def test_every_local_structured_call_uses_a_registered_schema() -> None:
         function = node.func
         if (
             isinstance(function, ast.Attribute)
-            and function.attr in {"_structured", "_structured_unchecked", "_decode_structured"}
+            and function.attr
+            in {"_structured", "_structured_unchecked", "_decode_structured"}
             and isinstance(node.args[0], ast.Name)
         ):
             called.add(node.args[0].id)
 
     # project_step picks between the two wire schemas through a local variable.
     registered = {cls.__name__ for cls in LOCAL_DECODE_SCHEMAS} | {"schema"}
-    assert called, "no structured call sites found — the AST walk is wrong, not the code"
-    assert called <= registered, f"unregistered local decode schemas: {sorted(called - registered)}"
+    assert called, (
+        "no structured call sites found — the AST walk is wrong, not the code"
+    )
+    assert called <= registered, (
+        f"unregistered local decode schemas: {sorted(called - registered)}"
+    )
 
 
 def test_the_project_wire_schemas_stay_flat_enough_to_compile() -> None:
@@ -1634,8 +1862,11 @@ def test_the_build_wire_step_converts_to_a_tool_step() -> None:
     from waqil_api.contracts import ProjectBuildStepWireV1
 
     step = ProjectBuildStepWireV1.model_validate(
-        {"status": "tool", "tool": "create_file",
-         "arguments": {"path": "app/main.py", "content": "x\n"}}
+        {
+            "status": "tool",
+            "tool": "create_file",
+            "arguments": {"path": "app/main.py", "content": "x\n"},
+        }
     ).to_step()
 
     assert step.status == "tool"
@@ -1660,15 +1891,26 @@ def test_build_turn_stays_on_while_the_build_is_demonstrably_unfinished() -> Non
             # The reference is read from disk on every build step; these
             # unit stubs point it at a directory that does not exist, so
             # the request carries an empty list rather than real files.
-            project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
+            project_reference_enabled=True,
+            project_repo_map_enabled=False,
+            project_orchestrator_enabled=False,
             project_reference_dir=Path("/nonexistent-reference"),
             project_reference_max_chars=14_000,
             project_reference_max_chars_local=6_000,
         )
     )
-    build = {"prompt": "Build out app/main.py from scratch and create requirements.txt."}
+    build = {
+        "prompt": "Build out app/main.py from scratch and create requirements.txt."
+    }
     question = {"prompt": "What does app/main.py do?"}
-    staged = {"app/main.py": {"content": "x", "origin": "create", "base_sha256": "", "bytes": 1}}
+    staged = {
+        "app/main.py": {
+            "content": "x",
+            "origin": "create",
+            "base_sha256": "",
+            "bytes": 1,
+        }
+    }
 
     def request(state, staged_changes, planned=None) -> dict[str, Any]:
         return ControlPlane._project_step_request(
@@ -1687,7 +1929,9 @@ def test_build_turn_stays_on_while_the_build_is_demonstrably_unfinished() -> Non
     assert partial["build_turn"] is True
     assert partial["files_still_to_write"] == ["requirements.txt"]
 
-    done = request(build, {**staged, "requirements.txt": {"content": "fastapi\n"}}, plan)
+    done = request(
+        build, {**staged, "requirements.txt": {"content": "fastapi\n"}}, plan
+    )
     assert done["build_turn"] is False
     assert done["files_still_to_write"] == []
     # A plain question is never gated, manifest or not.
@@ -1746,6 +1990,45 @@ def _execute_plane(outcome: Exception | None, **state_overrides: Any):
 
 
 @pytest.mark.asyncio
+async def test_successful_write_event_uses_the_workspace_normalized_path() -> None:
+    """Write attribution must use the jailed workspace result, not raw spelling."""
+
+    emitted: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(
+        _run_id: str,
+        _conversation_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        emitted.append((event_type, payload))
+
+    class Workspace:
+        async def execute_staged(self, _project_id, call, _staged, _next_paths=()):
+            assert call.arguments["path"] == "./app/main.py"
+            return (
+                {"path": "app/main.py", "staged": True},
+                {"app/main.py": {"content": "app = object()\n"}},
+            )
+
+    ControlPlane, plane, state = _execute_plane(None)
+    plane.projects = Workspace()
+    plane.events = SimpleNamespace(emit=emit)
+    state["project_pending_call"] = {
+        "name": "create_file",
+        "arguments": {"path": "./app/main.py", "content": "app = object()\n"},
+    }
+
+    await ControlPlane._project_execute(plane, state)
+
+    write_event = next(
+        payload for kind, payload in emitted if kind == "project.tool_result"
+    )
+    assert write_event["ok"] is True
+    assert write_event["path"] == "app/main.py"
+
+
+@pytest.mark.asyncio
 async def test_only_an_argument_shaped_refusal_narrows_the_next_step() -> None:
     """The wire between the two halves of P3. A refusal the model can fix by
     resending sets project_retry_tool, which narrows the next grammar to that
@@ -1768,11 +2051,15 @@ async def test_only_an_argument_shaped_refusal_narrows_the_next_step() -> None:
 
     # And a call that works clears any narrowing the previous step set.
     ControlPlane, plane, state = _execute_plane(None, project_retry_tool="create_file")
-    assert (await ControlPlane._project_execute(plane, state))["project_retry_tool"] == ""
+    assert (await ControlPlane._project_execute(plane, state))[
+        "project_retry_tool"
+    ] == ""
 
 
 @pytest.mark.asyncio
-async def test_a_repeated_read_returns_the_answer_and_counts_toward_the_breaker() -> None:
+async def test_a_repeated_read_returns_the_answer_and_counts_toward_the_breaker() -> (
+    None
+):
     """The livelock a real edit turn hit: 44 of 48 steps re-reading one file.
 
     Two faults compounded. The refusal said the earlier result was "still
@@ -1826,7 +2113,9 @@ async def test_a_stalled_turn_gets_its_honest_exit_back() -> None:
             # The reference is read from disk on every build step; these
             # unit stubs point it at a directory that does not exist, so
             # the request carries an empty list rather than real files.
-            project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
+            project_reference_enabled=True,
+            project_repo_map_enabled=False,
+            project_orchestrator_enabled=False,
             project_reference_dir=Path("/nonexistent-reference"),
             project_reference_max_chars=14_000,
             project_reference_max_chars_local=6_000,
@@ -1895,7 +2184,9 @@ async def test_a_refused_write_target_carries_the_files_still_owed() -> None:
         project_planned_files=["a.py"],
         project_staged={"a.py": {"content": "x\n"}},
     )
-    assert (await ControlPlane._project_execute(plane, state))["project_write_pin"] == []
+    assert (await ControlPlane._project_execute(plane, state))[
+        "project_write_pin"
+    ] == []
 
 
 @pytest.mark.asyncio
@@ -1908,7 +2199,9 @@ async def test_a_successful_call_clears_the_write_pin() -> None:
         project_write_pin=["b.py", "a.py"],
     )
 
-    assert (await ControlPlane._project_execute(plane, state))["project_write_pin"] == []
+    assert (await ControlPlane._project_execute(plane, state))[
+        "project_write_pin"
+    ] == []
 
 
 async def _stages_a_file(project_id, call, staged, next_paths=()):
@@ -1929,7 +2222,11 @@ async def test_a_target_that_keeps_failing_is_closed_for_the_turn() -> None:
     for attempt in range(1, _MAX_TARGET_REFUSALS + 1):
         result = await ControlPlane._project_execute(plane, state)
         assert result["project_blocked_targets"]["create_file:a.py"] == attempt
-        state = {**state, **result, "project_pending_call": state["project_pending_call"]}
+        state = {
+            **state,
+            **result,
+            "project_pending_call": state["project_pending_call"],
+        }
 
     # Past the limit the workspace is not consulted at all, and the model is
     # told to do something else rather than handed the same refusal again.
@@ -1961,7 +2258,9 @@ def test_the_step_request_carries_the_tool_catalog_the_local_model_needs() -> No
             # The reference is read from disk on every build step; these
             # unit stubs point it at a directory that does not exist, so
             # the request carries an empty list rather than real files.
-            project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
+            project_reference_enabled=True,
+            project_repo_map_enabled=False,
+            project_orchestrator_enabled=False,
             project_reference_dir=Path("/nonexistent-reference"),
             project_reference_max_chars=14_000,
             project_reference_max_chars_local=6_000,
@@ -2087,9 +2386,7 @@ async def test_the_manifest_is_taken_after_looking_around_and_costs_no_step(
         ] is None
     assert calls["count"] == 0
 
-    plan = await ControlPlane._project_manifest(
-        plane, state, {}, _PLAN_AFTER_STEPS, {}
-    )
+    plan = await ControlPlane._project_manifest(plane, state, {}, _PLAN_AFTER_STEPS, {})
     assert plan["files"] == ["alpha.txt", "beta.txt"]
     assert plan["scenarios"] == []
     assert plan["taken"] is True
@@ -2139,7 +2436,9 @@ async def test_the_plan_declares_the_turns_intent_and_the_regexes_step_back() ->
     # Over-fires: a question carrying a create verb and a path.
     question = "Where would I add a new route in app/main.py?"
     assert _writes_files({"prompt": question}) is True
-    assert _writes_files({"prompt": question, "project_build_intent": "question"}) is False
+    assert (
+        _writes_files({"prompt": question, "project_build_intent": "question"}) is False
+    )
 
     # Under-fires: the live Logivity turn, which writes across the whole UI.
     rewire = "Rewire this app's entire UI onto the Metis design language in appkit."
@@ -2165,17 +2464,62 @@ def test_an_infra_failure_is_not_reported_as_an_unreadable_model_reply() -> None
         'which is limited to 1000 API calls / month"}'
     )
     assert classify_backend_unavailable(quota) == "rate_limited"
-    assert classify_backend_unavailable(ModelProviderError("Cohere kept failing after 3 attempts")) == "backend_error"
-    assert classify_backend_unavailable(ModelProviderError("Grok call timed out after 120 seconds")) == "backend_timeout"
+    weekly_provider_cap = ModelProviderError(
+        'Cline returned HTTP 429: {"error":{"code":"INFERENCE_CAP_ERROR",'
+        '"message":"You have reached your weekly Clinepass limit"}}'
+    )
+    assert classify_backend_unavailable(weekly_provider_cap) == "provider_exhausted"
+    # A plain 429 remains model/rung-specific. It must still be allowed to try
+    # the next model on the same provider.
+    assert (
+        classify_backend_unavailable(
+            ModelProviderError("Cline returned HTTP 429: too many requests")
+        )
+        == "rate_limited"
+    )
+    ollama_extra_usage = ModelProviderError(
+        "this model uses extra usage only (not included plan usage) and your "
+        "extra usage balance is empty"
+    )
+    assert classify_backend_unavailable(ollama_extra_usage) == "rate_limited"
+    assert (
+        classify_backend_unavailable(
+            ModelProviderError("Cohere kept failing after 3 attempts")
+        )
+        == "backend_error"
+    )
+    assert (
+        classify_backend_unavailable(
+            ModelProviderError("Grok call timed out after 120 seconds")
+        )
+        == "backend_timeout"
+    )
 
     # Genuinely malformed model replies stay malformed — the model DID answer,
     # unreadably, and the loop must feed that back as evidence, not end the turn.
-    assert classify_backend_unavailable(ModelProviderError("hosted model returned prose instead of a project tool call")) is None
-    assert classify_backend_unavailable(ModelProviderError("Grok returned invalid project tool arguments")) is None
+    assert (
+        classify_backend_unavailable(
+            ModelProviderError(
+                "hosted model returned prose instead of a project tool call"
+            )
+        )
+        is None
+    )
+    assert (
+        classify_backend_unavailable(
+            ModelProviderError("Grok returned invalid project tool arguments")
+        )
+        is None
+    )
 
     # A permanent pre-model refusal is classify_model_error's job; this must
     # not shadow it (both would end the turn, but with different guidance).
-    assert classify_backend_unavailable(PermanentModelError("failed to parse grammar", reason="grammar_compile")) is None
+    assert (
+        classify_backend_unavailable(
+            PermanentModelError("failed to parse grammar", reason="grammar_compile")
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -2188,30 +2532,44 @@ async def test_a_backend_outage_ends_the_turn_honestly_not_as_malformed() -> Non
 
     class QuotaModel:
         async def project_plan_files(self, request, *, model_aliases=None):
-            return SimpleNamespace(files=[], scenarios=[], intent="edit", scope="narrow")
+            return SimpleNamespace(
+                files=[], scenarios=[], intent="edit", scope="narrow"
+            )
 
         async def project_step(self, request, *, model_aliases=None):
-            raise ModelProviderError('Cohere returned HTTP 429: {"message":"Trial key"}')
+            raise ModelProviderError(
+                'Cohere returned HTTP 429: {"message":"Trial key"}'
+            )
 
     plane = object.__new__(ControlPlane)
     plane.model = QuotaModel()
     plane.events = SimpleNamespace(emit=_noop_emit)
     plane.projects = SimpleNamespace(context=_empty_context, stage_scaffold=None)
     plane.settings = SimpleNamespace(
-        project_agent_max_steps=48, project_staged_max_files=48,
-        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
-        project_reference_max_chars=0, project_reference_max_chars_local=0,
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
     plane._stage = _noop_emit
 
-    result = await ControlPlane._project_step(plane, {
-        "prompt": "Add a /health route to app/main.py.",
-        "run_id": "run_x", "conversation_id": "conv_x",
-        "model_aliases": {"_project_id": "asset_x"},
-        "project_iterations": 0,
-    })
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            "prompt": "Add a /health route to app/main.py.",
+            "run_id": "run_x",
+            "conversation_id": "conv_x",
+            "model_aliases": {"_project_id": "asset_x"},
+            "project_iterations": 0,
+        },
+    )
 
     assert "rate-limited or out of quota" in result["response_text"]
     # Not counted as an unreadable reply.
@@ -2249,14 +2607,17 @@ async def test_a_run_of_reads_without_a_write_ends_the_turn() -> None:
     )
     plane.events = SimpleNamespace(emit=_noop_emit)
     plane.settings = SimpleNamespace(
-        project_agent_max_steps=48, project_verify_bonus_steps=0,
-        project_verify_enabled=False, project_typecheck_enabled=False,
+        project_agent_max_steps=48,
+        project_verify_bonus_steps=0,
+        project_verify_enabled=False,
+        project_typecheck_enabled=False,
     )
     plane._guard = _noop_emit
     plane._stage = _noop_emit
     base = {
         "prompt": "Rework the dashboard.",
-        "run_id": "r", "conversation_id": "c",
+        "run_id": "r",
+        "conversation_id": "c",
         "model_aliases": {"_project_id": "asset_x"},
         "project_iterations": 20,
     }
@@ -2319,7 +2680,11 @@ async def test_a_web_reskin_seeds_appkit_on_step_one_without_the_plan() -> None:
     async def _stage_scaffold(project_id, staged, capabilities):
         seeded_calls["n"] += 1
         nxt = dict(staged)
-        nxt["appkit/static/theme.css"] = {"content": ":root{}", "origin": "create", "bytes": 6}
+        nxt["appkit/static/theme.css"] = {
+            "content": ":root{}",
+            "origin": "create",
+            "bytes": 6,
+        }
         nxt["appkit/web.py"] = {"content": "x=1", "origin": "create", "bytes": 3}
         return nxt, ["appkit/static/theme.css", "appkit/web.py"]
 
@@ -2336,29 +2701,42 @@ async def test_a_web_reskin_seeds_appkit_on_step_one_without_the_plan() -> None:
             # Assert the scaffold reached the model on the very first step.
             assert request["scaffold"], "appkit note must be present on step 1"
             return ProjectAgentStepV1(
-                status="tool", tool_call=ProjectToolCallV1(name="list_files", arguments={}),
+                status="tool",
+                tool_call=ProjectToolCallV1(name="list_files", arguments={}),
             )
 
     plane = object.__new__(ControlPlane)
     plane.model = Model()
     plane.events = SimpleNamespace(emit=_noop_emit)
-    plane.projects = SimpleNamespace(context=_empty_context, stage_scaffold=_stage_scaffold)
+    plane.projects = SimpleNamespace(
+        context=_empty_context, stage_scaffold=_stage_scaffold
+    )
     plane.settings = SimpleNamespace(
-        project_agent_max_steps=48, project_staged_max_files=48,
-        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
-        project_reference_max_chars=0, project_reference_max_chars_local=0,
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
     plane._stage = _noop_emit
 
-    result = await ControlPlane._project_step(plane, {
-        "prompt": "Rewire this app's entire UI onto the Metis design language in appkit, "
-                  "mount it with mount_appkit_static(app), link /appkit/theme.css first.",
-        "run_id": "run_x", "conversation_id": "conv_x",
-        "model_aliases": {"_project_id": "asset_x"},
-        "project_iterations": 0,
-    })
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            "prompt": "Rewire this app's entire UI onto the Metis design language in appkit, "
+            "mount it with mount_appkit_static(app), link /appkit/theme.css first.",
+            "run_id": "run_x",
+            "conversation_id": "conv_x",
+            "model_aliases": {"_project_id": "asset_x"},
+            "project_iterations": 0,
+        },
+    )
 
     # appkit was seeded from the request, with no working plan behind it.
     staged = result["project_staged"]
@@ -2367,6 +2745,82 @@ async def test_a_web_reskin_seeds_appkit_on_step_one_without_the_plan() -> None:
     # And the seed is not model progress: _model_has_written sees past it, so
     # the plan-after-exploration gate would still hold.
     assert _model_has_written(staged) is False
+
+
+@pytest.mark.asyncio
+async def test_a_narrow_edit_upgrades_an_existing_scaffold_before_the_coder() -> None:
+    """An old appkit must not be described with the new API until its exact
+    canonical replacement is in the approval-visible overlay."""
+    from waqil_api.control_plane import ControlPlane
+    from waqil_api.contracts import ProjectAgentStepV1, ProjectToolCallV1
+
+    seeded_calls = {"n": 0}
+
+    async def context(*args, **kwargs):
+        return {
+            "manifest": {
+                "file_tree": ["appkit/__init__.py", "appkit/uploads.py", "app/main.py"]
+            },
+            "metis_md": "",
+        }
+
+    async def stage_scaffold(project_id, staged, capabilities):
+        seeded_calls["n"] += 1
+        next_staged = {
+            **staged,
+            "appkit/uploads.py": {
+                "content": "DOCUMENT_MIMES = frozenset()\n",
+                "origin": "patch",
+                "base_sha256": "old",
+                "bytes": 35,
+            },
+        }
+        return next_staged, ["appkit/uploads.py"]
+
+    class Model:
+        async def project_step(self, request, *, model_aliases=None):
+            assert "DOCUMENT_MIMES" in request["scaffold"]
+            return ProjectAgentStepV1(
+                status="tool",
+                tool_call=ProjectToolCallV1(name="list_files", arguments={}),
+            )
+
+    plane = object.__new__(ControlPlane)
+    plane.model = Model()
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.projects = SimpleNamespace(context=context, stage_scaffold=stage_scaffold)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            "prompt": "Fix the upload validation bug.",
+            "run_id": "run_x",
+            "conversation_id": "conv_x",
+            "model_aliases": {"_project_id": "asset_x"},
+            "project_iterations": 4,
+            "project_plan_taken": True,
+            "project_planned_files": [],
+            "project_build_intent": "edit",
+            "project_build_scope": "narrow",
+        },
+    )
+
+    assert seeded_calls["n"] == 1
+    assert result["project_staged"]["appkit/uploads.py"]["origin"] == "patch"
 
 
 @pytest.mark.asyncio
@@ -2380,9 +2834,12 @@ async def test_a_no_op_revise_plan_does_not_burn_a_revision() -> None:
     plane.events = SimpleNamespace(emit=_noop_emit)
     plane.settings = SimpleNamespace(project_staged_max_files=48)
     state = {
-        "prompt": "x", "run_id": "r", "conversation_id": "c",
+        "prompt": "x",
+        "run_id": "r",
+        "conversation_id": "c",
         "project_planned_files": ["app/main.py", "app/static/index.html"],
-        "project_plan_revisions": 0, "project_trace": [],
+        "project_plan_revisions": 0,
+        "project_trace": [],
     }
     call = ProjectToolCallV1(
         name="revise_plan",
@@ -2430,7 +2887,9 @@ async def test_planning_the_build_does_not_spend_one_of_the_models_steps() -> No
         project_spec_rewrite_max_chars=1800,
         # Reference lookup is part of every build step; point it at nothing so
         # these manifest tests stay about the manifest.
-        project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
+        project_reference_enabled=True,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
         project_reference_dir=Path("/nonexistent-reference"),
         project_reference_max_chars=14_000,
         project_reference_max_chars_local=6_000,
@@ -2486,7 +2945,9 @@ async def test_the_manifest_survives_an_unreadable_reply_on_the_step_it_lands() 
         project_spec_rewrite_max_chars=1800,
         # Reference lookup is part of every build step; point it at nothing so
         # these manifest tests stay about the manifest.
-        project_reference_enabled=True, project_repo_map_enabled=False, project_orchestrator_enabled=False,
+        project_reference_enabled=True,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
         project_reference_dir=Path("/nonexistent-reference"),
         project_reference_max_chars=14_000,
         project_reference_max_chars_local=6_000,
@@ -2553,7 +3014,9 @@ async def test_a_plan_taken_this_step_reaches_this_steps_request() -> None:
 
     class QuestionModel:
         async def project_plan_files(self, request, *, model_aliases=None):
-            return SimpleNamespace(files=[], scenarios=[], intent="question", scope="narrow")
+            return SimpleNamespace(
+                files=[], scenarios=[], intent="question", scope="narrow"
+            )
 
         async def project_step(self, request, *, model_aliases=None):
             seen.append(request)
@@ -2575,7 +3038,9 @@ async def test_a_plan_taken_this_step_reaches_this_steps_request() -> None:
         project_staged_max_files=48,
         project_spec_rewrite=False,
         project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
         project_reference_dir=Path("/nonexistent-reference"),
         project_reference_max_chars=0,
         project_reference_max_chars_local=0,
@@ -2666,7 +3131,7 @@ async def test_a_refused_step_still_clears_its_batch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_revise_plan_replaces_a_manifest_the_project_contradicts() -> None:
+async def test_revise_plan_explicitly_replaces_paths_the_project_contradicts() -> None:
     """The way out of a plan the evidence disproved.
 
     This is the live Logivity deadlock in miniature: a manifest naming
@@ -2697,6 +3162,7 @@ async def test_revise_plan_replaces_a_manifest_the_project_contradicts() -> None
         name="revise_plan",
         arguments={
             "files": ["app.py"],
+            "remove_files": ["app/static/index.html", "app/static/style.css"],
             "reason": "This is a Streamlit app: it has no app/static and serves no HTML.",
         },
     )
@@ -2708,14 +3174,19 @@ async def test_revise_plan_replaces_a_manifest_the_project_contradicts() -> None
     # A corrected plan is progress, so it must not advance the stall counter
     # that releases the manifest gate.
     assert result["project_stall_steps"] == 0
-    # The old plan's acceptance scenarios described files that are gone.
-    assert result["project_planned_scenarios"] == []
+    # revise_plan owns paths, not product behavior. The graph retains the
+    # original scenarios because the result does not overwrite them.
+    assert "project_planned_scenarios" not in result
     # It costs the step it took, and it never becomes a pending workspace call.
     assert result["project_iterations"] == 6
     assert result["project_pending_call"] == {}
     assert result["project_trace"][-1]["result"]["ok"] is True
     assert [kind for kind, _ in events] == ["project.plan_revised"]
     assert events[0][1]["previous_files"] == [
+        "app/static/index.html",
+        "app/static/style.css",
+    ]
+    assert events[0][1]["removed_files"] == [
         "app/static/index.html",
         "app/static/style.css",
     ]
@@ -2726,6 +3197,221 @@ async def test_revise_plan_replaces_a_manifest_the_project_contradicts() -> None
     assert refused["project_trace"][-1]["result"]["ok"] is False
     assert "limit for one turn" in refused["project_trace"][-1]["result"]["error"]
     assert "project_planned_files" not in refused
+
+
+@pytest.mark.asyncio
+async def test_repair_revision_cannot_drop_meridian_commitments() -> None:
+    """A focused stylesheet repair is a delta, not a new two-file product.
+
+    The live Meridian run staged every application file except README and the
+    workflow test, then a verifier-focused coder returned only index.html and a
+    new style.css. Treating that subset as replacement let the turn pass final
+    conformance and materialize 23 files while silently abandoning both owed
+    user requirements. The host now preserves the original dependency order,
+    appends the genuinely new path, records that merged plan, and directs the
+    first old commitment still owed.
+    """
+    from waqil_api.control_plane import ControlPlane
+
+    previous = [
+        "app/__init__.py",
+        "app/main.py",
+        "app/config.py",
+        "app/db.py",
+        "app/models.py",
+        "app/repository.py",
+        "app/extraction.py",
+        "app/services.py",
+        "app/routes/__init__.py",
+        "app/routes/documents.py",
+        "app/routes/questions.py",
+        "app/static/index.html",
+        "app/static/app.js",
+        "requirements.txt",
+        "README.md",
+        "tests/test_workflows.py",
+    ]
+    scenarios = [{"name": "TXT invoice workflow passes"}]
+    recorded: list[dict[str, Any]] = []
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def record_plan(project_id, plan):
+        assert project_id == "asset_x"
+        recorded.append(plan)
+
+    async def emit(run_id, conversation_id, kind, payload):
+        events.append((kind, payload))
+
+    plane = object.__new__(ControlPlane)
+    plane.projects = SimpleNamespace(record_plan=record_plan)
+    plane.events = SimpleNamespace(emit=emit)
+    plane.settings = SimpleNamespace(
+        project_staged_max_files=48,
+        project_orchestrator_enabled=True,
+        project_orchestrator_max_attempts=3,
+    )
+    staged = {
+        path: {"content": f"# {path}\n", "origin": "create"}
+        for path in previous
+        if path not in {"README.md", "tests/test_workflows.py"}
+    }
+    state = {
+        "prompt": "Build Meridian Evidence Desk and satisfy every workflow.",
+        "run_id": "run_meridian",
+        "conversation_id": "conv_meridian",
+        "model_aliases": {"_project_id": "asset_x"},
+        "project_plan_taken": True,
+        "project_planned_files": previous,
+        "project_planned_scenarios": scenarios,
+        "project_staged": staged,
+        "project_plan_revisions": 0,
+        "project_plan_revision_calls": 0,
+        "project_trace": [],
+    }
+    call = ProjectToolCallV1(
+        name="revise_plan",
+        arguments={
+            "files": ["app/static/index.html", "app/static/style.css"],
+            "reason": "The verifier found missing stylesheet classes.",
+        },
+    )
+
+    revised = await ControlPlane._revise_project_plan(plane, state, call, 20, {})
+    expected = [*previous, "app/static/style.css"]
+
+    assert revised["project_planned_files"] == expected
+    assert revised["project_trace"][-1]["result"]["output"]["retained_files"] == [
+        path for path in previous if path != "app/static/index.html"
+    ]
+    assert recorded[0]["files"] == expected
+    plan_event = [payload for kind, payload in events if kind == "project.plan_revised"]
+    assert plan_event[0]["files"] == expected
+    # Graph-state merging keeps behavioral commitments across a path revision.
+    assert "project_planned_scenarios" not in revised
+    merged_state = {**state, **revised}
+    assert merged_state["project_planned_scenarios"] == scenarios
+
+    direction = await ControlPlane._project_direct(
+        plane,
+        merged_state,
+        {},
+        staged,
+        revised["project_planned_files"],
+        21,
+    )
+    assert direction["path"] == "README.md"
+    assert "tests/test_workflows.py" in revised["project_planned_files"]
+
+
+@pytest.mark.asyncio
+async def test_revise_plan_refuses_to_remove_an_already_staged_path() -> None:
+    """Dropping it from the plan cannot remove its bytes from the approval."""
+    from waqil_api.control_plane import ControlPlane
+
+    plane = object.__new__(ControlPlane)
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.settings = SimpleNamespace(project_staged_max_files=48)
+    state = {
+        "prompt": "Build the app.",
+        "run_id": "run_x",
+        "conversation_id": "conv_x",
+        "project_plan_taken": True,
+        "project_planned_files": ["app/main.py", "README.md"],
+        "project_staged": {
+            "app/main.py": {"content": "app = object()\n", "origin": "create"}
+        },
+        "project_trace": [],
+    }
+    call = ProjectToolCallV1(
+        name="revise_plan",
+        arguments={
+            "files": ["README.md"],
+            "remove_files": ["app/main.py"],
+            "reason": "I changed focus to documentation.",
+        },
+    )
+
+    result = await ControlPlane._revise_project_plan(plane, state, call, 5, {})
+
+    assert "project_planned_files" not in result
+    evidence = result["project_trace"][-1]["result"]
+    assert evidence["ok"] is False
+    assert "Already-staged paths cannot be removed" in evidence["error"]
+    assert result["project_retry_tool"] == "revise_plan"
+
+
+@pytest.mark.asyncio
+async def test_revise_plan_clears_a_direction_whose_target_it_removed() -> None:
+    """A directed coder may revise an impossible target out of the manifest.
+
+    The old direction is derived from the old plan; retaining it after the
+    correction pins the next step to a write the new manifest refuses.
+    """
+    from waqil_api.control_plane import ControlPlane
+
+    plane = object.__new__(ControlPlane)
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.settings = SimpleNamespace(project_staged_max_files=48)
+    state = {
+        "prompt": "Build the app.",
+        "run_id": "run_x",
+        "conversation_id": "conv_x",
+        "project_plan_taken": True,
+        "project_planned_files": ["wrong/index.html", "app.py"],
+        "project_direction": {
+            "path": "wrong/index.html",
+            "instruction": "Write the planned static page.",
+            "reuse": [],
+            "read": [],
+        },
+        "project_focus_path": "wrong/index.html",
+        "project_write_pin": ["wrong/index.html"],
+        "project_trace": [],
+    }
+    call = ProjectToolCallV1(
+        name="revise_plan",
+        arguments={
+            "files": ["app.py"],
+            "remove_files": ["wrong/index.html"],
+            "reason": "The inspected project is a single-file Streamlit app.",
+        },
+    )
+
+    result = await ControlPlane._revise_project_plan(plane, state, call, 5, {})
+
+    assert result["project_planned_files"] == ["app.py"]
+    assert result["project_direction"] == {}
+    assert result["project_focus_path"] == ""
+    assert result["project_write_pin"] == []
+
+
+@pytest.mark.asyncio
+async def test_revise_plan_cannot_create_the_initial_plan() -> None:
+    from waqil_api.control_plane import ControlPlane
+
+    plane = object.__new__(ControlPlane)
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    state = {
+        "prompt": "Build the application.",
+        "run_id": "run_x",
+        "conversation_id": "conv_x",
+        "project_trace": [],
+        "project_plan_taken": False,
+        "project_planned_files": [],
+    }
+    call = ProjectToolCallV1(
+        name="revise_plan",
+        arguments={"files": ["app/main.py"], "reason": "initial plan"},
+    )
+
+    result = await ControlPlane._revise_project_plan(plane, state, call, 2, {})
+
+    assert "project_planned_files" not in result
+    assert result["project_trace"][-1]["result"]["ok"] is False
+    assert (
+        "has not established the initial file plan"
+        in result["project_trace"][-1]["result"]["error"]
+    )
 
 
 @pytest.mark.asyncio
@@ -2769,10 +3455,19 @@ def test_sandbox_verdict_is_honest_when_a_masked_import_left_the_app_unrun() -> 
     must not be described as having "imported and served its routes". This is the
     exact qwen `PyPDF2` case measured live: app.main never imported at all."""
     checks = [
-        {"name": "import app.main", "kind": "import", "ok": False, "missing_module": "PyPDF2"},
+        {
+            "name": "import app.main",
+            "kind": "import",
+            "ok": False,
+            "missing_module": "PyPDF2",
+        },
         {"name": "import app.config", "kind": "import", "ok": True},
-        {"name": "application object", "kind": "application", "ok": True,
-         "detail": "no ASGI application found; import checks only"},
+        {
+            "name": "application object",
+            "kind": "application",
+            "ok": True,
+            "detail": "no ASGI application found; import checks only",
+        },
     ]
     verdict = _sandbox_verdict(checks)
     assert verdict.startswith("⚠")
@@ -2786,8 +3481,12 @@ def test_sandbox_verdict_confirms_only_when_routes_were_actually_served() -> Non
     project's own routes — the grok case, whose app booted and served `/`."""
     served = [
         {"name": "import app.main", "kind": "import", "ok": True},
-        {"name": "application object", "kind": "application", "ok": True,
-         "detail": "FastAPI declaring 3 route(s), 1 written by this project"},
+        {
+            "name": "application object",
+            "kind": "application",
+            "ok": True,
+            "detail": "FastAPI declaring 3 route(s), 1 written by this project",
+        },
         {"name": "GET /", "kind": "request", "ok": True, "detail": "HTTP 200"},
     ]
     verdict = _sandbox_verdict(served)
@@ -2798,8 +3497,12 @@ def test_sandbox_verdict_confirms_only_when_routes_were_actually_served() -> Non
     # app object at all, are both honest ✅s that do NOT claim routes were served.
     loaded_no_routes = [
         {"name": "import app.main", "kind": "import", "ok": True},
-        {"name": "application object", "kind": "application", "ok": True,
-         "detail": "FastAPI declaring 2 route(s), 0 written by this project"},
+        {
+            "name": "application object",
+            "kind": "application",
+            "ok": True,
+            "detail": "FastAPI declaring 2 route(s), 0 written by this project",
+        },
     ]
     assert _sandbox_verdict(loaded_no_routes).startswith("✅")
     assert "served its routes" not in _sandbox_verdict(loaded_no_routes)
@@ -2814,12 +3517,26 @@ def test_annotate_summary_leads_with_the_masked_import_warning() -> None:
     not a green check, even though there are zero blocking errors."""
     verification = {
         "errors": [],
-        "warnings": [{"path": "app/main.py", "error": "PyPDF2 is declared but not installed in the offline verify image"}],
+        "warnings": [
+            {
+                "path": "app/main.py",
+                "error": "PyPDF2 is declared but not installed in the offline verify image",
+            }
+        ],
         "notes": [],
         "checks": [
-            {"name": "import app.main", "kind": "import", "ok": False, "missing_module": "PyPDF2"},
-            {"name": "application object", "kind": "application", "ok": True,
-             "detail": "no ASGI application found; import checks only"},
+            {
+                "name": "import app.main",
+                "kind": "import",
+                "ok": False,
+                "missing_module": "PyPDF2",
+            },
+            {
+                "name": "application object",
+                "kind": "application",
+                "ok": True,
+                "detail": "no ASGI application found; import checks only",
+            },
         ],
     }
     card = _annotate_summary("staged files", verification)
@@ -2833,6 +3550,7 @@ def test_annotate_summary_does_not_call_env_explained_failures_defects() -> None
     "would stop this working", and must collapse one cause seen from many
     importers into a single line. Measured on a real qwen build that showed
     "7 problem(s)" for one correct `raise`."""
+
     def failed_import(module: str) -> dict[str, str]:
         return {
             "path": "app/config.py",
@@ -2855,8 +3573,12 @@ def test_annotate_summary_does_not_call_env_explained_failures_defects() -> None
         "notes": [],
         "checks": [
             {"name": "import app.main", "kind": "import", "ok": False},
-            {"name": "application object", "kind": "application", "ok": True,
-             "detail": "no ASGI application found; import checks only"},
+            {
+                "name": "application object",
+                "kind": "application",
+                "ok": True,
+                "detail": "no ASGI application found; import checks only",
+            },
         ],
     }
     card = _annotate_summary("staged files", verification)
@@ -2869,11 +3591,13 @@ def test_annotate_summary_does_not_call_env_explained_failures_defects() -> None
 
 def test_annotate_summary_still_flags_a_genuinely_blocking_error() -> None:
     verification = {
-        "errors": [{
-            "path": "app/main.py",
-            "rung": "wiring",
-            "error": "mounts StaticFiles at directory 'app/static', but no file in the project creates it",
-        }],
+        "errors": [
+            {
+                "path": "app/main.py",
+                "rung": "wiring",
+                "error": "mounts StaticFiles at directory 'app/static', but no file in the project creates it",
+            }
+        ],
         "warnings": [],
         "notes": [],
         "checks": [],
@@ -2917,14 +3641,19 @@ def test_an_acceptance_failure_is_not_excused_as_an_environment_limit() -> None:
         "checks": [{"name": "import app.main", "kind": "import", "ok": True}],
     }
     card = _annotate_summary("staged files", verification)
-    assert "ran and answered, but not the way the plan said" in card
     assert "GET /convert returned HTTP 422" in card
     # The import failure keeps its own honest heading, and neither borrows the
     # other's wording.
     assert "Could not be exercised in the sandbox" in card
     assert "modules could not import — GET /convert" not in card
-    # Neither is dressed up as a blocking defect: both are still advisory.
-    assert "would stop this project working" not in card
+    # The acceptance error blocks; only the environment-shaped import remains
+    # advisory. The sandbox has already distinguished this from a content-miss
+    # warning, so exception-name heuristics must not override its verdict.
+    assert "would stop this project working" in card
+    reason = _blocking_reason(verification)
+    assert reason is not None
+    assert reason.startswith("1 problem(s)")
+    assert "GET /convert returned HTTP 422" in reason
 
 
 @pytest.mark.asyncio
@@ -2941,22 +3670,31 @@ async def test_a_drifting_turn_is_narrowed_to_one_file_before_it_is_ended() -> N
     (deepseek-v4-pro wrote six) and still miss one that stalls on two.
     """
     from waqil_api.control_plane import (
-        ControlPlane, _FOCUSED_EXPLORE_STEPS, _explore_budget,
+        ControlPlane,
+        _FOCUSED_EXPLORE_STEPS,
+        _explore_budget,
     )
 
     plane = object.__new__(ControlPlane)
     plane.projects = SimpleNamespace(context=_empty_context)
     plane.events = SimpleNamespace(emit=_noop_emit)
-    plane.settings = SimpleNamespace(project_agent_max_steps=48, project_verify_bonus_steps=0)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_verify_bonus_steps=0
+    )
     plane._guard = _noop_emit
     plane._stage = _noop_emit
 
     drifting = {
         "prompt": "Convert this to FastAPI.",
-        "run_id": "r", "conversation_id": "c",
+        "run_id": "r",
+        "conversation_id": "c",
         "model_aliases": {"_project_id": "asset_x"},
         "project_iterations": 20,
-        "project_planned_files": ["app/main.py", "app/static/index.html", "app/static/app.js"],
+        "project_planned_files": [
+            "app/main.py",
+            "app/static/index.html",
+            "app/static/app.js",
+        ],
         "project_staged": {},
     }
     drifting["project_consecutive_reads"] = _explore_budget(drifting)
@@ -2971,12 +3709,21 @@ async def test_a_drifting_turn_is_narrowed_to_one_file_before_it_is_ended() -> N
     # The step request now offers ONLY that file — which is what narrows
     # create_file's enum on the tool-calling lanes — and says so in words.
     plane.settings = SimpleNamespace(
-        project_agent_max_steps=48, project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False,
-        project_reference_dir=Path("/none"), project_reference_max_chars=0,
+        project_agent_max_steps=48,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
         project_reference_max_chars_local=0,
     )
     request = ControlPlane._project_step_request(
-        plane, {**drifting, **narrowed}, {}, [], {}, 21,
+        plane,
+        {**drifting, **narrowed},
+        {},
+        [],
+        {},
+        21,
         planned=drifting["project_planned_files"],
     )
     assert request["files_still_to_write"] == ["app/main.py"]
@@ -2984,8 +3731,14 @@ async def test_a_drifting_turn_is_narrowed_to_one_file_before_it_is_ended() -> N
     assert "app/main.py" in request["attention"]
 
     # Still refusing to write the one named file — now the turn ends.
-    stuck = {**drifting, **narrowed, "project_consecutive_reads": _FOCUSED_EXPLORE_STEPS}
-    plane.settings = SimpleNamespace(project_agent_max_steps=48, project_verify_bonus_steps=0)
+    stuck = {
+        **drifting,
+        **narrowed,
+        "project_consecutive_reads": _FOCUSED_EXPLORE_STEPS,
+    }
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48, project_verify_bonus_steps=0
+    )
     ended = await ControlPlane._project_step(plane, stuck)
     assert "without writing" in ended["response_text"]
 
@@ -3002,7 +3755,9 @@ async def test_a_model_that_keeps_writing_is_never_narrowed() -> None:
 
     class Writer:
         async def project_plan_files(self, request, *, model_aliases=None):
-            return SimpleNamespace(files=[], scenarios=[], intent="build", scope="narrow")
+            return SimpleNamespace(
+                files=[], scenarios=[], intent="build", scope="narrow"
+            )
 
         async def project_step(self, request, *, model_aliases=None):
             # The whole point: a productive model is never handed the narrowed
@@ -3020,10 +3775,16 @@ async def test_a_model_that_keeps_writing_is_never_narrowed() -> None:
     plane.projects = SimpleNamespace(context=_empty_context)
     plane.events = SimpleNamespace(emit=_noop_emit)
     plane.settings = SimpleNamespace(
-        project_agent_max_steps=48, project_verify_bonus_steps=0,
-        project_staged_max_files=48, project_spec_rewrite=False,
-        project_spec_rewrite_max_chars=1800, project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False,
-        project_reference_dir=Path("/none"), project_reference_max_chars=0,
+        project_agent_max_steps=48,
+        project_verify_bonus_steps=0,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
         project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
@@ -3031,7 +3792,8 @@ async def test_a_model_that_keeps_writing_is_never_narrowed() -> None:
 
     productive = {
         "prompt": "Convert this to FastAPI.",
-        "run_id": "r", "conversation_id": "c",
+        "run_id": "r",
+        "conversation_id": "c",
         "model_aliases": {"_project_id": "asset_x"},
         "project_iterations": 20,
         "project_planned_files": ["a.py", "b.py", "c.py", "d.py"],
@@ -3061,7 +3823,9 @@ def test_reads_are_weighted_by_whether_they_learned_anything() -> None:
     repeated identical calls are the signal worth acting on.
     """
     from waqil_api.control_plane import (
-        ControlPlane, _UNPRODUCTIVE_READ_WEIGHT, _explore_budget,
+        ControlPlane,
+        _UNPRODUCTIVE_READ_WEIGHT,
+        _explore_budget,
     )
 
     call = ProjectToolCallV1(name="read_file", arguments={"path": "a.py"})
@@ -3078,8 +3842,11 @@ def test_reads_are_weighted_by_whether_they_learned_anything() -> None:
     # A write still clears the run entirely.
     wrote = ControlPlane._project_evidence(
         {"project_consecutive_reads": 20},
-        ProjectToolCallV1(name="create_file", arguments={"path": "a.py", "content": "x"}),
-        {"ok": True}, 0,
+        ProjectToolCallV1(
+            name="create_file", arguments={"path": "a.py", "content": "x"}
+        ),
+        {"ok": True},
+        0,
     )
     assert wrote["project_consecutive_reads"] == 0
 
@@ -3127,27 +3894,41 @@ async def test_a_dead_coder_lane_falls_down_the_ladder_mid_turn() -> None:
     plane.events = SimpleNamespace(emit=_emit)
     plane.projects = SimpleNamespace(context=_empty_context)
     plane.settings = SimpleNamespace(
-        project_agent_max_steps=48, project_staged_max_files=48,
-        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
-        project_reference_max_chars=0, project_reference_max_chars_local=0,
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
     plane._stage = _noop_emit
 
-    chain = _json.dumps([
-        {"provider": "local", "model": "glm-5.2:cloud"},
-        {"provider": "cohere", "model": None},
-    ])
-    result = await ControlPlane._project_step(plane, {
-        "prompt": "Add a /health route.",
-        "run_id": "r", "conversation_id": "c",
-        "model_aliases": {
-            "_project_id": "asset_x", "_provider": "local",
-            "coder": "glm-5.2:cloud", "_chain_coder": chain,
+    chain = _json.dumps(
+        [
+            {"provider": "local", "model": "glm-5.2:cloud"},
+            {"provider": "cohere", "model": None},
+        ]
+    )
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            "prompt": "Add a /health route.",
+            "run_id": "r",
+            "conversation_id": "c",
+            "model_aliases": {
+                "_project_id": "asset_x",
+                "_provider": "local",
+                "coder": "glm-5.2:cloud",
+                "_chain_coder": chain,
+            },
+            "project_iterations": 0,
         },
-        "project_iterations": 0,
-    })
+    )
 
     # Both rungs were tried in ONE step, and the step succeeded on the second.
     assert calls == ["local:glm-5.2:cloud", "cohere:glm-5.2:cloud"]
@@ -3167,21 +3948,266 @@ async def test_a_dead_coder_lane_falls_down_the_ladder_mid_turn() -> None:
     class MalformedModel(LadderModel):
         async def project_step(self, request, *, model_aliases=None):
             calls.append(model_aliases["_provider"])
-            raise ModelProviderError("hosted model returned invalid project tool arguments")
+            raise ModelProviderError(
+                "hosted model returned invalid project tool arguments"
+            )
 
     plane.model = MalformedModel()
-    result = await ControlPlane._project_step(plane, {
-        "prompt": "Add a /health route.",
-        "run_id": "r", "conversation_id": "c",
-        "model_aliases": {
-            "_project_id": "asset_x", "_provider": "local",
-            "coder": "glm-5.2:cloud", "_chain_coder": chain,
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            "prompt": "Add a /health route.",
+            "run_id": "r",
+            "conversation_id": "c",
+            "model_aliases": {
+                "_project_id": "asset_x",
+                "_provider": "local",
+                "coder": "glm-5.2:cloud",
+                "_chain_coder": chain,
+            },
+            "project_iterations": 0,
         },
-        "project_iterations": 0,
-    })
+    )
     assert calls == ["local"]  # one attempt, no ladder walk
     assert result["project_malformed_streak"] == 1
     assert not [k for k, _ in events if k == "run.model_fallback"]
+
+
+@pytest.mark.asyncio
+async def test_provider_cap_skips_same_provider_coders_for_a_different_provider() -> (
+    None
+):
+    """An account cap is a provider fact, not three independent model failures."""
+    import json as _json
+
+    from waqil_api.contracts import ProjectAgentStepV1, ProjectToolCallV1
+    from waqil_api.control_plane import ControlPlane
+    from waqil_api.model_provider import ModelProviderError
+
+    calls: list[tuple[str, str]] = []
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(run_id, conversation_id, kind, payload):
+        events.append((kind, payload))
+
+    class ProviderCapThenHealthy:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            raise RuntimeError("plan unavailable")
+
+        async def project_step(self, request, *, model_aliases=None):
+            provider = model_aliases["_provider"]
+            model = model_aliases.get("_cline_model", "")
+            calls.append((provider, model))
+            if provider == "cline":
+                raise ModelProviderError(
+                    'Cline returned HTTP 429: {"error":{"code":'
+                    '"INFERENCE_CAP_ERROR","message":"weekly Clinepass limit"}}'
+                )
+            return ProjectAgentStepV1(
+                status="tool",
+                tool_call=ProjectToolCallV1(name="list_files", arguments={}),
+            )
+
+    plane = object.__new__(ControlPlane)
+    plane.model = ProviderCapThenHealthy()
+    plane.events = SimpleNamespace(emit=emit)
+    plane.projects = SimpleNamespace(context=_empty_context)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+    chain = _json.dumps(
+        [
+            {"provider": "cline", "model": "cline-pass/deepseek-v4-pro"},
+            {"provider": "cline", "model": "cline-pass/kimi-k3"},
+            {"provider": "cohere", "model": None},
+        ]
+    )
+
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            "prompt": "Add a /health route.",
+            "run_id": "r",
+            "conversation_id": "c",
+            "model_aliases": {
+                "_project_id": "asset_x",
+                "_provider": "cline",
+                "_chain_coder": chain,
+            },
+            "project_iterations": 0,
+        },
+    )
+
+    assert calls == [
+        ("cline", "cline-pass/deepseek-v4-pro"),
+        ("cohere", ""),
+    ]
+    assert result["project_chain_index"] == 2
+    fallback = [payload for kind, payload in events if kind == "run.model_fallback"]
+    assert len(fallback) == 1
+    assert fallback[0]["from"] == "Cline provider"
+    assert fallback[0]["to"] == "Cohere Command A+"
+    assert fallback[0]["reason"] == "provider_exhausted"
+    assert fallback[0]["skipped"] == ["Cline (cline-pass/kimi-k3)"]
+
+
+@pytest.mark.asyncio
+async def test_generic_429_still_tries_the_next_model_on_the_same_provider() -> None:
+    import json as _json
+
+    from waqil_api.contracts import ProjectAgentStepV1, ProjectToolCallV1
+    from waqil_api.control_plane import ControlPlane
+    from waqil_api.model_provider import ModelProviderError
+
+    calls: list[str] = []
+
+    class OneModelThrottled:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            raise RuntimeError("plan unavailable")
+
+        async def project_step(self, request, *, model_aliases=None):
+            model = model_aliases["_cline_model"]
+            calls.append(model)
+            if model.endswith("deepseek-v4-pro"):
+                raise ModelProviderError("Cline returned HTTP 429: too many requests")
+            return ProjectAgentStepV1(
+                status="tool",
+                tool_call=ProjectToolCallV1(name="list_files", arguments={}),
+            )
+
+    plane = object.__new__(ControlPlane)
+    plane.model = OneModelThrottled()
+    plane.events = SimpleNamespace(emit=_noop_emit)
+    plane.projects = SimpleNamespace(context=_empty_context)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+    chain = _json.dumps(
+        [
+            {"provider": "cline", "model": "cline-pass/deepseek-v4-pro"},
+            {"provider": "cline", "model": "cline-pass/kimi-k3"},
+            {"provider": "cohere", "model": None},
+        ]
+    )
+
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            "prompt": "Add a /health route.",
+            "run_id": "r",
+            "conversation_id": "c",
+            "model_aliases": {
+                "_project_id": "asset_x",
+                "_provider": "cline",
+                "_chain_coder": chain,
+            },
+            "project_iterations": 0,
+        },
+    )
+
+    assert calls == ["cline-pass/deepseek-v4-pro", "cline-pass/kimi-k3"]
+    assert result["project_chain_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_cap_with_no_other_provider_stops_once_and_is_visible() -> None:
+    import json as _json
+
+    from waqil_api.control_plane import ControlPlane
+    from waqil_api.model_provider import ModelProviderError
+
+    calls: list[str] = []
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(run_id, conversation_id, kind, payload):
+        events.append((kind, payload))
+
+    class ExhaustedCline:
+        async def project_plan_files(self, request, *, model_aliases=None):
+            raise RuntimeError("plan unavailable")
+
+        async def project_step(self, request, *, model_aliases=None):
+            calls.append(model_aliases["_cline_model"])
+            raise ModelProviderError(
+                'Cline returned HTTP 429: {"error":{"code":'
+                '"INFERENCE_CAP_ERROR","message":"weekly Clinepass limit"}}'
+            )
+
+    plane = object.__new__(ControlPlane)
+    plane.model = ExhaustedCline()
+    plane.events = SimpleNamespace(emit=emit)
+    plane.projects = SimpleNamespace(context=_empty_context)
+    plane.settings = SimpleNamespace(
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
+    )
+    plane._guard = _noop_emit
+    plane._stage = _noop_emit
+    chain = _json.dumps(
+        [
+            {"provider": "cline", "model": "cline-pass/deepseek-v4-pro"},
+            {"provider": "cline", "model": "cline-pass/kimi-k3"},
+            {"provider": "cline", "model": "cline-pass/kimi-k2.7-code"},
+        ]
+    )
+
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            "prompt": "Add a /health route.",
+            "run_id": "r",
+            "conversation_id": "c",
+            "model_aliases": {
+                "_project_id": "asset_x",
+                "_provider": "cline",
+                "_chain_coder": chain,
+            },
+            "project_iterations": 0,
+        },
+    )
+
+    assert calls == ["cline-pass/deepseek-v4-pro"]
+    assert not [kind for kind, _ in events if kind == "run.model_fallback"]
+    exhausted = [payload for kind, payload in events if kind == "run.model_exhausted"]
+    assert len(exhausted) == 1
+    assert exhausted[0]["model"] == "Cline provider"
+    assert exhausted[0]["provider"] == "cline"
+    assert exhausted[0]["reason"] == "provider_exhausted"
+    assert exhausted[0]["skipped"] == [
+        "Cline (cline-pass/kimi-k3)",
+        "Cline (cline-pass/kimi-k2.7-code)",
+    ]
+    assert "account-wide usage cap" in result["response_text"]
 
 
 @pytest.mark.asyncio
@@ -3206,23 +4232,35 @@ async def test_an_exhausted_ladder_ends_the_turn_naming_the_cause() -> None:
     plane.events = SimpleNamespace(emit=_noop_emit)
     plane.projects = SimpleNamespace(context=_empty_context)
     plane.settings = SimpleNamespace(
-        project_agent_max_steps=48, project_staged_max_files=48,
-        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
-        project_reference_max_chars=0, project_reference_max_chars_local=0,
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
     plane._stage = _noop_emit
 
-    result = await ControlPlane._project_step(plane, {
-        "prompt": "Add a /health route.",
-        "run_id": "r", "conversation_id": "c",
-        "model_aliases": {
-            "_project_id": "asset_x", "_provider": "local", "coder": "m1",
-            "_fallbacks_coder": _json.dumps([{"provider": "local", "model": "m2"}]),
+    result = await ControlPlane._project_step(
+        plane,
+        {
+            "prompt": "Add a /health route.",
+            "run_id": "r",
+            "conversation_id": "c",
+            "model_aliases": {
+                "_project_id": "asset_x",
+                "_provider": "local",
+                "coder": "m1",
+                "_fallbacks_coder": _json.dumps([{"provider": "local", "model": "m2"}]),
+            },
+            "project_iterations": 0,
         },
-        "project_iterations": 0,
-    })
+    )
     assert "rate-limited or out of quota" in result["response_text"]
     assert result.get("project_malformed_streak", 0) == 0
 
@@ -3248,9 +4286,11 @@ async def test_a_narrowed_turn_has_its_reads_closed_structurally() -> None:
     plane._guard = _noop_emit
     plane._stage = _noop_emit
     base = {
-        "run_id": "r", "conversation_id": "c",
+        "run_id": "r",
+        "conversation_id": "c",
         "model_aliases": {"_project_id": "asset_x"},
-        "project_trace": [], "project_focus_path": "app/main.py",
+        "project_trace": [],
+        "project_focus_path": "app/main.py",
         "project_pending_call": {"name": "read_file", "arguments": {"path": "x.py"}},
     }
 
@@ -3269,12 +4309,17 @@ async def test_a_narrowed_turn_has_its_reads_closed_structurally() -> None:
     error = refused["project_trace"][-1]["result"]["error"]
     assert "narrowed to writing app/main.py" in error
     # A write is never gated.
-    write = await ControlPlane._project_execute(plane, {
-        **base,
-        "project_consecutive_reads": 20,
-        "project_pending_call": {"name": "create_file",
-                                  "arguments": {"path": "app/main.py", "content": "x"}},
-    })
+    write = await ControlPlane._project_execute(
+        plane,
+        {
+            **base,
+            "project_consecutive_reads": 20,
+            "project_pending_call": {
+                "name": "create_file",
+                "arguments": {"path": "app/main.py", "content": "x"},
+            },
+        },
+    )
     assert executed == ["read_file", "create_file"]
     assert write["project_trace"][-1]["result"]["ok"] is True
 
@@ -3299,7 +4344,8 @@ async def test_the_explore_act_arc_is_emitted_as_phase_events() -> None:
 
         async def project_step(self, request, *, model_aliases=None):
             return ProjectAgentStepV1(
-                status="tool", tool_call=ProjectToolCallV1(name="list_files", arguments={}),
+                status="tool",
+                tool_call=ProjectToolCallV1(name="list_files", arguments={}),
             )
 
     plane = object.__new__(ControlPlane)
@@ -3307,16 +4353,23 @@ async def test_the_explore_act_arc_is_emitted_as_phase_events() -> None:
     plane.events = SimpleNamespace(emit=_emit)
     plane.projects = SimpleNamespace(context=_empty_context, stage_scaffold=None)
     plane.settings = SimpleNamespace(
-        project_agent_max_steps=48, project_staged_max_files=48,
-        project_spec_rewrite=False, project_spec_rewrite_max_chars=1800,
-        project_reference_enabled=False, project_repo_map_enabled=False, project_orchestrator_enabled=False, project_reference_dir=Path("/none"),
-        project_reference_max_chars=0, project_reference_max_chars_local=0,
+        project_agent_max_steps=48,
+        project_staged_max_files=48,
+        project_spec_rewrite=False,
+        project_spec_rewrite_max_chars=1800,
+        project_reference_enabled=False,
+        project_repo_map_enabled=False,
+        project_orchestrator_enabled=False,
+        project_reference_dir=Path("/none"),
+        project_reference_max_chars=0,
+        project_reference_max_chars_local=0,
     )
     plane._guard = _noop_emit
     plane._stage = _noop_emit
     base = {
         "prompt": "Add a /health route to app/main.py.",
-        "run_id": "r", "conversation_id": "c",
+        "run_id": "r",
+        "conversation_id": "c",
         "model_aliases": {"_project_id": "asset_x"},
     }
 
@@ -3325,11 +4378,14 @@ async def test_the_explore_act_arc_is_emitted_as_phase_events() -> None:
     assert [p["phase"] for k, p in events if k == "project.phase"] == ["exploring"]
 
     events.clear()
-    planned = await ControlPlane._project_step(plane, {
-        **base,
-        "project_iterations": _PLAN_AFTER_STEPS,
-        "project_phase": "exploring",
-    })
+    planned = await ControlPlane._project_step(
+        plane,
+        {
+            **base,
+            "project_iterations": _PLAN_AFTER_STEPS,
+            "project_phase": "exploring",
+        },
+    )
     assert planned["project_phase"] == "building"
     assert [p["phase"] for k, p in events if k == "project.phase"] == ["building"]
 

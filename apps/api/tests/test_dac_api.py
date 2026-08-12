@@ -7,6 +7,7 @@ architecture field that vanished — would not break any code path. It would jus
 quietly shrink what the tab can answer. These assert the shape of the data, not
 its contents, so they survive Oracle publishing new models.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -69,7 +70,9 @@ def test_supported_models_carry_the_fields_the_kv_math_needs(catalog: DacCatalog
 
 def test_unsupported_models_say_why_rather_than_going_blank(catalog: DacCatalog):
     """A model Oracle validates but the roofline cannot describe still explains itself."""
-    unsupported = [record for record in catalog.models.values() if not record.architecture]
+    unsupported = [
+        record for record in catalog.models.values() if not record.architecture
+    ]
     for record in unsupported:
         assert record.unsupported_reason, f"{record.id} has no explanation"
     # Image and audio models are the expected members of that set.
@@ -152,7 +155,8 @@ def test_estimate_endpoint_returns_a_full_breakdown(client: TestClient):
 
 def test_estimate_rejects_an_unknown_model_with_a_readable_error(client: TestClient):
     response = client.post(
-        "/api/v1/dac/estimate", json={"model_id": "nope/not-a-model", "shape": "H100_X1"}
+        "/api/v1/dac/estimate",
+        json={"model_id": "nope/not-a-model", "shape": "H100_X1"},
     )
     assert response.status_code == 400
     assert "nope/not-a-model" in response.json()["detail"]
@@ -184,7 +188,11 @@ def test_optimize_explains_an_unreachable_target(client: TestClient):
     model = _first_supported(client)
     response = client.post(
         "/api/v1/dac/optimize",
-        json={"model_id": model["id"], "concurrency": 64, "max_request_latency_s": 0.001},
+        json={
+            "model_id": model["id"],
+            "concurrency": 64,
+            "max_request_latency_s": 0.001,
+        },
     )
     assert response.status_code == 200
     body = response.json()
@@ -195,7 +203,10 @@ def test_optimize_explains_an_unreachable_target(client: TestClient):
 def test_recommend_endpoint_ranks_models_for_a_use_case(client: TestClient):
     response = client.post(
         "/api/v1/dac/recommend",
-        json={"use_case": "A coding assistant for our internal Python services", "limit": 5},
+        json={
+            "use_case": "A coding assistant for our internal Python services",
+            "limit": 5,
+        },
     )
     assert response.status_code == 200
     body = response.json()
@@ -209,7 +220,9 @@ def test_recommend_switches_capability_for_a_vision_use_case(client: TestClient)
         json={"use_case": "Read scanned invoices and screenshots into structured data"},
     )
     assert response.status_code == 200
-    capabilities = {candidate["capability"] for candidate in response.json()["candidates"]}
+    capabilities = {
+        candidate["capability"] for candidate in response.json()["candidates"]
+    }
     assert capabilities == {"IMAGE_TEXT_TO_TEXT"}
 
 
@@ -219,8 +232,7 @@ def test_combined_coding_and_extraction_prompt_gets_a_diverse_judge_pool(
     """Old VL naming must not crowd newer multimodal models out of consideration."""
     request = DacRecommendRequestV1(
         use_case=(
-            "Two use cases: 1. Coding assistant "
-            "2. Document/image extraction solution"
+            "Two use cases: 1. Coding assistant 2. Document/image extraction solution"
         )
     )
     service = DacService(catalog)
@@ -238,7 +250,11 @@ def test_request_validation_rejects_nonsense_load(client: TestClient):
     model = _first_supported(client)
     response = client.post(
         "/api/v1/dac/estimate",
-        json={"model_id": model["id"], "shape": model["validated_shapes"][0], "concurrency": 0},
+        json={
+            "model_id": model["id"],
+            "shape": model["validated_shapes"][0],
+            "concurrency": 0,
+        },
     )
     assert response.status_code == 422
 
@@ -251,7 +267,9 @@ class ExplodingModel:
 
     name = "exploding"
 
-    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+    async def generate(
+        self, request, on_token=None, *, model_aliases=None, on_reasoning=None
+    ):
         raise RuntimeError("model backend unreachable")
 
 
@@ -264,7 +282,9 @@ class ReorderingModel:
         self._order = order
         self.seen_aliases: dict | None = None
 
-    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+    async def generate(
+        self, request, on_token=None, *, model_aliases=None, on_reasoning=None
+    ):
         import json as _json
 
         from waqil_api.contracts import ModelResultV1
@@ -299,8 +319,9 @@ async def test_recommendation_survives_a_dead_model_backend(catalog: DacCatalog)
 @pytest.mark.anyio
 async def test_model_may_reorder_but_never_introduce_a_model(catalog: DacCatalog):
     """The model reorders a host-validated list; anything it invents is dropped."""
-    baseline = DacService(catalog).\
-        _shortlist(DacRecommendRequestV1(use_case="A coding assistant for Python services"))
+    baseline = DacService(catalog)._shortlist(
+        DacRecommendRequestV1(use_case="A coding assistant for Python services")
+    )
     assert len(baseline) > 1
     reversed_ids = [candidate.model_id for candidate in reversed(baseline)]
 
@@ -323,8 +344,7 @@ async def test_model_can_promote_a_modern_model_beyond_the_visible_shortlist(
 ):
     request = DacRecommendRequestV1(
         use_case=(
-            "Two use cases: 1. Coding assistant "
-            "2. Document/image extraction solution"
+            "Two use cases: 1. Coding assistant 2. Document/image extraction solution"
         ),
         limit=5,
     )

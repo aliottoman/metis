@@ -15,6 +15,7 @@ Two properties are deliberate:
   slightly worse memories is a much better outcome than a turn that dies because
   a region was busy.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -63,7 +64,9 @@ class MemoryIndex:
             "consent": granted,
             "consent_reason": reason,
             "cloud_available": self._retrieval.available(),
-            "semantic": granted and self._retrieval.available() and counts["embedded"] > 0,
+            "semantic": granted
+            and self._retrieval.available()
+            and counts["embedded"] > 0,
             **counts,
         }
 
@@ -137,7 +140,9 @@ class MemoryIndex:
             return []
         if not recall:
             return []
-        contents = await self._db.memories_by_ids([memory_id for memory_id, _ in recall])
+        contents = await self._db.memories_by_ids(
+            [memory_id for memory_id, _ in recall]
+        )
         ordered = [
             contents[memory_id] for memory_id, _ in recall if memory_id in contents
         ]
@@ -152,7 +157,9 @@ class MemoryIndex:
         return [ordered[index] for index, _ in ranked]
 
     @staticmethod
-    def _cosine_recall(query_vector: list[float], rows, k: int) -> list[tuple[str, float]]:
+    def _cosine_recall(
+        query_vector: list[float], rows, k: int
+    ) -> list[tuple[str, float]]:
         import numpy as np
 
         query = np.asarray(query_vector, dtype=np.float32)

@@ -27,6 +27,7 @@ follow algebraically from TTFT and decode speed, so only those two are modeled
 and the remainder are derived — which also means the derived metrics stay
 mutually consistent instead of drifting apart under separate fits.
 """
+
 from __future__ import annotations
 
 import math
@@ -96,7 +97,11 @@ class GpuSpec:
 
     def compute_tflops(self, quantization: str | None) -> float:
         """Peak dense tensor throughput for the precision the weights run at."""
-        if self.supports_fp8 and self.dense_fp8_tflops and dtype_bytes(quantization) <= 1.0:
+        if (
+            self.supports_fp8
+            and self.dense_fp8_tflops
+            and dtype_bytes(quantization) <= 1.0
+        ):
             return self.dense_fp8_tflops
         return self.dense_bf16_tflops
 
@@ -341,7 +346,9 @@ def estimate_vram(
     # this tracks the chunk rather than the whole prompt; the constant folds in
     # the handful of hidden-sized buffers a transformer block keeps live.
     chunk = min(context_tokens, 2048)
-    activations_gb = 18 * chunk * architecture.hidden_size * element_bytes / BYTES_PER_GB
+    activations_gb = (
+        18 * chunk * architecture.hidden_size * element_bytes / BYTES_PER_GB
+    )
 
     overhead_gb = FRAMEWORK_OVERHEAD_GB_PER_GPU * shape.gpu_count
 
@@ -458,7 +465,9 @@ class Coefficients:
     def as_dict(self) -> dict[str, Any]:
         return {
             "mbu": round(self.mbu, 4),
-            "mbu_by_gpu_count": {str(count): round(value, 4) for count, value in self.mbu_by_gpu_count},
+            "mbu_by_gpu_count": {
+                str(count): round(value, 4) for count, value in self.mbu_by_gpu_count
+            },
             "dense_mbu": round(self.dense_mbu, 4),
             "mfu": round(self.mfu, 4),
             "decode_a": round(self.decode_a, 4),
@@ -474,7 +483,9 @@ class Coefficients:
                 else None
             ),
             "decode_p90_error": (
-                round(self.decode_p90_error, 4) if self.decode_p90_error is not None else None
+                round(self.decode_p90_error, 4)
+                if self.decode_p90_error is not None
+                else None
             ),
             "ttft_median_error": (
                 round(self.ttft_median_error, 4)
@@ -656,7 +667,11 @@ def time_to_first_token(
     peak = compute * 1e12 * shape.gpu_count * coefficients.mfu
     if peak <= 0:
         raise SizingError("shape has no compute rating")
-    queued = 1.0 + coefficients.queue_factor * (max(1, concurrency) - 1) ** coefficients.queue_exponent
+    queued = (
+        1.0
+        + coefficients.queue_factor
+        * (max(1, concurrency) - 1) ** coefficients.queue_exponent
+    )
     return coefficients.ttft_overhead_s + (flops / peak) * queued
 
 
@@ -781,7 +796,9 @@ def _median(values: Sequence[float]) -> float:
     return (ordered[middle - 1] + ordered[middle]) / 2
 
 
-def _least_squares(matrix: list[list[float]], target: list[float]) -> list[float] | None:
+def _least_squares(
+    matrix: list[list[float]], target: list[float]
+) -> list[float] | None:
     """Tiny normal-equation solve, so calibration needs no numpy at import."""
     columns = len(matrix[0]) if matrix else 0
     if not matrix or len(matrix) < columns:
@@ -840,11 +857,24 @@ def _fit_prefill(
     if single:
         best = None
         # Overhead spans a few milliseconds to a second; MFU cannot exceed 1.
-        for overhead_candidate in [0.0, 0.005, 0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.2, 0.3]:
+        for overhead_candidate in [
+            0.0,
+            0.005,
+            0.01,
+            0.02,
+            0.03,
+            0.05,
+            0.08,
+            0.12,
+            0.2,
+            0.3,
+        ]:
             for mfu_candidate in [0.05 * step for step in range(1, 21)]:
                 error = 0.0
                 for item in single:
-                    predicted = overhead_candidate + compute_seconds(item) / mfu_candidate
+                    predicted = (
+                        overhead_candidate + compute_seconds(item) / mfu_candidate
+                    )
                     error += (math.log(max(predicted, 1e-9) / item.ttft_s)) ** 2
                 if best is None or error < best[0]:
                     best = (error, overhead_candidate, mfu_candidate)
@@ -861,14 +891,18 @@ def _fit_prefill(
     reference: dict[tuple[str, int, int], float] = {}
     for item in samples:
         if item.concurrency == 1 and item.ttft_s > 0:
-            reference[(item.shape.key, item.prompt_tokens, item.response_tokens)] = item.ttft_s
+            reference[(item.shape.key, item.prompt_tokens, item.response_tokens)] = (
+                item.ttft_s
+            )
 
     rows: list[list[float]] = []
     target: list[float] = []
     for item in samples:
         if item.concurrency <= 1 or item.ttft_s <= 0:
             continue
-        single_ttft = reference.get((item.shape.key, item.prompt_tokens, item.response_tokens))
+        single_ttft = reference.get(
+            (item.shape.key, item.prompt_tokens, item.response_tokens)
+        )
         baseline = compute_seconds(item) / mfu
         if single_ttft is None or baseline <= 0:
             continue
@@ -883,7 +917,12 @@ def _fit_prefill(
         # A request cannot wait behind more prefill than the other requests
         # actually issue, so the factor is capped at mild super-serialization
         # (prefill also contends with in-flight decode) rather than left free.
-        return overhead, mfu, min(2.0, math.exp(solved[0])), min(1.2, max(0.4, solved[1]))
+        return (
+            overhead,
+            mfu,
+            min(2.0, math.exp(solved[0])),
+            min(1.2, max(0.4, solved[1])),
+        )
     return overhead, mfu, base.queue_factor, base.queue_exponent
 
 
@@ -939,7 +978,10 @@ def fit_coefficients(
     for item in samples:
         context = item.prompt_tokens + item.response_tokens
         batch = running_batch_size(
-            item.architecture, item.shape, concurrency=item.concurrency, context_tokens=context
+            item.architecture,
+            item.shape,
+            concurrency=item.concurrency,
+            context_tokens=context,
         )
         if batch <= 1:
             continue
@@ -1022,7 +1064,9 @@ def residuals(
             coefficients=coefficients,
         )
         if item.inference_speed_tps > 0:
-            decode_errors.append(abs(predicted - item.inference_speed_tps) / item.inference_speed_tps)
+            decode_errors.append(
+                abs(predicted - item.inference_speed_tps) / item.inference_speed_tps
+            )
         predicted_ttft = time_to_first_token(
             item.architecture,
             item.shape,
@@ -1053,7 +1097,9 @@ class ConfidenceVerdict:
     def as_dict(self) -> dict[str, Any]:
         return {
             "tier": self.tier,
-            "error_margin": round(self.error_margin, 3) if self.error_margin is not None else None,
+            "error_margin": round(self.error_margin, 3)
+            if self.error_margin is not None
+            else None,
             "reason": self.reason,
         }
 
@@ -1090,10 +1136,16 @@ def confidence_for(
         reasons.append("calibration models are mixture-of-experts, this one is dense")
     if not coefficients.fitted:
         reasons.append("running on default coefficients, not a fit")
-    detail = "; ".join(reasons) if reasons else "extrapolated from the calibrated roofline"
+    detail = (
+        "; ".join(reasons) if reasons else "extrapolated from the calibrated roofline"
+    )
     # Extrapolating past the calibrated hardware costs more than the in-sample
     # residual suggests, so the published margin is widened rather than reused.
-    penalty = 1.0 + (0.0 if calibrated_gpu else 0.5) + (0.0 if architecture_matches_calibration else 0.3)
+    penalty = (
+        1.0
+        + (0.0 if calibrated_gpu else 0.5)
+        + (0.0 if architecture_matches_calibration else 0.3)
+    )
     widened = margin * penalty if margin is not None else None
     return ConfidenceVerdict("modeled", widened, detail.capitalize() + ".")
 

@@ -87,9 +87,7 @@ _CATEGORICALLY_DENIED = frozenset(
 
 def _parse_permission(value: str) -> PolicyPermission | None:
     normalized = value.strip().lower()
-    aliases = {
-        permission.value: permission for permission in PolicyPermission
-    } | {
+    aliases = {permission.value: permission for permission in PolicyPermission} | {
         "activate:tool": PolicyPermission.TOOL_ACTIVATION,
         "network:disabled": PolicyPermission.NO_NETWORK,
         "network:off": PolicyPermission.NO_NETWORK,

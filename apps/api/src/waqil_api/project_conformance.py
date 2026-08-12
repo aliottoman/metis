@@ -14,6 +14,7 @@ model-authored prose: these findings withhold the Approve button, and a
 requirement a planner phrased badly would then block a correct build — the
 exact failure the sandbox rung had to be de-escalated for.
 """
+
 from __future__ import annotations
 
 import ast
@@ -104,7 +105,9 @@ def _model_names(trees: dict[str, ast.Module]) -> set[str]:
             if not isinstance(node, ast.ClassDef):
                 continue
             bases = {
-                base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", "")
+                base.attr
+                if isinstance(base, ast.Attribute)
+                else getattr(base, "id", "")
                 for base in node.bases
             }
             if bases & {"BaseModel", "Contract"} or any(
@@ -114,7 +117,9 @@ def _model_names(trees: dict[str, ast.Module]) -> set[str]:
     return names
 
 
-def _accepts_a_body(function: ast.FunctionDef | ast.AsyncFunctionDef, models: set[str]) -> bool:
+def _accepts_a_body(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, models: set[str]
+) -> bool:
     """Whether this handler declares anything FastAPI would read from the body."""
     arguments = [*function.args.args, *function.args.kwonlyargs]
     for argument in arguments:
@@ -123,7 +128,9 @@ def _accepts_a_body(function: ast.FunctionDef | ast.AsyncFunctionDef, models: se
         # the annotation says.
         default = _default_for(function, argument)
         if isinstance(default, ast.Call):
-            factory = getattr(default.func, "id", "") or getattr(default.func, "attr", "")
+            factory = getattr(default.func, "id", "") or getattr(
+                default.func, "attr", ""
+            )
             if factory in {"Body", "File", "Form"}:
                 return True
         if annotation is None:
@@ -141,20 +148,16 @@ def _accepts_form_data(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool
     """Whether a FastAPI handler can consume a browser's native form encoding."""
     arguments = [*function.args.args, *function.args.kwonlyargs]
     for argument in arguments:
-        annotation = _annotation_name(argument.annotation) if argument.annotation else ""
+        annotation = (
+            _annotation_name(argument.annotation) if argument.annotation else ""
+        )
         if annotation in {"Request", "UploadFile"}:
             # A Request may call await request.form() itself; UploadFile is a
             # multipart form value even when it is not written as File(...).
             return True
         if argument.annotation and any(
-            (
-                isinstance(node, ast.Name)
-                and node.id in {"File", "Form"}
-            )
-            or (
-                isinstance(node, ast.Attribute)
-                and node.attr in {"File", "Form"}
-            )
+            (isinstance(node, ast.Name) and node.id in {"File", "Form"})
+            or (isinstance(node, ast.Attribute) and node.attr in {"File", "Form"})
             for node in ast.walk(argument.annotation)
         ):
             # FastAPI also supports Annotated[str, Form()] with no default.
@@ -270,9 +273,7 @@ class _NativeFormParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.requests: set[tuple[str, str]] = set()
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag.casefold() != "form":
             return
         values = {name.casefold(): value or "" for name, value in attrs}
@@ -341,15 +342,47 @@ def missing_planned_files(
     missing in six consecutive builds while every other rung reported the
     project healthy.
     """
+    # ``on_disk`` remains in the signature because callers also use it for
+    # cross-file analysis. It is deliberately not completion evidence: the
+    # planner is told to list an existing path only when this turn must rewrite
+    # it, so pre-existing bytes cannot satisfy the new changeset's commitment.
+    del on_disk
     findings: list[dict[str, str]] = []
     for path in planned:
-        if path in staged or path in on_disk:
+        if path in staged:
             continue
         findings.append(
             _finding(
                 path,
                 "was planned for this build and never written. Create it, or "
                 "say plainly in your summary why it is not needed.",
+            )
+        )
+    return findings
+
+
+def missing_required_files(
+    staged: dict[str, dict[str, Any]], required: list[str], planned: list[str]
+) -> list[dict[str, str]]:
+    """Files the user's own request explicitly required and did not receive.
+
+    Independent of the plan, and checked whether or not the plan agrees: a
+    plan that never named a file the request enumerated is exactly as
+    incomplete as a plan that named it and never wrote it (the latter is
+    already caught by missing_planned_files above; a path already reported
+    there is skipped here so the card names each missing file once). Both
+    are provable straight from the request's own text, not from the model's
+    account of what it committed to.
+    """
+    findings: list[dict[str, str]] = []
+    for path in required:
+        if path in staged or path in planned:
+            continue
+        findings.append(
+            _finding(
+                path,
+                "was explicitly required by the request and never written. "
+                "Create it, or say plainly in your summary why it is not needed.",
             )
         )
     return findings
@@ -409,6 +442,7 @@ def staged_conformance_errors(
     staged: dict[str, dict[str, Any]],
     *,
     planned: list[str] | None = None,
+    required: list[str] | None = None,
     on_disk: Iterable[str] = (),
 ) -> list[dict[str, str]]:
     """Every way this changeset falls short of what the turn set out to do."""
@@ -432,6 +466,7 @@ def staged_conformance_errors(
     models = _model_names(trees)
     findings = [
         *missing_planned_files(staged, list(planned or []), set(on_disk)),
+        *missing_required_files(staged, list(required or []), list(planned or [])),
         *request_shape_findings(trees, scripts, models),
         *native_form_findings(trees, documents, scripts, models),
         *undocumented_settings(trees, staged),

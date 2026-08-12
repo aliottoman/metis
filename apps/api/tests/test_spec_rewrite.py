@@ -46,7 +46,11 @@ def _plane(model, *, rewrite=True, max_chars=1800):
 
 
 class Rewriter:
-    def __init__(self, spec="STACK: FastAPI\nFILES: app/main.py", assumptions=("no web research in v1",)):
+    def __init__(
+        self,
+        spec="STACK: FastAPI\nFILES: app/main.py",
+        assumptions=("no web research in v1",),
+    ):
         self.calls = 0
         self._spec = spec
         self._assumptions = list(assumptions)
@@ -89,19 +93,35 @@ async def test_the_rewrite_stands_down_where_it_must() -> None:
     state = {"prompt": LOOSE, "run_id": "r", "conversation_id": "c"}
     # Mid-turn, staged work, or the setting off: never rewritten.
     assert await ControlPlane._project_spec_rewrite(_plane(model), state, 1, {}) is None
-    assert await ControlPlane._project_spec_rewrite(_plane(model), state, 0, {"a": {}}) is None
     assert (
-        await ControlPlane._project_spec_rewrite(_plane(model, rewrite=False), state, 0, {})
+        await ControlPlane._project_spec_rewrite(_plane(model), state, 0, {"a": {}})
+        is None
+    )
+    assert (
+        await ControlPlane._project_spec_rewrite(
+            _plane(model, rewrite=False), state, 0, {}
+        )
         is None
     )
     # A long request is already a spec by size; a structured one by shape.
     long_state = {**state, "prompt": LOOSE + " x" * 1000}
-    assert await ControlPlane._project_spec_rewrite(_plane(model), long_state, 0, {}) is None
-    structured = {**state, "prompt": "Build out this project from scratch: X.\nSTACK: FastAPI\nFILES: app/main.py"}
-    assert await ControlPlane._project_spec_rewrite(_plane(model), structured, 0, {}) is None
+    assert (
+        await ControlPlane._project_spec_rewrite(_plane(model), long_state, 0, {})
+        is None
+    )
+    structured = {
+        **state,
+        "prompt": "Build out this project from scratch: X.\nSTACK: FastAPI\nFILES: app/main.py",
+    }
+    assert (
+        await ControlPlane._project_spec_rewrite(_plane(model), structured, 0, {})
+        is None
+    )
     # Not an application request at all.
     question = {**state, "prompt": "What does app/main.py do?"}
-    assert await ControlPlane._project_spec_rewrite(_plane(model), question, 0, {}) is None
+    assert (
+        await ControlPlane._project_spec_rewrite(_plane(model), question, 0, {}) is None
+    )
     assert model.calls == 0
 
     # A provider without the method (deterministic, scripted fakes): no stage.
@@ -113,7 +133,10 @@ async def test_the_rewrite_stands_down_where_it_must() -> None:
         async def project_spec(self, request, *, model_aliases=None):
             raise RuntimeError("provider down")
 
-    assert await ControlPlane._project_spec_rewrite(_plane(Failing()), state, 0, {}) is None
+    assert (
+        await ControlPlane._project_spec_rewrite(_plane(Failing()), state, 0, {})
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -127,13 +150,22 @@ async def test_the_step_request_works_from_the_spec_but_keeps_the_intent() -> No
         "model_aliases": {},
     }
     request = ControlPlane._project_step_request(
-        plane, state, {}, [], {}, 0, ["app/main.py"], spec_text="STACK: FastAPI\nFILES: app/main.py"
+        plane,
+        state,
+        {},
+        [],
+        {},
+        0,
+        ["app/main.py"],
+        spec_text="STACK: FastAPI\nFILES: app/main.py",
     )
     assert request["user_request"].startswith("STACK")
     assert request["original_request"] == LOOSE
     # build_turn detection keys off the user's own words, not the spec.
     assert request["build_turn"] is True
 
-    bare = ControlPlane._project_step_request(plane, state, {}, [], {}, 0, ["app/main.py"])
+    bare = ControlPlane._project_step_request(
+        plane, state, {}, [], {}, 0, ["app/main.py"]
+    )
     assert bare["user_request"] == LOOSE
     assert "original_request" not in bare

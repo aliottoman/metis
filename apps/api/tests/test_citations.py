@@ -4,6 +4,7 @@ These exercise the pure helpers directly. The end-to-end citation path already
 has coverage in `test_grounding_review.py`; what needs pinning here is the two
 things a model can get wrong — pointing at a page the reader cannot open, and
 pointing at a source that was never there."""
+
 from __future__ import annotations
 
 from waqil_api.control_plane import (
@@ -108,7 +109,9 @@ def test_cited_notion_source_renders_as_an_openable_link() -> None:
 
 def test_cited_local_source_is_not_linked() -> None:
     answer, _ = _append_cited_sources("Retrieval lives here [1].", [_local_snippet()])
-    assert "**Sources**\n[1] proj — apps/api/src/waqil_api/corpus.py::retrieve" in answer
+    assert (
+        "**Sources**\n[1] proj — apps/api/src/waqil_api/corpus.py::retrieve" in answer
+    )
     assert "](" not in answer
 
 

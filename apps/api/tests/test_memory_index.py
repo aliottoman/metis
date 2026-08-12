@@ -4,6 +4,7 @@ The claim being tested is specific: a memory phrased one way must be findable by
 a question phrased another way, which keyword search cannot do. Every test uses
 the offline FakeRetrieval so the pipeline is exercised without OCI.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -79,14 +80,20 @@ class SynonymRetrieval:
             ),
             key=lambda pair: -pair[1],
         )
-        return [(index, float(score)) for index, score in scored[: (top_n or len(documents))]]
+        return [
+            (index, float(score))
+            for index, score in scored[: (top_n or len(documents))]
+        ]
 
 
 async def _index(tmp_path, **settings_kwargs):
     database = Database(tmp_path / "waqil.db")
     await database.open()
     settings = Settings(
-        _env_file=None, data_dir=tmp_path / "data", repo_root=tmp_path, **settings_kwargs
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        repo_root=tmp_path,
+        **settings_kwargs,
     )
     retrieval = SynonymRetrieval()
     return MemoryIndex(settings, database, retrieval), database, retrieval

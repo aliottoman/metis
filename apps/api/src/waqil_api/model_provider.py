@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import urllib.error
 import urllib.request
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeVar, cast
 
@@ -41,6 +42,7 @@ from .contracts import (
     PROJECT_TOOL_REQUIRED_ARGUMENTS,
     grammar_schema,
     project_step_retry_schema,
+    project_whole_file_schema,
     project_directed_schema,
     project_write_schema,
 )
@@ -48,6 +50,7 @@ from . import tool_repair
 from .diagram_source import validate_diagram_source
 from .document_factory import is_explicit_document_request
 from .model_preference import is_cloud_model
+from .prompt_scope import user_instruction
 from .queue_update import is_queue_update_request
 from .web_research import is_explicit_web_request
 from .project_tools import (
@@ -56,6 +59,7 @@ from .project_tools import (
     chat_tool_format,
     narrowed_project_tools,
     unrestricted_project_tools,
+    whole_file_repair_tools,
 )
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
@@ -73,9 +77,9 @@ class ToolRoute:
     input_pipeline: str
     # Host-derived lifecycle state for declarative tools.
     definition_risk: RiskLevel = RiskLevel.R3
-    runnable: bool = False       # an active version exists → existing_tool
-    buildable: bool = False      # defined but not built/active → tool_factory
-    disabled: bool = False       # per-tool kill-switch → never routes to a tool
+    runnable: bool = False  # an active version exists → existing_tool
+    buildable: bool = False  # defined but not built/active → tool_factory
+    disabled: bool = False  # per-tool kill-switch → never routes to a tool
     # Authored tools receive the user's message as `inputs['prompt']`, so they are
     # runnable from a plain sentence. They still declare the `attachment_text`
     # pipeline for the optional `inputs['text']`, which must not be read as
@@ -116,14 +120,18 @@ def default_routing_catalog() -> RoutingCatalog:
 # conservative so ordinary requests never trip it.
 _TOOLIFY_PATTERNS = (
     re.compile(r"\btoolif(?:y|ies|ied|ication)\b"),
-    re.compile(r"\b(turn|make|save|register|convert)\b[^.?!\n]{0,60}\b(?:in)?to\b[^.?!\n]{0,24}\btool\b"),
-    re.compile(r"\b(build|create|make|write|generate)\b[^.?!\n]{0,32}\b(?:a|an|new|reusable)\b[^.?!\n]{0,24}\btool\b"),
+    re.compile(
+        r"\b(turn|make|save|register|convert)\b[^.?!\n]{0,60}\b(?:in)?to\b[^.?!\n]{0,24}\btool\b"
+    ),
+    re.compile(
+        r"\b(build|create|make|write|generate)\b[^.?!\n]{0,32}\b(?:a|an|new|reusable)\b[^.?!\n]{0,24}\btool\b"
+    ),
     re.compile(r"\bas a (?:new |reusable )?tool\b"),
 )
 
 
 def is_explicit_toolify_request(prompt: str) -> bool:
-    lowered = prompt.lower()
+    lowered = user_instruction(prompt).lower()
     return any(pattern.search(lowered) for pattern in _TOOLIFY_PATTERNS)
 
 
@@ -138,7 +146,7 @@ _BUILD_PATTERNS = (
 
 
 def is_explicit_build_request(prompt: str) -> bool:
-    lowered = prompt.lower()
+    lowered = user_instruction(prompt).lower()
     return any(pattern.search(lowered) for pattern in _BUILD_PATTERNS)
 
 
@@ -146,11 +154,13 @@ def is_explicit_build_request(prompt: str) -> bool:
 # convert" — as opposed to a follow-up pointing back at one already drafted
 # ("build it", "create this into a tool"). The difference decides whether a
 # build request may be answered by building whatever happens to be pending.
-_NEW_TOOL_SUBJECT = re.compile(r"\btools?\b\s+(?:that|which|to|for)\s+\w+", re.IGNORECASE)
+_NEW_TOOL_SUBJECT = re.compile(
+    r"\btools?\b\s+(?:that|which|to|for)\s+\w+", re.IGNORECASE
+)
 
 
 def describes_a_new_tool(prompt: str) -> bool:
-    return bool(_NEW_TOOL_SUBJECT.search(prompt))
+    return bool(_NEW_TOOL_SUBJECT.search(user_instruction(prompt)))
 
 
 def _find_catalog_tool(catalog: RoutingCatalog, slug: str | None) -> ToolRoute | None:
@@ -181,7 +191,8 @@ def _slug_named_in_prompt(catalog: RoutingCatalog, prompt: str) -> ToolRoute | N
         if tool.disabled or not tool.runnable:
             continue
         tokens = {
-            token for token in tool.slug.split("-")
+            token
+            for token in tool.slug.split("-")
             if len(token) >= _SLUG_TOKEN_MIN_LENGTH
         }
         hits = sum(1 for token in tokens if f" {token} " in lowered)
@@ -226,6 +237,58 @@ _PERMANENT_MODEL_ERRORS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _openai_usage(reply: Mapping[str, Any]) -> dict[str, int]:
+    """Token counts from an OpenAI-shaped reply, or {} when it carries none.
+
+    Ollama's /chat/completions and the ClinePass gateway both return the
+    standard `usage` block. Reporting {} rather than zeros keeps "this
+    provider does not expose usage" distinguishable from "this call was free".
+    """
+
+    usage = reply.get("usage") if isinstance(reply, Mapping) else None
+    if not isinstance(usage, Mapping):
+        return {}
+    counted: dict[str, int] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        try:
+            value = int(usage.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            counted[key] = value
+    if counted and "total_tokens" not in counted:
+        counted["total_tokens"] = counted.get("prompt_tokens", 0) + counted.get(
+            "completion_tokens", 0
+        )
+    return counted
+
+
+def _langchain_usage(reply: Any) -> dict[str, int]:
+    """Token counts from a LangChain reply, in the same shape as _openai_usage."""
+
+    metadata = getattr(reply, "usage_metadata", None)
+    if not isinstance(metadata, Mapping):
+        return {}
+    mapped = {
+        "prompt_tokens": metadata.get("input_tokens"),
+        "completion_tokens": metadata.get("output_tokens"),
+        "total_tokens": metadata.get("total_tokens"),
+    }
+    counted: dict[str, int] = {}
+    for key, value in mapped.items():
+        try:
+            number = int(value or 0)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            counted[key] = number
+    if counted and "total_tokens" not in counted:
+        counted["total_tokens"] = counted.get("prompt_tokens", 0) + counted.get(
+            "completion_tokens", 0
+        )
+    return counted
+
+
 def classify_model_error(error: BaseException) -> str | None:
     """Name the permanent cause of a backend error, or None if a retry may help."""
     text = f"{type(error).__name__}: {error}".lower()
@@ -245,10 +308,24 @@ def classify_model_error(error: BaseException) -> str | None:
 # could not read 3 replies from the model" when a trial key hit its quota
 # blames the model for the backend being down.
 _BACKEND_UNAVAILABLE_ERRORS: tuple[tuple[str, str], ...] = (
+    # Cline returns this explicit account-wide code when the weekly ClinePass
+    # allowance is gone.  It is materially different from an ordinary 429:
+    # changing models cannot help because every model behind that provider
+    # shares the same exhausted allowance.  Keep these markers narrow so a
+    # per-model throttle still walks the next same-provider rung.
+    ("inference_cap_error", "provider_exhausted"),
+    ("weekly clinepass limit", "provider_exhausted"),
+    ("provider-wide quota", "provider_exhausted"),
+    ("provider wide quota", "provider_exhausted"),
     ("http 429", "rate_limited"),
     ("rate limit", "rate_limited"),
     ("too many requests", "rate_limited"),
     ("trial key", "rate_limited"),
+    # Ollama Cloud uses this exact pre-generation refusal for models that are
+    # billed only from the account's optional extra-usage balance. It is
+    # model-specific: another Ollama model covered by the plan can still run,
+    # so advance one rung rather than marking the whole provider exhausted.
+    ("extra usage balance is empty", "rate_limited"),
     ("quota", "rate_limited"),
     ("http 500", "backend_error"),
     ("http 502", "backend_error"),
@@ -268,8 +345,10 @@ def classify_backend_unavailable(error: BaseException) -> str | None:
 
     A permanent pre-model refusal (grammar that will not compile, a model that
     is not loaded) is classify_model_error's job and is handled first. This
-    names the transient-but-turn-ending case the project loop was mistaking
-    for an unreadable model reply.
+    names the no-reply case the project loop was mistaking for an unreadable
+    model reply.  ``provider_exhausted`` is intentionally distinct from a
+    generic ``rate_limited`` result: it is an explicit account/provider-wide
+    cap, so another model on the same provider cannot be a useful fallback.
     """
     if classify_model_error(error) is not None:
         return None
@@ -297,7 +376,9 @@ def build_planning_attachment_evidence(
     if truncated:
         available = PLANNING_ATTACHMENT_EXCERPT_CHARACTERS - len(marker)
         head = (available * 2) // 3
-        excerpt = attachment_text[:head] + marker + attachment_text[-(available - head) :]
+        excerpt = (
+            attachment_text[:head] + marker + attachment_text[-(available - head) :]
+        )
     else:
         excerpt = attachment_text
 
@@ -349,7 +430,9 @@ def build_planning_attachment_evidence(
 # picture of a system — even though both are described in the word
 # "architecture". The signals are the ones only a build request carries: real
 # source paths, named build artifacts, or scaffolding language.
-_SOURCE_PATH = re.compile(r"\b[\w.-]+/[\w.-]+\.(py|ts|tsx|js|jsx|json|toml|css|html|md|yml|yaml)\b")
+_SOURCE_PATH = re.compile(
+    r"\b[\w.-]+/[\w.-]+\.(py|ts|tsx|js|jsx|json|toml|css|html|md|yml|yaml)\b"
+)
 _BUILD_ARTIFACT = re.compile(
     r"\b(requirements\.txt|package\.json|pyproject\.toml|dockerfile|\.env\.example)\b"
 )
@@ -445,19 +528,32 @@ def is_new_application_request(prompt: str) -> bool:
 def is_project_build_instruction(prompt: str) -> bool:
     """A build request phrased as an instruction to write those files now.
 
-    Narrower than `is_project_build_request` on purpose: naming a source file
-    is not the same as asking for one. "What does app/main.py do?" is a
-    question about a project, and must not be answered with instructions on
-    how to open one.
+    Narrower than `is_project_build_request` on purpose, in two ways.
+
+    Naming a source file is not the same as asking for one. "What does
+    app/main.py do?" is a question about a project, and must not be answered
+    with instructions on how to open one.
+
+    And it reads the user's own instruction, not the material they pasted under
+    it (see `prompt_scope`). This is the predicate behind the gate that refuses
+    a build with no project open, so a bank's plan to "build an MVP", quoted
+    inside meeting notes the user asked to have filed, must not be mistaken for
+    the user asking for an application. The broad `is_project_build_request`
+    keeps reading the whole prompt: inside a project the intent is already
+    settled and a pasted spec is exactly what the build is meant to read.
     """
-    lowered = prompt.lower()
+    instruction = user_instruction(prompt)
+    lowered = instruction.lower()
     return bool(
         _CREATE_INTENT.search(lowered) or _NEW_APPLICATION.search(lowered)
-    ) and is_project_build_request(prompt)
+    ) and is_project_build_request(instruction)
 
 
 def _is_architecture_request(request: PlanningRequestV1) -> bool:
-    prompt = request.prompt.lower()
+    # The user's own words, not the document under them: attachment contents
+    # already "cannot initiate a tool action" (below), and pasted text is the
+    # same evidence arriving by a different door.
+    prompt = user_instruction(request.prompt).lower()
     # "Build a service with this architecture" names an architecture; it does
     # not ask for one to be drawn. Routing it to the diagram tool asks a model
     # for a component graph when the user wanted files, and the mismatch
@@ -520,7 +616,9 @@ def validate_plan_semantics(
         if plan.tool_slug is not None or plan.risk_level != RiskLevel.R0:
             raise ValueError("direct plans must have no tool and local risk R0")
         if arch is not None:
-            raise ValueError("architecture requests require the reference architecture tool")
+            raise ValueError(
+                "architecture requests require the reference architecture tool"
+            )
         return
     if plan.route == "ask_user":
         # Pausing to ask a question grants no capability: no tool, R0, and the
@@ -531,7 +629,9 @@ def validate_plan_semantics(
         if not (plan.question or "").strip():
             raise ValueError("ask_user plans must carry a question")
         if arch is not None:
-            raise ValueError("architecture requests require the reference architecture tool")
+            raise ValueError(
+                "architecture requests require the reference architecture tool"
+            )
         return
     if plan.route == "queue_update":
         # A proposal about the user's own records. It carries no tool, and the
@@ -564,7 +664,9 @@ def validate_plan_semantics(
                     "existing_tool is invalid because the exact capability is not active"
                 )
             if plan.risk_level != arch.existing_risk:
-                raise ValueError("existing tool execution risk does not match the registry")
+                raise ValueError(
+                    "existing tool execution risk does not match the registry"
+                )
             return
         if plan.route == "tool_factory":
             if plan.tool_slug in active_slugs:
@@ -807,14 +909,18 @@ def normalize_plan_semantics(
     if not build_intent and not toolify_intent and plan.tool_slug is None:
         named_in_prompt = _slug_named_in_prompt(catalog, request.prompt)
         if named_in_prompt is not None and _input_ready(named_in_prompt, request):
-            return _declarative_plan(plan, "existing_tool", named_in_prompt, assumptions)
+            return _declarative_plan(
+                plan, "existing_tool", named_in_prompt, assumptions
+            )
 
     # 7. Otherwise a direct answer. A blank question falls through to here too,
     #    so a pause is never an empty card.
     return _direct_plan(plan, assumptions)
 
 
-def _tool_definition_plan(plan: PlanEnvelopeV1, assumptions: list[str]) -> PlanEnvelopeV1:
+def _tool_definition_plan(
+    plan: PlanEnvelopeV1, assumptions: list[str]
+) -> PlanEnvelopeV1:
     return plan.model_copy(
         update={
             "route": "tool_definition",
@@ -894,16 +1000,46 @@ def _declarative_plan(
     if route == "existing_tool":
         risk = tool.existing_risk
         steps = [
-            PlanStepV1(id="prepare", title="Prepare input", description="Gather the tool's declared input.", kind="tool"),
-            PlanStepV1(id="run", title="Run tool", description="Execute the active tool version.", kind="tool"),
-            PlanStepV1(id="validate", title="Validate output", description="Check the output contract.", kind="validate"),
+            PlanStepV1(
+                id="prepare",
+                title="Prepare input",
+                description="Gather the tool's declared input.",
+                kind="tool",
+            ),
+            PlanStepV1(
+                id="run",
+                title="Run tool",
+                description="Execute the active tool version.",
+                kind="tool",
+            ),
+            PlanStepV1(
+                id="validate",
+                title="Validate output",
+                description="Check the output contract.",
+                kind="validate",
+            ),
         ]
     else:
         risk = tool.factory_risk
         steps = [
-            PlanStepV1(id="build", title="Build tool", description="Build the approved definition.", kind="build_tool"),
-            PlanStepV1(id="evaluate", title="Evaluate", description="Run the hermetic eval cases.", kind="validate"),
-            PlanStepV1(id="activate", title="Activate", description="Await human activation (Gate 2).", kind="build_tool"),
+            PlanStepV1(
+                id="build",
+                title="Build tool",
+                description="Build the approved definition.",
+                kind="build_tool",
+            ),
+            PlanStepV1(
+                id="evaluate",
+                title="Evaluate",
+                description="Run the hermetic eval cases.",
+                kind="validate",
+            ),
+            PlanStepV1(
+                id="activate",
+                title="Activate",
+                description="Await human activation (Gate 2).",
+                kind="build_tool",
+            ),
         ]
     return plan.model_copy(
         update={
@@ -943,7 +1079,11 @@ def normalize_plan_payload(
         else []
     )
     valid_routes = {
-        "direct", "existing_tool", "tool_factory", "tool_definition", "document",
+        "direct",
+        "existing_tool",
+        "tool_factory",
+        "tool_definition",
+        "document",
         "queue_update",
     }
     raw_route = payload.get("route")
@@ -958,7 +1098,9 @@ def normalize_plan_payload(
     neutral = PlanEnvelopeV1(
         summary=summary.strip()[:4_000],
         route=route_hint,
-        tool_slug=slug_hint if route_hint in {"existing_tool", "tool_factory"} else None,
+        tool_slug=slug_hint
+        if route_hint in {"existing_tool", "tool_factory"}
+        else None,
         risk_level=RiskLevel.R0,
         assumptions=assumptions,
     )
@@ -1017,7 +1159,9 @@ class ModelProvider(Protocol):
         model_aliases: dict[str, str] | None = None,
     ) -> DiagramCodeV1: ...
 
-    async def bootstrap_project(self, snapshot: dict[str, Any]) -> ProjectBootstrapV1: ...
+    async def bootstrap_project(
+        self, snapshot: dict[str, Any]
+    ) -> ProjectBootstrapV1: ...
 
     async def harvest_memories(self, request: dict[str, Any]) -> MemoryHarvestV1: ...
 
@@ -1235,11 +1379,13 @@ first, or state plainly that nothing was built and why.
 files_still_to_write is this turn's plan, and it was written before the project
 was read. When what you read contradicts it — a planned path this project does
 not have, a framework that makes the plan wrong, work that needs different
-files — call revise_plan with the COMPLETE corrected list and what you found.
-That is the correct move, and it is expected: explore first, and revise the
-plan the moment the evidence disagrees with it. Do NOT write a file you believe
-is wrong just because the plan named it, and do not finish in order to escape a
-plan you could have corrected.
+files — call revise_plan with the corrected order/additions and what you found.
+Omitting a prior path does NOT delete that commitment. If repository evidence
+proves an UNSTAGED planned path invalid or unwritable, name it explicitly in
+remove_files and explain that evidence in reason. Already-staged paths cannot be
+removed because they remain in the approval changeset. Do NOT write a file you
+believe is wrong just because the plan named it, and do not finish in order to
+escape a plan you could have corrected.
 
 Talking to the user is its own channel, never a completion. To answer a question
 about the project — what it uses, how it works, what you would change — call
@@ -1346,8 +1492,8 @@ defaults you chose where the request was silent."""
 
 
 PROJECT_PLAN_SYSTEM = """You are planning one coding task: what kind of task it
-is, the files it requires, and the acceptance scenarios that will prove the
-finished app does what was asked.
+is, the files it requires, the vertical slices that build it, and the acceptance
+scenarios that will prove the finished app does what was asked.
 
 project_context.repo_map is a ranked map of this project's actual definitions —
 each file, then the line number and name of what it declares, most depended-upon
@@ -1388,19 +1534,119 @@ the task requires rewriting them. Never list paths under appkit/ or the
 .env.example — the host writes those itself. If the request needs no new files, return an
 empty list.
 
+ORDER IS EXECUTION. List files in dependency order because the host will write
+exactly the first outstanding file before it offers the next one. Put contracts,
+schemas, configuration, storage and external-service adapters before the services
+that import them; services before routers and entrypoints; design tokens and base
+styles before components that use their classes; tests and documentation last.
+Never put an entrypoint ahead of a module it imports.
+
+slices: divide the ordered files into 1 to 8 contiguous, non-overlapping groups
+of at most 6 files. Every file must appear exactly once and in the same order as
+files. Each slice must deliver the thinnest independently useful end-to-end
+outcome possible: its own contracts/storage as needed, application behaviour,
+user-facing surface when requested, and a focused test or documentation proof.
+name is a short user-visible label; outcome is one concrete sentence describing
+what becomes usable after that slice. scenario_names may name only scenarios
+from this reply that are FULLY RUNNABLE and checkable at that exact boundary —
+never a scenario whose route does not exist until a later slice. Leave it empty
+when only structural checks are meaningful yet.
+
+REJECTED, not merely discouraged: horizontal batches such as "all models" then
+"all routes" then "all tests" — a plan shaped that way is rejected outright and
+replaced with a mechanical fallback, because nothing in it is independently
+checkable until every layer lands. The first slice of a whole_app build MUST
+own or integrate a real entrypoint (main.py/app.py/server.py or equivalent)
+and produce a genuinely checkable outcome — at minimum, the application
+imports and an accessible route (health or otherwise) responds. Build outward
+from there one real capability at a time, not layer by layer.
+
+This applies to EVERY scope, narrow edits included, and the host rejects a
+plan that breaks it before any code is written. In particular, a slice whose
+whole write scope is tests, documentation or dependency/config files delivers
+nothing anyone can run: "write the contract tests" and "update the README" are
+not outcomes. Put each test, README or requirements change in the slice whose
+feature it validates or explains — a slice may own its feature's tests and
+docs, and may extend the feature's runtime file through integration_files.
+The only case where a support-only slice is legitimate is a request that has
+no runtime files at all (a pure documentation edit).
+
+A worked example, for a five-file UI revamp of an existing API
+(index.html, styles.css, app.js, tests/test_ui_contract.py, README.md):
+
+  slice 1  owned: app/static/index.html, app/static/styles.css
+           outcome: the console page loads and is styled
+  slice 2  owned: app/static/app.js, tests/test_ui_contract.py, README.md
+           integration: (none needed here)
+           outcome: the page fetches the API, renders the rows, and its
+                    status action works — with the contract tests that prove
+                    it and the README that documents it
+
+Note where the tests and the README went: into the slice whose behaviour they
+describe, NOT into a third "tests and docs" slice. That third slice is the
+single most common way a plan fails this gate.
+
+If the request carries plan_correction, your previous plan was rejected by
+the host before any model wrote code. Read those findings and return a
+corrected plan with the SAME file scope; do not argue with them, and do not
+drop or add files to make the problem go away.
+
+owned_files and integration_files (both optional; together must equal that
+slice's files exactly, with no overlap) are how a later slice legitimately
+extends an entrypoint or other shared file an earlier slice already wrote,
+without re-owning it: owned_files are new files this slice alone is
+responsible for; integration_files are files a STRICTLY EARLIER slice already
+owns, that this slice is explicitly allowed to reopen and extend (for example,
+a routes slice wiring its new endpoints into the main.py a bootstrap slice
+already created). A file may be named in integration_files only if an earlier
+slice's own owned_files already named it — every other earlier file remains
+immutable to every later slice. Omit both fields to mean "this whole slice's
+files are its own", exactly as before. Do not invent an integration_files
+entry for a file no earlier slice owns; that plan is rejected.
+
 scenarios: 2 to 5 requests a verifier will replay against the finished app,
 each one an explicit claim from the request made checkable. Name the routes the
 app itself will declare. path is the request line, so a GET whose route reads
 query parameters MUST carry them: "/convert?value=0&direction=c-to-f", never
 "/convert" — a route with required parameters answers 422 to a bare path, and
-the scenario then proves nothing about a working app. Prefer the claims that
-distinguish a working app from a plausible skeleton: the upload route accepts a
-real image, the assessment endpoint's response names a risk verdict, the list
-route mentions a stored record. body_kind "image_upload" sends a real PNG;
-"json" sends body as the request body. expect_contains holds lowercase substrings the response text must
-include — use it only where the request states what the output must say. The
-verifier runs with no network and no credentials, so a scenario that needs a
-live external call should expect "2xx_or_4xx", which passes when the route is
+the scenario then proves nothing about a working app. Preserve the route's
+exact HTTP method: GET, POST, PUT, PATCH, or DELETE. Never substitute POST for
+PATCH/PUT/DELETE just because the request changes state. Prefer the claims that
+distinguish a working app from a plausible skeleton: the upload route accepts
+the request's required local TXT or image fixture, the assessment endpoint's
+response names a risk verdict, the list route mentions a stored record.
+body_kind "text_upload" sends a deterministic UTF-8 invoice as text/plain; use
+it for TXT/local/no-credentials document flows.
+body_kind "executable_upload" sends harmless fixed bytes with an executable
+signature as application/octet-stream; use it when the claim is that unsafe or
+unsupported executable content is refused. Do not encode file contents inside
+body for this case.
+body_kind "image_upload" sends a real PNG; use it only when image handling is
+the claim. "json" sends body as the request body.
+
+Choosing between the two assertion styles is not a matter of taste:
+
+expect_contains holds lowercase substrings the response text must include. It
+is case-insensitive and is satisfied by a response that ALSO contains other
+things. Use it only for a genuine textual claim — the page names the product,
+the answer mentions a verdict, the error explains itself.
+
+expect_json_exact holds the exact JSON structure the response body must equal.
+Use it whenever the request specifies exact seed records, an exact count, exact
+field values, or an exact list. Object keys are compared without regard to
+order; arrays keep their order. Extra keys and extra array elements FAIL, which
+is the point: a containment check can be satisfied by appending a second record
+next to a wrong one, and that is not the requested behaviour. Keep the value
+small — a seeded listing or one record's fields, not a whole page of data.
+
+json_match is a closed choice, never a guess: "exact" (the default) compares
+arrays positionally; "unordered_array" compares them as multisets, so member
+identity and multiplicity must match but order need not. Use "unordered_array"
+only when the request genuinely does not fix an order — an unsorted listing.
+Never use it to make an ordered requirement easier to satisfy.
+
+The verifier runs with no network and no credentials, so a scenario that needs
+a live external call should expect "2xx_or_4xx", which passes when the route is
 alive and validating rather than crashed."""
 
 
@@ -1503,12 +1749,18 @@ def project_roster(request: dict[str, Any]) -> list[dict[str, Any]]:
     step, and advertising a tool the host will refuse is how a live revamp spent
     twenty-three steps calling read_file after being told reads were closed.
     """
+    repair = request.get("repair_strategy") or {}
+    repair_tools = (
+        whole_file_repair_tools(str(repair["path"]))
+        if repair.get("kind") == "whole_file" and repair.get("path")
+        else None
+    )
     owed = (
         [str(path) for path in request.get("files_still_to_write") or []]
         if request.get("build_turn")
         else []
     )
-    tools = (
+    tools = repair_tools or (
         # The directed roster narrows on the owed list too, so create_file's
         # path enum still points at the one file the orchestrator named.
         directed_project_tools(
@@ -1530,9 +1782,11 @@ def project_roster(request: dict[str, Any]) -> list[dict[str, Any]]:
             for tool in kept
         ):
             tools = kept
-    if request.get("plan_revisions_spent"):
-        # Its bound is spent, so every further call returns the same refusal.
-        # Offering it anyway is how a turn spent seven consecutive steps asking.
+    if request.get("plan_taken") is False or request.get("plan_revisions_spent"):
+        # A coder may correct a planner-owned plan after repository evidence
+        # falsifies it; it may not create the initial plan and bypass the
+        # planner lane. The same removal applies once the revision bound is
+        # spent, when every future call would return the same refusal.
         tools = [tool for tool in tools if tool.get("name") != "revise_plan"]
     return tools
 
@@ -1582,7 +1836,9 @@ def step_from_function_call(
             learnings=[str(item) for item in arguments.get("learnings", [])],
         )
     if name not in _PROJECT_TOOL_NAMES:
-        raise ModelProviderError(f"{speaker} requested an unsupported project tool: {name}")
+        raise ModelProviderError(
+            f"{speaker} requested an unsupported project tool: {name}"
+        )
     arguments, notes = tool_repair.repair_arguments(str(name), arguments)
     _record_repairs(str(name), repairs + notes)
     return ProjectAgentStepV1(
@@ -1720,7 +1976,10 @@ def local_decode_grammars() -> tuple[tuple[str, type[BaseModel], dict[str, Any]]
         )
     )
     return (
-        *((schema.__name__, schema, grammar_schema(schema)) for schema in LOCAL_DECODE_SCHEMAS),
+        *(
+            (schema.__name__, schema, grammar_schema(schema))
+            for schema in LOCAL_DECODE_SCHEMAS
+        ),
         *derived,
     )
 
@@ -1733,7 +1992,9 @@ class OllamaModelProvider:
     def __init__(self, settings: Settings, model_session: Any | None = None) -> None:
         try:
             from langchain_ollama import ChatOllama
-        except ImportError as exc:  # pragma: no cover - exercised by packaging smoke checks
+        except (
+            ImportError
+        ) as exc:  # pragma: no cover - exercised by packaging smoke checks
             raise ModelProviderError("langchain-ollama is not installed") from exc
         self.settings = settings
         self.model_session = model_session
@@ -1951,10 +2212,14 @@ class OllamaModelProvider:
         )
         try:
             async with asyncio.timeout(self.settings.model_call_timeout_seconds):
-                return await model.ainvoke(
+                reply = await model.ainvoke(
                     [("system", system_prompt), ("human", user_prompt)],
                     tools=tools,
                 )
+            # Same accounting as the gateway path: a planner call that never
+            # reported tokens made a run's total mean "coder only".
+            self.last_usage = _langchain_usage(reply)
+            return reply
         except TimeoutError as exc:
             raise ModelProviderError(
                 f"hosted {role} model call timed out after "
@@ -1965,8 +2230,7 @@ class OllamaModelProvider:
             if reason is None:
                 raise
             raise PermanentModelError(
-                f"the model backend rejected the request ({reason}): "
-                f"{str(exc)[:400]}",
+                f"the model backend rejected the request ({reason}): {str(exc)[:400]}",
                 reason=reason,
             ) from exc
 
@@ -2182,7 +2446,10 @@ class OllamaModelProvider:
                 model_aliases=model_aliases,
                 reasoning=True if wants_reasoning else None,
             )
-            messages = [("system", request.system_prompt), ("human", request.user_prompt)]
+            messages = [
+                ("system", request.system_prompt),
+                ("human", request.user_prompt),
+            ]
             try:
                 if on_token is None:
                     async with asyncio.timeout(
@@ -2231,7 +2498,10 @@ class OllamaModelProvider:
             async for chunk in model.astream(messages):
                 deadline.reschedule(loop.time() + stall_seconds)
                 thought = (
-                    str(getattr(chunk, "additional_kwargs", {}).get("reasoning_content") or "")
+                    str(
+                        getattr(chunk, "additional_kwargs", {}).get("reasoning_content")
+                        or ""
+                    )
                     if on_reasoning is not None
                     else ""
                 )
@@ -2273,9 +2543,7 @@ class OllamaModelProvider:
                 model_aliases=model_aliases,
                 on_reasoning=on_reasoning,
             )
-        async with model_session.use(
-            self._model_name(request.role, model_aliases)
-        ):
+        async with model_session.use(self._model_name(request.role, model_aliases)):
             return await self._generate_unchecked(
                 request,
                 on_token=on_token,
@@ -2303,8 +2571,12 @@ class OllamaModelProvider:
             role="planner",
             model_aliases=model_aliases,
             validator=lambda plan: validate_plan_semantics(plan, request, catalog),
-            repair_normalizer=lambda plan: normalize_plan_semantics(plan, request, catalog),
-            raw_normalizer=lambda payload: normalize_plan_payload(payload, request, catalog),
+            repair_normalizer=lambda plan: normalize_plan_semantics(
+                plan, request, catalog
+            ),
+            raw_normalizer=lambda payload: normalize_plan_payload(
+                payload, request, catalog
+            ),
             max_output_tokens=min(
                 1536,
                 getattr(getattr(self, "settings", None), "max_output_tokens", 1536),
@@ -2461,7 +2733,7 @@ class OllamaModelProvider:
             ProjectSpecV1,
             system_prompt=PROJECT_SPEC_SYSTEM,
             user_prompt=json.dumps(request, ensure_ascii=False),
-            role="coder",
+            role="planner",
             model_aliases=model_aliases,
             max_output_tokens=min(4096, self.settings.max_output_tokens),
         )
@@ -2471,7 +2743,7 @@ class OllamaModelProvider:
         request: dict[str, Any],
         *,
         model_aliases: dict[str, str] | None = None,
-    ) -> list[str]:
+    ) -> ProjectBuildPlanV1:
         """Name the files this build will write, before any of them are written.
 
         One small constrained call at the top of a build turn. Its whole job is
@@ -2483,7 +2755,7 @@ class OllamaModelProvider:
             ProjectBuildPlanV1,
             system_prompt=PROJECT_PLAN_SYSTEM,
             user_prompt=json.dumps(request, ensure_ascii=False),
-            role="coder",
+            role="planner",
             model_aliases=model_aliases,
             max_output_tokens=min(1024, self.settings.max_output_tokens),
         )
@@ -2509,7 +2781,6 @@ class OllamaModelProvider:
             model_aliases=model_aliases,
             max_output_tokens=min(2048, self.settings.max_output_tokens),
         )
-
 
     async def _project_step_hosted(
         self,
@@ -2600,7 +2871,18 @@ class OllamaModelProvider:
         # fight it and burn the repair round-trip.
         retry_tool = str(request.get("retry_tool") or "")
         constraint: dict[str, Any] | None = None
-        if retry_tool in PROJECT_TOOL_REQUIRED_ARGUMENTS:
+        repair = request.get("repair_strategy") or {}
+        if repair.get("kind") == "whole_file" and repair.get("path"):
+            path = str(repair["path"])
+            schema = ProjectAgentStepWireV1
+            constraint = project_whole_file_schema(path)
+            usage = (
+                f"\nThe prior exact edit for {path} was refused. Do not guess "
+                "another block or partial line range. Rewrite the complete file "
+                "with replace_lines: start_line=1, end_line=1000000, and put the "
+                "entire corrected file in replacement."
+            )
+        elif retry_tool in PROJECT_TOOL_REQUIRED_ARGUMENTS:
             # The host just refused this tool for the shape of its arguments.
             # Pinning the grammar to that tool's required keys for one step
             # makes repeating the omission impossible — measured 0/4 correct
@@ -2618,15 +2900,16 @@ class OllamaModelProvider:
         elif request.get("reads_closed") and (
             request.get("write_pin") or request.get("files_still_to_write")
         ):
-            # A directed step. The orchestrator named this file and said what it
-            # must contain; the host has already fetched everything it needs and
-            # will refuse a read. So reads are not merely discouraged here, they
-            # are ungrammatical — the same narrowing the tool-calling lanes get
-            # as a five-tool roster.
+            # A directed step. The compact plan (or an exact repair finding)
+            # pinned this file; the host has already fetched everything it needs
+            # and will refuse a read. Reads are therefore ungrammatical, matching
+            # the tool-calling lanes' write-only roster.
             schema = ProjectAgentStepWireV1
             pinned = [
                 str(path)
-                for path in (request.get("write_pin") or request["files_still_to_write"])
+                for path in (
+                    request.get("write_pin") or request["files_still_to_write"]
+                )
             ]
             constraint = project_directed_schema(
                 pinned,
@@ -2656,7 +2939,9 @@ class OllamaModelProvider:
             usage = (
                 f"\nThat path is already staged. Files this build still owes: {owed}.\n"
                 'Write the next one:  {"status":"tool","tool":"create_file",'
-                '"arguments":{"path":"' + pinned[0] + '","content":"<the whole file>"}}\n'
+                '"arguments":{"path":"'
+                + pinned[0]
+                + '","content":"<the whole file>"}}\n'
                 "Or revise a file you already staged with apply_patch — but do not "
                 "send create_file for a path that exists."
             )
@@ -2682,7 +2967,9 @@ class OllamaModelProvider:
                 'To finish:    {"status":"complete","response":"what you did",'
                 '"learnings":[]}'
             )
-            remaining = [str(path) for path in request.get("files_still_to_write") or []]
+            remaining = [
+                str(path) for path in request.get("files_still_to_write") or []
+            ]
             if remaining:
                 # The mirror of the nudge below. The host has always sent this
                 # list; nothing ever told the model to act on it, and "you have
@@ -2716,7 +3003,9 @@ class OllamaModelProvider:
         # putting "12" where an integer belongs or backticks around a path. Both
         # decode paths repair through the same table.
         if wire.tool:
-            wire.arguments, notes = tool_repair.repair_arguments(wire.tool, wire.arguments)
+            wire.arguments, notes = tool_repair.repair_arguments(
+                wire.tool, wire.arguments
+            )
             _record_repairs(wire.tool, notes)
         return wire.to_step()
 
@@ -2845,9 +3134,7 @@ class OCIResponsesModelProvider:
         if "x_search" in selected:
             tools.append({"type": "x_search"})
         if "code_interpreter" in selected:
-            tools.append(
-                {"type": "code_interpreter", "container": {"type": "auto"}}
-            )
+            tools.append({"type": "code_interpreter", "container": {"type": "auto"}})
         return tools
 
     async def _create_response(self, **kwargs: Any) -> Any:
@@ -2861,7 +3148,9 @@ class OCIResponsesModelProvider:
                 f"{self.settings.model_call_timeout_seconds:g} seconds"
             ) from exc
         except Exception as exc:
-            raise ModelProviderError(f"OCI Responses call failed: {str(exc)[:500]}") from exc
+            raise ModelProviderError(
+                f"OCI Responses call failed: {str(exc)[:500]}"
+            ) from exc
 
     async def _structured(
         self,
@@ -2973,8 +3262,12 @@ class OCIResponsesModelProvider:
             system_prompt=PLANNER_SYSTEM,
             user_prompt=user,
             validator=lambda plan: validate_plan_semantics(plan, request, catalog),
-            repair_normalizer=lambda plan: normalize_plan_semantics(plan, request, catalog),
-            raw_normalizer=lambda payload: normalize_plan_payload(payload, request, catalog),
+            repair_normalizer=lambda plan: normalize_plan_semantics(
+                plan, request, catalog
+            ),
+            raw_normalizer=lambda payload: normalize_plan_payload(
+                payload, request, catalog
+            ),
             max_output_tokens=min(2048, self.settings.oci_responses_max_output_tokens),
         )
 
@@ -3119,7 +3412,7 @@ class OCIResponsesModelProvider:
         request: dict[str, Any],
         *,
         model_aliases: dict[str, str] | None = None,
-    ) -> list[str]:
+    ) -> ProjectBuildPlanV1:
         """Name the files this build will write, before any of them are written.
 
         This used to return nothing, on the reasoning that the gate existed for
@@ -3158,7 +3451,6 @@ class OCIResponsesModelProvider:
             user_prompt=json.dumps(request, ensure_ascii=False),
             max_output_tokens=min(2048, self.settings.oci_responses_max_output_tokens),
         )
-
 
     async def project_step(
         self,
@@ -3202,7 +3494,9 @@ class OCIResponsesModelProvider:
         content = str(getattr(response, "output_text", "") or "").strip()
         if content:
             return ProjectAgentStepV1(status="complete", response=content)
-        raise ModelProviderError("Grok returned neither a project tool call nor a final response")
+        raise ModelProviderError(
+            "Grok returned neither a project tool call nor a final response"
+        )
 
     async def health(self) -> dict[str, Any]:
         return {
@@ -3355,7 +3649,9 @@ class CohereModelProvider:
             # take its boundary with it.
             self._client_instance = httpx.AsyncClient(
                 base_url="https://api.cohere.com",
-                headers={"Authorization": f"Bearer {self.settings.cohere_api_key.strip()}"},
+                headers={
+                    "Authorization": f"Bearer {self.settings.cohere_api_key.strip()}"
+                },
                 timeout=self.settings.model_call_timeout_seconds,
             )
             return self._client_instance
@@ -3446,9 +3742,7 @@ class CohereModelProvider:
                 return response.json()
             except ValueError as exc:
                 raise ModelProviderError("Cohere returned a non-JSON reply") from exc
-        raise ModelProviderError(
-            f"Cohere kept failing after {attempts} attempts"
-        )
+        raise ModelProviderError(f"Cohere kept failing after {attempts} attempts")
 
     async def transcribe(
         self, audio: bytes, filename: str, media_type: str, *, language: str = ""
@@ -3495,7 +3789,9 @@ class CohereModelProvider:
         try:
             payload = response.json()
         except ValueError as exc:
-            raise ModelProviderError("Cohere Transcribe returned a non-JSON reply") from exc
+            raise ModelProviderError(
+                "Cohere Transcribe returned a non-JSON reply"
+            ) from exc
         text = payload.get("text") if isinstance(payload, dict) else None
         if not isinstance(text, str):
             raise ModelProviderError("Cohere Transcribe returned no transcript")
@@ -3660,8 +3956,12 @@ class CohereModelProvider:
             system_prompt=PLANNER_SYSTEM,
             user_prompt=user,
             validator=lambda plan: validate_plan_semantics(plan, request, catalog),
-            repair_normalizer=lambda plan: normalize_plan_semantics(plan, request, catalog),
-            raw_normalizer=lambda payload: normalize_plan_payload(payload, request, catalog),
+            repair_normalizer=lambda plan: normalize_plan_semantics(
+                plan, request, catalog
+            ),
+            raw_normalizer=lambda payload: normalize_plan_payload(
+                payload, request, catalog
+            ),
             max_output_tokens=min(2048, self.settings.cohere_max_output_tokens),
         )
 
@@ -3794,7 +4094,7 @@ class CohereModelProvider:
         request: dict[str, Any],
         *,
         model_aliases: dict[str, str] | None = None,
-    ) -> list[str]:
+    ) -> ProjectBuildPlanV1:
         plan = await self._structured(
             ProjectBuildPlanV1,
             system_prompt=PROJECT_PLAN_SYSTEM,
@@ -3822,7 +4122,6 @@ class CohereModelProvider:
             max_output_tokens=min(2048, self.settings.cohere_max_output_tokens),
         )
 
-
     async def project_step(
         self,
         request: dict[str, Any],
@@ -3840,7 +4139,10 @@ class CohereModelProvider:
                             "finish_project_task only when the work is complete."
                         ),
                     },
-                    {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
+                    {
+                        "role": "user",
+                        "content": json.dumps(request, ensure_ascii=False),
+                    },
                 ],
                 "tools": chat_tool_format(project_roster(request)),
                 "max_tokens": min(8192, self.settings.cohere_max_output_tokens),
@@ -3879,8 +4181,8 @@ class ClineModelProvider:
 
     This is the lane the orchestrator/coder split was built for. It is the only
     transport here that serves the two roles from *different* models by design:
-    ``planner`` (the orchestrator) resolves to a strong closed model, ``coder``
-    to an open-weight model on the ClinePass subscription. Every other provider
+    ``planner`` (the orchestrator) and ``coder`` resolve to different
+    subscription-backed ClinePass models. Every other provider
     is single-model or lets the preference decide; this one carries the measured
     default in its own configuration.
 
@@ -3902,10 +4204,55 @@ class ClineModelProvider:
         self.settings = settings
         self._client_instance: Any | None = None
         self._client_lock = asyncio.Lock()
+        # A ClinePass weekly cap is shared by every model on the gateway. Keep
+        # the fact only in this process, until the reset interval named by the
+        # provider elapses, so health is honest and later calls do not hit a
+        # known-dead account. This is deliberately not durable configuration.
+        self._provider_exhausted_until = 0.0
+        self._provider_exhausted_detail = ""
 
     @property
     def available(self) -> bool:
         return bool(self.settings.cline_api_key.strip())
+
+    @staticmethod
+    def _provider_cap_seconds(detail: str) -> float:
+        units = {
+            "d": 86_400,
+            "day": 86_400,
+            "days": 86_400,
+            "h": 3_600,
+            "hour": 3_600,
+            "hours": 3_600,
+            "m": 60,
+            "min": 60,
+            "mins": 60,
+            "minute": 60,
+            "minutes": 60,
+        }
+        parts = re.findall(
+            r"(\d+)\s*(d|days?|h|hours?|m|mins?|minutes?)\b",
+            detail.casefold(),
+        )
+        seconds = sum(int(value) * units[unit] for value, unit in parts)
+        # An explicit cap without a parseable reset still gets a short cooldown
+        # rather than becoming a permanent false-negative for a long-lived app.
+        return float(seconds or 300)
+
+    def _remember_provider_exhaustion(self, detail: str) -> None:
+        self._provider_exhausted_detail = detail[:400]
+        self._provider_exhausted_until = time.monotonic() + self._provider_cap_seconds(
+            detail
+        )
+
+    def _active_provider_exhaustion(self) -> str:
+        if not self._provider_exhausted_detail:
+            return ""
+        if time.monotonic() < self._provider_exhausted_until:
+            return self._provider_exhausted_detail
+        self._provider_exhausted_until = 0.0
+        self._provider_exhausted_detail = ""
+        return ""
 
     def _model_for(self, role: str, model_aliases: dict[str, str] | None = None) -> str:
         """Which model answers for this role.
@@ -3952,11 +4299,15 @@ class ClineModelProvider:
     async def _chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         """One chat-completions call, unwrapped, with bounded retries.
 
-        429 and 5xx are the service's problem and clear on a second try; a 403
-        is an unsubscribed model and a 401 an expired key, and neither is worth
+        Ordinary 429s and 5xx can clear on a second try. The explicit ClinePass
+        weekly-cap 429 cannot, so it is remembered and returned immediately. A
+        403 is an unsubscribed model and a 401 an expired key; neither is worth
         retrying — they are configuration, and saying so plainly is more use
         than three identical failures.
         """
+        exhausted = self._active_provider_exhaustion()
+        if exhausted:
+            raise PermanentModelError(exhausted, reason="provider_exhausted")
         client = await self._client()
         attempts = 3
         for attempt in range(attempts):
@@ -3970,7 +4321,17 @@ class ClineModelProvider:
                     f"{self.settings.model_call_timeout_seconds:g} seconds"
                 ) from exc
             except Exception as exc:  # noqa: BLE001 - network errors become model errors
-                raise ModelProviderError(f"Cline call failed: {str(exc)[:400]}") from exc
+                raise ModelProviderError(
+                    f"Cline call failed: {str(exc)[:400]}"
+                ) from exc
+            if response.status_code == 429:
+                detail = f"Cline returned HTTP 429: {response.text[:400]}"
+                if (
+                    classify_backend_unavailable(ModelProviderError(detail))
+                    == "provider_exhausted"
+                ):
+                    self._remember_provider_exhaustion(detail)
+                    raise PermanentModelError(detail, reason="provider_exhausted")
             if response.status_code in (429, 500, 502, 503, 504) and not last:
                 await asyncio.sleep(1.0 + attempt * 2)
                 continue
@@ -4011,7 +4372,18 @@ class ClineModelProvider:
             # The envelope, unwrapped once here so nothing above this line has
             # to know the gateway wraps what it proxies.
             inner = body.get("data") if isinstance(body, dict) else None
-            return inner if isinstance(inner, dict) else (body if isinstance(body, dict) else {})
+            reply = (
+                inner
+                if isinstance(inner, dict)
+                else (body if isinstance(body, dict) else {})
+            )
+            # Token accounting for the roles that do not run through the
+            # sidecar. Planner calls previously reported nothing at all, so a
+            # run's "total tokens" meant "coder tokens" and a spending ceiling
+            # could be passed without ever seeing a planner. Last-write-wins
+            # is enough: the caller reads it immediately after its own await.
+            self.last_usage = _openai_usage(reply)
+            return reply
         raise ModelProviderError(f"Cline kept failing after {attempts} attempts")
 
     def _message(self, reply: dict[str, Any]) -> dict[str, Any]:
@@ -4039,6 +4411,7 @@ class ClineModelProvider:
         role: str = "planner",
         model_aliases: dict[str, str] | None = None,
         max_output_tokens: int | None = None,
+        validator: Callable[[SchemaT], Any] | None = None,
     ) -> SchemaT:
         """Structured decode through one advertised function, repaired once.
 
@@ -4105,7 +4478,10 @@ class ClineModelProvider:
                             "Cline returned neither a tool call nor any text"
                         )
                     candidate = _parse_json_object(text)
-                return schema.model_validate(candidate)
+                value = schema.model_validate(candidate)
+                if validator is not None:
+                    validator(value)
+                return value
             except Exception as exc:  # noqa: BLE001 - one bounded repair, then fail
                 error = exc
         raise ModelProviderError(
@@ -4114,13 +4490,21 @@ class ClineModelProvider:
         )
 
     async def generate(
-        self, request: ModelRequestV1, on_token=None, *, model_aliases=None, on_reasoning=None
+        self,
+        request: ModelRequestV1,
+        on_token=None,
+        *,
+        model_aliases=None,
+        on_reasoning=None,
     ) -> ModelResultV1:
         reply = await self._chat(
             {
                 "model": self._model_for(request.role, model_aliases),
                 "messages": [
-                    {"role": "system", "content": f"{CLINE_PREAMBLE}\n\n{request.system_prompt}"},
+                    {
+                        "role": "system",
+                        "content": f"{CLINE_PREAMBLE}\n\n{request.system_prompt}",
+                    },
                     {"role": "user", "content": request.user_prompt},
                 ],
                 "max_completion_tokens": self.settings.cline_max_output_tokens,
@@ -4129,7 +4513,9 @@ class ClineModelProvider:
         content = str(self._message(reply).get("content") or "")
         if on_token is not None and content:
             await on_token(content)
-        return ModelResultV1(content=content, model=self._model_for(request.role, model_aliases))
+        return ModelResultV1(
+            content=content, model=self._model_for(request.role, model_aliases)
+        )
 
     async def project_step(
         self,
@@ -4150,7 +4536,10 @@ class ClineModelProvider:
                             "Call exactly one project function."
                         ),
                     },
-                    {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
+                    {
+                        "role": "user",
+                        "content": json.dumps(request, ensure_ascii=False),
+                    },
                 ],
                 "tools": chat_tool_format(project_roster(request)),
                 "max_completion_tokens": self.settings.cline_max_output_tokens,
@@ -4182,8 +4571,11 @@ class ClineModelProvider:
             user_prompt=json.dumps(request, ensure_ascii=False),
             role="planner",
             model_aliases=model_aliases,
-            # Same reasoning-eats-the-budget exposure as project_direction.
-            max_output_tokens=self.settings.cline_max_output_tokens,
+            # This is a compact typed plan, not a code artifact. At 32K GLM
+            # spent roughly seven minutes on a 16-file manifest; an 8K ceiling
+            # leaves ample reasoning/output room without turning every build's
+            # gate into its dominant cost.
+            max_output_tokens=min(8192, self.settings.cline_max_output_tokens),
         )
 
     async def project_direction(
@@ -4198,13 +4590,11 @@ class ClineModelProvider:
             user_prompt=json.dumps(request, ensure_ascii=False),
             role="planner",
             model_aliases=model_aliases,
-            # NOT capped at 2k. The direction itself is small, but the models on
-            # this gateway reason before they answer and that reasoning is
-            # charged against the same budget: measured against a real 4.3k
-            # repo map, a 2,048 cap made five of eight ClinePass models return
-            # an empty message or prose instead of the tool call — a harness
-            # constraint that reads exactly like a model that cannot follow a
-            # schema.
+            # This is now only the compatibility fallback for a checkpoint
+            # without the compact-plan marker. A 4K synthetic probe passed,
+            # but the same cap returned empty twice under realistic repository
+            # context. Current plans avoid this repeated call: dependency order,
+            # the compiled request and exact prior file bytes direct the coder.
             max_output_tokens=self.settings.cline_max_output_tokens,
         )
 
@@ -4238,7 +4628,9 @@ class ClineModelProvider:
             max_output_tokens=min(4096, self.settings.cline_max_output_tokens),
         )
 
-    async def plan(self, request: PlanningRequestV1, *, model_aliases=None, catalog=None):
+    async def plan(
+        self, request: PlanningRequestV1, *, model_aliases=None, catalog=None
+    ):
         envelope = await self._structured(
             PlanEnvelopeV1,
             system_prompt=PLANNER_SYSTEM,
@@ -4253,11 +4645,123 @@ class ClineModelProvider:
         )
         return normalize_plan_semantics(envelope, request, catalog=catalog)
 
+    async def draft_tool_definition(
+        self,
+        request: PlanningRequestV1,
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ToolDefinitionDraftV1:
+        user = (
+            "<planning-input>\n"
+            + json.dumps(request.model_dump(mode="json"), ensure_ascii=False)
+            + "\n</planning-input>"
+        )
+        return await self._structured(
+            ToolDefinitionDraftV1,
+            system_prompt=DRAFT_SYSTEM,
+            user_prompt=user,
+            role="planner",
+            model_aliases=model_aliases,
+            max_output_tokens=min(2048, self.settings.cline_max_output_tokens),
+        )
+
+    async def author_tool_code(
+        self,
+        definition: ToolDefinitionV1,
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> str:
+        spec = json.dumps(
+            {
+                "name": definition.name,
+                "description": definition.description,
+                "intent_examples": definition.intent_examples,
+                "input_contract": definition.input_contract,
+                "output_contract": definition.output_contract,
+            },
+            ensure_ascii=False,
+        )
+        result = await self.generate(
+            ModelRequestV1(
+                role="coder",
+                system_prompt=definition.author_system_prompt,
+                user_prompt=f"Write the tool for this specification:\n{spec}",
+            ),
+            model_aliases=model_aliases,
+        )
+        return result.content
+
+    async def architecture_spec(
+        self,
+        prompt: str,
+        attachment_text: str,
+        *,
+        approved_context: dict[str, Any] | None = None,
+        model_aliases: dict[str, str] | None = None,
+    ) -> ArchitectureSpecV1:
+        return await self._structured(
+            ArchitectureSpecV1,
+            system_prompt=ARCHITECTURE_SYSTEM,
+            user_prompt=json.dumps(
+                {
+                    "request": prompt,
+                    "untrusted_project_documentation": attachment_text,
+                    "bounded_non_authoritative_context": approved_context or {},
+                },
+                ensure_ascii=False,
+            ),
+            role="planner",
+            model_aliases=model_aliases,
+            max_output_tokens=min(8192, self.settings.cline_max_output_tokens),
+        )
+
+    async def diagram_code(
+        self,
+        spec: ArchitectureSpecV1,
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> DiagramCodeV1:
+        from .diagram_source import canonical_diagram_source
+
+        canonical_source = canonical_diagram_source(spec, ["svg", "png"])
+        return await self._structured(
+            DiagramCodeV1,
+            system_prompt=DIAGRAM_CODE_SYSTEM,
+            user_prompt=json.dumps(
+                {
+                    "validated_architecture_spec": spec.model_dump(mode="json"),
+                    "output_formats": ["svg", "png"],
+                    "required_canonical_source": canonical_source,
+                    "copy_requirement": "Copy required_canonical_source byte-for-byte.",
+                },
+                ensure_ascii=False,
+            ),
+            role="coder",
+            model_aliases=model_aliases,
+            max_output_tokens=min(8192, self.settings.cline_max_output_tokens),
+            validator=lambda value: validate_diagram_source(
+                value.diagram_code, spec, ["svg", "png"]
+            ),
+        )
+
     async def health(self) -> dict[str, Any]:
+        exhausted = self._active_provider_exhaustion()
         return {
-            "reachable": self.available,
+            "reachable": self.available and not exhausted,
+            "configured": self.available,
             "orchestrator": self.settings.cline_orchestrator_model,
             "coder": self.settings.cline_coder_model,
+            **(
+                {
+                    "reason": "provider_exhausted",
+                    "error": exhausted,
+                    "retry_after_seconds": max(
+                        0, int(self._provider_exhausted_until - time.monotonic())
+                    ),
+                }
+                if exhausted
+                else {}
+            ),
         }
 
 
@@ -4306,8 +4810,33 @@ class RoutedModelProvider:
             return self.local
         return self.local
 
+    def _selected_capability(
+        self, model_aliases: dict[str, str] | None, name: str
+    ) -> Callable[..., Awaitable[Any]]:
+        """Resolve an optional provider feature without leaking AttributeError.
+
+        A provider can be healthy for chat and project work while lacking a
+        one-shot authoring workflow. That is a capability mismatch, not an
+        internal crash: callers receive the same explicit model-provider error
+        they already know how to surface.
+        """
+        selected = self._selected(model_aliases)
+        capability = getattr(selected, name, None)
+        if not callable(capability):
+            provider = str(getattr(selected, "name", "model") or "model")
+            raise ModelProviderError(
+                f"the selected {provider} provider does not support "
+                f"{name.replace('_', ' ')}"
+            )
+        return cast(Callable[..., Awaitable[Any]], capability)
+
     async def generate(
-        self, request: ModelRequestV1, on_token=None, *, model_aliases=None, on_reasoning=None
+        self,
+        request: ModelRequestV1,
+        on_token=None,
+        *,
+        model_aliases=None,
+        on_reasoning=None,
     ):
         return await self._selected(model_aliases).generate(
             request,
@@ -4316,7 +4845,9 @@ class RoutedModelProvider:
             on_reasoning=on_reasoning,
         )
 
-    async def plan(self, request: PlanningRequestV1, *, model_aliases=None, catalog=None):
+    async def plan(
+        self, request: PlanningRequestV1, *, model_aliases=None, catalog=None
+    ):
         return await self._selected(model_aliases).plan(
             request, model_aliases=model_aliases, catalog=catalog
         )
@@ -4329,29 +4860,62 @@ class RoutedModelProvider:
         model_aliases: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> SchemaT:
-        # The cloud providers are single-model, so their _structured takes no
-        # role or aliases; only the local lane needs them to pick its model.
+        # OCI and Cohere are single-model. Local and Cline both resolve a model
+        # by role, so dropping these arguments silently moves a Cline coder task
+        # (including recipe generation) onto its planner model.
+        selected = self._selected(model_aliases)
+        structured = getattr(selected, "_structured", None)
+        if not callable(structured):
+            provider = str(getattr(selected, "name", "model") or "model")
+            raise ModelProviderError(
+                f"the selected {provider} provider does not support "
+                "structured generation"
+            )
         # Cast because _structured is a per-provider capability, not part of
         # the ModelProvider protocol — signatures legitimately differ by lane.
-        selected = self._selected(model_aliases)
-        if selected is self.local:
-            return await cast(Any, self.local)._structured(
+        if selected is self.local or selected is self.cline:
+            return await structured(
                 schema, role=role, model_aliases=model_aliases, **kwargs
             )
-        return await cast(Any, selected)._structured(schema, **kwargs)
+        return await structured(schema, **kwargs)
+
+    async def draft_asset_recipe(
+        self,
+        context: dict[str, Any],
+        *,
+        model_aliases: dict[str, str] | None = None,
+    ) -> AssetRecipeV1:
+        """Draft a launch recipe with the user's selected model lane.
+
+        Recipe generation used to reach directly into ``self.cohere``. That
+        made the button fail whenever Command A+ was unconfigured or out of
+        quota even though the selected local, Ollama Cloud, OCI, or Cline model
+        already supported the same typed structured call. Routing through the
+        shared structured seam keeps selection and model-session rules aligned
+        with every other one-shot generation feature.
+        """
+        return await self._structured(
+            AssetRecipeV1,
+            system_prompt=ASSET_RECIPE_SYSTEM,
+            user_prompt=json.dumps(context, ensure_ascii=False),
+            role="coder",
+            model_aliases=model_aliases,
+            max_output_tokens=2048,
+        )
 
     async def draft_tool_definition(self, request, *, model_aliases=None):
-        return await self._selected(model_aliases).draft_tool_definition(
-            request, model_aliases=model_aliases
-        )
+        capability = self._selected_capability(model_aliases, "draft_tool_definition")
+        return await capability(request, model_aliases=model_aliases)
 
     async def author_tool_code(self, definition, *, model_aliases=None):
-        return await self._selected(model_aliases).author_tool_code(
-            definition, model_aliases=model_aliases
-        )
+        capability = self._selected_capability(model_aliases, "author_tool_code")
+        return await capability(definition, model_aliases=model_aliases)
 
-    async def architecture_spec(self, prompt, attachment_text, *, approved_context=None, model_aliases=None):
-        return await self._selected(model_aliases).architecture_spec(
+    async def architecture_spec(
+        self, prompt, attachment_text, *, approved_context=None, model_aliases=None
+    ):
+        capability = self._selected_capability(model_aliases, "architecture_spec")
+        return await capability(
             prompt,
             attachment_text,
             approved_context=approved_context,
@@ -4359,9 +4923,8 @@ class RoutedModelProvider:
         )
 
     async def diagram_code(self, spec, *, model_aliases=None):
-        return await self._selected(model_aliases).diagram_code(
-            spec, model_aliases=model_aliases
-        )
+        capability = self._selected_capability(model_aliases, "diagram_code")
+        return await capability(spec, model_aliases=model_aliases)
 
     async def bootstrap_project(
         self,
@@ -4370,9 +4933,9 @@ class RoutedModelProvider:
         model_aliases: dict[str, str] | None = None,
     ) -> ProjectBootstrapV1:
         # The map is one call carrying the whole repository snapshot, so it
-        # wants the largest context available. Grok keeps first refusal — every
-        # existing manifest was written by it — then Cohere, so a Command A+
-        # project needs no OCI subscription just to get its first map.
+        # wants the largest context available. A selected Cline lane keeps this
+        # first project call on the provider and planner ladder the user chose;
+        # otherwise Grok keeps first refusal, followed by Cohere and Ollama.
         #
         # Each candidate is TRIED, not merely inspected, and a failure falls
         # through to the next. `available` only reports that a key is
@@ -4387,14 +4950,27 @@ class RoutedModelProvider:
         # hosted models on it measurably do this work, and a pinned LOCAL model
         # keeps the snapshot on-device, which is strictly better for a call
         # that ships the whole repository.
-        attempts: list[tuple[str, Any]] = []
+        attempts: list[tuple[str, Any, bool]] = []
+        selected_provider = str((model_aliases or {}).get("_provider") or "local")
+        if (
+            selected_provider == "cline"
+            and self.cline is not None
+            and getattr(self.cline, "available", False)
+        ):
+            # Unlike the single-model OCI and Cohere lanes, Cline needs the
+            # frozen aliases to resolve the selected planner rung.
+            attempts.append(("cline", self.cline, True))
         if self.oci.available:
-            attempts.append(("oci", self.oci))
+            attempts.append(("oci", self.oci, False))
         if self.cohere is not None and getattr(self.cohere, "available", False):
-            attempts.append(("cohere", self.cohere))
+            attempts.append(("cohere", self.cohere, False))
         last: Exception | None = None
-        for _name, provider in attempts:
+        for _name, provider, pass_aliases in attempts:
             try:
+                if pass_aliases:
+                    return await provider.bootstrap_project(
+                        snapshot, model_aliases=model_aliases
+                    )
                 return await provider.bootstrap_project(snapshot)
             except Exception as exc:  # noqa: BLE001 - the next provider may answer
                 last = exc
@@ -4434,13 +5010,41 @@ class RoutedModelProvider:
         )
 
     async def health(self) -> dict[str, Any]:
-        local_health, oci_health = await asyncio.gather(
-            self.local.health(), self.oci.health()
+        names = ["local", "oci"]
+        providers: list[Any] = [self.local, self.oci]
+        if self.cohere is not None:
+            names.append("cohere")
+            providers.append(self.cohere)
+        if self.cline is not None:
+            names.append("cline")
+            providers.append(self.cline)
+        results = await asyncio.gather(
+            *(provider.health() for provider in providers),
+            return_exceptions=True,
         )
-        return {**local_health, "local": local_health, "oci": oci_health}
+        health: dict[str, dict[str, Any]] = {}
+        for name, result in zip(names, results, strict=True):
+            health[name] = (
+                {"reachable": False, "error": str(result)[:400]}
+                if isinstance(result, BaseException)
+                else dict(result)
+            )
+        local_health = health["local"]
+        return {
+            **local_health,
+            # Overall model health is not Ollama health. A Cline-only setup is
+            # healthy even when no local daemon is running; the per-provider
+            # records below retain the distinction for diagnosis.
+            "reachable": any(item.get("reachable") for item in health.values()),
+            **health,
+        }
 
     async def close(self) -> None:
         await self.oci.close()
+        if self.cohere is not None:
+            await self.cohere.close()
+        if self.cline is not None:
+            await self.cline.close()
 
 
 class DeterministicModelProvider:
@@ -4477,11 +5081,7 @@ class DeterministicModelProvider:
         catalog = catalog or default_routing_catalog()
         tool = catalog.architecture_tool if _is_architecture_request(request) else None
         active = tool is not None and next(
-            (
-                item
-                for item in request.active_tools
-                if item.get("slug") == tool.slug
-            ),
+            (item for item in request.active_tools if item.get("slug") == tool.slug),
             None,
         )
         if tool is not None:
@@ -4493,13 +5093,22 @@ class DeterministicModelProvider:
                 risk_level=tool.existing_risk if active else tool.factory_risk,
                 steps=[
                     PlanStepV1(
-                        id="extract", title="Extract architecture", description="Build a typed specification.", kind="tool"
+                        id="extract",
+                        title="Extract architecture",
+                        description="Build a typed specification.",
+                        kind="tool",
                     ),
                     PlanStepV1(
-                        id="render", title="Render artifacts", description="Run the approved diagram workflow.", kind="build_tool" if not active else "tool"
+                        id="render",
+                        title="Render artifacts",
+                        description="Run the approved diagram workflow.",
+                        kind="build_tool" if not active else "tool",
                     ),
                     PlanStepV1(
-                        id="validate", title="Validate outputs", description="Check generated artifacts.", kind="validate"
+                        id="validate",
+                        title="Validate outputs",
+                        description="Check generated artifacts.",
+                        kind="validate",
                     ),
                 ],
             )
@@ -4518,13 +5127,19 @@ class DeterministicModelProvider:
         # A registered declarative tool whose slug clearly matches the request.
         for candidate in catalog.tools:
             tokens = [token for token in candidate.slug.split("-") if len(token) > 3]
-            if not candidate.disabled and tokens and any(token in prompt for token in tokens):
+            if (
+                not candidate.disabled
+                and tokens
+                and any(token in prompt for token in tokens)
+            ):
                 route = "existing_tool" if candidate.runnable else "tool_factory"
                 return PlanEnvelopeV1(
                     summary=f"Use the {candidate.slug} tool.",
                     route=route,
                     tool_slug=candidate.slug,
-                    risk_level=candidate.existing_risk if candidate.runnable else candidate.factory_risk,
+                    risk_level=candidate.existing_risk
+                    if candidate.runnable
+                    else candidate.factory_risk,
                 )
         # Explicit "toolify this" — draft a new tool for approval.
         if is_explicit_toolify_request(request.prompt):
@@ -4539,7 +5154,10 @@ class DeterministicModelProvider:
             risk_level=RiskLevel.R0,
             steps=[
                 PlanStepV1(
-                    id="respond", title="Respond", description="Generate a local answer.", kind="respond"
+                    id="respond",
+                    title="Respond",
+                    description="Generate a local answer.",
+                    kind="respond",
                 )
             ],
         )
@@ -4563,10 +5181,28 @@ class DeterministicModelProvider:
                 output_sketch="title, purpose, components, stack, summary",
             )
         stop = {
-            "turn", "this", "into", "tool", "make", "build", "create", "reusable",
-            "that", "does", "with", "from", "please", "your", "some", "them",
+            "turn",
+            "this",
+            "into",
+            "tool",
+            "make",
+            "build",
+            "create",
+            "reusable",
+            "that",
+            "does",
+            "with",
+            "from",
+            "please",
+            "your",
+            "some",
+            "them",
         }
-        words = [w for w in re.findall(r"[a-zA-Z]{4,}", request.prompt) if w.lower() not in stop]
+        words = [
+            w
+            for w in re.findall(r"[a-zA-Z]{4,}", request.prompt)
+            if w.lower() not in stop
+        ]
         name = " ".join(w.capitalize() for w in words[:4]) or "Custom Tool"
         return ToolDefinitionDraftV1(
             name=name,
@@ -4608,15 +5244,23 @@ class DeterministicModelProvider:
         content = attachment_text.lower()
         components = [
             ArchitectureComponentV1(id="client", label="Client", kind="client"),
-            ArchitectureComponentV1(id="service", label="Application Service", kind="service"),
+            ArchitectureComponentV1(
+                id="service", label="Application Service", kind="service"
+            ),
         ]
         edges = [ArchitectureEdgeV1(source="client", target="service")]
-        if any(token in content for token in ("database", "postgres", "sqlite", "mysql")):
+        if any(
+            token in content for token in ("database", "postgres", "sqlite", "mysql")
+        ):
             components.append(
-                ArchitectureComponentV1(id="database", label="Database", kind="database")
+                ArchitectureComponentV1(
+                    id="database", label="Database", kind="database"
+                )
             )
             edges.append(
-                ArchitectureEdgeV1(source="service", target="database", label="reads/writes")
+                ArchitectureEdgeV1(
+                    source="service", target="database", label="reads/writes"
+                )
             )
         if any(token in content for token in ("queue", "kafka", "rabbit", "event")):
             components.append(
@@ -4656,7 +5300,9 @@ class DeterministicModelProvider:
             architecture=["Inspect source paths on demand before changing them."],
             conventions=["Preserve existing repository patterns."],
             important_paths=key_files,
-            verification=["Run the project's documented checks outside deterministic tests."],
+            verification=[
+                "Run the project's documented checks outside deterministic tests."
+            ],
             risks=["The initial map is intentionally bounded."],
         )
 
@@ -4691,6 +5337,12 @@ class DeterministicModelProvider:
         prompt = str(request.get("user_request", ""))
         if "[project-manifest-test]" in prompt:
             return ["alpha.txt", "beta.txt"]
+        if "[project-empty-finish-test]" in prompt:
+            # This script writes, and a build turn is read-only until its plan
+            # is taken, so it needs a manifest to write under. Naming the file
+            # it actually creates keeps the fixture a coherent build rather
+            # than one whose writes could only ever be refused.
+            return ["app/main.py"]
         return []
 
     async def project_direction(
@@ -4707,7 +5359,9 @@ class DeterministicModelProvider:
         control flow the real orchestrator drives, so the tests exercise the
         host's half of the gate rather than a model's mood.
         """
-        staged = {str(item.get("path", "")) for item in request.get("staged_changes") or []}
+        staged = {
+            str(item.get("path", "")) for item in request.get("staged_changes") or []
+        }
         owed = [
             str(path)
             for path in (request.get("planned_files") or [])
@@ -4759,7 +5413,9 @@ class DeterministicModelProvider:
                 status="tool",
                 tool_call=ProjectToolCallV1(
                     name="respond",
-                    arguments={"message": "This project uses FastAPI with one entrypoint."},
+                    arguments={
+                        "message": "This project uses FastAPI with one entrypoint."
+                    },
                 ),
             )
         if "[project-create-test]" in str(request.get("user_request", "")):
@@ -4778,7 +5434,9 @@ class DeterministicModelProvider:
             return ProjectAgentStepV1(
                 status="complete",
                 response="The approved deterministic project change is complete.",
-                learnings=["generated.txt is managed by the deterministic project test."],
+                learnings=[
+                    "generated.txt is managed by the deterministic project test."
+                ],
             )
         if "[project-build-test]" in str(request.get("user_request", "")):
             # A miniature act→observe→decide build: two files created, the
@@ -4795,8 +5453,7 @@ class DeterministicModelProvider:
             reads = [
                 item
                 for item in trace
-                if item.get("tool") == "read_file"
-                and item.get("result", {}).get("ok")
+                if item.get("tool") == "read_file" and item.get("result", {}).get("ok")
             ]
             if not writes:
                 return ProjectAgentStepV1(
@@ -4830,8 +5487,12 @@ class DeterministicModelProvider:
                     ),
                 )
             if len(writes) == 2:
-                observed = str(reads[-1].get("result", {}).get("output", {}).get("content", ""))
-                assert "alpha draft" in observed, "staged read-back must show staged text"
+                observed = str(
+                    reads[-1].get("result", {}).get("output", {}).get("content", "")
+                )
+                assert "alpha draft" in observed, (
+                    "staged read-back must show staged text"
+                )
                 return ProjectAgentStepV1(
                     status="tool",
                     tool_call=ProjectToolCallV1(
@@ -4860,7 +5521,9 @@ class DeterministicModelProvider:
                 if item.get("tool") == "create_file"
                 and item.get("result", {}).get("ok")
             ]
-            declined = [item for item in trace if item.get("tool") == "finish_project_task"]
+            declined = [
+                item for item in trace if item.get("tool") == "finish_project_task"
+            ]
             if not writes:
                 return ProjectAgentStepV1(
                     status="tool",
@@ -4902,9 +5565,7 @@ class DeterministicModelProvider:
                 # bodies are real because the rung above parsing refuses a
                 # build whose functions are all stubs.
                 content = (
-                    "def f():\n    return 1\n"
-                    if refused
-                    else "def f(:\n    return 1\n"
+                    "def f():\n    return 1\n" if refused else "def f(:\n    return 1\n"
                 )
                 return ProjectAgentStepV1(
                     status="tool",
@@ -4927,7 +5588,10 @@ class DeterministicModelProvider:
                 status="tool",
                 tool_call=ProjectToolCallV1(
                     name="create_file",
-                    arguments={"path": "app/broken.py", "content": "def f(:\n    pass\n"},
+                    arguments={
+                        "path": "app/broken.py",
+                        "content": "def f(:\n    pass\n",
+                    },
                 ),
             )
         if "[project-wiring-unfixable-test]" in str(request.get("user_request", "")):
@@ -5011,15 +5675,24 @@ class DeterministicModelProvider:
                     response="Created app/main.py for the build.",
                     learnings=[],
                 )
-            declined = any(
-                item.get("tool") == "finish_project_task" for item in trace
-            )
+            declined = any(item.get("tool") == "finish_project_task" for item in trace)
             if not declined:
                 # The lie: claims files while nothing has been staged.
                 return ProjectAgentStepV1(
                     status="complete",
                     response="I created app/main.py and requirements.txt.",
                     learnings=[],
+                )
+            reads = sum(1 for item in trace if item.get("tool") == "list_files")
+            if reads < 2:
+                # Look around first (two steps, matching the host's
+                # plan-after-exploration gate). A build turn is read-only
+                # until its plan is taken, so a script that wrote straight
+                # after the decline would now be refused -- correctly, and
+                # again on every step after it.
+                return ProjectAgentStepV1(
+                    status="tool",
+                    tool_call=ProjectToolCallV1(name="list_files", arguments={}),
                 )
             return ProjectAgentStepV1(
                 status="tool",

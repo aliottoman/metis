@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { API_BASE, getHealth, getModelPreference, setModelPreference } from "@/lib/api";
+import { clinePassReady } from "@/lib/model-route";
 import type { HealthSnapshot, ModelPreference } from "@/lib/types";
+import { MetisCompanion } from "@/components/metis-companion";
+import { SelectMenu } from "@/components/select-menu";
+import {
+  readCompanionEnergy,
+  writeCompanionEnergy,
+  type CompanionEnergy,
+} from "@/lib/companion-preference";
 
 type Provider = ModelPreference["provider"];
 
@@ -17,6 +25,7 @@ export function SettingsPanel() {
   const [savingPreference, setSavingPreference] = useState(false);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [ociTools, setOciTools] = useState<Array<"x_search" | "code_interpreter">>(["code_interpreter"]);
+  const [companionEnergy, setCompanionEnergy] = useState<CompanionEnergy>("expressive");
 
   // The installed local lineup, straight from the runtime — a hardcoded list
   // here went stale the first time the lineup changed, and stayed stale.
@@ -85,6 +94,7 @@ export function SettingsPanel() {
   }, []);
 
   useEffect(() => {
+    setCompanionEnergy(readCompanionEnergy());
     void refresh();
     void loadPreference();
     const timer = window.setInterval(() => void refresh(), 15_000);
@@ -93,8 +103,40 @@ export function SettingsPanel() {
 
   const isPinned = preference?.mode === "pinned";
   const provider = preference?.provider ?? "local";
+  const clineModels = preference?.cline_models ?? [];
+  const clineReady = clinePassReady(
+    preference?.cline_available === true,
+    clineModels,
+  );
   const providerBadge =
-    provider === "oci" ? "Cloud · Grok" : provider === "cohere" ? "Cloud · Command A+" : "Local";
+    provider === "oci"
+      ? "Cloud · Grok"
+      : provider === "cohere"
+        ? "Cloud · Command A+"
+        : provider === "cline"
+          ? "Cloud · ClinePass"
+          : "Local";
+  const projectCoding = health?.project_coding_engine;
+  const systemStatusTitle =
+    health?.status === "ok"
+      ? "Metis is ready"
+      : error
+        ? "Metis is waiting for its local service"
+        : health?.status === "degraded"
+          ? "Metis needs attention"
+          : "Checking Metis";
+  const systemStatusMessage = error
+    ?? projectCoding?.reason
+    ?? (!health
+      ? "Checking required local services…"
+      : health.status === "degraded"
+        ? "A required local service is unavailable."
+        : `API ${health.version ? `version ${health.version} ` : ""}is reachable at ${API_BASE}.`);
+  const projectCodingStatus = !projectCoding
+    ? "Unknown"
+    : projectCoding.ready
+      ? "Vertical-slice coding ready"
+      : "Setup needed";
 
   return (
     <div className="workspacePage settingsPage">
@@ -111,8 +153,37 @@ export function SettingsPanel() {
         <span className="healthOrb"><i /></span>
         <div>
           <span className="eyebrow">System status</span>
-          <h2>{health?.status === "ok" ? "Metis is ready" : error ? "Metis is waiting for its local service" : "Checking Metis"}</h2>
-          <p>{error ?? `API ${health?.version ? `version ${health.version} ` : ""}is reachable at ${API_BASE}.`}</p>
+          <h2>{systemStatusTitle}</h2>
+          <p>{systemStatusMessage}</p>
+        </div>
+      </section>
+
+      <section className="settingsSection companionSettings">
+        <div className="sectionTitle">
+          <div><h2>Companion expression</h2><p>Choose how visibly the companion reacts. Mood color still communicates listening, working, done, and trouble in every mode.</p></div>
+          <span className="sectionBadge">{companionEnergy}</span>
+        </div>
+        <div className="companionEnergyGrid" role="radiogroup" aria-label="Companion expression">
+          {([
+            ["calm", "Calm", "Slow breathing and restrained color."],
+            ["expressive", "Expressive", "Fluid motion and clear mood shifts."],
+            ["playful", "Playful", "More bounce, glow, and orbiting sparks."],
+          ] as const).map(([value, label, description]) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={companionEnergy === value}
+              className={companionEnergy === value ? "selected" : ""}
+              key={value}
+              onClick={() => { setCompanionEnergy(value); writeCompanionEnergy(value); }}
+            >
+              <span className="companionEnergyPreview" data-preview-energy={value}>
+                <MetisCompanion mood={value === "calm" ? "idle" : "thinking"} size={46} energy={value} />
+              </span>
+              <span><strong>{label}</strong><small>{description}</small></span>
+              <i aria-hidden="true" />
+            </button>
+          ))}
         </div>
       </section>
 
@@ -127,6 +198,9 @@ export function SettingsPanel() {
           </button>
           <button type="button" className={`providerChoice ${provider === "cohere" ? "selected" : ""}`} onClick={() => void chooseProvider("cohere")} disabled={savingPreference || !preference?.cohere_available}>
             <span>Cohere</span><strong>Command A+</strong><small>{preference?.cohere_available ? "Strong tool use and structured output; also powers dictation." : "Configure Cohere on OCI Generative AI to enable."}</small>
+          </button>
+          <button type="button" className={`providerChoice ${provider === "cline" ? "selected" : ""}`} onClick={() => void chooseProvider("cline")} disabled={savingPreference || !clineReady}>
+            <span>ClinePass</span><strong>Planner + coder roles</strong><small>{clineReady ? `${clineModels.length} verified subscription model${clineModels.length === 1 ? "" : "s"}; choose each role and backup from the chat model control.` : "Configure WAQIL_CLINE_API_KEY to enable the verified ClinePass catalog."}</small>
           </button>
         </div>
         <div className="nativeToolChoices" aria-label="OCI native tools">
@@ -166,16 +240,17 @@ export function SettingsPanel() {
           >
             Per-task (default)
           </button>
-          <select
+          <SelectMenu
+            className="settingsModelSelect"
+            hideLabel
+            label="Pinned local model"
             value={pinnedChoice}
-            onChange={(event) => setPinnedChoice(event.target.value)}
+            onChange={setPinnedChoice}
             disabled={savingPreference || !localModels.length}
-          >
-            {!localModels.length ? <option value="">No local models</option> : null}
-            {localModels.map((model) => (
-              <option key={model.id} value={model.id}>{model.label || model.id}</option>
-            ))}
-          </select>
+            options={localModels.length
+              ? localModels.map((model) => ({ value: model.id, label: model.label || model.id }))
+              : [{ value: "", label: "No local models", disabled: true }]}
+          />
           <button
             type="button"
             className={isPinned ? "primaryButton" : "secondaryButton"}
@@ -210,6 +285,7 @@ export function SettingsPanel() {
             <div><dt>Ollama</dt><dd><span className={health?.ollama?.status === "ok" ? "serviceUp" : "serviceNeutral"} />{health?.ollama?.status ?? "Unknown"}</dd></div>
             <div><dt>Database</dt><dd><span className={health?.database === "ok" ? "serviceUp" : "serviceNeutral"} />{health?.database ?? "Unknown"}</dd></div>
             <div><dt>Podman sandbox</dt><dd><span className={health?.sandbox === "ok" ? "serviceUp" : "serviceNeutral"} />{health?.sandbox ?? "On demand"}</dd></div>
+            <div><dt>Project building</dt><dd><span className={projectCoding?.ready ? "serviceUp" : projectCoding ? "serviceDown" : "serviceNeutral"} />{projectCodingStatus}</dd></div>
           </dl>
         </section>
       </div>

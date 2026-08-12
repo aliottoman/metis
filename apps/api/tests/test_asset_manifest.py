@@ -75,7 +75,7 @@ async def test_manifest_is_written_and_the_library_accepts_it(tmp_path: Path) ->
         "OCI_RESPONSES_MODEL_ID",
         "OCI_RESPONSES_PROJECT_ID",
     ]
-    assert manifest["metis"]["scaffold_version"] == "0.1.0"
+    assert manifest["metis"]["scaffold_version"] == "0.2.0"
 
     # The library, rescanned, sees a configured (not yet approved) launch.
     (view,) = await assets.scan()
@@ -85,13 +85,17 @@ async def test_manifest_is_written_and_the_library_accepts_it(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_manifest_never_overwrites_and_needs_an_entrypoint(tmp_path: Path) -> None:
+async def test_manifest_never_overwrites_and_needs_an_entrypoint(
+    tmp_path: Path,
+) -> None:
     service, _, asset_id, project, _ = await _service(tmp_path)
-    handwritten = (project / ".metis")
+    handwritten = project / ".metis"
     handwritten.mkdir()
     (handwritten / "asset.json").write_text('{"name": "mine"}', encoding="utf-8")
     assert await service.ensure_asset_manifest(asset_id) == ""
-    assert json.loads((project / ".metis" / "asset.json").read_text()) == {"name": "mine"}
+    assert json.loads((project / ".metis" / "asset.json").read_text()) == {
+        "name": "mine"
+    }
 
 
 @pytest.mark.asyncio

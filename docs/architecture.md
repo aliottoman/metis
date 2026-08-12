@@ -10,7 +10,8 @@ A project build is verified before it is offered, in three rungs that run
 cheapest first and stop at the first failure: every staged file parses
 (`project_workspace.staged_syntax_errors`), the staged files fit together
 (`project_wiring.staged_wiring_errors` — pure AST, nothing executed), and the
-project actually imports and serves its routes
+project actually imports and serves its routes, plus a fixed, bounded pytest
+slice when the overlay changes Python
 (`project_sandbox.ProjectSandboxService`). Only the third rung executes anything,
 and it executes nothing on the host: the reviewed wrapper at
 `infra/sandbox/project-verify/run_project_verify.py` owns every container flag,
@@ -20,7 +21,10 @@ CPU, memory and wall clock. A sandbox that cannot run degrades to the static
 rungs and says so on the approval card — it never reports the project as clean by
 default. Because the sandbox is offline, a package the project declares but the
 image does not carry is reported as a limit of the verifier, never as a defect in
-the code.
+the code. Pytest runs in a fresh child interpreter against the materialized
+overlay, with verifier-owned flags and limits; repository or model text never
+becomes a host command. Its failures enter the same structured repair queue as
+the other runtime checks.
 
 The planner receives at most 12,000 characters of attachment text, labelled as an
 untrusted excerpt, plus a fixed vocabulary of host-derived document-shape signals

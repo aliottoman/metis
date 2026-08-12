@@ -8,6 +8,7 @@ nothing is imported and nothing is executed — so it is safe on code the model
 wrote a moment ago, it costs microseconds, and it still works when the container
 sandbox is unavailable.
 """
+
 from __future__ import annotations
 
 import ast
@@ -41,7 +42,9 @@ _DISTRIBUTION_ALIASES: dict[str, str] = {
 _REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 # Directories whose contents are not part of the project's own import namespace.
-_SKIP_DIRECTORIES = frozenset({".venv", "venv", "node_modules", "__pycache__", "build", "dist"})
+_SKIP_DIRECTORIES = frozenset(
+    {".venv", "venv", "node_modules", "__pycache__", "build", "dist"}
+)
 
 
 def _finding(path: str, error: str, severity: str = ERROR) -> dict[str, str]:
@@ -129,7 +132,9 @@ def _top_level_names(tree: ast.Module) -> set[str]:
             # Conditional definitions (a try/except import fallback, a
             # TYPE_CHECKING block) still bind names an importer can reach.
             for child in ast.walk(node):
-                if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+                if isinstance(
+                    child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+                ):
                     names.add(child.name)
                 elif isinstance(child, ast.Assign):
                     for target in child.targets:
@@ -171,13 +176,18 @@ def _is_stub_body(body: list[ast.stmt]) -> bool:
     for statement in body:
         if isinstance(statement, ast.Pass):
             continue
-        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
+        if isinstance(statement, ast.Expr) and isinstance(
+            statement.value, ast.Constant
+        ):
             continue
         if isinstance(statement, ast.Raise):
             exception = statement.exc
             if isinstance(exception, ast.Call):
                 exception = exception.func
-            if isinstance(exception, ast.Name) and exception.id == "NotImplementedError":
+            if (
+                isinstance(exception, ast.Name)
+                and exception.id == "NotImplementedError"
+            ):
                 continue
             return False
         else:
@@ -190,14 +200,22 @@ def _declares_an_interface(tree: ast.Module) -> bool:
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             for base in node.bases:
-                name = base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", "")
+                name = (
+                    base.attr
+                    if isinstance(base, ast.Attribute)
+                    else getattr(base, "id", "")
+                )
                 if name in {"ABC", "Protocol"}:
                     return True
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             for decorator in node.decorator_list:
-                target = decorator.func if isinstance(decorator, ast.Call) else decorator
+                target = (
+                    decorator.func if isinstance(decorator, ast.Call) else decorator
+                )
                 name = (
-                    target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+                    target.attr
+                    if isinstance(target, ast.Attribute)
+                    else getattr(target, "id", "")
                 )
                 if name in {"abstractmethod", "abstractproperty", "overload"}:
                     return True
@@ -227,7 +245,7 @@ def declared_distributions(requirements: str) -> set[str]:
     """The distribution names a requirements or pyproject text declares."""
     declared: set[str] = set()
     for line in requirements.splitlines():
-        stripped = line.strip().strip('",\'')
+        stripped = line.strip().strip("\",'")
         if not stripped or stripped.startswith(("#", "-")):
             continue
         match = _REQUIREMENT_NAME.match(stripped)
@@ -464,7 +482,10 @@ def _dependency_finding(
         return []
     if root in sys.stdlib_module_names or root.startswith("_"):
         return []
-    if _distribution_for(root) in declared or root.replace("_", "-").casefold() in declared:
+    if (
+        _distribution_for(root) in declared
+        or root.replace("_", "-").casefold() in declared
+    ):
         return []
     return [
         _finding(
@@ -634,7 +655,11 @@ def _static_mount_findings(
             ):
                 continue
             argument = next(
-                (keyword.value for keyword in call.keywords if keyword.arg == "directory"),
+                (
+                    keyword.value
+                    for keyword in call.keywords
+                    if keyword.arg == "directory"
+                ),
                 call.args[0] if call.args else None,
             )
             directory = _resolve_dir(argument, module_dir, assigns)
@@ -741,7 +766,9 @@ def _static_mounts(trees: dict[str, ast.Module]) -> list[tuple[str, str]]:
             if directory is None:
                 continue
             prefix = node.args[0].value
-            mounts.append((prefix if prefix.startswith("/") else f"/{prefix}", directory))
+            mounts.append(
+                (prefix if prefix.startswith("/") else f"/{prefix}", directory)
+            )
     return sorted(mounts, key=lambda mount: -len(mount[0]))
 
 

@@ -12,14 +12,19 @@ the repository, user data, Ollama itself, or Ollama model blobs.
 `make offline-bundle` creates a ZIP containing:
 
 - `apps/api/uv.lock`, `apps/api/pyproject.toml`, the pnpm lockfile, workspace
-  file, and package manifests used during creation;
+  file, web/sidecar package manifests, and the sidecar TypeScript build contract
+  used during creation;
 - a freshly populated `uv` cache that was proven with an offline frozen sync;
 - the exact `uv` executable used to populate that cache;
-- a freshly populated pnpm store that was proven with an offline frozen install;
+- a freshly populated pnpm store that was proven with an offline frozen install
+  and an offline compile of the pinned ClineCore sidecar;
 - an OCI archive of the locally reviewed sandbox image, resolved and recorded by
   repository digest;
 - the base-image reference, sandbox build inputs, host/platform versions, and a
   SHA-256/size/mode record for every member.
+
+This is bundle schema 2. Schema-1 bundles predate the coding sidecar dependency
+contract and must be recreated; the verifier rejects them as unsupported.
 
 Archive entry order, timestamps, and modes are normalized. Package-manager cache
 metadata and OCI archives can nevertheless differ byte-for-byte across tool
@@ -73,8 +78,10 @@ make offline-extract \
   OFFLINE_EXTRACT=/opt/metis-offline
 ```
 
-Verification checks every archived byte and also checks that the checkout's six
-dependency metadata files match those used to build the bundle. For transport
+Verification checks every archived byte and also checks that the checkout's
+dependency metadata files match those used to build the bundle. It rejects a
+floating Cline SDK/TypeScript version, a non-`dist` sidecar entrypoint, or a
+sidecar contract that differs from its archived package manifest. For transport
 verification without a checkout comparison, use:
 
 ```bash
@@ -91,8 +98,9 @@ restores the recorded internal links and executable mode for bundled `uv`.
 The target must already provide the same Python 3.13 patch release, OS/CPU,
 Node.js release, and pnpm release recorded in `bundle-manifest.json`. Podman must
 be installed and configured rootless. The verifier's `--smoke-install` option
-enforces these host versions and performs disposable offline Python and frontend
-installs without changing the checkout:
+enforces these host versions, performs disposable offline Python/frontend
+installs, and recompiles the sidecar from the verified checkout without changing
+that checkout:
 
 ```bash
 python3.13 scripts/offline_bundle.py verify \
@@ -114,6 +122,8 @@ UV_PROJECT_ENVIRONMENT="$PWD/.venv" \
 pnpm install \
   --offline --frozen-lockfile \
   --store-dir /opt/metis-offline/frontend/pnpm-store
+
+pnpm --dir apps/cline-sidecar build
 
 podman load --input /opt/metis-offline/podman/reference-architecture.oci.tar
 ```

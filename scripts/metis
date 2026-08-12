@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Start Metis the way a desktop app would: free the ports a previous run left
-# behind, rebuild the web app only when its sources changed, bring up the API
-# and the UI together, then open the browser once the UI answers.
+# behind, rebuild the web app and local coding sidecar only when their sources
+# changed, bring up the API and the UI together, then open the browser once the
+# UI answers.
 #
 # Run it from a terminal, or double-click Metis.app (which just calls this).
 #
@@ -64,6 +65,23 @@ needs_build() {
 	return 1
 }
 
+# True when the supervised ClineCore entrypoint is missing or older than a
+# runtime build input. This stays independent of the current feature flag: a
+# fresh `make setup && make run` is then ready for either engine, and changing
+# the flag never turns startup into a stale/missing-artifact surprise.
+needs_sidecar_build() {
+	local sidecar="$ROOT/apps/cline-sidecar"
+	local stamp="$sidecar/dist/src/index.js"
+	[[ -f $stamp ]] || return 0
+	local entry changed
+	for entry in src package.json tsconfig.json; do
+		[[ -e "$sidecar/$entry" ]] || return 0
+		changed=$(find "$sidecar/$entry" -newer "$stamp" -print -quit 2>/dev/null)
+		[[ -n $changed ]] && return 0
+	done
+	return 1
+}
+
 # Only one launch may hold the "kill the ports, then rebuild" section at a time.
 # Two overlapping launches let `next build` rewrite .next underneath a server
 # that is already serving it, and the running server then 500s on chunk names
@@ -86,6 +104,19 @@ trap 'rm -rf "$LOCK"' EXIT INT TERM
 
 free_port "$WEB_PORT"
 free_port "$API_PORT"
+
+if needs_sidecar_build; then
+	say "changes detected, building the local coding sidecar..."
+	notify "Building the latest coding engine…"
+	if ! pnpm --dir "$ROOT/apps/cline-sidecar" build \
+		|| [[ ! -s "$ROOT/apps/cline-sidecar/dist/src/index.js" ]]; then
+		say "coding sidecar build failed, not starting."
+		notify "Build failed. See $LOG"
+		exit 1
+	fi
+else
+	say "coding sidecar build is up to date, skipping rebuild."
+fi
 
 if needs_build; then
 	say "changes detected, building the web app..."

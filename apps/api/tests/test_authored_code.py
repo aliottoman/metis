@@ -5,6 +5,7 @@ Table-tests the denylist: real tool logic passes; every classic escape hatch
 dunder attribute/name access, with/class/async/yield) is rejected. The host
 profile is the primary control on what authored code may ever exist.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -12,7 +13,7 @@ import pytest
 from waqil_api import capability_profiles
 from waqil_api.authored_code import AuthoredCodeError, validate_authored_source
 
-VALID = '''
+VALID = """
 import json
 import re
 from collections import Counter
@@ -31,7 +32,7 @@ def run(inputs, model):
     if not top:
         result["gist"] = "no content"
     return result
-'''
+"""
 
 
 def test_valid_authored_code_passes() -> None:
@@ -39,12 +40,16 @@ def test_valid_authored_code_passes() -> None:
     assert evidence["defines_run"] is True
     assert "re" in evidence["imports"] and "json" in evidence["imports"]
     # And it passes through the named capability profile too.
-    assert capability_profiles.validate("pure-python-authored-v1", VALID, {})["defines_run"]
+    assert capability_profiles.validate("pure-python-authored-v1", VALID, {})[
+        "defines_run"
+    ]
 
 
 def _wrap(body: str, params: str = "inputs, model") -> str:
     """Indent a run() body by 4 spaces. `body` lines must be given UN-indented."""
-    return f"def run({params}):\n" + "\n".join("    " + line for line in body.splitlines())
+    return f"def run({params}):\n" + "\n".join(
+        "    " + line for line in body.splitlines()
+    )
 
 
 REJECTED = {
@@ -52,7 +57,9 @@ REJECTED = {
     "import sys": _wrap("import sys\n    return {}"),
     "import subprocess": _wrap("import subprocess\n    return {}"),
     "import socket": _wrap("import socket\n    return {}"),
-    "urllib.request (network)": _wrap("from urllib.request import urlopen\n    return {}"),
+    "urllib.request (network)": _wrap(
+        "from urllib.request import urlopen\n    return {}"
+    ),
     "import pathlib": _wrap("import pathlib\n    return {}"),
     "import importlib": _wrap("import importlib\n    return {}"),
     "eval": _wrap("return eval('1+1')"),

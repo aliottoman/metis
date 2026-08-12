@@ -4,6 +4,7 @@ The unit tests prove each piece works in isolation. These prove the wiring: that
 a real run through the API leaves behind a retrievable document and a memory
 proposal the user still has to approve.
 """
+
 from __future__ import annotations
 
 import time
@@ -29,7 +30,10 @@ def test_a_finished_run_is_written_into_history(client: TestClient, settings) ->
     conversation_id = new_conversation(client)
     accepted = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
-        json={"content": "Why does the nightly import drop rows?", "attachment_ids": []},
+        json={
+            "content": "Why does the nightly import drop rows?",
+            "attachment_ids": [],
+        },
     )
     run_id = accepted.json()["run_id"]
     run = wait_for_status(client, run_id, {"completed", "failed"})

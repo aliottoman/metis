@@ -4,6 +4,7 @@ Every rule here gets a negative case as well as a positive one. A false positive
 is worse than a missed defect: it spends the model's bounded fix budget rewriting
 code that was already correct, and the build ends with less done, not more.
 """
+
 from __future__ import annotations
 
 from waqil_api.project_wiring import ERROR, WARNING, staged_wiring_errors
@@ -282,7 +283,9 @@ def test_does_not_flag_files_that_define_no_functions_at_all() -> None:
 
 def _app(body: str) -> dict[str, dict[str, str]]:
     """A staged FastAPI entrypoint, which is what turns the wiring rules on."""
-    return _staged({"app/main.py": "from fastapi import FastAPI\napp = FastAPI()\n" + body})
+    return _staged(
+        {"app/main.py": "from fastapi import FastAPI\napp = FastAPI()\n" + body}
+    )
 
 
 def test_flags_static_files_that_are_built_but_never_mounted() -> None:
@@ -318,11 +321,15 @@ def test_accepts_static_files_that_are_mounted() -> None:
 
 
 def test_accepts_wiring_that_happens_in_another_file() -> None:
-    staged = _app("from fastapi.staticfiles import StaticFiles\nfiles = StaticFiles(directory='s')\n")
+    staged = _app(
+        "from fastapi.staticfiles import StaticFiles\nfiles = StaticFiles(directory='s')\n"
+    )
     findings = _errors(
         staged_wiring_errors(
             staged,
-            sources={"app/wiring.py": "def attach(app, files):\n    app.mount('/s', files)\n"},
+            sources={
+                "app/wiring.py": "def attach(app, files):\n    app.mount('/s', files)\n"
+            },
             project_paths=["app/wiring.py", "s/logo.svg"],
         )
     )
@@ -332,7 +339,9 @@ def test_accepts_wiring_that_happens_in_another_file() -> None:
 
 def test_flags_a_router_that_is_never_included() -> None:
     findings = _errors(
-        staged_wiring_errors(_app("from fastapi import APIRouter\nrouter = APIRouter()\n"))
+        staged_wiring_errors(
+            _app("from fastapi import APIRouter\nrouter = APIRouter()\n")
+        )
     )
 
     assert len(findings) == 1
@@ -369,7 +378,9 @@ def test_warns_about_an_import_the_requirements_never_declare() -> None:
 
 
 def test_does_not_warn_about_declared_aliased_or_stdlib_imports() -> None:
-    source = "import json\nimport dotenv\nimport fastapi\nfrom bs4 import BeautifulSoup\n"
+    source = (
+        "import json\nimport dotenv\nimport fastapi\nfrom bs4 import BeautifulSoup\n"
+    )
     findings = staged_wiring_errors(
         _staged({"app/main.py": source}),
         requirements="fastapi==0.115.0\npython-dotenv==1.0.1\nbeautifulsoup4==4.12.3\n",
@@ -390,7 +401,12 @@ def test_says_nothing_about_dependencies_when_none_are_declared() -> None:
 
 def test_leaves_unparseable_files_to_the_syntax_gate() -> None:
     findings = staged_wiring_errors(
-        _staged({"app/broken.py": "def f(:\n    pass\n", "app/ok.py": "def g():\n    return 1\n"})
+        _staged(
+            {
+                "app/broken.py": "def f(:\n    pass\n",
+                "app/ok.py": "def g():\n    return 1\n",
+            }
+        )
     )
 
     assert findings == []
@@ -430,14 +446,16 @@ def _static(findings: list[dict[str, str]]) -> list[dict[str, str]]:
 
 def test_flags_a_static_mount_at_a_literal_directory_the_project_lacks() -> None:
     findings = staged_wiring_errors(
-        _staged({
-            "app/main.py": (
-                "from fastapi import FastAPI\n"
-                "from fastapi.staticfiles import StaticFiles\n"
-                "app = FastAPI()\n"
-                "app.mount('/static', StaticFiles(directory='app/static'), name='static')\n"
-            ),
-        }),
+        _staged(
+            {
+                "app/main.py": (
+                    "from fastapi import FastAPI\n"
+                    "from fastapi.staticfiles import StaticFiles\n"
+                    "app = FastAPI()\n"
+                    "app.mount('/static', StaticFiles(directory='app/static'), name='static')\n"
+                ),
+            }
+        ),
     )
     flagged = _static(findings)
     assert len(flagged) == 1
@@ -449,16 +467,18 @@ def test_flags_the_path_file_parent_static_pattern_a_real_build_shipped() -> Non
     # `STATIC = Path(__file__).parent / "static"` — the exact form the live qwen
     # build used, and the reason a literal-only check would have missed it.
     findings = staged_wiring_errors(
-        _staged({
-            "app/main.py": (
-                "from pathlib import Path\n"
-                "from fastapi import FastAPI\n"
-                "from fastapi.staticfiles import StaticFiles\n"
-                "app = FastAPI()\n"
-                "STATIC = Path(__file__).parent / 'static'\n"
-                "app.mount('/static', StaticFiles(directory=STATIC), name='static')\n"
-            ),
-        }),
+        _staged(
+            {
+                "app/main.py": (
+                    "from pathlib import Path\n"
+                    "from fastapi import FastAPI\n"
+                    "from fastapi.staticfiles import StaticFiles\n"
+                    "app = FastAPI()\n"
+                    "STATIC = Path(__file__).parent / 'static'\n"
+                    "app.mount('/static', StaticFiles(directory=STATIC), name='static')\n"
+                ),
+            }
+        ),
     )
     flagged = _static(findings)
     assert len(flagged) == 1
@@ -467,17 +487,19 @@ def test_flags_the_path_file_parent_static_pattern_a_real_build_shipped() -> Non
 
 def test_accepts_a_static_mount_whose_directory_the_changeset_creates() -> None:
     findings = staged_wiring_errors(
-        _staged({
-            "app/main.py": (
-                "from pathlib import Path\n"
-                "from fastapi import FastAPI\n"
-                "from fastapi.staticfiles import StaticFiles\n"
-                "app = FastAPI()\n"
-                "STATIC = Path(__file__).parent / 'static'\n"
-                "app.mount('/static', StaticFiles(directory=STATIC), name='static')\n"
-            ),
-            "app/static/index.html": "<html></html>\n",
-        }),
+        _staged(
+            {
+                "app/main.py": (
+                    "from pathlib import Path\n"
+                    "from fastapi import FastAPI\n"
+                    "from fastapi.staticfiles import StaticFiles\n"
+                    "app = FastAPI()\n"
+                    "STATIC = Path(__file__).parent / 'static'\n"
+                    "app.mount('/static', StaticFiles(directory=STATIC), name='static')\n"
+                ),
+                "app/static/index.html": "<html></html>\n",
+            }
+        ),
     )
     assert _static(findings) == []
 
@@ -486,14 +508,16 @@ def test_accepts_a_static_mount_whose_directory_already_exists_on_disk() -> None
     # An edit turn that touches only main.py must not be blamed for a static
     # directory that is already in the project.
     findings = staged_wiring_errors(
-        _staged({
-            "app/main.py": (
-                "from fastapi import FastAPI\n"
-                "from fastapi.staticfiles import StaticFiles\n"
-                "app = FastAPI()\n"
-                "app.mount('/static', StaticFiles(directory='app/static'), name='static')\n"
-            ),
-        }),
+        _staged(
+            {
+                "app/main.py": (
+                    "from fastapi import FastAPI\n"
+                    "from fastapi.staticfiles import StaticFiles\n"
+                    "app = FastAPI()\n"
+                    "app.mount('/static', StaticFiles(directory='app/static'), name='static')\n"
+                ),
+            }
+        ),
         project_paths=["app/static/style.css"],
     )
     assert _static(findings) == []
@@ -501,14 +525,16 @@ def test_accepts_a_static_mount_whose_directory_already_exists_on_disk() -> None
 
 def test_does_not_flag_a_static_mount_with_check_dir_disabled() -> None:
     findings = staged_wiring_errors(
-        _staged({
-            "app/main.py": (
-                "from fastapi import FastAPI\n"
-                "from fastapi.staticfiles import StaticFiles\n"
-                "app = FastAPI()\n"
-                "app.mount('/s', StaticFiles(directory='app/static', check_dir=False), name='s')\n"
-            ),
-        }),
+        _staged(
+            {
+                "app/main.py": (
+                    "from fastapi import FastAPI\n"
+                    "from fastapi.staticfiles import StaticFiles\n"
+                    "app = FastAPI()\n"
+                    "app.mount('/s', StaticFiles(directory='app/static', check_dir=False), name='s')\n"
+                ),
+            }
+        ),
     )
     assert _static(findings) == []
 
@@ -517,14 +543,16 @@ def test_does_not_flag_a_static_directory_it_cannot_resolve() -> None:
     # A directory that comes from a call the checker cannot read is left alone:
     # an unresolvable path is never a finding, so correct code is never blocked.
     findings = staged_wiring_errors(
-        _staged({
-            "app/main.py": (
-                "from fastapi import FastAPI\n"
-                "from fastapi.staticfiles import StaticFiles\n"
-                "def pick(): return 'somewhere'\n"
-                "app = FastAPI()\n"
-                "app.mount('/s', StaticFiles(directory=pick()), name='s')\n"
-            ),
-        }),
+        _staged(
+            {
+                "app/main.py": (
+                    "from fastapi import FastAPI\n"
+                    "from fastapi.staticfiles import StaticFiles\n"
+                    "def pick(): return 'somewhere'\n"
+                    "app = FastAPI()\n"
+                    "app.mount('/s', StaticFiles(directory=pick()), name='s')\n"
+                ),
+            }
+        ),
     )
     assert _static(findings) == []

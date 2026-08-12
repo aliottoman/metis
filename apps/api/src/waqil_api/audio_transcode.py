@@ -17,6 +17,7 @@ Output is deliberately WAV LEI16 @ 16 kHz mono: the transcription model's
 native diet, and small enough that transcoding never bloats a clip past the
 upload ceiling except when the recording was genuinely enormous.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -65,19 +66,39 @@ def _to_wav_blocking(audio: bytes, suffix: str, timeout_seconds: float) -> bytes
         attempts: list[list[str]] = []
         if Path(_AFCONVERT).exists():
             attempts.append(
-                [_AFCONVERT, "-f", "WAVE", "-d", "LEI16@16000", "-c", "1",
-                 str(source), str(target)]
+                [
+                    _AFCONVERT,
+                    "-f",
+                    "WAVE",
+                    "-d",
+                    "LEI16@16000",
+                    "-c",
+                    "1",
+                    str(source),
+                    str(target),
+                ]
             )
         if ffmpeg := shutil.which("ffmpeg"):
             attempts.append(
-                [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                 "-i", str(source), "-ar", "16000", "-ac", "1", "-f", "wav",
-                 str(target)]
+                [
+                    ffmpeg,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(source),
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-f",
+                    "wav",
+                    str(target),
+                ]
             )
         if not attempts:
-            raise TranscodeError(
-                "no audio converter is available on this machine"
-            )
+            raise TranscodeError("no audio converter is available on this machine")
 
         failures: list[str] = []
         for command in attempts:
@@ -90,9 +111,11 @@ def _to_wav_blocking(audio: bytes, suffix: str, timeout_seconds: float) -> bytes
                 continue
             if completed.returncode == 0 and target.is_file() and target.stat().st_size:
                 return target.read_bytes()
-            detail = (completed.stderr or completed.stdout or b"").decode(
-                "utf-8", "replace"
-            ).strip()
+            detail = (
+                (completed.stderr or completed.stdout or b"")
+                .decode("utf-8", "replace")
+                .strip()
+            )
             failures.append(f"{Path(command[0]).name}: {detail[:200] or 'failed'}")
 
         hint = (

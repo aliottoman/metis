@@ -12,16 +12,26 @@ from waqil_api.config import Settings
 from waqil_api.contracts import ProjectToolCallV1
 from waqil_api.model_provider import DeterministicModelProvider
 from waqil_api.main import create_app
-from waqil_api.project_workspace import ProjectWorkspaceError, ProjectWorkspaceService
+from waqil_api.project_scaffold import scaffold_sources
+from waqil_api.project_workspace import (
+    ExternalChangeProvenance,
+    ProjectWorkspaceError,
+    ProjectWorkspaceService,
+    _atomic_write_text,
+)
 
 
 @pytest.mark.asyncio
-async def test_project_workspace_bootstraps_tools_and_evolving_notes(tmp_path: Path) -> None:
+async def test_project_workspace_bootstraps_tools_and_evolving_notes(
+    tmp_path: Path,
+) -> None:
     projects_root = tmp_path / "Projects"
     project = projects_root / "demo"
     source = project / "src"
     source.mkdir(parents=True)
-    (project / "README.md").write_text("# Demo\nA small typed service.\n", encoding="utf-8")
+    (project / "README.md").write_text(
+        "# Demo\nA small typed service.\n", encoding="utf-8"
+    )
     (project / "package.json").write_text(
         json.dumps({"name": "demo", "scripts": {"test": "node --test"}}),
         encoding="utf-8",
@@ -94,7 +104,9 @@ async def test_project_workspace_bootstraps_tools_and_evolving_notes(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_project_tools_fail_closed_on_internal_and_secret_paths(tmp_path: Path) -> None:
+async def test_project_tools_fail_closed_on_internal_and_secret_paths(
+    tmp_path: Path,
+) -> None:
     projects_root = tmp_path / "Projects"
     project = projects_root / "demo"
     project.mkdir(parents=True)
@@ -107,19 +119,28 @@ async def test_project_tools_fail_closed_on_internal_and_secret_paths(tmp_path: 
         model_backend="deterministic",
         allow_test_backends=True,
     )
-    assets = AssetManager(settings.asset_roots, catalog_path=settings.asset_catalog_path)
+    assets = AssetManager(
+        settings.asset_roots, catalog_path=settings.asset_catalog_path
+    )
     project_id = (await assets.scan())[0].id
     service = ProjectWorkspaceService(settings, assets, DeterministicModelProvider())
     await service.open(project_id)
 
     for relative in (
-        "../outside.txt", ".env", ".env.local", ".env.production",
-        "server.key", ".metis/METIS.md", ".git/config",
+        "../outside.txt",
+        ".env",
+        ".env.local",
+        ".env.production",
+        "server.key",
+        ".metis/METIS.md",
+        ".git/config",
     ):
         with pytest.raises(ProjectWorkspaceError):
             await service.execute(
                 project_id,
-                ProjectToolCallV1(name="create_file", arguments={"path": relative, "content": "x"}),
+                ProjectToolCallV1(
+                    name="create_file", arguments={"path": relative, "content": "x"}
+                ),
             )
 
     # …but an example env file names variables instead of holding them, and
@@ -150,6 +171,10 @@ def test_project_chat_pins_mode_and_uses_project_agent_path(tmp_path: Path) -> N
         model_backend="deterministic",
         reference_runner_mode="deterministic",
         allow_test_backends=True,
+        # This exercises the frozen legacy per-file loop, not the direct
+        # path: name it, because routing follows the project selection and
+        # no longer depends on how the request happens to be worded.
+        project_build_path="planner_slices",
     )
     with TestClient(create_app(settings)) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
@@ -175,9 +200,7 @@ def test_project_chat_pins_mode_and_uses_project_agent_path(tmp_path: Path) -> N
                 break
             time.sleep(0.01)
         assert run["status"] == "completed"
-        session = client.get(
-            f"/api/v1/conversations/{conversation_id}/project"
-        ).json()
+        session = client.get(f"/api/v1/conversations/{conversation_id}/project").json()
         assert session == {
             "conversation_id": conversation_id,
             "project_id": project_id,
@@ -204,13 +227,20 @@ def test_project_write_waits_for_exact_approval_then_resumes(tmp_path: Path) -> 
         model_backend="deterministic",
         reference_runner_mode="deterministic",
         allow_test_backends=True,
+        # This exercises the frozen legacy per-file loop, not the direct
+        # path: name it, because routing follows the project selection and
+        # no longer depends on how the request happens to be worded.
+        project_build_path="planner_slices",
     )
     with TestClient(create_app(settings)) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -228,7 +258,9 @@ def test_project_write_waits_for_exact_approval_then_resumes(tmp_path: Path) -> 
         assert run["status"] == "awaiting_approval"
         assert not (project / "generated.txt").exists()
         recoverable = client.get("/api/v1/runs?status=awaiting_approval").json()
-        approval = next(item["approval"] for item in recoverable if item["run"]["id"] == run_id)
+        approval = next(
+            item["approval"] for item in recoverable if item["run"]["id"] == run_id
+        )
         # A single write now rides the same staged-build gate as a large one:
         # the card lists the whole (here one-file) changeset.
         assert approval["kind"] == "project_apply_build"
@@ -244,7 +276,11 @@ def test_project_write_waits_for_exact_approval_then_resumes(tmp_path: Path) -> 
                 break
             time.sleep(0.01)
         assert run["status"] == "completed"
-        assert (project / "generated.txt").read_text(encoding="utf-8").startswith("created")
+        assert (
+            (project / "generated.txt")
+            .read_text(encoding="utf-8")
+            .startswith("created")
+        )
         notes = (project / ".metis" / "METIS.md").read_text(encoding="utf-8")
         assert "Approved a staged build touching 1 file(s)" in notes
 
@@ -346,8 +382,10 @@ def _staged(files: dict[str, str]) -> dict[str, dict[str, str]]:
 
 
 @pytest.mark.asyncio
-async def test_a_refused_create_names_the_next_file_the_build_owes(tmp_path: Path) -> None:
-    """"Write a different path" left the model guessing, and it guessed the same
+async def test_a_refused_create_names_the_next_file_the_build_owes(
+    tmp_path: Path,
+) -> None:
+    """ "Write a different path" left the model guessing, and it guessed the same
     path again — 43 create_file calls for 11 files in one live build. The host
     has the manifest, so the refusal says which file is actually outstanding."""
     projects_root = tmp_path / "Projects"
@@ -360,7 +398,9 @@ async def test_a_refused_create_names_the_next_file_the_build_owes(tmp_path: Pat
         model_backend="deterministic",
         allow_test_backends=True,
     )
-    assets = AssetManager(settings.asset_roots, catalog_path=settings.asset_catalog_path)
+    assets = AssetManager(
+        settings.asset_roots, catalog_path=settings.asset_catalog_path
+    )
     asset_id = (await assets.scan())[0].id
     service = ProjectWorkspaceService(settings, assets, DeterministicModelProvider())
     staged = _staged({"app/main.py": "X = 1\n"})
@@ -369,7 +409,9 @@ async def test_a_refused_create_names_the_next_file_the_build_owes(tmp_path: Pat
     )
 
     with pytest.raises(ProjectWorkspaceError) as named:
-        await service.execute_staged(asset_id, call, staged, ["app/config.py", "README.md"])
+        await service.execute_staged(
+            asset_id, call, staged, ["app/config.py", "README.md"]
+        )
     with pytest.raises(ProjectWorkspaceError) as unnamed:
         await service.execute_staged(asset_id, call, staged)
 
@@ -385,12 +427,7 @@ def test_staged_syntax_gate_flags_a_python_indentation_error() -> None:
     decorator and def disagree on indentation, so the file will not import."""
     from waqil_api.project_workspace import staged_syntax_errors
 
-    broken = (
-        "class A:\n"
-        "     @property\n"
-        "    def name(self):\n"
-        "        return 1\n"
-    )
+    broken = "class A:\n     @property\n    def name(self):\n        return 1\n"
     errors = staged_syntax_errors(_staged({"app/agents/extractor.py": broken}))
 
     assert [item["path"] for item in errors] == ["app/agents/extractor.py"]
@@ -424,7 +461,7 @@ def test_staged_syntax_gate_skips_languages_it_cannot_safely_parse() -> None:
 
     unparseable_but_skipped = _staged(
         {
-            "app/x.ts": "const y: number = ;",   # invalid TS, but not our job to judge
+            "app/x.ts": "const y: number = ;",  # invalid TS, but not our job to judge
             "app/static/style.css": '"""not css""" * { color: red }',
             "app/static/index.html": "<div><span></div>",
         }
@@ -452,13 +489,20 @@ def test_project_ask_user_pauses_the_build_and_resumes_with_the_answer(
         model_backend="deterministic",
         reference_runner_mode="deterministic",
         allow_test_backends=True,
+        # This exercises the frozen legacy per-file loop, not the direct
+        # path: name it, because routing follows the project selection and
+        # no longer depends on how the request happens to be worded.
+        project_build_path="planner_slices",
     )
     with TestClient(create_app(settings)) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -520,13 +564,20 @@ def test_project_respond_answers_without_the_stage_footer(tmp_path: Path) -> Non
         model_backend="deterministic",
         reference_runner_mode="deterministic",
         allow_test_backends=True,
+        # This exercises the frozen legacy per-file loop, not the direct
+        # path: name it, because routing follows the project selection and
+        # no longer depends on how the request happens to be worded.
+        project_build_path="planner_slices",
     )
     with TestClient(create_app(settings)) as client:
         project_id = client.post("/api/v1/assets/scan").json()[0]["id"]
-        assert client.post(
-            f"/api/v1/projects/{project_id}/open",
-            json={"mode": "grok_bootstrap_local"},
-        ).status_code == 200
+        assert (
+            client.post(
+                f"/api/v1/projects/{project_id}/open",
+                json={"mode": "grok_bootstrap_local"},
+            ).status_code
+            == 200
+        )
         conversation_id = client.post("/api/v1/conversations", json={}).json()["id"]
         run_id = client.post(
             f"/api/v1/conversations/{conversation_id}/messages",
@@ -586,7 +637,9 @@ def test_the_ollama_lane_can_write_a_project_map_when_no_cloud_key_exists() -> N
     # user's pinned model is what it is told to use.
     router = RoutedModelProvider(Local(), Cloud(False), Cloud(False))
     result = asyncio.run(
-        router.bootstrap_project({"project": {}}, model_aliases={"planner": "glm-5.2:cloud"})
+        router.bootstrap_project(
+            {"project": {}}, model_aliases={"planner": "glm-5.2:cloud"}
+        )
     )
     assert result == "map-from-ollama"
     assert seen["called"] == "local"
@@ -597,6 +650,49 @@ def test_the_ollama_lane_can_write_a_project_map_when_no_cloud_key_exists() -> N
     router = RoutedModelProvider(Local(), Cloud(True), Cloud(False))
     assert asyncio.run(router.bootstrap_project({"project": {}})) == "map-from-cloud"
     assert seen["called"] == "cloud"
+
+
+def test_a_selected_cline_planner_writes_the_first_project_map() -> None:
+    """Cline-only project work must not borrow OCI, Cohere, or local Ollama."""
+    import asyncio
+
+    from waqil_api.model_provider import RoutedModelProvider
+
+    calls: list[tuple[str, object]] = []
+
+    class Local:
+        async def bootstrap_project(self, snapshot, *, model_aliases=None):
+            calls.append(("local", model_aliases))
+            return "map-from-ollama"
+
+    class OtherCloud:
+        available = True
+
+        async def bootstrap_project(self, snapshot):
+            calls.append(("other-cloud", None))
+            return "map-from-other-cloud"
+
+    class Cline:
+        available = True
+
+        async def bootstrap_project(self, snapshot, *, model_aliases=None):
+            calls.append(("cline", model_aliases))
+            return "map-from-cline"
+
+    aliases = {
+        "_provider": "cline",
+        "_chain_planner": ('[{"provider":"cline","model":"cline-pass/glm-5.2"}]'),
+    }
+    router = RoutedModelProvider(
+        Local(), OtherCloud(), cohere=OtherCloud(), cline=Cline()
+    )
+
+    result = asyncio.run(
+        router.bootstrap_project({"project": {}}, model_aliases=aliases)
+    )
+
+    assert result == "map-from-cline"
+    assert calls == [("cline", aliases)]
 
 
 def test_a_dead_cloud_key_falls_through_to_the_ollama_lane() -> None:
@@ -620,7 +716,9 @@ def test_a_dead_cloud_key_falls_through_to_the_ollama_lane() -> None:
         available = True
 
         async def bootstrap_project(self, snapshot):
-            raise ModelProviderError('Cohere returned HTTP 429: {"message":"Trial key"}')
+            raise ModelProviderError(
+                'Cohere returned HTTP 429: {"message":"Trial key"}'
+            )
 
     class OffCloud:
         available = False
@@ -646,7 +744,9 @@ def test_a_dead_cloud_key_falls_through_to_the_ollama_lane() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_plan_is_written_to_the_project_and_survives_revision(tmp_path) -> None:
+async def test_the_plan_is_written_to_the_project_and_survives_revision(
+    tmp_path,
+) -> None:
     """Plan-as-file: the build plan lands in .metis as a checklist the next
     context window can read, replaces itself on revision instead of stacking,
     and marks what actually landed."""
@@ -662,14 +762,20 @@ async def test_the_plan_is_written_to_the_project_and_survives_revision(tmp_path
         model_backend="deterministic",
         allow_test_backends=True,
     )
-    assets = AssetManager(settings.asset_roots, catalog_path=settings.asset_catalog_path)
+    assets = AssetManager(
+        settings.asset_roots, catalog_path=settings.asset_catalog_path
+    )
     project_id = (await assets.scan())[0].id
     service = ProjectWorkspaceService(settings, assets, DeterministicModelProvider())
     await service.open(project_id)
 
     await service.record_plan(
         project_id,
-        {"files": ["app/main.py", "app/static/index.html"], "intent": "build", "scope": "narrow"},
+        {
+            "files": ["app/main.py", "app/static/index.html"],
+            "intent": "build",
+            "scope": "narrow",
+        },
     )
     notes = (project / ".metis" / "METIS.md").read_text(encoding="utf-8")
     assert "- [ ] `app/main.py`" in notes
@@ -680,8 +786,12 @@ async def test_the_plan_is_written_to_the_project_and_survives_revision(tmp_path
     # A revision REPLACES the section — one plan in the file, ever.
     await service.record_plan(
         project_id,
-        {"files": ["app.py"], "intent": "edit", "scope": "narrow",
-         "reason": "the project is Streamlit; there is no app/ package"},
+        {
+            "files": ["app.py"],
+            "intent": "edit",
+            "scope": "narrow",
+            "reason": "the project is Streamlit; there is no app/ package",
+        },
     )
     notes = (project / ".metis" / "METIS.md").read_text(encoding="utf-8")
     assert notes.count("Current build plan") == 1
@@ -691,7 +801,8 @@ async def test_the_plan_is_written_to_the_project_and_survives_revision(tmp_path
 
     # Applied files come back checked.
     await service.record_plan(
-        project_id, {"files": ["app.py"], "intent": "edit", "scope": "narrow"},
+        project_id,
+        {"files": ["app.py"], "intent": "edit", "scope": "narrow"},
         done=["app.py"],
     )
     notes = (project / ".metis" / "METIS.md").read_text(encoding="utf-8")
@@ -699,7 +810,9 @@ async def test_the_plan_is_written_to_the_project_and_survives_revision(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_repo_map_ranks_the_real_tree_and_follows_the_request(tmp_path: Path) -> None:
+async def test_repo_map_ranks_the_real_tree_and_follows_the_request(
+    tmp_path: Path,
+) -> None:
     """The map a build step is handed, built from a real project on disk."""
     projects_root = tmp_path / "Projects"
     project = projects_root / "shop"
@@ -733,7 +846,9 @@ async def test_repo_map_ranks_the_real_tree_and_follows_the_request(tmp_path: Pa
     service = ProjectWorkspaceService(settings, assets, DeterministicModelProvider())
     opened = await service.open(discovered[0].id)
 
-    text = await service.repo_map(opened.id, request="charge the order", max_chars=4_000)
+    text = await service.repo_map(
+        opened.id, request="charge the order", max_chars=4_000
+    )
     # Definitions, with the line numbers that let the model verify them.
     assert "app/models.py" in text
     assert "class Order" in text
@@ -747,9 +862,347 @@ async def test_repo_map_ranks_the_real_tree_and_follows_the_request(tmp_path: Pa
     # Extraction is cached per file by (mtime, size); a changed file is re-read
     # and a deleted one stops contributing symbols that no longer exist.
     (project / "app" / "shipping.py").unlink()
-    again = await service.repo_map(opened.id, request="charge the order", max_chars=4_000)
+    again = await service.repo_map(
+        opened.id, request="charge the order", max_chars=4_000
+    )
     assert "app/shipping.py" not in again
     assert "def charge" in again
 
     # A budget of zero sends no map at all — the before-side of the measurement.
     assert await service.repo_map(opened.id, request="charge", max_chars=0) == ""
+
+
+@pytest.mark.asyncio
+async def test_interface_map_uses_overlay_dependencies_and_real_appkit_apis(
+    tmp_path: Path,
+) -> None:
+    """The next coder composes against staged bytes, not stale disk interfaces."""
+    projects_root = tmp_path / "Projects"
+    project = projects_root / "extractor"
+    (project / "app").mkdir(parents=True)
+    (project / "README.md").write_text("# Extractor\n", encoding="utf-8")
+    (project / "app" / "contracts.py").write_text(
+        "class OldContract:\n    pass\n", encoding="utf-8"
+    )
+    (project / "app" / "service.py").write_text(
+        "from app.contracts import OldContract\n\n"
+        "def legacy_extract(payload: bytes) -> OldContract:\n"
+        "    return OldContract()\n",
+        encoding="utf-8",
+    )
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        repo_root=tmp_path,
+        asset_roots=[projects_root],
+        model_backend="deterministic",
+        allow_test_backends=True,
+    )
+    assets = AssetManager(
+        settings.asset_roots,
+        approval_path=settings.asset_approval_path,
+        catalog_path=settings.asset_catalog_path,
+    )
+    project_id = (await assets.scan())[0].id
+    service = ProjectWorkspaceService(settings, assets, DeterministicModelProvider())
+    await service.open(project_id)
+    upload_source = scaffold_sources({"oci_responses", "web_ui"})["appkit/uploads.py"]
+    staged = {
+        "app/contracts.py": {
+            "content": (
+                "class Document:\n"
+                "    text: str\n\n"
+                "def parse_document(payload: bytes, *, strict: bool = True) -> Document:\n"
+                "    return Document()\n"
+            ),
+            "origin": "patch",
+        },
+        "app/service.py": {
+            "content": (
+                "from app.contracts import Document\n\n"
+                "async def extract(payload: bytes, *, retries: int = 1) -> Document:\n"
+                "    return Document()\n"
+            ),
+            "origin": "patch",
+        },
+        "appkit/uploads.py": {"content": upload_source, "origin": "create"},
+    }
+
+    text = await service.interface_map(
+        project_id,
+        target_path="app/service.py",
+        dependency_paths=["app/contracts.py"],
+        staged=staged,
+        max_chars=6_000,
+    )
+    assert "current target contract; import app.service" in text
+    assert "from app.contracts import Document" in text
+    assert "async def extract(payload: bytes, *, retries: int = 1) -> Document" in text
+    assert "legacy_extract" not in text
+    assert "earlier dependency; import app.contracts" in text
+    assert (
+        "def parse_document(payload: bytes, *, strict: bool = True) -> Document" in text
+    )
+    assert "OldContract" not in text
+    assert "appkit public API; import appkit.uploads" in text
+    assert "DOCUMENT_MIMES" in text
+    assert "async def save_upload(" in text
+    assert "_known_mime" not in text
+    assert len(text) <= 6_000
+
+    assert (
+        await service.interface_map(
+            project_id,
+            target_path="app/service.py",
+            staged=staged,
+            max_chars=0,
+        )
+        == ""
+    )
+
+
+# ── Disposable coding-engine workspace + atomic diff import ────────────────
+
+
+@pytest.mark.asyncio
+async def test_external_mirror_imports_exact_text_diff_with_provenance(
+    tmp_path: Path,
+) -> None:
+    service, asset_id = await _service_for(tmp_path)
+    project = tmp_path / "Projects" / "demo"
+    (project / ".env").write_text("API_KEY=never-send\n", encoding="utf-8")
+    (project / ".env.example").write_text("API_KEY=\n", encoding="utf-8")
+    (project / "credentials.json").write_text('{"token":"never-send"}\n')
+    (project / "server.pem").write_text("private key bytes\n")
+    _, staged = await service.execute_staged(
+        asset_id,
+        ProjectToolCallV1(
+            name="create_file",
+            arguments={"path": "app/staged.py", "content": "VALUE = 1\n"},
+        ),
+        {},
+    )
+    assert staged is not None
+
+    mirror = await service.create_external_mirror(asset_id, staged)
+    assert (mirror.project_root / "app" / "main.py").read_text() == "print('hi')\n"
+    assert (mirror.project_root / "app" / "staged.py").read_text() == "VALUE = 1\n"
+    assert (mirror.project_root / ".env.example").is_file()
+    assert not (mirror.project_root / ".env").exists()
+    assert not (mirror.project_root / "credentials.json").exists()
+    assert not (mirror.project_root / "server.pem").exists()
+    assert {".env", "credentials.json", "server.pem"}.issubset(
+        set(mirror.excluded_paths)
+    )
+
+    (mirror.project_root / "app" / "main.py").write_text(
+        "print('updated')\n", encoding="utf-8"
+    )
+    (mirror.project_root / "app" / "staged.py").write_text(
+        "VALUE = 2\n", encoding="utf-8"
+    )
+    (mirror.project_root / "app" / "new.py").write_text(
+        "CREATED = True\n", encoding="utf-8"
+    )
+    result, imported = await service.import_external_changes(
+        asset_id,
+        mirror,
+        staged,
+        provenance=ExternalChangeProvenance(
+            engine="clinecore", session_id="session-7", run_id="run-3"
+        ),
+    )
+
+    # Import is still staging: the real project has not changed.
+    assert (project / "app" / "main.py").read_text() == "print('hi')\n"
+    assert [change["path"] for change in result["changes"]] == [
+        "app/main.py",
+        "app/new.py",
+        "app/staged.py",
+    ]
+    assert imported["app/main.py"]["origin"] == "patch"
+    assert imported["app/new.py"]["origin"] == "create"
+    assert imported["app/staged.py"]["origin"] == "create"
+    provenance = imported["app/main.py"]["provenance"]
+    assert provenance["engine"] == "clinecore"
+    assert provenance["session_id"] == "session-7"
+    assert provenance["run_id"] == "run-3"
+    assert provenance["workspace_id"] == mirror.id
+    assert provenance["file_before_sha256"]
+    assert provenance["file_after_sha256"]
+    assert provenance["excluded_path_count"] == mirror.excluded_count
+    assert ".env" in provenance["excluded_paths"]
+
+    applied = await service.materialize_staged(asset_id, imported)
+    assert applied["skipped"] == []
+    assert (project / "app" / "main.py").read_text() == "print('updated')\n"
+    assert (project / "app" / "new.py").read_text() == "CREATED = True\n"
+    # The apply pass writes through a temp file + atomic rename per file; no
+    # partial temp artifact should ever remain in the real project tree.
+    assert not list((project / "app").glob(".metis-apply-*"))
+    await service.discard_external_mirror(mirror)
+    assert not mirror.project_root.parent.exists()
+
+
+def test_atomic_write_text_preserves_mode_and_leaves_original_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "existing.py"
+    target.write_text("ORIGINAL = True\n", encoding="utf-8")
+    target.chmod(0o640)
+
+    _atomic_write_text(target, "UPDATED = True\n")
+    assert target.read_text(encoding="utf-8") == "UPDATED = True\n"
+    assert (target.stat().st_mode & 0o777) == 0o640
+    assert not list(tmp_path.glob(".metis-apply-*"))
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated crash before rename")
+
+    monkeypatch.setattr("waqil_api.project_workspace.os.fsync", _boom)
+    with pytest.raises(OSError, match="simulated crash"):
+        _atomic_write_text(target, "CORRUPTED = True\n")
+
+    # A crash before the atomic rename must never touch the real file, and
+    # must not leave a stray temp file behind either.
+    assert target.read_text(encoding="utf-8") == "UPDATED = True\n"
+    assert not list(tmp_path.glob(".metis-apply-*"))
+
+
+@pytest.mark.asyncio
+async def test_external_import_is_all_or_nothing_on_forbidden_late_file(
+    tmp_path: Path,
+) -> None:
+    service, asset_id = await _service_for(tmp_path)
+    mirror = await service.create_external_mirror(asset_id, {})
+    (mirror.project_root / "app" / "main.py").write_text("print('safe')\n")
+    (mirror.project_root / ".env").write_text("API_KEY=leak\n")
+
+    with pytest.raises(ProjectWorkspaceError, match="secret-bearing path"):
+        await service.import_external_changes(
+            asset_id,
+            mirror,
+            {},
+            provenance=ExternalChangeProvenance("clinecore", "session-8"),
+        )
+
+    # A valid earlier path did not leak into project disk or a caller-owned overlay.
+    assert (tmp_path / "Projects" / "demo" / "app" / "main.py").read_text() == (
+        "print('hi')\n"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("delete", "deletions and renames"),
+        ("rename", "deletions and renames"),
+        ("binary", "binary"),
+        ("appkit", "Metis-owned scaffold"),
+    ],
+)
+async def test_external_import_refuses_unsupported_changes(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    service, asset_id = await _service_for(tmp_path)
+    project = tmp_path / "Projects" / "demo"
+    (project / "appkit").mkdir()
+    (project / "appkit" / "web.py").write_text("PUBLIC = True\n")
+    mirror = await service.create_external_mirror(asset_id, {})
+
+    if mutation == "delete":
+        (mirror.project_root / "app" / "main.py").unlink()
+    elif mutation == "rename":
+        (mirror.project_root / "app" / "main.py").rename(
+            mirror.project_root / "app" / "renamed.py"
+        )
+    elif mutation == "binary":
+        (mirror.project_root / "image.png").write_bytes(b"\x89PNG\x00\xff")
+    else:
+        (mirror.project_root / "appkit" / "web.py").write_text("PUBLIC = False\n")
+
+    with pytest.raises(ProjectWorkspaceError, match=message):
+        await service.import_external_changes(
+            asset_id,
+            mirror,
+            {},
+            provenance=ExternalChangeProvenance("clinecore", "session-9"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_external_import_refuses_symlinks_hardlinks_and_disk_drift(
+    tmp_path: Path,
+) -> None:
+    service, asset_id = await _service_for(tmp_path)
+    project = tmp_path / "Projects" / "demo"
+
+    symlink_mirror = await service.create_external_mirror(asset_id, {})
+    (symlink_mirror.project_root / "linked.py").symlink_to(project / "app" / "main.py")
+    with pytest.raises(ProjectWorkspaceError, match="symbolic link"):
+        await service.import_external_changes(
+            asset_id,
+            symlink_mirror,
+            {},
+            provenance=ExternalChangeProvenance("clinecore", "symlink-session"),
+        )
+
+    hardlink_mirror = await service.create_external_mirror(asset_id, {})
+    (hardlink_mirror.project_root / "linked.py").hardlink_to(
+        project / "app" / "main.py"
+    )
+    with pytest.raises(ProjectWorkspaceError, match="hard-linked file"):
+        await service.import_external_changes(
+            asset_id,
+            hardlink_mirror,
+            {},
+            provenance=ExternalChangeProvenance("clinecore", "hardlink-session"),
+        )
+
+    drift_mirror = await service.create_external_mirror(asset_id, {})
+    (drift_mirror.project_root / "app" / "main.py").write_text("print('agent')\n")
+    (project / "app" / "main.py").write_text("print('human')\n")
+    with pytest.raises(ProjectWorkspaceError, match="disk source changed"):
+        await service.import_external_changes(
+            asset_id,
+            drift_mirror,
+            {},
+            provenance=ExternalChangeProvenance("clinecore", "drift-session"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_external_import_rebase_supports_same_session_follow_up(
+    tmp_path: Path,
+) -> None:
+    service, asset_id = await _service_for(tmp_path)
+    mirror = await service.create_external_mirror(asset_id, {})
+    target = mirror.project_root / "app" / "main.py"
+    target.write_text("print('first')\n")
+
+    _, first_staged = await service.import_external_changes(
+        asset_id,
+        mirror,
+        {},
+        provenance=ExternalChangeProvenance("clinecore", "persistent-session"),
+    )
+    rebased = await service.rebase_external_mirror(mirror, first_staged)
+    assert rebased.id == mirror.id
+    assert rebased.project_root == mirror.project_root
+    assert rebased.overlay_sha256 != mirror.overlay_sha256
+    assert rebased.tree_sha256 != mirror.tree_sha256
+
+    target.write_text("print('second')\n")
+    result, second_staged = await service.import_external_changes(
+        asset_id,
+        rebased,
+        first_staged,
+        provenance=ExternalChangeProvenance("clinecore", "persistent-session"),
+    )
+    assert [change["path"] for change in result["changes"]] == ["app/main.py"]
+    assert second_staged["app/main.py"]["content"] == "print('second')\n"
+    assert second_staged["app/main.py"]["origin"] == "patch"
+    assert second_staged["app/main.py"]["provenance"]["file_before_sha256"] == (
+        next(item.sha256 for item in rebased.files if item.path == "app/main.py")
+    )

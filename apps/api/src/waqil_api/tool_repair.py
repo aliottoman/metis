@@ -22,6 +22,7 @@ three rules that keep this a shape fix rather than a licence:
   should be deleted, and one that fires constantly is telling us about a prompt
   bug rather than a model bug.
 """
+
 from __future__ import annotations
 
 import json
@@ -147,7 +148,9 @@ def repair_json_text(raw: str) -> tuple[str, list[str]]:
         text = repaired
         notes.append("removed a trailing comma")
 
-    repaired = _PY_LITERAL.sub(lambda m: {"True": "true", "False": "false", "None": "null"}[m.group(1)], text)
+    repaired = _PY_LITERAL.sub(
+        lambda m: {"True": "true", "False": "false", "None": "null"}[m.group(1)], text
+    )
     if repaired != text:
         text = repaired
         notes.append("converted Python literals")

@@ -11,6 +11,7 @@ exactly, and judging whether a model suits a use case is not; keeping them apart
 means the tab still answers offline, and that a model failure costs the prose
 rather than the recommendation.
 """
+
 from __future__ import annotations
 
 import json
@@ -59,7 +60,10 @@ QUANTIZATION_CHOICES = ("fp32", "bf16", "fp16", "fp8", "int8", "mxfp4", "int4")
 # table is kept narrow so it cannot quietly grow into a worse version of one.
 USE_CASE_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("code", "coding", "program", "developer", "sql", "refactor"), ("coder",)),
-    (("reason", "math", "proof", "agent", "plan"), ("qwq", "r1", "reasoning", "thinking")),
+    (
+        ("reason", "math", "proof", "agent", "plan"),
+        ("qwq", "r1", "reasoning", "thinking"),
+    ),
 )
 
 VISION_WORDS = ("vision", "image", "screenshot", "diagram", "ocr", "document", "visual")
@@ -68,7 +72,9 @@ RERANK_WORDS = ("rerank", "re-rank", "reranking")
 
 
 class DacService:
-    def __init__(self, catalog: DacCatalog, model: Any = None, preference: Any = None) -> None:
+    def __init__(
+        self, catalog: DacCatalog, model: Any = None, preference: Any = None
+    ) -> None:
         self._catalog = catalog
         self._model = model
         self._preference = preference
@@ -108,14 +114,18 @@ class DacService:
                 )
                 for gpu in catalog.gpus.values()
             ],
-            quantizations=[name for name in QUANTIZATION_CHOICES if name in DTYPE_BYTES],
+            quantizations=[
+                name for name in QUANTIZATION_CHOICES if name in DTYPE_BYTES
+            ],
             pricing=catalog.pricing,
             provenance=catalog.provenance(),
         )
 
     # ── Estimate ─────────────────────────────────────────────────────────────
 
-    def _confidence(self, model_id: str, shape_key: str, request: Any) -> DacConfidenceV1:
+    def _confidence(
+        self, model_id: str, shape_key: str, request: Any
+    ) -> DacConfidenceV1:
         catalog = self._catalog
         record = catalog.model(model_id)
         shape = catalog.shape(shape_key)
@@ -130,8 +140,10 @@ class DacService:
             )
         verdict = confidence_for(
             has_published_row=published is not None,
-            within_published_grid=shape is not None and catalog.has_grid(model_id, shape.key),
-            calibrated_gpu=shape is not None and shape.gpu.key in catalog.calibrated_gpus,
+            within_published_grid=shape is not None
+            and catalog.has_grid(model_id, shape.key),
+            calibrated_gpu=shape is not None
+            and shape.gpu.key in catalog.calibrated_gpus,
             architecture_matches_calibration=bool(
                 record and record.architecture and record.architecture.is_moe
             ),
@@ -145,7 +157,9 @@ class DacService:
         if record is None:
             raise SizingError(f"unknown model {request.model_id!r}")
         if record.architecture is None:
-            raise SizingError(record.unsupported_reason or "model has no architecture data")
+            raise SizingError(
+                record.unsupported_reason or "model has no architecture data"
+            )
         shape = catalog.shape(request.shape)
         if shape is None:
             raise SizingError(f"unknown shape {request.shape!r}")
@@ -177,7 +191,10 @@ class DacService:
             else catalog.price_per_ai_unit_hour
         )
         cost = cost_estimate(
-            shape, units=request.units, hours=request.hours, price_per_ai_unit_hour=price
+            shape,
+            units=request.units,
+            hours=request.hours,
+            price_per_ai_unit_hour=price,
         )
         smallest = minimum_shape(
             architecture,
@@ -207,13 +224,19 @@ class DacService:
                 "These are Oracle's published measurements for this exact "
                 "configuration, not modeled values."
             )
-        validated = shape.key.upper() in {name.upper() for name in record.validated_shapes}
+        validated = shape.key.upper() in {
+            name.upper() for name in record.validated_shapes
+        }
         if record.validated_shapes and not validated:
             notes.append(
                 f"Oracle has not validated {shape.key} for this model. "
                 f"Validated: {', '.join(record.validated_shapes)}."
             )
-        if smallest and record.validated_shapes and smallest.key not in record.validated_shapes:
+        if (
+            smallest
+            and record.validated_shapes
+            and smallest.key not in record.validated_shapes
+        ):
             notes.append(
                 f"The model fits on {smallest.key}, smaller than Oracle's recommendation — "
                 "the recommended shape carries throughput and validation headroom, "
@@ -223,7 +246,10 @@ class DacService:
             notes.append(
                 "Does not fit: weights plus KV cache exceed the usable memory of one replica."
             )
-        if vram.max_concurrency and request.concurrency > vram.max_concurrency * request.units:
+        if (
+            vram.max_concurrency
+            and request.concurrency > vram.max_concurrency * request.units
+        ):
             notes.append(
                 f"KV cache holds about {vram.max_concurrency * request.units} concurrent "
                 "sequences at this context; beyond that requests queue rather than run."
@@ -251,7 +277,9 @@ class DacService:
         if record is None:
             raise SizingError(f"unknown model {request.model_id!r}")
         if record.architecture is None:
-            raise SizingError(record.unsupported_reason or "model has no architecture data")
+            raise SizingError(
+                record.unsupported_reason or "model has no architecture data"
+            )
 
         sla = SlaTarget(
             max_ttft_s=request.max_ttft_s,
@@ -288,9 +316,15 @@ class DacService:
                 "Turn that off to see cheaper unvalidated configurations."
             )
         if not any(option.meets_sla for option in options):
-            notes.append("No configuration meets the target; the closest misses are listed first.")
+            notes.append(
+                "No configuration meets the target; the closest misses are listed first."
+            )
 
-        best = options[0].shape.key if options else (record.validated_shapes[0] if record.validated_shapes else "")
+        best = (
+            options[0].shape.key
+            if options
+            else (record.validated_shapes[0] if record.validated_shapes else "")
+        )
         return DacOptimizeResultV1(
             model_id=request.model_id,
             options=[DacOptionV1(**option.as_dict()) for option in options[:24]],
@@ -347,7 +381,10 @@ class DacService:
                 continue
             if wanted and record.capability != wanted:
                 continue
-            if not wanted and record.capability not in ("TEXT_TO_TEXT", "IMAGE_TEXT_TO_TEXT"):
+            if not wanted and record.capability not in (
+                "TEXT_TO_TEXT",
+                "IMAGE_TEXT_TO_TEXT",
+            ):
                 continue
 
             best: tuple[float, Any, Any, Any, int] | None = None
@@ -512,7 +549,9 @@ class DacService:
                     "units": candidate.units,
                     "meets_latency_target": candidate.meets_sla,
                     "tokens_per_second": (
-                        candidate.performance.inference_speed_tps if candidate.performance else None
+                        candidate.performance.inference_speed_tps
+                        if candidate.performance
+                        else None
                     ),
                     "ai_unit_hours": (candidate.cost or {}).get("unit_hours"),
                 }
@@ -560,11 +599,17 @@ class DacService:
         ordered: list[DacCandidateV1] = []
         if isinstance(order, list):
             for model_id in order:
-                if isinstance(model_id, str) and model_id in allowed and model_id in by_id:
+                if (
+                    isinstance(model_id, str)
+                    and model_id in allowed
+                    and model_id in by_id
+                ):
                     ordered.append(by_id.pop(model_id))
         # Anything the model dropped keeps its deterministic position at the end,
         # so a truncated reply narrows the ordering rather than the shortlist.
-        ordered.extend(by_id[key] for key in [c.model_id for c in shortlist] if key in by_id)
+        ordered.extend(
+            by_id[key] for key in [c.model_id for c in shortlist] if key in by_id
+        )
 
         summary = parsed.get("summary")
         return (

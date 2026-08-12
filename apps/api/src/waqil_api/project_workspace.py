@@ -5,18 +5,25 @@ for new siblings. A deterministic local manifest and an evolving METIS.md live
 inside the project. Models can inspect the grant through narrow tools; exact
 mutations are executed only after the control plane records user approval.
 """
+
 from __future__ import annotations
 
 import ast
 import asyncio
+import fnmatch
 import hashlib
 import json
 import os
 import re
+import shutil
+import tempfile
+import uuid
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
-from collections.abc import Iterable, Sequence
+from html.parser import HTMLParser
+from pathlib import Path, PurePosixPath
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from .asset_library import AssetLibraryError, AssetManager
@@ -152,6 +159,76 @@ _LEARNINGS_END = "<!-- metis-learnings:end -->"
 _PLAN_START = "<!-- metis-plan:start -->"
 _PLAN_END = "<!-- metis-plan:end -->"
 
+# A coding engine receives a useful project, not an unbounded clone of an
+# arbitrary filesystem tree. The file count follows the user-configured
+# manifest boundary; this independent byte ceiling prevents a project made of
+# a few enormous artifacts from filling the run volume while it is mirrored.
+_EXTERNAL_MIRROR_MAX_BYTES = 128_000_000
+_EXTERNAL_WORKSPACE_PREFIX = "metis-code-workspace-"
+_EXTERNAL_WORKSPACE_NAME = re.compile(
+    rf"^{re.escape(_EXTERNAL_WORKSPACE_PREFIX)}[A-Za-z0-9_-]{{6,64}}$"
+)
+_EXTERNAL_SECRET_NAMES = frozenset(
+    {
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        "credentials",
+        "credentials.json",
+        "credentials.toml",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+        "id_rsa",
+        "service-account.json",
+        "service_account.json",
+    }
+)
+_EXTERNAL_SENSITIVE_SUFFIXES = _SENSITIVE_SUFFIXES | frozenset(
+    {".cer", ".crt", ".der", ".gpg", ".keystore", ".kdbx"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalMirrorFile:
+    """One immutable byte fact from an external workspace's starting tree."""
+
+    path: str
+    sha256: str
+    bytes: int
+    source: str
+    disk_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalWorkspaceMirror:
+    """A disposable project mirror and the baseline its diff is measured from.
+
+    ``project_root`` is the only path an external coding engine should receive.
+    The baseline lives in host memory, outside that editable directory, so the
+    engine cannot make a rewrite look unchanged by editing its own manifest.
+    """
+
+    id: str
+    asset_id: str
+    source_root: Path
+    project_root: Path
+    tree_sha256: str
+    overlay_sha256: str
+    files: tuple[ExternalMirrorFile, ...]
+    excluded_count: int
+    excluded_paths: tuple[str, ...]
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalChangeProvenance:
+    """The durable identity attached to every imported external edit."""
+
+    engine: str
+    session_id: str
+    run_id: str = ""
+
 
 class ProjectWorkspaceError(RuntimeError):
     """A refused project tool call.
@@ -167,14 +244,34 @@ class ProjectWorkspaceError(RuntimeError):
     and the arguments are well formed — only the target is wrong — so the next
     step can be pinned to the files the build still owes instead of leaving the
     model to guess, which measurably means re-sending the same path.
+
+    ``repair_strategy`` names a safer edit primitive after the requested one
+    has proved brittle. Exact-block and line-range failures use ``whole_file``:
+    the next coder rewrites the complete current file through one replace_lines
+    call instead of guessing another patch or range.
     """
 
     def __init__(
-        self, message: str, *, argument_shape: bool = False, wrong_target: bool = False
+        self,
+        message: str,
+        *,
+        argument_shape: bool = False,
+        wrong_target: bool = False,
+        repair_strategy: str = "",
+        repairable_external: bool = False,
+        repair_path: str = "",
     ) -> None:
         super().__init__(message)
         self.argument_shape = argument_shape
         self.wrong_target = wrong_target
+        self.repair_strategy = repair_strategy
+        # External mirror import is atomic, so a syntax-invalid in-scope file
+        # cannot enter the approval overlay. It is nevertheless model-repairable
+        # inside that same private mirror. This marker is deliberately absent
+        # from scope, CAS, deletion, symlink, secret, and destructive-rewrite
+        # refusals, which remain terminal safety boundaries.
+        self.repairable_external = repairable_external
+        self.repair_path = repair_path
 
 
 class VerificationNotApprovedError(ProjectWorkspaceError):
@@ -196,9 +293,9 @@ def _bounded_line(value: Any, limit: int = 500) -> str:
 def _bootstrap_aliases(preference: Any | None) -> dict[str, str] | None:
     """The routing hint for a project map, or None when there is no preference.
 
-    Only consulted by the Ollama fallback: the cloud providers pin their own
-    model. A preference store that cannot answer is not worth failing a map
-    over, so any error degrades to "no hint" and the role defaults apply.
+    Cline uses it to retain the selected planner rung; the Ollama fallback uses
+    its local planner alias. A preference store that cannot answer is not worth
+    failing a map over, so any error degrades to role defaults.
     """
     if preference is None:
         return None
@@ -265,20 +362,25 @@ def _splice_lines(text: str, arguments: dict[str, Any]) -> str:
         raise ProjectWorkspaceError(
             "replace_lines needs integer start_line and end_line",
             argument_shape=True,
+            repair_strategy="whole_file",
         ) from None
     lines = text.splitlines(keepends=True)
     total = len(lines)
     if start < 1 or end < start:
         raise ProjectWorkspaceError(
-            f"replace_lines needs 1 <= start_line <= end_line; you sent "
-            f"{start}..{end}",
+            f"replace_lines needs 1 <= start_line <= end_line; you sent {start}..{end}",
             argument_shape=True,
+            repair_strategy="whole_file",
         )
-    if start > total:
+    # A present but empty file still has a valid whole-file insertion point.
+    # The recovery grammar deliberately uses 1..WHOLE_FILE_END_LINE for every
+    # file, and clamping that range to zero lines should replace the empty body.
+    if start > total and not (total == 0 and start == 1):
         raise ProjectWorkspaceError(
             f"replace_lines range {start}..{end} starts past the end of the "
             f"file, which has {total} line(s); read_file the target first",
             argument_shape=True,
+            repair_strategy="whole_file",
         )
     end = min(end, total)
     doomed = "".join(lines[start - 1 : end])
@@ -289,6 +391,7 @@ def _splice_lines(text: str, arguments: dict[str, Any]) -> str:
             f"expected text {expect[:120]!r}. That range currently holds:\n"
             f"{doomed[:400]}\nAim start_line/end_line at the block you meant.",
             argument_shape=True,
+            repair_strategy="whole_file",
         )
     replacement = str(arguments.get("replacement", ""))
     # A replacement that stops mid-line would glue itself onto the next line
@@ -296,6 +399,131 @@ def _splice_lines(text: str, arguments: dict[str, Any]) -> str:
     if replacement and not replacement.endswith("\n") and end < total:
         replacement += "\n"
     return "".join(lines[: start - 1]) + replacement + "".join(lines[end:])
+
+
+class _HtmlStructureMeasure(HTMLParser):
+    """Measure document structure while excluding inline script bodies."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.weight = 0
+        self._script_depth = 0
+        self.loads_script = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        folded = tag.casefold()
+        if folded == "script":
+            self._script_depth += 1
+            self.loads_script = self.loads_script or any(
+                name.casefold() == "src" and bool(value and value.strip())
+                for name, value in attrs
+            )
+        # Tags and attributes are part of the page's structural contract even
+        # inside script markup; only JavaScript data is intentionally ignored.
+        self.weight += len(tag) + sum(
+            len(name) + len(value or "") for name, value in attrs
+        )
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        if tag.casefold() == "script" and self._script_depth:
+            self._script_depth -= 1
+
+    def handle_endtag(self, tag: str) -> None:
+        self.weight += len(tag)
+        if tag.casefold() == "script" and self._script_depth:
+            self._script_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._script_depth:
+            self.weight += len(data)
+
+
+def _html_structure(document: str) -> tuple[int, bool]:
+    parser = _HtmlStructureMeasure()
+    parser.feed(document)
+    parser.close()
+    return parser.weight, parser.loads_script
+
+
+def _guard_whole_file_repair(
+    relative: str,
+    before: str,
+    after: str,
+    arguments: Mapping[str, Any],
+) -> None:
+    """Refuse a repair that satisfies the checker by deleting the file.
+
+    A live three-model micro-benchmark exposed the otherwise invisible failure:
+    one coder honored the whole-file tool schema and cleared mypy by replacing a
+    958-byte repository with 67 bytes. Parsing and the targeted static check
+    both passed, but most of the module's public API was gone. The host-selected
+    recovery strategy uses a sentinel end line, while models may spell the same
+    full rewrite with the actual last line. In either form its contract is a
+    narrow repair, so retaining the surrounding file is an enforceable invariant
+    rather than a stylistic preference.
+    """
+    try:
+        start = int(arguments.get("start_line", 0))
+        end = int(arguments.get("end_line", 0))
+    except (TypeError, ValueError):
+        return
+    line_count = len(before.splitlines(keepends=True))
+    # The sentinel is how the host requests a recovery rewrite, but a model can
+    # express the identical operation with the file's real last line (notably
+    # 1..1 for minified HTML). Guard the operation's actual span, not one spelling
+    # of it. Empty files have no surface to preserve.
+    if start != 1 or not line_count or end < line_count:
+        return
+    before_bytes = len(before.encode("utf-8"))
+    after_bytes = len(after.encode("utf-8"))
+    severe_shrink = before_bytes >= 256 and after_bytes * 2 < before_bytes
+    if severe_shrink and relative.lower().endswith((".html", ".htm")):
+        # Extracting a large inline application script into its already-planned
+        # static asset can legitimately remove most of an HTML file's bytes.
+        # Compare browser-visible structure with script bodies excluded. This
+        # admits that refactor while a replacement containing only a script tag
+        # still loses almost all of the original page's structural weight.
+        before_structure, _ = _html_structure(before)
+        after_structure, loads_script = _html_structure(after)
+        severe_shrink = not (
+            loads_script
+            and before_structure >= 128
+            and after_structure * 2 >= before_structure
+        )
+    if severe_shrink:
+        raise ProjectWorkspaceError(
+            f"whole-file repair for {relative} is incomplete: it shrank the file "
+            f"from {before_bytes} to {after_bytes} bytes. Send the complete corrected "
+            "file, preserving unrelated code and public interfaces.",
+            argument_shape=True,
+            repair_strategy="whole_file",
+        )
+    if not relative.lower().endswith(".py"):
+        return
+    try:
+        old_tree = ast.parse(before)
+        new_tree = ast.parse(after)
+    except SyntaxError:
+        return  # the ordinary parse gate below reports the precise syntax error
+
+    def public_surface(tree: ast.Module) -> set[str]:
+        return {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and not node.name.startswith("_")
+        }
+
+    missing = sorted(public_surface(old_tree) - public_surface(new_tree))
+    if missing:
+        raise ProjectWorkspaceError(
+            f"whole-file repair for {relative} removed public definitions: "
+            f"{', '.join(missing[:12])}. Send the complete corrected file and retain "
+            "every unrelated public interface.",
+            argument_shape=True,
+            repair_strategy="whole_file",
+        )
 
 
 # Every spelling a model reaches for when it means "the project root". Left
@@ -329,6 +557,177 @@ def _suggest_relative(relative: str) -> str:
 
 def _is_text_file(path: Path) -> bool:
     return path.name in _PRIORITY_FILES or path.suffix.casefold() in _TEXT_SUFFIXES
+
+
+def _external_secret_path(relative: Path) -> bool:
+    """Whether a path is too likely to carry credentials to leave the host.
+
+    Source modules may legitimately be named ``secrets.py`` or
+    ``credential_store.ts``; those contain handling logic, not necessarily
+    values. Data/config files with the same names are excluded fail-closed.
+    """
+    name = relative.name.casefold()
+    suffix = relative.suffix.casefold()
+    if name.startswith(".env") and name not in _ENV_TEMPLATE_NAMES:
+        return True
+    if name in _EXTERNAL_SECRET_NAMES or suffix in _EXTERNAL_SENSITIVE_SUFFIXES:
+        return True
+    source_suffixes = frozenset(
+        {
+            ".c",
+            ".cc",
+            ".cpp",
+            ".go",
+            ".h",
+            ".java",
+            ".js",
+            ".jsx",
+            ".kt",
+            ".php",
+            ".py",
+            ".rb",
+            ".rs",
+            ".swift",
+            ".ts",
+            ".tsx",
+            ".vue",
+        }
+    )
+    credentialish = re.search(
+        r"(?i)(credential|password|passwd|secret|private[_ -]?key|"
+        r"api[_ -]?key|access[_ -]?token|auth[_ -]?token)",
+        name,
+    )
+    return bool(credentialish and suffix not in source_suffixes)
+
+
+def _sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _atomic_write_text(target: Path, content: str) -> None:
+    """Write ``target`` via temp-file + fsync + atomic rename.
+
+    A plain ``write_text`` truncates the destination in place: a crash
+    mid-write leaves a partial file on disk, and the next materialize pass
+    reports it as merely "changed after staging" rather than corrupted. The
+    rename step means a crash can only ever leave the previous complete
+    content or the new complete content, never a half-written file.
+    """
+
+    try:
+        mode = target.stat().st_mode & 0o777
+    except FileNotFoundError:
+        mode = 0o644
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".metis-apply-", dir=str(target.parent)
+    )
+    temporary_path = Path(temporary)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary_path, mode)
+        os.replace(temporary_path, target)
+        directory = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary_path.unlink(missing_ok=True)
+
+
+def _external_tree_digest(files: Iterable[ExternalMirrorFile]) -> str:
+    """Bind a baseline to every path, byte length, hash and source."""
+    digest = hashlib.sha256()
+    for item in sorted(files, key=lambda candidate: candidate.path):
+        for value in (
+            item.path,
+            str(item.bytes),
+            item.sha256,
+            item.source,
+            item.disk_sha256,
+        ):
+            digest.update(value.encode("utf-8"))
+            digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def _staged_state_digest(staged: Mapping[str, Mapping[str, Any]]) -> str:
+    """Bind an external session to the exact overlay it was given.
+
+    The ordinary approval digest intentionally covers only the bytes a user
+    will apply. An external coding session also needs to retain the CAS origin
+    and prior provenance: swapping a ``create`` for a ``patch`` with identical
+    content changes whether materialization may overwrite a disk path.
+    """
+    digest = hashlib.sha256()
+    for relative in sorted(staged):
+        entry = staged[relative]
+        provenance = json.dumps(
+            entry.get("provenance", {}),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        for value in (
+            relative,
+            str(entry.get("content", "")),
+            str(entry.get("origin", "")),
+            str(entry.get("base_sha256", "")),
+            str(entry.get("bytes", "")),
+            provenance,
+        ):
+            digest.update(value.encode("utf-8"))
+            digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def _decode_external_text(relative: str, content: bytes) -> str:
+    """Decode an edited file without guessing that arbitrary bytes are text."""
+    if b"\x00" in content:
+        raise ProjectWorkspaceError(
+            f"external change {relative} is binary; binary changes are not supported"
+        )
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ProjectWorkspaceError(
+            f"external change {relative} is binary or not UTF-8; only text changes "
+            "can be staged"
+        ) from exc
+    # A UTF-8 decode alone is not sufficient: compact binary formats can be
+    # ASCII-heavy. Permit ordinary whitespace, but refuse the C0 controls that
+    # never belong in source/configuration files.
+    if any(ord(character) < 32 and character not in "\t\n\r\f" for character in text):
+        raise ProjectWorkspaceError(
+            f"external change {relative} contains binary control bytes; only text "
+            "changes can be staged"
+        )
+    return text
+
+
+def _normalized_external_provenance(
+    provenance: ExternalChangeProvenance,
+) -> dict[str, str]:
+    engine = _bounded_line(provenance.engine, 120)
+    session_id = _bounded_line(provenance.session_id, 240)
+    run_id = _bounded_line(provenance.run_id, 240)
+    if not engine or not session_id:
+        raise ProjectWorkspaceError(
+            "external changes require a bounded engine and session_id provenance"
+        )
+    return {
+        "engine": engine,
+        "session_id": session_id,
+        **({"run_id": run_id} if run_id else {}),
+    }
 
 
 # How much on-disk Python the static gate will read to resolve a changeset's
@@ -415,7 +814,9 @@ class ProjectWorkspaceService:
         self._lock = asyncio.Lock()
         # Repo-map extraction, per project, keyed by (mtime_ns, size) so a
         # multi-step build turn parses each file exactly once.
-        self._repo_map_cache: dict[str, dict[str, tuple[tuple[int, int], repo_map.FileFacts]]] = {}
+        self._repo_map_cache: dict[
+            str, dict[str, tuple[tuple[int, int], repo_map.FileFacts]]
+        ] = {}
 
     async def list(self) -> list[ProjectWorkspaceV1]:
         projects: list[ProjectWorkspaceV1] = []
@@ -449,7 +850,7 @@ class ProjectWorkspaceService:
         return projects
 
     async def open(self, asset_id: str) -> ProjectWorkspaceV1:
-        """Create or refresh local context; Grok is called only on first access."""
+        """Create or refresh local context; a model maps only the first access."""
         async with self._lock:
             root = await self.assets.project_path(asset_id)
             metadata = await self._asset_metadata(asset_id)
@@ -457,9 +858,13 @@ class ProjectWorkspaceService:
             manifest_path = metis_dir / "project-context.json"
             notes_path = metis_dir / "METIS.md"
             if metis_dir.exists() and metis_dir.is_symlink():
-                raise ProjectWorkspaceError("the project's .metis folder may not be a symlink")
+                raise ProjectWorkspaceError(
+                    "the project's .metis folder may not be a symlink"
+                )
             if manifest_path.is_symlink() or notes_path.is_symlink():
-                raise ProjectWorkspaceError("Metis project context files may not be symlinks")
+                raise ProjectWorkspaceError(
+                    "Metis project context files may not be symlinks"
+                )
             metis_dir.mkdir(parents=True, exist_ok=True)
 
             prior = self._read_manifest(root)
@@ -479,22 +884,37 @@ class ProjectWorkspaceService:
             bootstrapper = "oci-grok"
             bootstrap_model_name = self.settings.oci_grok_model
             if bootstrap is None:
+                aliases = _bootstrap_aliases(self.preference)
                 available = getattr(self.bootstrap_model, "available", None)
                 if available is None and hasattr(self.bootstrap_model, "oci"):
-                    # Mirror the router's own order (Grok, then Cohere, then the
-                    # Ollama lane) so the manifest records who actually wrote
-                    # the map rather than always claiming Grok.
+                    # Mirror the router's own order (a selected Cline planner,
+                    # then Grok, Cohere, and the Ollama lane) so a healthy
+                    # Cline-only setup can open a project without borrowing an
+                    # unrelated provider or a local model session.
                     #
                     # The Ollama fallback is why this no longer refuses: making
                     # a map used to require an OCI or Cohere key, so with the
                     # Grok lane off and a spent Cohere quota — the real state of
                     # this install — no project could be opened at all.
                     cohere = getattr(self.bootstrap_model, "cohere", None)
-                    oci_ready = bool(getattr(self.bootstrap_model.oci, "available", False))
+                    cline = getattr(self.bootstrap_model, "cline", None)
+                    selected_provider = str((aliases or {}).get("_provider") or "local")
+                    cline_ready = bool(
+                        selected_provider == "cline"
+                        and cline is not None
+                        and getattr(cline, "available", False)
+                    )
+                    oci_ready = bool(
+                        getattr(self.bootstrap_model.oci, "available", False)
+                    )
                     cohere_ready = bool(
                         cohere is not None and getattr(cohere, "available", False)
                     )
-                    if oci_ready:
+                    if cline_ready:
+                        available = True
+                        bootstrapper = "cline"
+                        bootstrap_model_name = self.settings.cline_orchestrator_model
+                    elif oci_ready:
                         available = True
                     elif cohere_ready:
                         available = True
@@ -516,7 +936,6 @@ class ProjectWorkspaceService:
                     "manifest": snapshot,
                     "bounded_file_samples": sample,
                 }
-                aliases = _bootstrap_aliases(self.preference)
                 try:
                     bootstrap = await self.bootstrap_model.bootstrap_project(
                         request, model_aliases=aliases
@@ -538,7 +957,9 @@ class ProjectWorkspaceService:
                 "project_name": metadata["name"],
                 "root_name": root.name,
                 "revision": revision,
-                "created_at": prior.get("created_at", timestamp) if prior else timestamp,
+                "created_at": prior.get("created_at", timestamp)
+                if prior
+                else timestamp,
                 "updated_at": timestamp,
                 "bootstrap_provider": prior.get("bootstrap_provider", bootstrapper)
                 if prior
@@ -569,7 +990,9 @@ class ProjectWorkspaceService:
         manifest = self._read_manifest(root)
         notes_path = root / ".metis" / "METIS.md"
         if not manifest or not notes_path.is_file() or notes_path.is_symlink():
-            raise ProjectWorkspaceError("open this project once before starting a project chat")
+            raise ProjectWorkspaceError(
+                "open this project once before starting a project chat"
+            )
         notes = notes_path.read_text(encoding="utf-8")[:40_000]
         return {
             "project_id": asset_id,
@@ -577,6 +1000,100 @@ class ProjectWorkspaceService:
             "manifest": manifest,
             "metis_md": notes,
             "verification": await self._verification_context(asset_id, root),
+            "settings": self.read_project_settings(root),
+        }
+
+    @staticmethod
+    def settings_path(root: Path) -> Path:
+        return root / ".metis" / "project-settings.json"
+
+    def read_project_settings(self, root: Path) -> dict[str, Any]:
+        """Durable per-project settings a person set. Never model-writable.
+
+        Stores path identities and patterns only. The bytes behind a protected
+        path are hashed per run at admission, so a file edited on disk between
+        runs cannot inherit a stale hash.
+        """
+
+        path = self.settings_path(root)
+        if not path.is_file() or path.is_symlink():
+            return {"protected_files": []}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # A corrupt settings file protects nothing rather than failing the
+            # project open; the resolved contract is emitted visibly either way.
+            return {"protected_files": []}
+        if not isinstance(raw, Mapping):
+            return {"protected_files": []}
+        stored = raw.get("protected_files")
+        return {
+            "protected_files": sorted(
+                {
+                    str(item).replace("\\", "/").strip()
+                    for item in (stored if isinstance(stored, list) else [])
+                    if str(item).strip()
+                }
+            )[:256]
+        }
+
+    async def write_project_settings(
+        self, asset_id: str, protected_files: Sequence[str]
+    ) -> dict[str, Any]:
+        """Replace the per-project protections. Callers are people, not models."""
+
+        root = (await self.assets.project_path(asset_id)).resolve()
+        cleaned = sorted(
+            {
+                str(item).replace("\\", "/").strip()
+                for item in protected_files
+                if str(item).strip()
+            }
+        )[:256]
+        for candidate in cleaned:
+            # A protection is a project-relative identity or pattern. An
+            # absolute path or a traversal is a different instruction.
+            if candidate.startswith("/") or ".." in PurePosixPath(candidate).parts:
+                raise ProjectWorkspaceError(
+                    f"a protected path must stay inside the project: {candidate}"
+                )
+        target = self.settings_path(root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(
+            target,
+            json.dumps({"protected_files": cleaned}, indent=2) + "\n",
+        )
+        return {"protected_files": cleaned}
+
+    async def preview_project_settings(
+        self, asset_id: str, protected_files: Sequence[str]
+    ) -> dict[str, Any]:
+        """What those patterns resolve to right now, without saving them."""
+
+        root = (await self.assets.project_path(asset_id)).resolve()
+        manifest = self._read_manifest(root) or {}
+        tree = [str(path) for path in manifest.get("file_tree") or []]
+        resolved: list[str] = []
+        unmatched: list[str] = []
+        for pattern in protected_files:
+            needle = str(pattern).replace("\\", "/").strip()
+            if not needle:
+                continue
+            hits = [
+                path
+                for path in tree
+                if path == needle
+                or PurePosixPath(path).name == needle
+                or fnmatch.fnmatch(path, needle)
+                or fnmatch.fnmatch(PurePosixPath(path).name, needle)
+            ]
+            if hits:
+                resolved.extend(hits)
+            else:
+                unmatched.append(needle)
+        return {
+            "resolved": sorted(set(resolved)),
+            "unmatched": sorted(set(unmatched)),
         }
 
     async def repo_map(
@@ -593,7 +1110,83 @@ class ProjectWorkspaceService:
         if max_chars <= 0:
             return ""
         root = await self.assets.project_path(asset_id)
-        return await asyncio.to_thread(self._repo_map_sync, asset_id, root, request, max_chars)
+        return await asyncio.to_thread(
+            self._repo_map_sync, asset_id, root, request, max_chars
+        )
+
+    async def interface_map(
+        self,
+        asset_id: str,
+        *,
+        target_path: str,
+        dependency_paths: Sequence[str] = (),
+        staged: Mapping[str, Mapping[str, Any]] | None = None,
+        max_chars: int = 6_000,
+    ) -> str:
+        """Exact callable/import context for one directed file.
+
+        Unlike the ranked overview, this reads the staged overlay as the source
+        of truth. Earlier files in a build are not materialized until approval,
+        so a disk-only map would teach the next coder that their interfaces do
+        not exist. Canonical appkit modules are included when they are actually
+        present on disk or in the overlay; absent optional capabilities are
+        never advertised.
+        """
+        if max_chars <= 0 or not target_path:
+            return ""
+        root = await self.assets.project_path(asset_id)
+        return await asyncio.to_thread(
+            self._interface_map_sync,
+            root,
+            target_path,
+            tuple(dependency_paths),
+            dict(staged or {}),
+            max_chars,
+        )
+
+    def _interface_map_sync(
+        self,
+        root: Path,
+        target_path: str,
+        dependency_paths: Sequence[str],
+        staged: Mapping[str, Mapping[str, Any]],
+        max_chars: int,
+    ) -> str:
+        canonical_appkit = {
+            path
+            for path in scaffold_sources({"oci_responses", "web_ui"})
+            if path.startswith("appkit/")
+        }
+        selected = {
+            target_path,
+            *(str(path) for path in dependency_paths if path),
+            *canonical_appkit,
+        }
+        sources: dict[str, str] = {}
+        for path, relative in self._iter_files(root):
+            rel = relative.as_posix()
+            if rel not in selected or not _is_text_file(path):
+                continue
+            try:
+                sources[rel] = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+        # Overlay bytes are newer than disk bytes by definition. A repair must
+        # preserve the interface the approval card currently carries, not the
+        # older file beneath it.
+        for rel, entry in staged.items():
+            if rel not in selected or not isinstance(entry, Mapping):
+                continue
+            content = entry.get("content")
+            if isinstance(content, str):
+                sources[rel] = content
+        facts = [repo_map.extract(path, source) for path, source in sources.items()]
+        return repo_map.render_interfaces(
+            facts,
+            target_path=target_path,
+            dependency_paths=dependency_paths,
+            max_chars=max_chars,
+        )
 
     def _repo_map_sync(
         self, asset_id: str, root: Path, request: str, max_chars: int
@@ -686,7 +1279,11 @@ class ProjectWorkspaceService:
         digest = hashlib.sha256(
             json.dumps(call.model_dump(mode="json"), sort_keys=True).encode("utf-8")
         ).hexdigest()
-        return {"path": str(target.relative_to(root)), "summary": detail, "digest": digest}
+        return {
+            "path": str(target.relative_to(root)),
+            "summary": detail,
+            "digest": digest,
+        }
 
     async def execute(self, asset_id: str, call: ProjectToolCallV1) -> dict[str, Any]:
         if call.name in PROJECT_HOST_TOOLS:
@@ -707,17 +1304,23 @@ class ProjectWorkspaceService:
             return await asyncio.to_thread(self._read_file, root, call.arguments)
         if call.name == "apply_patch":
             async with self._lock:
-                result = await asyncio.to_thread(self._apply_patch, root, call.arguments)
+                result = await asyncio.to_thread(
+                    self._apply_patch, root, call.arguments
+                )
                 await asyncio.to_thread(self._record_mutation, root, call, result)
                 return result
         if call.name == "replace_lines":
             async with self._lock:
-                result = await asyncio.to_thread(self._replace_lines, root, call.arguments)
+                result = await asyncio.to_thread(
+                    self._replace_lines, root, call.arguments
+                )
                 await asyncio.to_thread(self._record_mutation, root, call, result)
                 return result
         if call.name == "create_file":
             async with self._lock:
-                result = await asyncio.to_thread(self._create_file, root, call.arguments)
+                result = await asyncio.to_thread(
+                    self._create_file, root, call.arguments
+                )
                 await asyncio.to_thread(self._record_mutation, root, call, result)
                 return result
         if call.name == "run_check":
@@ -733,6 +1336,676 @@ class ProjectWorkspaceService:
     # changeset once. A staged entry is {content, origin, base_sha256, bytes} —
     # base_sha256 pins the disk text a patch was computed against, so a file
     # that changed under a pending approval is skipped rather than clobbered.
+
+    async def create_external_mirror(
+        self,
+        asset_id: str,
+        staged: dict[str, dict[str, Any]],
+        *,
+        workspace_parent: Path | None = None,
+    ) -> ExternalWorkspaceMirror:
+        """Materialize disk + overlay into a disposable, editable project.
+
+        The mirror is a capability boundary for a local coding engine. Secret
+        and internal paths are omitted before the engine sees the tree; staged
+        entries are CAS-checked first, and the immutable baseline is retained
+        by the host rather than written inside the editable project.
+        """
+        root = (await self.assets.project_path(asset_id)).resolve()
+        parent = Path(workspace_parent or self.settings.run_dir)
+
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._create_external_mirror,
+                asset_id,
+                root,
+                dict(staged),
+                parent,
+            )
+
+    def _create_external_mirror(
+        self,
+        asset_id: str,
+        root: Path,
+        staged: dict[str, dict[str, Any]],
+        parent: Path,
+    ) -> ExternalWorkspaceMirror:
+        self._validate_external_overlay(root, staged)
+        parent.mkdir(parents=True, exist_ok=True)
+        container = Path(
+            tempfile.mkdtemp(prefix=_EXTERNAL_WORKSPACE_PREFIX, dir=str(parent))
+        )
+        project_root = container / "project"
+        project_root.mkdir(mode=0o700)
+        records: dict[str, ExternalMirrorFile] = {}
+        byte_sizes: dict[str, int] = {}
+        excluded: set[str] = set()
+
+        try:
+            count = 0
+            total = 0
+            for current, directories, filenames in os.walk(root, followlinks=False):
+                current_path = Path(current)
+                kept: list[str] = []
+                for directory in sorted(directories):
+                    source = current_path / directory
+                    relative = source.relative_to(root)
+                    rel = relative.as_posix() + "/"
+                    if source.is_symlink():
+                        excluded.add(rel)
+                        continue
+                    if directory in _IGNORE_DIRS or directory.startswith("."):
+                        excluded.add(rel)
+                        continue
+                    kept.append(directory)
+                directories[:] = kept
+
+                for filename in sorted(filenames):
+                    source = current_path / filename
+                    relative = source.relative_to(root)
+                    rel = relative.as_posix()
+                    if source.is_symlink() or not source.is_file():
+                        excluded.add(rel)
+                        continue
+                    if _external_secret_path(relative):
+                        excluded.add(rel)
+                        continue
+                    content = source.read_bytes()
+                    count += 1
+                    total += len(content)
+                    if count > self.settings.project_manifest_max_files:
+                        raise ProjectWorkspaceError(
+                            "project exceeds the external workspace file limit"
+                        )
+                    if total > _EXTERNAL_MIRROR_MAX_BYTES:
+                        raise ProjectWorkspaceError(
+                            "project exceeds the external workspace byte limit"
+                        )
+                    destination = project_root / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(content)
+                    destination.chmod(source.stat().st_mode & 0o777)
+                    digest = _sha256_bytes(content)
+                    records[rel] = ExternalMirrorFile(
+                        path=rel,
+                        sha256=digest,
+                        bytes=len(content),
+                        source="disk",
+                        disk_sha256=digest,
+                    )
+                    byte_sizes[rel] = len(content)
+
+            # The overlay is authoritative: replace the copied disk bytes with
+            # precisely what the coding session is meant to observe.
+            for rel in sorted(staged):
+                entry = staged[rel]
+                content = str(entry["content"]).encode("utf-8")
+                previous_size = byte_sizes.get(rel, 0)
+                if rel not in records:
+                    count += 1
+                total += len(content) - previous_size
+                if count > self.settings.project_manifest_max_files:
+                    raise ProjectWorkspaceError(
+                        "project exceeds the external workspace file limit"
+                    )
+                if total > _EXTERNAL_MIRROR_MAX_BYTES:
+                    raise ProjectWorkspaceError(
+                        "project exceeds the external workspace byte limit"
+                    )
+                relative = Path(rel)
+                destination = project_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
+                prior = records.get(rel)
+                records[rel] = ExternalMirrorFile(
+                    path=rel,
+                    sha256=_sha256_bytes(content),
+                    bytes=len(content),
+                    source="staged",
+                    disk_sha256=prior.disk_sha256 if prior else "",
+                )
+                byte_sizes[rel] = len(content)
+
+            files = tuple(records[path] for path in sorted(records))
+            return ExternalWorkspaceMirror(
+                id=f"ewm_{uuid.uuid4().hex}",
+                asset_id=asset_id,
+                source_root=root,
+                project_root=project_root,
+                tree_sha256=_external_tree_digest(files),
+                overlay_sha256=_staged_state_digest(staged),
+                files=files,
+                excluded_count=len(excluded),
+                excluded_paths=tuple(sorted(excluded)[:256]),
+                created_at=_now(),
+            )
+        except Exception:
+            shutil.rmtree(container, ignore_errors=True)
+            raise
+
+    def _validate_external_overlay(
+        self, root: Path, staged: Mapping[str, Mapping[str, Any]]
+    ) -> None:
+        """Prove every staged entry still names the disk state it was based on."""
+        for relative in sorted(staged):
+            entry = staged[relative]
+            target = self._safe_target(root, relative, write=True, framework=True)
+            canonical = target.relative_to(root).as_posix()
+            if canonical != relative:
+                raise ProjectWorkspaceError(
+                    f"staged path {relative!r} is not canonical; expected {canonical!r}"
+                )
+            content = str(entry.get("content", ""))
+            encoded = content.encode("utf-8")
+            try:
+                recorded_bytes = int(entry.get("bytes", len(encoded)))
+            except (TypeError, ValueError):
+                raise ProjectWorkspaceError(
+                    f"staged entry {relative} has invalid byte provenance"
+                ) from None
+            if recorded_bytes != len(encoded):
+                raise ProjectWorkspaceError(
+                    f"staged entry {relative} no longer matches its recorded byte count"
+                )
+            origin = str(entry.get("origin", ""))
+            if origin == "create":
+                if target.exists():
+                    raise ProjectWorkspaceError(
+                        f"cannot mirror {relative}: a file appeared after it was staged"
+                    )
+                continue
+            if origin != "patch":
+                raise ProjectWorkspaceError(
+                    f"staged entry {relative} has unknown origin provenance"
+                )
+            if not target.is_file() or target.is_symlink():
+                raise ProjectWorkspaceError(
+                    f"cannot mirror {relative}: its disk source is unavailable"
+                )
+            disk_sha256 = _sha256_bytes(target.read_bytes())
+            if disk_sha256 != str(entry.get("base_sha256", "")):
+                raise ProjectWorkspaceError(
+                    f"cannot mirror {relative}: its disk source changed after staging"
+                )
+
+    def _validate_external_mirror_identity(
+        self, asset_id: str, root: Path, mirror: ExternalWorkspaceMirror
+    ) -> None:
+        if mirror.asset_id != asset_id or mirror.source_root != root:
+            raise ProjectWorkspaceError(
+                "external workspace does not belong to the selected project"
+            )
+        if mirror.project_root.is_symlink() or not mirror.project_root.is_dir():
+            raise ProjectWorkspaceError(
+                "external workspace is unavailable or redirected"
+            )
+        container = mirror.project_root.parent
+        if mirror.project_root.name != "project" or not container.name.startswith(
+            _EXTERNAL_WORKSPACE_PREFIX
+        ):
+            raise ProjectWorkspaceError("external workspace identity is invalid")
+        if mirror.tree_sha256 != _external_tree_digest(mirror.files):
+            raise ProjectWorkspaceError("external workspace baseline metadata changed")
+
+    def _read_external_tree(
+        self,
+        mirror: ExternalWorkspaceMirror,
+        *,
+        baseline: Mapping[str, ExternalMirrorFile],
+    ) -> dict[str, bytes]:
+        """Read an untrusted engine workspace without following filesystem aliases."""
+        current: dict[str, bytes] = {}
+        total = 0
+        for current_dir, directories, filenames in os.walk(
+            mirror.project_root, followlinks=False
+        ):
+            current_path = Path(current_dir)
+            for name in sorted([*directories, *filenames]):
+                path = current_path / name
+                relative = path.relative_to(mirror.project_root)
+                rel = relative.as_posix()
+                if path.is_symlink():
+                    raise ProjectWorkspaceError(
+                        f"external workspace contains a symbolic link: {rel}"
+                    )
+                if any(part in {".git", ".metis"} for part in relative.parts):
+                    raise ProjectWorkspaceError(
+                        f"external workspace changed protected internals: {rel}"
+                    )
+                if _external_secret_path(relative):
+                    raise ProjectWorkspaceError(
+                        f"external workspace contains a secret-bearing path: {rel}"
+                    )
+            directories[:] = sorted(directories)
+            for filename in sorted(filenames):
+                path = current_path / filename
+                relative = path.relative_to(mirror.project_root)
+                rel = relative.as_posix()
+                if not path.is_file():
+                    raise ProjectWorkspaceError(
+                        f"external workspace contains a non-regular file: {rel}"
+                    )
+                stat = path.stat()
+                if stat.st_nlink != 1:
+                    raise ProjectWorkspaceError(
+                        f"external workspace contains a hard-linked file: {rel}"
+                    )
+                if len(current) >= (
+                    self.settings.project_manifest_max_files
+                    + self.settings.project_staged_max_files
+                ):
+                    raise ProjectWorkspaceError(
+                        "external workspace exceeds the file import limit"
+                    )
+                if (
+                    stat.st_size > self.settings.project_max_write_bytes
+                    and rel not in baseline
+                ):
+                    raise ProjectWorkspaceError(
+                        f"external create {rel} exceeds the per-file write limit"
+                    )
+                content = path.read_bytes()
+                total += len(content)
+                if total > (
+                    _EXTERNAL_MIRROR_MAX_BYTES + self.settings.project_staged_max_bytes
+                ):
+                    raise ProjectWorkspaceError(
+                        "external workspace exceeds the byte import limit"
+                    )
+                current[rel] = content
+        return current
+
+    async def rebase_external_mirror(
+        self,
+        mirror: ExternalWorkspaceMirror,
+        staged: dict[str, dict[str, Any]],
+    ) -> ExternalWorkspaceMirror:
+        """Advance one persistent engine session to its just-imported overlay.
+
+        Import deliberately invalidates the old overlay digest. Rebase proves
+        that every current mirror byte is either unchanged from the old baseline
+        or exactly present in the newly staged overlay, then returns a new
+        immutable baseline for the same directory. No project bytes are copied.
+        """
+        root = (await self.assets.project_path(mirror.asset_id)).resolve()
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._rebase_external_mirror, root, mirror, dict(staged)
+            )
+
+    def _rebase_external_mirror(
+        self,
+        root: Path,
+        mirror: ExternalWorkspaceMirror,
+        staged: dict[str, dict[str, Any]],
+    ) -> ExternalWorkspaceMirror:
+        self._validate_external_mirror_identity(mirror.asset_id, root, mirror)
+        self._validate_external_overlay(root, staged)
+        old = {item.path: item for item in mirror.files}
+        current = self._read_external_tree(mirror, baseline=old)
+        missing = sorted(set(old) - set(current))
+        if missing:
+            raise ProjectWorkspaceError(
+                f"cannot rebase an external workspace with a deletion: {missing[0]}"
+            )
+        unexpected = sorted(set(current) - set(old) - set(staged))
+        if unexpected:
+            raise ProjectWorkspaceError(
+                f"cannot rebase an unimported external change: {unexpected[0]}"
+            )
+
+        records: list[ExternalMirrorFile] = []
+        for rel in sorted(current):
+            content = current[rel]
+            digest = _sha256_bytes(content)
+            entry = staged.get(rel)
+            if entry is not None:
+                expected = str(entry.get("content", "")).encode("utf-8")
+                if content != expected:
+                    raise ProjectWorkspaceError(
+                        f"cannot rebase unimported bytes for {rel}"
+                    )
+                origin = str(entry.get("origin", ""))
+                records.append(
+                    ExternalMirrorFile(
+                        path=rel,
+                        sha256=digest,
+                        bytes=len(content),
+                        source="staged",
+                        disk_sha256=(
+                            str(entry.get("base_sha256", ""))
+                            if origin == "patch"
+                            else ""
+                        ),
+                    )
+                )
+                continue
+            prior = old.get(rel)
+            if prior is None or digest != prior.sha256:
+                raise ProjectWorkspaceError(f"cannot rebase unimported bytes for {rel}")
+            records.append(prior)
+
+        files = tuple(records)
+        return ExternalWorkspaceMirror(
+            id=mirror.id,
+            asset_id=mirror.asset_id,
+            source_root=mirror.source_root,
+            project_root=mirror.project_root,
+            tree_sha256=_external_tree_digest(files),
+            overlay_sha256=_staged_state_digest(staged),
+            files=files,
+            excluded_count=mirror.excluded_count,
+            excluded_paths=mirror.excluded_paths,
+            created_at=_now(),
+        )
+
+    async def preview_external_overlay(
+        self,
+        asset_id: str,
+        mirror: ExternalWorkspaceMirror,
+        staged: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """A read-only view of the mirror as it stands right now.
+
+        ``run_check`` has to verify what the model has written *so far*, in the
+        middle of its own turn. Running the real import to get that would
+        journal, rebase and advance the overlay digest mid-round, which is the
+        state the round's own drift proof depends on. This reads the same tree
+        through the same alias-safe reader and returns an overlay-shaped dict
+        that is handed to the verifier and then thrown away.
+
+        Nothing here mutates workspace state, and nothing outside the mirror is
+        read: the walk is bounded by the mirror's own baseline exactly as the
+        authoritative import is.
+        """
+
+        root = (await self.assets.project_path(asset_id)).resolve()
+
+        def _read() -> dict[str, dict[str, Any]]:
+            self._validate_external_mirror_identity(asset_id, root, mirror)
+            baseline = {item.path: item for item in mirror.files}
+            current = self._read_external_tree(mirror, baseline=baseline)
+            preview: dict[str, dict[str, Any]] = {
+                path: dict(entry) for path, entry in staged.items()
+            }
+            for path, content in current.items():
+                try:
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    # A binary file cannot be verified as source; the existing
+                    # overlay entry (if any) stands.
+                    continue
+                previous = baseline.get(path)
+                if previous is not None and previous.sha256 == _sha256_bytes(content):
+                    continue
+                preview[path] = {
+                    "content": text,
+                    "bytes": len(content),
+                    "origin": "preview",
+                }
+            return preview
+
+        async with self._lock:
+            return await asyncio.to_thread(_read)
+
+    async def import_external_changes(
+        self,
+        asset_id: str,
+        mirror: ExternalWorkspaceMirror,
+        staged: dict[str, dict[str, Any]],
+        *,
+        provenance: ExternalChangeProvenance,
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        """Atomically turn a mirror's byte diff into the ordinary staged overlay.
+
+        The external process never supplies a patch or a claimed file list. The
+        host walks the resulting tree, compares every byte hash to its retained
+        baseline, then sends each accepted create/modify through ``_stage_write``.
+        Any refusal aborts the whole import and the caller's overlay is untouched.
+        """
+        root = (await self.assets.project_path(asset_id)).resolve()
+        normalized_provenance = _normalized_external_provenance(provenance)
+
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._import_external_changes,
+                asset_id,
+                root,
+                mirror,
+                dict(staged),
+                normalized_provenance,
+            )
+
+    def _import_external_changes(
+        self,
+        asset_id: str,
+        root: Path,
+        mirror: ExternalWorkspaceMirror,
+        staged: dict[str, dict[str, Any]],
+        provenance: dict[str, str],
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        self._validate_external_mirror_identity(asset_id, root, mirror)
+        if mirror.overlay_sha256 != _staged_state_digest(staged):
+            raise ProjectWorkspaceError(
+                "staged overlay changed while the external coding session was running"
+            )
+        self._validate_external_overlay(root, staged)
+
+        baseline = {item.path: item for item in mirror.files}
+        current = self._read_external_tree(mirror, baseline=baseline)
+
+        missing = sorted(set(baseline) - set(current))
+        if missing:
+            missing_hashes = {baseline[path].sha256 for path in missing}
+            replacement = next(
+                (
+                    path
+                    for path, content in current.items()
+                    if path not in baseline and _sha256_bytes(content) in missing_hashes
+                ),
+                "",
+            )
+            detail = f" (possible rename to {replacement})" if replacement else ""
+            raise ProjectWorkspaceError(
+                f"external deletions and renames are not supported: {missing[0]}{detail}"
+            )
+
+        changes: list[tuple[str, str, bytes, str]] = []
+        for rel in sorted(current):
+            before = baseline.get(rel)
+            after = current[rel]
+            after_sha256 = _sha256_bytes(after)
+            if before is not None and before.sha256 == after_sha256:
+                continue
+            changes.append(
+                (rel, "modify" if before is not None else "create", after, after_sha256)
+            )
+
+        # Preflight every path, payload and target CAS before constructing any
+        # candidate entries. This makes a late forbidden file no different from
+        # an early one: neither can partially enter the returned overlay.
+        decoded: dict[str, str] = {}
+        for rel, change, content, _ in changes:
+            target = self._safe_target(root, rel, write=True)
+            decoded[rel] = _decode_external_text(rel, content)
+            if len(content) > self.settings.project_max_write_bytes:
+                raise ProjectWorkspaceError(
+                    f"external change {rel} exceeds the per-file write limit"
+                )
+            before = baseline.get(rel)
+            if change == "create":
+                if target.exists() or rel in staged:
+                    raise ProjectWorkspaceError(
+                        f"external create {rel} collided with a project file"
+                    )
+            elif before is None:
+                raise ProjectWorkspaceError(f"external baseline is missing {rel}")
+            elif before.source == "disk":
+                if (
+                    not target.is_file()
+                    or _sha256_bytes(target.read_bytes()) != before.disk_sha256
+                ):
+                    raise ProjectWorkspaceError(
+                        f"external change {rel} is stale because its disk source changed"
+                    )
+
+        next_staged = dict(staged)
+        imported: list[dict[str, Any]] = []
+        for rel, change, _, after_sha256 in changes:
+            before = baseline.get(rel)
+            if change == "create":
+                call = ProjectToolCallV1(
+                    name="create_file",
+                    arguments={"path": rel, "content": decoded[rel]},
+                )
+            else:
+                before_text = (
+                    str(next_staged[rel]["content"])
+                    if rel in next_staged
+                    else root.joinpath(rel).read_text(encoding="utf-8")
+                )
+                call = ProjectToolCallV1(
+                    name="replace_lines",
+                    arguments={
+                        "path": rel,
+                        "start_line": 1,
+                        "end_line": max(1, len(before_text.splitlines(keepends=True))),
+                        "replacement": decoded[rel],
+                    },
+                )
+            _, candidate = self._stage_write(root, call, next_staged)
+            entry = dict(candidate[rel])
+            file_provenance: dict[str, Any] = {
+                "kind": "external_workspace",
+                **provenance,
+                "workspace_id": mirror.id,
+                "workspace_baseline_sha256": mirror.tree_sha256,
+                "file_before_sha256": before.sha256 if before else "",
+                "file_after_sha256": after_sha256,
+                "excluded_path_count": mirror.excluded_count,
+                "excluded_paths": list(mirror.excluded_paths),
+            }
+            entry["provenance"] = file_provenance
+            candidate[rel] = entry
+            next_staged = candidate
+            imported.append(
+                {
+                    "path": rel,
+                    "change": change,
+                    "before_sha256": before.sha256 if before else "",
+                    "after_sha256": after_sha256,
+                    "bytes": len(decoded[rel].encode("utf-8")),
+                }
+            )
+
+        total = sum(int(entry["bytes"]) for entry in next_staged.values())
+        result: dict[str, Any] = {
+            "workspace_id": mirror.id,
+            "baseline_sha256": mirror.tree_sha256,
+            "overlay_sha256": mirror.overlay_sha256,
+            "provenance": provenance,
+            "excluded_path_count": mirror.excluded_count,
+            "excluded_paths": list(mirror.excluded_paths),
+            "changes": imported,
+            "staged_files": len(next_staged),
+            "staged_bytes": total,
+        }
+        return result, next_staged
+
+    async def discard_external_mirror(self, mirror: ExternalWorkspaceMirror) -> None:
+        """Remove only a temporary container created by ``create_external_mirror``."""
+        container = mirror.project_root.parent
+        if mirror.project_root.name != "project" or not container.name.startswith(
+            _EXTERNAL_WORKSPACE_PREFIX
+        ):
+            raise ProjectWorkspaceError("refusing to remove an unknown workspace path")
+        await asyncio.to_thread(shutil.rmtree, container, True)
+
+    async def discard_unreferenced_external_mirrors(
+        self,
+        referenced_workspace_paths: set[Path],
+        *,
+        older_than: datetime,
+    ) -> tuple[Path, ...]:
+        """Collect abandoned mirrors that crashed before a session row existed.
+
+        This deliberately accepts only old, direct children with the exact
+        ``mkdtemp`` shape.  A symlink, recent write, referenced mirror, or path
+        outside the private workspace parent turns deletion into a no-op.
+        """
+
+        if older_than.tzinfo is None:
+            raise ValueError("orphan workspace cutoff must be timezone-aware")
+        return await asyncio.to_thread(
+            self._discard_unreferenced_external_mirrors,
+            referenced_workspace_paths,
+            older_than,
+        )
+
+    def _discard_unreferenced_external_mirrors(
+        self,
+        referenced_workspace_paths: set[Path],
+        older_than: datetime,
+    ) -> tuple[Path, ...]:
+        parent = self.settings.coding_workspace_dir
+        if not parent.is_dir() or parent.is_symlink():
+            return ()
+        parent = parent.resolve()
+        referenced = {
+            Path(os.path.abspath(str(path))) for path in referenced_workspace_paths
+        }
+        removed: list[Path] = []
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                if not _EXTERNAL_WORKSPACE_NAME.fullmatch(
+                    entry.name
+                ) or not entry.is_dir(follow_symlinks=False):
+                    continue
+                container = Path(entry.path)
+                project_root = container / "project"
+                if (
+                    Path(os.path.abspath(str(project_root))) in referenced
+                    or not project_root.is_dir()
+                    or project_root.is_symlink()
+                    or self._external_workspace_is_recent_or_linked(
+                        container,
+                        older_than,
+                    )
+                ):
+                    continue
+                # Recheck after the scan narrows the race with a newly-created
+                # mirror. A current mirror is always recent even before its row
+                # has been committed.
+                if self._external_workspace_is_recent_or_linked(
+                    container,
+                    older_than,
+                ):
+                    continue
+                shutil.rmtree(container)
+                removed.append(container)
+        return tuple(removed)
+
+    @staticmethod
+    def _external_workspace_is_recent_or_linked(
+        container: Path,
+        older_than: datetime,
+    ) -> bool:
+        cutoff = older_than.timestamp()
+        try:
+            if container.lstat().st_mtime >= cutoff:
+                return True
+            for root, directories, files in os.walk(container, followlinks=False):
+                root_path = Path(root)
+                if root_path.is_symlink() or root_path.lstat().st_mtime >= cutoff:
+                    return True
+                for name in (*directories, *files):
+                    candidate = root_path / name
+                    stat = candidate.lstat()
+                    if candidate.is_symlink() or stat.st_mtime >= cutoff:
+                        return True
+        except FileNotFoundError:
+            return True
+        return False
 
     async def execute_staged(
         self,
@@ -844,7 +2117,9 @@ class ProjectWorkspaceService:
         limit = min(max(int(arguments.get("limit", 200)), 1), 500)
 
         def matches(rel: str) -> bool:
-            return not prefix or rel == prefix or rel.startswith(prefix.rstrip("/") + "/")
+            return (
+                not prefix or rel == prefix or rel.startswith(prefix.rstrip("/") + "/")
+            )
 
         names = {rel for rel in staged if matches(rel)}
         for _, relative in self._iter_files(root):
@@ -928,7 +2203,10 @@ class ProjectWorkspaceService:
 
         if call.name == "create_file":
             content = str(call.arguments.get("content", ""))
-            if not content or len(content.encode("utf-8")) > self.settings.project_max_write_bytes:
+            if (
+                not content
+                or len(content.encode("utf-8")) > self.settings.project_max_write_bytes
+            ):
                 raise ProjectWorkspaceError(
                     "new project file is empty or exceeds the write limit. "
                     'create_file needs the complete file text in "content"; '
@@ -963,7 +2241,9 @@ class ProjectWorkspaceService:
         elif call.name == "replace_lines":
             replacement = str(call.arguments.get("replacement", ""))
             if len(replacement.encode("utf-8")) > self.settings.project_max_write_bytes:
-                raise ProjectWorkspaceError("project replacement exceeds the write limit")
+                raise ProjectWorkspaceError(
+                    "project replacement exceeds the write limit"
+                )
             if existing is not None:
                 text = str(existing["content"])
                 origin = str(existing["origin"])
@@ -977,6 +2257,7 @@ class ProjectWorkspaceService:
                     "replace_lines target must be an existing or staged text file"
                 )
             updated = _splice_lines(text, call.arguments)
+            _guard_whole_file_repair(rel, text, updated, call.arguments)
             entry = {
                 "content": updated,
                 "origin": origin,
@@ -993,9 +2274,12 @@ class ProjectWorkspaceService:
                     f"{sorted(call.arguments)}. If quoting the block exactly keeps "
                     "failing, use replace_lines with the line range instead.",
                     argument_shape=True,
+                    repair_strategy="whole_file",
                 )
             if len(replacement.encode("utf-8")) > self.settings.project_max_write_bytes:
-                raise ProjectWorkspaceError("project replacement exceeds the write limit")
+                raise ProjectWorkspaceError(
+                    "project replacement exceeds the write limit"
+                )
             if existing is not None:
                 text = str(existing["content"])
                 origin = str(existing["origin"])
@@ -1031,11 +2315,14 @@ class ProjectWorkspaceService:
                     f"patch context matched {located.count} times "
                     f"({located.how}); {advice}",
                     argument_shape=True,
+                    repair_strategy="whole_file",
                 )
             matched_how = located.how
             updated = text[: located.start] + located.replacement + text[located.end :]
             if len(updated.encode("utf-8")) > self.settings.project_max_write_bytes:
-                raise ProjectWorkspaceError("updated project file exceeds the write limit")
+                raise ProjectWorkspaceError(
+                    "updated project file exceeds the write limit"
+                )
             entry = {
                 "content": updated,
                 "origin": origin,
@@ -1060,6 +2347,13 @@ class ProjectWorkspaceService:
             raise ProjectWorkspaceError(
                 f"{rel} was not staged because it does not parse — {broken}. {hint}",
                 argument_shape=True,
+                repair_strategy=(
+                    "whole_file"
+                    if call.name in {"apply_patch", "replace_lines"}
+                    else ""
+                ),
+                repairable_external=True,
+                repair_path=rel,
             )
 
         next_staged = dict(staged)
@@ -1158,7 +2452,10 @@ class ProjectWorkspaceService:
                 if origin == "patch":
                     if not target.is_file():
                         skipped.append(
-                            {"path": rel, "reason": "the file disappeared after staging"}
+                            {
+                                "path": rel,
+                                "reason": "the file disappeared after staging",
+                            }
                         )
                         continue
                     disk_sha = hashlib.sha256(
@@ -1170,7 +2467,7 @@ class ProjectWorkspaceService:
                         )
                         continue
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(str(entry["content"]), encoding="utf-8")
+                _atomic_write_text(target, str(entry["content"]))
                 applied.append(rel)
             if applied:
                 self._record_batch_mutation(root, applied)
@@ -1217,13 +2514,27 @@ class ProjectWorkspaceService:
                 # uv prepares an isolated environment from the project's own
                 # requirements on first launch and reuses its cache after.
                 command = [
-                    "{uv}", "run", "--with-requirements", "requirements.txt",
-                    "uvicorn", entry_module, "--host", "{host}", "--port", "{port}",
+                    "{uv}",
+                    "run",
+                    "--with-requirements",
+                    "requirements.txt",
+                    "uvicorn",
+                    entry_module,
+                    "--host",
+                    "{host}",
+                    "--port",
+                    "{port}",
                 ]
             else:
                 command = [
-                    "{python}", "-m", "uvicorn", entry_module,
-                    "--host", "{host}", "--port", "{port}",
+                    "{python}",
+                    "-m",
+                    "uvicorn",
+                    entry_module,
+                    "--host",
+                    "{host}",
+                    "--port",
+                    "{port}",
                 ]
             capabilities = capabilities_of_tree(root)
             env_keys = sorted(
@@ -1258,28 +2569,75 @@ class ProjectWorkspaceService:
         staged: dict[str, dict[str, Any]],
         capabilities: Iterable[str],
     ) -> tuple[dict[str, dict[str, Any]], list[str]]:
-        """Seed the framework-owned scaffold into a build turn's overlay.
+        """Seed or upgrade the framework-owned scaffold in the build overlay.
 
-        Only paths absent from both the overlay and the disk are added, so a
-        rebuild in a project that already carries appkit stages nothing and
-        the approval card stays about the model's own work. All-or-nothing
-        against the changeset budgets: a build too large to hold the scaffold
-        proceeds without it rather than dying before the first model step.
+        Existing appkit files are Metis-owned, so canonical changes are staged
+        as approval-visible patches pinned to their exact disk hashes. Files
+        outside appkit remain seed-only, and unknown appkit extras are left
+        alone. All-or-nothing against the changeset budgets: a build too large
+        to hold the scaffold proceeds without it rather than dying before the
+        first model step.
         """
         root = await self.assets.project_path(asset_id)
 
         def seed() -> tuple[dict[str, dict[str, Any]], list[str]]:
-            sources = scaffold_sources(capabilities)
+            def canonical_target(rel: str) -> Path | None:
+                lexical = root / rel
+                try:
+                    resolved = self._safe_target(root, rel, write=True, framework=True)
+                except ProjectWorkspaceError:
+                    return None
+                # `_safe_target` resolves every component. Equality therefore
+                # proves no appkit path is being redirected through a symlink.
+                return lexical if resolved == lexical else None
+
+            effective_capabilities = set(capabilities)
+            existing_paths = set(staged)
+            oci_path = canonical_target("appkit/oci_responses.py")
+            if oci_path is not None and oci_path.is_file():
+                existing_paths.add("appkit/oci_responses.py")
+            for rel in ("appkit/web.py", "appkit/static/theme.css"):
+                optional_path = canonical_target(rel)
+                if optional_path is not None and optional_path.is_file():
+                    existing_paths.add(rel)
+            if "appkit/oci_responses.py" in existing_paths:
+                effective_capabilities.add("oci_responses")
+            if existing_paths & {"appkit/web.py", "appkit/static/theme.css"}:
+                effective_capabilities.add("web_ui")
+
+            sources = scaffold_sources(effective_capabilities)
             next_staged = dict(staged)
             added: list[str] = []
             for rel in sorted(sources):
-                if rel in next_staged or (root / rel).exists():
+                if rel in next_staged:
                     continue
                 content = sources[rel]
+                target = canonical_target(rel)
+                if target is None:
+                    continue
+                if target.exists():
+                    # .env.example and any future non-appkit seed are
+                    # project-owned once present; only the declared Metis
+                    # boundary is eligible for automatic upgrades.
+                    if not rel.startswith("appkit/") or not target.is_file():
+                        continue
+                    try:
+                        disk_content = target.read_text(encoding="utf-8")
+                    except (OSError, UnicodeError):
+                        continue
+                    if disk_content == content:
+                        continue
+                    origin = "patch"
+                    base_sha256 = hashlib.sha256(
+                        disk_content.encode("utf-8")
+                    ).hexdigest()
+                else:
+                    origin = "create"
+                    base_sha256 = ""
                 next_staged[rel] = {
                     "content": content,
-                    "origin": "create",
-                    "base_sha256": "",
+                    "origin": origin,
+                    "base_sha256": base_sha256,
                     "bytes": len(content.encode("utf-8")),
                 }
                 added.append(rel)
@@ -1350,14 +2708,16 @@ class ProjectWorkspaceService:
         asset_id: str,
         staged: dict[str, dict[str, Any]],
         planned: list[str] | None = None,
+        required: list[str] | None = None,
     ) -> list[dict[str, str]]:
         """Check the changeset against what this turn set out to do.
 
         The rungs below prove the code is well-formed. This one proves it is the
-        code the turn committed to: every planned file written, and no frontend
-        call whose body the backend would never read. Pure inspection, like the
-        wiring gate — the files on disk are consulted so a turn that only edits
-        part of a project is not told to re-write what is already there.
+        code the turn committed to: every planned file written, every file the
+        user's own request explicitly required, and no frontend call whose body
+        the backend would never read. Pure inspection, like the wiring gate —
+        the files on disk are consulted so a turn that only edits part of a
+        project is not told to re-write what is already there.
         """
         if not staged:
             return []
@@ -1366,7 +2726,10 @@ class ProjectWorkspaceService:
         def check() -> list[dict[str, str]]:
             return [
                 *staged_conformance_errors(
-                    staged, planned=list(planned or []), on_disk=paths
+                    staged,
+                    planned=list(planned or []),
+                    required=list(required or []),
+                    on_disk=paths,
                 ),
                 # Contracts BETWEEN files: the defects where every file is
                 # individually well-formed and the changeset is still broken.
@@ -1384,16 +2747,15 @@ class ProjectWorkspaceService:
         one is a list to satisfy rather than a repository to re-read.
         """
         _, sources, _ = await self._static_context(asset_id, staged)
-        sheets = {
-            path: text for path, text in sources.items() if is_stylesheet(path)
-        }
+        sheets = {path: text for path, text in sources.items() if is_stylesheet(path)}
         for path, entry in staged.items():
             if is_stylesheet(path):
                 sheets[path] = str(entry.get("content", ""))
         markup = {
             path: text
             for path, text in sources.items()
-            if Path(path).suffix.lower() in {".jsx", ".tsx", ".vue", ".svelte", ".html", ".htm"}
+            if Path(path).suffix.lower()
+            in {".jsx", ".tsx", ".vue", ".svelte", ".html", ".htm"}
         }
         if not sheets or not markup:
             return {"classes": [], "variables": []}
@@ -1419,7 +2781,9 @@ class ProjectWorkspaceService:
             root = await self.assets.project_path(asset_id)
         except AssetLibraryError as exc:
             return SandboxOutcome(available=False, reason=str(exc))
-        paths, _, requirements = await self._static_context(asset_id, staged, with_sources=False)
+        paths, _, requirements = await self._static_context(
+            asset_id, staged, with_sources=False
+        )
         return await self.sandbox.verify(
             root=root,
             staged=staged,
@@ -1464,9 +2828,20 @@ class ProjectWorkspaceService:
                 # has to be judged against the components already on disk, which
                 # are the ones about to render against it.
                 if not with_sources or (
-                    path.suffix.lower() not in {
-                        ".py", ".pyi", ".css", ".scss", ".sass", ".less",
-                        ".jsx", ".tsx", ".vue", ".svelte", ".html", ".htm",
+                    path.suffix.lower()
+                    not in {
+                        ".py",
+                        ".pyi",
+                        ".css",
+                        ".scss",
+                        ".sass",
+                        ".less",
+                        ".jsx",
+                        ".tsx",
+                        ".vue",
+                        ".svelte",
+                        ".html",
+                        ".htm",
                     }
                     and path.name != "package.json"
                 ):
@@ -1484,7 +2859,9 @@ class ProjectWorkspaceService:
                 candidate = root / name
                 try:
                     if candidate.is_file():
-                        disk_requirements += candidate.read_text(encoding="utf-8") + "\n"
+                        disk_requirements += (
+                            candidate.read_text(encoding="utf-8") + "\n"
+                        )
                 except (OSError, UnicodeError):
                     continue
             return paths, sources, _requirements_from(staged, {"": disk_requirements})
@@ -1688,11 +3065,20 @@ class ProjectWorkspaceService:
             if start < 0 or end < start:
                 return
             existing = text[start + len(_LEARNINGS_START) : end]
-            known = {line[2:].strip().casefold() for line in existing.splitlines() if line.startswith("- ")}
+            known = {
+                line[2:].strip().casefold()
+                for line in existing.splitlines()
+                if line.startswith("- ")
+            }
             additions = [item for item in clean if item.casefold() not in known]
             if not additions:
                 return
-            body = existing.rstrip() + "\n" + "\n".join(f"- {item}" for item in additions) + "\n"
+            body = (
+                existing.rstrip()
+                + "\n"
+                + "\n".join(f"- {item}" for item in additions)
+                + "\n"
+            )
             text = text[: start + len(_LEARNINGS_START)] + body + text[end:]
             log = f"\n- {_now()[:10]} · `{run_id}` · captured {len(additions)} durable learning(s).\n"
             text = text.rstrip() + log
@@ -1720,7 +3106,11 @@ class ProjectWorkspaceService:
             if path.is_symlink():
                 return {}
             value = json.loads(path.read_text(encoding="utf-8"))
-            return value if isinstance(value, dict) and value.get("schema_version") == "1" else {}
+            return (
+                value
+                if isinstance(value, dict) and value.get("schema_version") == "1"
+                else {}
+            )
         except (OSError, ValueError, json.JSONDecodeError):
             return {}
 
@@ -1773,7 +3163,9 @@ class ProjectWorkspaceService:
         samples: list[str] = []
         remaining = self.settings.project_manifest_sample_chars
         priority = list(_PRIORITY_FILES)
-        priority.extend(path for path in paths if path.endswith(("/AGENTS.md", "/README.md")))
+        priority.extend(
+            path for path in paths if path.endswith(("/AGENTS.md", "/README.md"))
+        )
         for relative in dict.fromkeys(priority):
             if remaining <= 0:
                 break
@@ -1792,7 +3184,9 @@ class ProjectWorkspaceService:
             "total_bytes": total_bytes,
             "tree_digest": digest.hexdigest(),
             "languages": dict(languages.most_common()),
-            "key_files": [item for item in paths if Path(item).name in _PRIORITY_FILES][:80],
+            "key_files": [item for item in paths if Path(item).name in _PRIORITY_FILES][
+                :80
+            ],
             "file_tree": paths[:2_000],
             "truncated": len(paths) >= self.settings.project_manifest_max_files,
         }
@@ -1802,7 +3196,9 @@ class ProjectWorkspaceService:
         self, metadata: dict[str, Any], bootstrap: ProjectBootstrapV1
     ) -> str:
         def bullets(values: list[str], empty: str) -> str:
-            cleaned = [_bounded_line(item, 600) for item in values if _bounded_line(item, 600)]
+            cleaned = [
+                _bounded_line(item, 600) for item in values if _bounded_line(item, 600)
+            ]
             return "\n".join(f"- {item}" for item in cleaned) or f"- {empty}"
 
         return (
@@ -1843,11 +3239,7 @@ class ProjectWorkspaceService:
                 # A missing/corrupt JSON manifest must not erase a surviving
                 # project memory file. Its managed markers remain usable.
                 return
-            generated = (
-                existing.rstrip()
-                + "\n\n---\n\n"
-                + generated
-            )
+            generated = existing.rstrip() + "\n\n---\n\n" + generated
         path.write_text(generated, encoding="utf-8")
 
     def _record_mutation(
@@ -1901,11 +3293,18 @@ class ProjectWorkspaceService:
                 f"'{_suggest_relative(relative)}' instead."
             )
         if candidate_path.parts and candidate_path.parts[0] in {".git", ".metis"}:
-            raise ProjectWorkspaceError("models cannot directly change Metis or source-control internals")
+            raise ProjectWorkspaceError(
+                "models cannot directly change Metis or source-control internals"
+            )
         # Model writes stop at the scaffold boundary; reads pass. `framework`
         # marks the host's own writes — staging the scaffold, materializing an
         # approved overlay — which are the only way appkit/ content ever moves.
-        if write and not framework and candidate_path.parts and candidate_path.parts[0] == "appkit":
+        if (
+            write
+            and not framework
+            and candidate_path.parts
+            and candidate_path.parts[0] == "appkit"
+        ):
             raise ProjectWorkspaceError(
                 "appkit/ is Metis-owned scaffold: import it from your application "
                 "modules instead of editing it. Write your changes elsewhere."
@@ -1923,11 +3322,15 @@ class ProjectWorkspaceService:
         try:
             candidate.relative_to(root)
         except ValueError as exc:
-            raise ProjectWorkspaceError("project path escaped the selected project") from exc
+            raise ProjectWorkspaceError(
+                "project path escaped the selected project"
+            ) from exc
         if candidate.exists() and candidate.is_symlink():
             raise ProjectWorkspaceError("project tools do not follow symbolic links")
         if write and candidate.exists() and not candidate.is_file():
-            raise ProjectWorkspaceError("project mutation target must be a regular file")
+            raise ProjectWorkspaceError(
+                "project mutation target must be a regular file"
+            )
         return candidate
 
     def _list_files(self, root: Path, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1946,11 +3349,15 @@ class ProjectWorkspaceService:
         relative = _bounded_line(arguments.get("path"), 1_000)
         path = self._safe_target(root, relative)
         if not path.is_file() or not _is_text_file(path):
-            raise ProjectWorkspaceError("project file is unavailable or not readable text")
+            raise ProjectWorkspaceError(
+                "project file is unavailable or not readable text"
+            )
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
-            raise ProjectWorkspaceError("project file could not be decoded as UTF-8") from exc
+            raise ProjectWorkspaceError(
+                "project file could not be decoded as UTF-8"
+            ) from exc
         return {
             **_read_window(text, arguments, self.settings.project_tool_result_chars),
             "path": relative,
@@ -1977,7 +3384,11 @@ class ProjectWorkspaceService:
                 haystack = line if case_sensitive else line.casefold()
                 if needle in haystack:
                     matches.append(
-                        {"path": relative.as_posix(), "line": number, "text": line[:500]}
+                        {
+                            "path": relative.as_posix(),
+                            "line": number,
+                            "text": line[:500],
+                        }
                     )
                     if len(matches) >= limit:
                         return {"matches": matches, "truncated": True}
@@ -1987,7 +3398,9 @@ class ProjectWorkspaceService:
         relative = _bounded_line(arguments.get("path"), 1_000)
         path = self._safe_target(root, relative, write=True)
         if not path.is_file() or not _is_text_file(path):
-            raise ProjectWorkspaceError("replace_lines target must be an existing text file")
+            raise ProjectWorkspaceError(
+                "replace_lines target must be an existing text file"
+            )
         if (
             len(str(arguments.get("replacement", "")).encode("utf-8"))
             > self.settings.project_max_write_bytes
@@ -1995,6 +3408,7 @@ class ProjectWorkspaceService:
             raise ProjectWorkspaceError("project replacement exceeds the write limit")
         text = path.read_text(encoding="utf-8")
         updated = _splice_lines(text, arguments)
+        _guard_whole_file_repair(relative, text, updated, arguments)
         if len(updated.encode("utf-8")) > self.settings.project_max_write_bytes:
             raise ProjectWorkspaceError("updated project file exceeds the write limit")
         path.write_text(updated, encoding="utf-8")
@@ -2010,12 +3424,16 @@ class ProjectWorkspaceService:
         original = str(arguments.get("original", ""))
         replacement = str(arguments.get("replacement", ""))
         if not original:
-            raise ProjectWorkspaceError("apply_patch requires a non-empty exact original block")
+            raise ProjectWorkspaceError(
+                "apply_patch requires a non-empty exact original block"
+            )
         if len(replacement.encode("utf-8")) > self.settings.project_max_write_bytes:
             raise ProjectWorkspaceError("project replacement exceeds the write limit")
         path = self._safe_target(root, relative, write=True)
         if not path.is_file() or not _is_text_file(path):
-            raise ProjectWorkspaceError("apply_patch target must be an existing text file")
+            raise ProjectWorkspaceError(
+                "apply_patch target must be an existing text file"
+            )
         text = path.read_text(encoding="utf-8")
         occurrences = text.count(original)
         if occurrences != 1:
@@ -2038,10 +3456,14 @@ class ProjectWorkspaceService:
         content = str(arguments.get("content", ""))
         encoded = content.encode("utf-8")
         if not content or len(encoded) > self.settings.project_max_write_bytes:
-            raise ProjectWorkspaceError("new project file is empty or exceeds the write limit")
+            raise ProjectWorkspaceError(
+                "new project file is empty or exceeds the write limit"
+            )
         path = self._safe_target(root, relative, write=True)
         if path.exists():
-            raise ProjectWorkspaceError("create_file refuses to overwrite an existing file")
+            raise ProjectWorkspaceError(
+                "create_file refuses to overwrite an existing file"
+            )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return {

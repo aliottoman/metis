@@ -335,7 +335,9 @@ def _parse_build_steps(raw: object) -> tuple[tuple[tuple[str, ...], ...], bool]:
     return tuple(steps), False
 
 
-def _substitute(argv: tuple[str, ...], *, port: int, python: str, uv: str) -> tuple[str, ...]:
+def _substitute(
+    argv: tuple[str, ...], *, port: int, python: str, uv: str
+) -> tuple[str, ...]:
     """Fill the launch placeholders in one argv.
 
     Shared by the launch command and every build step, so both resolve
@@ -360,9 +362,7 @@ def manifest_metadata_from_body(body: dict) -> _ManifestMetadata:
     """
     metadata = _ManifestMetadata()
     metadata.name = _single_line(body.get("name"), 120)
-    metadata.summary = _single_line(
-        body.get("summary", body.get("description")), 240
-    )
+    metadata.summary = _single_line(body.get("summary", body.get("description")), 240)
     metadata.category = _single_line(body.get("category"), 60)
     metadata.entrypoint = _single_line(body.get("entrypoint"), 240)
     if isinstance(body.get("tags"), list):
@@ -701,7 +701,14 @@ def _framework_and_entrypoint(project: Path) -> tuple[str | None, str | None, se
             return 10, name
         if any(
             token in stem
-            for token in ("chatbot", "dashboard", "demo", "agent", "generator", "extractor")
+            for token in (
+                "chatbot",
+                "dashboard",
+                "demo",
+                "agent",
+                "generator",
+                "extractor",
+            )
         ):
             return 20, name
         return 50, name
@@ -765,29 +772,59 @@ def _category_and_tags(
     text = f"{name} {summary} {readme[:8_000]}".casefold()
     if explicit_category:
         category = explicit_category
-    elif any(token in text for token in ("invoice", "document extraction", "document understanding", "ocr", "data extraction")):
+    elif any(
+        token in text
+        for token in (
+            "invoice",
+            "document extraction",
+            "document understanding",
+            "ocr",
+            "data extraction",
+        )
+    ):
         category = "Document AI"
     elif any(token in text for token in ("voice", "audio", "speech", "tts", "whisper")):
         category = "Voice & Audio"
-    elif any(token in text for token in ("video", "image", "vision", "vlm", "multimodal")):
+    elif any(
+        token in text for token in ("video", "image", "vision", "vlm", "multimodal")
+    ):
         category = "Vision & Media"
     elif any(token in text for token in ("health", "medical", "patient", "clinical")):
         category = "Healthcare"
-    elif any(token in text for token in ("insurance", "claims", "financial", "funding", "earnings")):
+    elif any(
+        token in text
+        for token in ("insurance", "claims", "financial", "funding", "earnings")
+    ):
         category = "Finance & Insurance"
-    elif any(token in text for token in ("legal", "policy", "compliance", "tender", "due diligence")):
+    elif any(
+        token in text
+        for token in ("legal", "policy", "compliance", "tender", "due diligence")
+    ):
         category = "Legal & Policy"
     elif any(token in text for token in ("architecture", "diagram", "topology")):
         category = "Architecture"
     elif any(token in text for token in ("analytics", "dashboard", "metric", "report")):
         category = "Analytics"
-    elif any(token in text for token in ("rag", "vector", "database", "sql", "data pipeline")):
+    elif any(
+        token in text for token in ("rag", "vector", "database", "sql", "data pipeline")
+    ):
         category = "Data & Knowledge"
-    elif any(token in text for token in ("agent", "generative ai", " llm", "artificial intelligence")):
+    elif any(
+        token in text
+        for token in ("agent", "generative ai", " llm", "artificial intelligence")
+    ):
         category = "AI & Agents"
     elif any(token in text for token in ("api", "developer", "sdk", "backend")):
         category = "Developer Tools"
-    elif framework in {"Next.js", "SvelteKit", "Nuxt", "Vite", "React", "Vue", "Static HTML"}:
+    elif framework in {
+        "Next.js",
+        "SvelteKit",
+        "Nuxt",
+        "Vite",
+        "React",
+        "Vue",
+        "Static HTML",
+    }:
         category = "Web Apps"
     else:
         category = "Other"
@@ -964,9 +1001,13 @@ class AssetManager:
                 or project.parent not in allowed_roots
             ):
                 raise AssetLibraryError("project no longer matches its saved grant")
-            expected_id = f"asset_{hashlib.sha256(str(project).encode('utf-8')).hexdigest()[:20]}"
+            expected_id = (
+                f"asset_{hashlib.sha256(str(project).encode('utf-8')).hexdigest()[:20]}"
+            )
             if expected_id != asset_id:
-                raise AssetLibraryError("project identity no longer matches its saved grant")
+                raise AssetLibraryError(
+                    "project identity no longer matches its saved grant"
+                )
             return project
 
     async def create(self, name: str) -> AssetV1:
@@ -1004,9 +1045,7 @@ class AssetManager:
         except (OSError, PermissionError) as exc:
             raise AssetLibraryError("the project folder could not be created") from exc
         await self.scan()
-        created_id = (
-            f"asset_{hashlib.sha256(str((root / cleaned).resolve()).encode('utf-8')).hexdigest()[:20]}"
-        )
+        created_id = f"asset_{hashlib.sha256(str((root / cleaned).resolve()).encode('utf-8')).hexdigest()[:20]}"
         async with self._lock:
             record = self._catalog.get(created_id)
             if record is None:
@@ -1113,7 +1152,9 @@ class AssetManager:
             try:
                 first = await self._spawn(first_argv, cwd=record.path, env=child_env)
             except (OSError, ValueError) as exc:
-                raise AssetLibraryError(f"asset failed to start: {type(exc).__name__}") from exc
+                raise AssetLibraryError(
+                    f"asset failed to start: {type(exc).__name__}"
+                ) from exc
             run = _ProcessRun(
                 process=first,
                 port=port,
@@ -1213,9 +1254,13 @@ class AssetManager:
                         f"[Metis] build step {index + 1} could not start: {type(exc).__name__}\n",
                     )
                     return
-            run.append_logs(f"[Metis] build {index + 1}/{total} · {' '.join(resolved)}\n")
+            run.append_logs(
+                f"[Metis] build {index + 1}/{total} · {' '.join(resolved)}\n"
+            )
             try:
-                await asyncio.wait_for(self._capture_output(run), timeout=_BUILD_STEP_TIMEOUT)
+                await asyncio.wait_for(
+                    self._capture_output(run), timeout=_BUILD_STEP_TIMEOUT
+                )
             except TimeoutError:
                 self._terminate(run.process)
                 try:
@@ -1246,7 +1291,8 @@ class AssetManager:
             )
         except (OSError, ValueError) as exc:
             self._fail_build(
-                run, f"[Metis] launch could not start after build: {type(exc).__name__}\n"
+                run,
+                f"[Metis] launch could not start after build: {type(exc).__name__}\n",
             )
             return
         run.building = False
@@ -1289,9 +1335,7 @@ class AssetManager:
         async with self._lock:
             record = self._lookup(asset_id)
             run = self._runs.get(asset_id)
-            if run is None or (
-                not run.building and run.process.returncode is not None
-            ):
+            if run is None or (not run.building and run.process.returncode is not None):
                 return self._view(record)
             # While building, `run.process` is the current build step (which may
             # have just exited between steps); flag the stop so the build loop
@@ -1353,7 +1397,9 @@ class AssetManager:
                     )
                 original = _read_text(path, _ENV_FILE_LIMIT) if exists else ""
                 if original is None:
-                    raise AssetEnvironmentError("the project .env file could not be read")
+                    raise AssetEnvironmentError(
+                        "the project .env file could not be read"
+                    )
                 _write_env_file(path, _render_env_file(original, values))
             except OSError as exc:
                 raise AssetEnvironmentError(
@@ -1366,7 +1412,9 @@ class AssetManager:
             record = self._lookup(asset_id)
             run = self._runs.get(asset_id)
             if run is None:
-                return AssetLogsV1(asset_id=asset_id, status=self._status(record), logs="")
+                return AssetLogsV1(
+                    asset_id=asset_id, status=self._status(record), logs=""
+                )
             text = run.logs
             for secret in run.secrets:
                 text = text.replace(secret, "[REDACTED]")
@@ -1385,7 +1433,9 @@ class AssetManager:
             if self._closed:
                 return
             self._closed = True
-            active = [run for run in self._runs.values() if run.process.returncode is None]
+            active = [
+                run for run in self._runs.values() if run.process.returncode is None
+            ]
             for run in active:
                 run.requested_stop = True
                 self._terminate(run.process)
@@ -1395,7 +1445,9 @@ class AssetManager:
             except TimeoutError:
                 self._kill(run.process)
                 await run.process.wait()
-        reader_tasks = [run.reader_task for run in self._runs.values() if run.reader_task]
+        reader_tasks = [
+            run.reader_task for run in self._runs.values() if run.reader_task
+        ]
         if reader_tasks:
             await asyncio.gather(*reader_tasks, return_exceptions=True)
         readiness_tasks = [
@@ -1522,7 +1574,9 @@ class AssetManager:
             return None
         project = Path(raw_path).expanduser().resolve(strict=False)
         allowed_parents = {Path(root) for root in self._root_signature()}
-        expected_id = f"asset_{hashlib.sha256(str(project).encode('utf-8')).hexdigest()[:20]}"
+        expected_id = (
+            f"asset_{hashlib.sha256(str(project).encode('utf-8')).hexdigest()[:20]}"
+        )
         if project.parent not in allowed_parents or expected_id != asset_id:
             return None
 
@@ -1538,15 +1592,21 @@ class AssetManager:
             for item in (raw.get("tags") if isinstance(raw.get("tags"), list) else [])
             if (tag := _slug_tag(item)) is not None
         )[:16]
-        env_keys = tuple(sorted({
-            item
-            for item in (
-                raw.get("env_keys") if isinstance(raw.get("env_keys"), list) else []
+        env_keys = tuple(
+            sorted(
+                {
+                    item
+                    for item in (
+                        raw.get("env_keys")
+                        if isinstance(raw.get("env_keys"), list)
+                        else []
+                    )
+                    if isinstance(item, str)
+                    and _ENV_KEY.fullmatch(item)
+                    and not _is_reserved_env(item)
+                }
             )
-            if isinstance(item, str)
-            and _ENV_KEY.fullmatch(item)
-            and not _is_reserved_env(item)
-        }))[:64]
+        )[:64]
 
         command = _valid_argv(raw.get("command"))
         build, invalid_build = _parse_build_steps(raw.get("build"))
@@ -1607,7 +1667,9 @@ class AssetManager:
                     "framework": record.framework,
                     "entrypoint": record.entrypoint,
                     "env_keys": list(record.env_keys),
-                    "command": list(record.command) if record.command is not None else None,
+                    "command": list(record.command)
+                    if record.command is not None
+                    else None,
                     "launch_path": record.launch_path,
                     "build": [list(step) for step in record.build],
                 }
@@ -1617,7 +1679,8 @@ class AssetManager:
         temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         try:
             temporary.write_text(
-                json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+                json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
+                + "\n",
                 encoding="utf-8",
             )
             if os.name == "posix":
@@ -1650,9 +1713,13 @@ class AssetManager:
         allowed = set(record.env_keys)
         for key, value in provided.items():
             if not _ENV_KEY.fullmatch(key) or _is_reserved_env(key):
-                raise AssetEnvironmentError(f"environment key {key!r} is reserved or invalid")
+                raise AssetEnvironmentError(
+                    f"environment key {key!r} is reserved or invalid"
+                )
             if key not in allowed:
-                raise AssetEnvironmentError(f"environment key {key!r} is not declared by the asset")
+                raise AssetEnvironmentError(
+                    f"environment key {key!r} is not declared by the asset"
+                )
             if not isinstance(value, str) or len(value) > 16_384 or "\x00" in value:
                 raise AssetEnvironmentError(f"environment value for {key!r} is invalid")
         return dict(provided)
@@ -1674,7 +1741,9 @@ class AssetManager:
             entrypoint=record.entrypoint,
             env_keys=list(record.env_keys),
             env_file=[
-                AssetEnvVarV1(key=key, is_set=bool(value), sensitive=_is_sensitive_env(key))
+                AssetEnvVarV1(
+                    key=key, is_set=bool(value), sensitive=_is_sensitive_env(key)
+                )
                 for key, value in list((env_file or {}).items())[:64]
             ],
             env_file_present=env_file is not None,
@@ -1744,7 +1813,9 @@ class AssetManager:
                 return
             if run.process.returncode is None and not run.requested_stop:
                 run.startup_failed = True
-                run.append_logs("\n[Metis] Startup timed out before the loopback port became ready.\n")
+                run.append_logs(
+                    "\n[Metis] Startup timed out before the loopback port became ready.\n"
+                )
                 self._terminate(run.process)
         finally:
             run.ready_event.set()

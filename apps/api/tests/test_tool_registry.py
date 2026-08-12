@@ -5,6 +5,7 @@ routing driven by the registry catalog is byte-identical to the pre-registry v1
 behavior, and that the framework-of-control invariants hold (unknown profiles
 fail closed, unregistered slugs never route).
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -155,7 +156,9 @@ async def test_registry_catalog_routes_identically_to_v1_defaults() -> None:
 
     for active in (False, True):
         request = _arch_request(active=active)
-        via_registry = normalize_plan_semantics(_neutral_plan(), request, registry_catalog)
+        via_registry = normalize_plan_semantics(
+            _neutral_plan(), request, registry_catalog
+        )
         via_v1 = normalize_plan_semantics(_neutral_plan(), request, v1_catalog)
         # Registry-driven routing must equal the hardcoded v1 routing exactly.
         assert via_registry.model_dump() == via_v1.model_dump()
@@ -190,7 +193,9 @@ def test_validate_rejects_unregistered_slug() -> None:
         risk_level=RiskLevel.R2,
     )
     with pytest.raises(ValueError, match="only registered tool capabilities"):
-        validate_plan_semantics(request=request, plan=rogue, catalog=default_routing_catalog())
+        validate_plan_semantics(
+            request=request, plan=rogue, catalog=default_routing_catalog()
+        )
 
 
 @pytest.mark.asyncio
@@ -229,17 +234,32 @@ async def test_builtin_content_change_at_same_version_upgrades_in_place() -> Non
         )
     )
     await db.upsert_tool_definition(original, activate=True)
-    upgraded = finalize(original.model_copy(update={"archetype": "architecture", "content_hash": ""}))
+    upgraded = finalize(
+        original.model_copy(update={"archetype": "architecture", "content_hash": ""})
+    )
     assert upgraded.content_hash != original.content_hash
     await db.upsert_tool_definition(upgraded, activate=True)  # must not raise
     active = await db.get_active_tool_definition(REFERENCE_ARCHITECTURE_SLUG)
     assert active is not None and active.content_hash == upgraded.content_hash
     assert active.archetype == "architecture"
-    rows = [r for r in await db.list_tool_definitions() if r.slug == REFERENCE_ARCHITECTURE_SLUG]
+    rows = [
+        r
+        for r in await db.list_tool_definitions()
+        if r.slug == REFERENCE_ARCHITECTURE_SLUG
+    ]
     assert len(rows) == 1  # upgraded in place, not duplicated
     # Re-seeding the same content again is idempotent.
     await db.upsert_tool_definition(upgraded, activate=True)
-    assert len([r for r in await db.list_tool_definitions() if r.slug == REFERENCE_ARCHITECTURE_SLUG]) == 1
+    assert (
+        len(
+            [
+                r
+                for r in await db.list_tool_definitions()
+                if r.slug == REFERENCE_ARCHITECTURE_SLUG
+            ]
+        )
+        == 1
+    )
     await db.close()
 
 

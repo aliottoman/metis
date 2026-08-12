@@ -7,6 +7,7 @@ than in a long system prompt or a fragile retrieval hit. It is bounded on
 injection so a hand-grown file can never blow the context budget, and it stays a
 plain local markdown file the user fully owns and can edit by hand.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

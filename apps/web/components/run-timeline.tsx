@@ -4,21 +4,39 @@ import { useMemo } from "react";
 
 import { ApprovalCard } from "@/components/approval-card";
 import { approvalFrom } from "@/lib/approvals";
+import {
+  BACKEND_REASON_LABELS,
+  humanizeToken,
+  OPERATION_LABELS,
+} from "@/lib/run-event-labels";
+import {
+  codingRoundSummary,
+  codingStepSummary,
+  directContractSummary,
+  isFailedCodingStep,
+} from "@/lib/coding-diagnostics";
 import type { RunEventV1 } from "@/lib/types";
 
 interface RunTimelineProps {
   events: RunEventV1[];
   connection: string;
   streamError?: string | null;
-  onDecision: (approvalId: string, decision: "approve" | "reject") => Promise<void>;
+  onDecision: (
+    approvalId: string,
+    decision: "approve" | "reject",
+  ) => Promise<void>;
   decidedApprovals: ReadonlySet<string>;
   decisionBusy?: string | null;
   approveLabel?: string;
 }
 
-function getText(payload: Record<string, unknown>, ...keys: string[]): string | undefined {
+function getText(
+  payload: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
   for (const key of keys) {
-    if (typeof payload[key] === "string" && payload[key]) return String(payload[key]);
+    if (typeof payload[key] === "string" && payload[key])
+      return String(payload[key]);
   }
   return undefined;
 }
@@ -29,7 +47,7 @@ function numText(value: unknown, fallback = "?"): string {
   return fallback;
 }
 
-function titleFor(type: string): string {
+export function runEventTitle(type: string): string {
   const exact: Record<string, string> = {
     "run.created": "Run started",
     "run.started": "Run started",
@@ -40,6 +58,11 @@ function titleFor(type: string): string {
     "input.truncated": "Context trimmed to budget",
     "context.retrieved": "Context retrieved",
     "context.knowledge_error": "Knowledge search unavailable",
+    "project.direct_contract": "Cline coding session",
+    "project.check_requested": "Verification check",
+    "project.coding_event": "Coding step",
+    "project.coding_round": "Coding round",
+    "project.build_checked": "Verification",
     "memory.retrieved": "Context retrieved",
     "plan.created": "Plan ready",
     "model.response": "Model finished",
@@ -70,7 +93,11 @@ function titleFor(type: string): string {
     "project.plan_revised": "Build plan corrected",
     "project.focused": "Narrowed to one file",
     "project.phase": "Phase",
+    "project.agent_step": "Project action",
+    "project.vertical_slice_checked": "Vertical slice verified",
+    "project.staged_verified": "Build verification",
     "run.model_fallback": "Model fallback",
+    "run.model_exhausted": "Model ladder exhausted",
     "approval.required": "Approval needed",
     "approval.applied": "Approval recorded",
     "run.awaiting_approval": "Waiting for approval",
@@ -81,18 +108,48 @@ function titleFor(type: string): string {
     "run.failed": "Run failed",
     "run.cancelled": "Run cancelled",
   };
-  return exact[type] ?? type.replace(/[._-]/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
+  return (
+    exact[type] ??
+    type
+      .replace(/[._-]/g, " ")
+      .replace(/\b\w/g, (character) => character.toUpperCase())
+  );
 }
 
-function eventTone(event: RunEventV1): string {
+export function runEventTone(event: RunEventV1): string {
   const { type, payload } = event;
   if (type === "context.knowledge_error") return "attention";
   // Payload-dependent tones for the Tool Factory events.
-  if (type === "tool.evaluated") return payload.passed ? "success" : "attention";
+  if (type === "tool.evaluated")
+    return payload.passed ? "success" : "attention";
   if (type === "project.check_result") return payload.ok ? "success" : "danger";
-  if (type === "project.verification_decided") return payload.approved ? "success" : "attention";
-  if (type === "tool.output") return payload.contract_ok ? "success" : "attention";
-  if (type === "tool.code_reviewed") return payload.safe === false ? "danger" : "success";
+  if (type === "project.verification_decided")
+    return payload.approved ? "success" : "attention";
+  if (type === "project.staged_verified")
+    return Number(payload.errors ?? 0) > 0 ? "danger" : "success";
+  if (type === "project.vertical_slice_checked")
+    return Number(payload.errors ?? 0) > 0 ? "danger" : "success";
+  if (type === "run.model_exhausted") return "danger";
+  if (type === "project.coding_event")
+    return isFailedCodingStep(payload) ? "danger" : "muted";
+  if (type === "project.direct_contract") {
+    const unresolved = Array.isArray(payload.unresolved)
+      ? payload.unresolved
+      : [];
+    return unresolved.length ? "attention" : "success";
+  }
+  if (type === "project.check_requested")
+    return payload.ok ? "success" : "attention";
+  if (type === "project.coding_round") {
+    const changed = Array.isArray(payload.changed_paths)
+      ? payload.changed_paths
+      : [];
+    return changed.length ? "success" : "attention";
+  }
+  if (type === "tool.output")
+    return payload.contract_ok ? "success" : "attention";
+  if (type === "tool.code_reviewed")
+    return payload.safe === false ? "danger" : "success";
   const exact: Record<string, string> = {
     "run.broker_call": "model",
     "tool.definition_drafted": "neutral",
@@ -101,27 +158,47 @@ function eventTone(event: RunEventV1): string {
     "tool.code_review_skipped": "attention",
   };
   if (exact[type]) return exact[type];
-  if (type.includes("fail") || type.includes("error") || type.includes("reject")) return "danger";
-  if (type.includes("approval") || type.includes("interrupt") || type.includes("proposal")) return "attention";
-  if (type.includes("complete") || type.includes("artifact") || type.includes("approved")) return "success";
+  if (
+    type.includes("fail") ||
+    type.includes("error") ||
+    type.includes("reject")
+  )
+    return "danger";
+  if (
+    type.includes("approval") ||
+    type.includes("interrupt") ||
+    type.includes("proposal")
+  )
+    return "attention";
+  if (
+    type.includes("complete") ||
+    type.includes("artifact") ||
+    type.includes("approved")
+  )
+    return "success";
   if (type.includes("model")) return "model";
   return "neutral";
 }
 
-function eventSummary(event: RunEventV1): string {
+export function runEventSummary(event: RunEventV1): string {
   const payload = event.payload;
   if (event.type === "stage.entered") {
     return getText(payload, "label") ?? "Working…";
   }
   if (event.type === "answer.grounding_reviewed") {
-    if (payload.revision) return "Retrieved sources went uncited — sending one revision to ground the answer.";
-    if (payload.has_attachments) return "Answered from the attached document — kept as written.";
-    if (payload.strong_retrieval) return "Answer is grounded in the retrieved sources.";
+    if (payload.revision)
+      return "Retrieved sources went uncited — sending one revision to ground the answer.";
+    if (payload.has_attachments)
+      return "Answered from the attached document — kept as written.";
+    if (payload.strong_retrieval)
+      return "Answer is grounded in the retrieved sources.";
     return "No strongly-relevant sources to ground against.";
   }
   if (event.type === "context.knowledge_error") {
-    return getText(payload, "summary")
-      ?? "Knowledge search is unavailable. Continuing with the attached files and local context.";
+    return (
+      getText(payload, "summary") ??
+      "Knowledge search is unavailable. Continuing with the attached files and local context."
+    );
   }
   if (event.type === "run.broker_call") {
     const role = getText(payload, "role") ?? "model";
@@ -130,15 +207,23 @@ function eventSummary(event: RunEventV1): string {
     return `${role} · ${template} · call ${numText(payload.call_index)}/${numText(payload.budget)} · ${model}`;
   }
   if (event.type === "tool.definition_drafted") {
-    const definition = payload.definition && typeof payload.definition === "object"
-      ? (payload.definition as Record<string, unknown>)
-      : {};
-    return getText(definition, "name") ?? getText(payload, "slug", "name") ?? "A new tool definition was drafted.";
+    const definition =
+      payload.definition && typeof payload.definition === "object"
+        ? (payload.definition as Record<string, unknown>)
+        : {};
+    return (
+      getText(definition, "name") ??
+      getText(payload, "slug", "name") ??
+      "A new tool definition was drafted."
+    );
   }
   if (event.type === "tool.definition_refused") {
     return getText(payload, "reason") ?? "Tool creation was refused.";
   }
-  if (event.type === "tool.definition_decided" || event.type === "tool.build_decided") {
+  if (
+    event.type === "tool.definition_decided" ||
+    event.type === "tool.build_decided"
+  ) {
     return `${getText(payload, "slug") ?? "definition"}: ${getText(payload, "status") ?? "decided"}`;
   }
   if (event.type === "tool.evaluated") {
@@ -155,14 +240,19 @@ function eventSummary(event: RunEventV1): string {
     return `reviewed by ${getText(payload, "reviewer") ?? "model"}${payload.improved ? " · improved" : ""}`;
   }
   if (event.type === "tool.code_review_skipped") {
-    return getText(payload, "reason") ?? "code review unavailable — AST gate still applied";
+    return (
+      getText(payload, "reason") ??
+      "code review unavailable — AST gate still applied"
+    );
   }
   if (event.type === "project.check_result") {
     const name = getText(payload, "name") ?? "check";
     const failure = getText(payload, "error");
     if (failure) return `${name} · ${failure}`;
     if (payload.timed_out) return `${name} · timed out`;
-    const verdict = payload.ok ? "passed" : `failed (exit ${numText(payload.exit_code, "?")})`;
+    const verdict = payload.ok
+      ? "passed"
+      : `failed (exit ${numText(payload.exit_code, "?")})`;
     return `${name} · ${verdict} · ${numText(payload.duration_seconds, "?")}s`;
   }
   if (event.type === "project.verification_decided") {
@@ -193,42 +283,167 @@ function eventSummary(event: RunEventV1): string {
       ? "exploration answered — building now"
       : "exploring the project";
   }
+  if (event.type === "project.agent_step") {
+    const tool = getText(payload, "tool");
+    const status = getText(payload, "status") ?? "working";
+    const step = numText(payload.step, "?");
+    return tool
+      ? `${tool.replaceAll("_", " ")} · step ${step}`
+      : `${status.replaceAll("_", " ")} · step ${step}`;
+  }
+  if (event.type === "project.build_checked") {
+    const errors = Number(payload.errors ?? 0);
+    const checks = Number(payload.ran ?? 0);
+    return errors
+      ? `${errors} blocking problem${errors === 1 ? "" : "s"} — sent back to the coding session`
+      : `${checks} check${checks === 1 ? "" : "s"} passed`;
+  }
+  if (event.type === "project.vertical_slice_checked") {
+    const name = getText(payload, "name") ?? "Current slice";
+    const errors = Number(payload.errors ?? 0);
+    const checks = Number(payload.ran ?? 0);
+    const files = Array.isArray(payload.files) ? payload.files.length : 0;
+    return errors
+      ? `${name} · ${errors} blocker${errors === 1 ? "" : "s"} · repair stays in this slice`
+      : `${name} · ${files} file${files === 1 ? "" : "s"} · ${checks} check${checks === 1 ? "" : "s"} passed`;
+  }
+  if (event.type === "project.staged_verified") {
+    const errors = Number(payload.errors ?? 0);
+    const warnings = Number(payload.warnings ?? 0);
+    const checks = Number(payload.ran ?? 0);
+    const findings = Array.isArray(payload.findings) ? payload.findings : [];
+    const first =
+      findings[0] && typeof findings[0] === "object"
+        ? (findings[0] as Record<string, unknown>)
+        : null;
+    if (errors > 0) {
+      const path = first ? getText(first, "path") : undefined;
+      const detail = first ? getText(first, "error") : undefined;
+      const lead = `${errors} blocking problem${errors === 1 ? "" : "s"}`;
+      return path && detail ? `${lead} · ${path}: ${detail}` : lead;
+    }
+    return `${checks} check${checks === 1 ? "" : "s"} passed${warnings ? ` · ${warnings} warning${warnings === 1 ? "" : "s"}` : ""}`;
+  }
+  if (event.type === "project.direct_contract") {
+    return directContractSummary(payload);
+  }
+  if (event.type === "project.check_requested") {
+    const check = getText(payload, "check") ?? "check";
+    const errors = numText(payload.errors, "0");
+    const warnings = numText(payload.warnings, "0");
+    const used = numText(payload.checks_used, "?");
+    const budget = numText(payload.checks_budget, "?");
+    const verdict = payload.ok
+      ? "no blocking problems"
+      : `${errors} blocking problem${errors === "1" ? "" : "s"}`;
+    return `${check} · ${verdict}${warnings === "0" ? "" : ` · ${warnings} warning(s)`} · check ${used} of ${budget}`;
+  }
+  if (event.type === "project.coding_event") {
+    return codingStepSummary(payload);
+  }
+  if (event.type === "project.coding_round") {
+    return codingRoundSummary(payload);
+  }
   if (event.type === "run.model_fallback") {
     const from = getText(payload, "from") ?? "the primary";
     const to = getText(payload, "to") ?? "a backup";
-    const reason = getText(payload, "reason") ?? "unavailable";
-    return `${from} stopped answering (${reason}) — continuing on ${to}`;
+    const reason = humanizeToken(
+      getText(payload, "reason") ?? "unavailable",
+      BACKEND_REASON_LABELS,
+    );
+    return `${from} stopped answering — ${reason} — continuing on ${to}`;
   }
-  return getText(payload, "summary", "message", "status", "tool_name", "tool", "node", "error") ??
-    (event.type.includes("delta") ? "Streaming response" : "Recorded by the control plane");
+  if (event.type === "run.model_exhausted") {
+    const model = getText(payload, "model") ?? "the final model";
+    const operation = humanizeToken(
+      getText(payload, "operation") ?? "the requested operation",
+      OPERATION_LABELS,
+    );
+    const reason = humanizeToken(
+      getText(payload, "reason") ?? "unavailable",
+      BACKEND_REASON_LABELS,
+    );
+    return `${model} could not finish ${operation} — ${reason} — no backup model remains`;
+  }
+  return (
+    getText(
+      payload,
+      "summary",
+      "message",
+      "status",
+      "tool_name",
+      "tool",
+      "node",
+      "error",
+    ) ??
+    (event.type.includes("delta")
+      ? "Streaming response"
+      : "Recorded by the control plane")
+  );
 }
 
-export function RunTimeline({ events, connection, streamError, onDecision, decidedApprovals, decisionBusy, approveLabel = "Approve once" }: RunTimelineProps) {
-  const ordered = useMemo(() => [...events].sort((a, b) => a.sequence - b.sequence), [events]);
+export function RunTimeline({
+  events,
+  connection,
+  streamError,
+  onDecision,
+  decidedApprovals,
+  decisionBusy,
+  approveLabel = "Approve once",
+}: RunTimelineProps) {
+  const ordered = useMemo(
+    () => [...events].sort((a, b) => a.sequence - b.sequence),
+    [events],
+  );
 
   return (
     <div className="timelinePanel">
       <header className="timelineHeader">
-        <div><span className="eyebrow">Live run</span><h2>Activity</h2></div>
-        <span className={`streamState stream-${connection}`}><i />{connection}</span>
+        <div>
+          <span className="eyebrow">Live run</span>
+          <h2>Activity</h2>
+        </div>
+        <span className={`streamState stream-${connection}`}>
+          <i />
+          {connection}
+        </span>
       </header>
-      {streamError ? <div className="streamWarning">Connection interrupted. Reconnecting from the last event…</div> : null}
+      {streamError ? (
+        <div className="streamWarning">
+          Connection interrupted. Reconnecting from the last event…
+        </div>
+      ) : null}
       <div className="timelineList" aria-live="polite">
         {!ordered.length ? (
-          <div className="timelineEmpty"><span>↗</span><p>Run steps, approvals, and validation results appear here.</p></div>
+          <div className="timelineEmpty">
+            <span>↗</span>
+            <p>Run steps, approvals, and validation results appear here.</p>
+          </div>
         ) : null}
         {ordered.map((event) => {
           const approval = approvalFrom(event);
-          const decided = approval ? decidedApprovals.has(approval.id) || approval.status !== "pending" : false;
+          const decided = approval
+            ? decidedApprovals.has(approval.id) || approval.status !== "pending"
+            : false;
           return (
-            <article className={`timelineEvent tone-${eventTone(event)}`} key={event.id}>
+            <article
+              className={`timelineEvent tone-${runEventTone(event)}`}
+              key={event.id}
+            >
               <span className="timelineNode" />
               <div className="timelineEventBody">
                 <div className="timelineEventTitle">
-                  <strong>{titleFor(event.type)}</strong>
-                  <time>{event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : `#${event.sequence}`}</time>
+                  <strong>{runEventTitle(event.type)}</strong>
+                  <time>
+                    {event.timestamp
+                      ? new Date(event.timestamp).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : `#${event.sequence}`}
+                  </time>
                 </div>
-                <p>{eventSummary(event)}</p>
+                <p>{runEventSummary(event)}</p>
                 {approval ? (
                   <ApprovalCard
                     approval={approval}
@@ -243,7 +458,10 @@ export function RunTimeline({ events, connection, streamError, onDecision, decid
           );
         })}
       </div>
-      <footer className="timelineFooter">Operational summaries only. The model&rsquo;s thinking streams to the answer, under Thinking, and is never stored.</footer>
+      <footer className="timelineFooter">
+        Operational summaries only. The model&rsquo;s thinking streams to the
+        answer, under Thinking, and is never stored.
+      </footer>
     </div>
   );
 }

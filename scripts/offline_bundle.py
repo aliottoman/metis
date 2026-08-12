@@ -30,7 +30,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 
-BUNDLE_SCHEMA_VERSION = 1
+BUNDLE_SCHEMA_VERSION = 2
 MANIFEST_NAME = "bundle-manifest.json"
 DEFAULT_IMAGE = "localhost/metis/reference-architecture-tool:0.3.0"
 PROJECT_FILES = (
@@ -39,8 +39,20 @@ PROJECT_FILES = (
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
+    "apps/cline-sidecar/package.json",
+    "apps/cline-sidecar/tsconfig.json",
     "apps/web/package.json",
 )
+FRONTEND_PROJECT_FILES = (
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "apps/cline-sidecar/package.json",
+    "apps/cline-sidecar/tsconfig.json",
+    "apps/web/package.json",
+)
+SIDECAR_PACKAGE_FILE = "apps/cline-sidecar/package.json"
+SIDECAR_ENTRYPOINT_PREFIX = "apps/cline-sidecar/"
 SANDBOX_PREREQUISITE_FILES = (
     "infra/sandbox/Containerfile",
     "infra/sandbox/containerignore",
@@ -195,6 +207,83 @@ def _copy_project_metadata(project_root: Path, staging: Path) -> dict[str, dict[
     return records
 
 
+def _sidecar_contract_from_package(package: Any) -> dict[str, Any]:
+    """Validate and record the build contract of the local coding sidecar."""
+
+    if not isinstance(package, dict):
+        raise BundleError("Cline sidecar package manifest is not a JSON object")
+    if package.get("name") != "@metis/cline-sidecar" or package.get("private") is not True:
+        raise BundleError("Cline sidecar package identity/private flag is invalid")
+    dependencies = package.get("dependencies")
+    dev_dependencies = package.get("devDependencies")
+    scripts = package.get("scripts")
+    bins = package.get("bin")
+    engines = package.get("engines")
+    files = package.get("files")
+    if not all(
+        isinstance(value, dict)
+        for value in (dependencies, dev_dependencies, scripts, bins, engines)
+    ):
+        raise BundleError("Cline sidecar package manifest is incomplete")
+
+    sdk_version = dependencies.get("@cline/sdk")
+    typescript_version = dev_dependencies.get("typescript")
+    exact_version = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
+    if not isinstance(sdk_version, str) or exact_version.fullmatch(sdk_version) is None:
+        raise BundleError("@cline/sdk must use one exact version without a range or tag")
+    if (
+        not isinstance(typescript_version, str)
+        or exact_version.fullmatch(typescript_version) is None
+    ):
+        raise BundleError("the sidecar TypeScript compiler must use one exact version")
+
+    build_script = scripts.get("build")
+    test_script = scripts.get("test")
+    entrypoint = bins.get("metis-cline-sidecar")
+    node_engine = engines.get("node")
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in (build_script, test_script, entrypoint, node_engine)
+    ):
+        raise BundleError("Cline sidecar build, test, binary, or Node contract is missing")
+    if re.fullmatch(r">=22(?:\.[0-9]+\.[0-9]+)?", str(node_engine)) is None:
+        raise BundleError("Cline sidecar must require Node 22 or newer")
+    normalized_entrypoint = str(entrypoint).removeprefix("./")
+    if (
+        not normalized_entrypoint.startswith("dist/")
+        or normalized_entrypoint.endswith("/")
+        or ".." in PurePosixPath(normalized_entrypoint).parts
+    ):
+        raise BundleError("Cline sidecar binary must point to a compiled dist file")
+    if not isinstance(files, list) or "dist" not in files:
+        raise BundleError("Cline sidecar package does not publish its compiled dist tree")
+
+    return {
+        "schema_version": 1,
+        "package": SIDECAR_PACKAGE_FILE,
+        "package_name": "@metis/cline-sidecar",
+        "sdk_package": "@cline/sdk",
+        "sdk_version": sdk_version,
+        "typescript_version": typescript_version,
+        "node_engine": node_engine,
+        "compiled_entrypoint": f"{SIDECAR_ENTRYPOINT_PREFIX}{normalized_entrypoint}",
+        "build_command": "pnpm --dir apps/cline-sidecar build",
+        "test_command": "pnpm --dir apps/cline-sidecar test",
+        "offline_compile_verified": True,
+    }
+
+
+def _sidecar_contract(project_root: Path) -> dict[str, Any]:
+    package_path = project_root / SIDECAR_PACKAGE_FILE
+    if package_path.is_symlink() or not package_path.is_file():
+        raise BundleError("Cline sidecar package manifest is unavailable or unsafe")
+    try:
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BundleError("Cline sidecar package manifest is not valid UTF-8 JSON") from exc
+    return _sidecar_contract_from_package(package)
+
+
 def _populate_python_cache(
     project_root: Path,
     staging: Path,
@@ -230,13 +319,37 @@ def _populate_python_cache(
 
 
 def _copy_frontend_checkout(source_root: Path, destination_root: Path) -> None:
-    for relative_name in (
-        "package.json",
-        "pnpm-lock.yaml",
-        "pnpm-workspace.yaml",
-        "apps/web/package.json",
-    ):
+    for relative_name in FRONTEND_PROJECT_FILES:
         _copy_regular(source_root / relative_name, destination_root / relative_name)
+
+
+def _copy_sidecar_build_sources(source_root: Path, destination_root: Path) -> None:
+    """Copy only reviewed TypeScript inputs into a disposable build checkout."""
+
+    copied = 0
+    for directory_name in ("src", "tests"):
+        source_directory = source_root / "apps" / "cline-sidecar" / directory_name
+        if source_directory.is_symlink() or not source_directory.is_dir():
+            raise BundleError(
+                f"Cline sidecar source directory is unavailable or unsafe: {directory_name}"
+            )
+        for source in sorted(source_directory.rglob("*.ts")):
+            if source.is_symlink() or not source.is_file():
+                raise BundleError(f"Cline sidecar source is unavailable or unsafe: {source}")
+            relative = source.relative_to(source_root)
+            _copy_regular(source, destination_root / relative)
+            copied += 1
+    if copied < 2:
+        raise BundleError("Cline sidecar source checkout is incomplete")
+
+
+def _require_compiled_sidecar(checkout: Path, contract: dict[str, Any]) -> None:
+    entrypoint_name = contract.get("compiled_entrypoint")
+    if not isinstance(entrypoint_name, str):
+        raise BundleError("Cline sidecar compiled entrypoint contract is invalid")
+    entrypoint = checkout / entrypoint_name
+    if entrypoint.is_symlink() or not entrypoint.is_file() or entrypoint.stat().st_size == 0:
+        raise BundleError("Cline sidecar build did not produce its declared entrypoint")
 
 
 def _remove_pnpm_project_links(store: Path) -> None:
@@ -259,6 +372,7 @@ def _populate_frontend_store(
     staging: Path,
     temporary_root: Path,
     pnpm_binary: Path,
+    sidecar_contract: dict[str, Any],
 ) -> None:
     store = staging / "frontend" / "pnpm-store"
     store.mkdir(parents=True)
@@ -277,6 +391,7 @@ def _populate_frontend_store(
     _remove_pnpm_project_links(store)
     checkout = temporary_root / "frontend-offline-check"
     _copy_frontend_checkout(project_root, checkout)
+    _copy_sidecar_build_sources(project_root, checkout)
     environment = os.environ.copy()
     environment.update(
         {
@@ -297,6 +412,17 @@ def _populate_frontend_store(
         cwd=checkout,
         env=environment,
     )
+    _run(
+        [
+            str(pnpm_binary),
+            "--dir",
+            str(checkout / "apps" / "cline-sidecar"),
+            "build",
+        ],
+        cwd=checkout,
+        env=environment,
+    )
+    _require_compiled_sidecar(checkout, sidecar_contract)
     _remove_pnpm_project_links(store)
     store_files = [path for path in store.rglob("*") if path.is_file()]
     if len(store_files) < 2:
@@ -502,6 +628,7 @@ def create_bundle(
         staging = temporary_root / "bundle"
         staging.mkdir()
         project_records = _copy_project_metadata(project_root, staging)
+        sidecar_contract = _sidecar_contract(project_root)
         _copy_regular(uv_binary, staging / "tooling" / "uv", executable=True)
 
         uv_version = _version(uv_binary, "--version", cwd=project_root)
@@ -511,7 +638,11 @@ def create_bundle(
 
         _populate_python_cache(project_root, staging, temporary_root, uv_binary)
         _populate_frontend_store(
-            project_root, staging, temporary_root, pnpm_binary
+            project_root,
+            staging,
+            temporary_root,
+            pnpm_binary,
+            sidecar_contract,
         )
 
         prerequisites = _sandbox_prerequisites(project_root, image)
@@ -555,6 +686,7 @@ def create_bundle(
                     "--store-dir <bundle>/frontend/pnpm-store"
                 ),
             },
+            "coding_sidecar": sidecar_contract,
             "sandbox": prerequisites,
         }
         manifest["members"] = _member_records(staging)
@@ -623,6 +755,25 @@ def _read_manifest(archive: zipfile.ZipFile) -> dict[str, Any]:
     if not isinstance(manifest.get("members"), dict):
         raise BundleError("offline bundle manifest has no member map")
     return manifest
+
+
+def _verify_sidecar_contract(
+    archive: zipfile.ZipFile, manifest: dict[str, Any]
+) -> None:
+    member = f"project/{SIDECAR_PACKAGE_FILE}"
+    records = manifest.get("members", {})
+    if member not in records:
+        raise BundleError("offline bundle is missing the Cline sidecar package manifest")
+    try:
+        package = json.loads(archive.read(member))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BundleError(
+            "bundled Cline sidecar package manifest is not valid UTF-8 JSON"
+        ) from exc
+    expected = _sidecar_contract_from_package(package)
+    recorded = manifest.get("coding_sidecar")
+    if recorded != expected:
+        raise BundleError("Cline sidecar build contract does not match its package manifest")
 
 
 def _verify_project_files(manifest: dict[str, Any], project_root: Path) -> None:
@@ -712,6 +863,7 @@ def verify_bundle(
             or not (int(records["tooling/uv"].get("mode", 0)) & stat.S_IXUSR)
         ):
             raise BundleError("bundled uv executable is not a regular executable")
+        _verify_sidecar_contract(archive, manifest)
 
         sandbox = manifest.get("sandbox")
         if not isinstance(sandbox, dict):
@@ -857,6 +1009,7 @@ def smoke_install(path: Path, project_root: Path, *, require_image: bool) -> dic
         )
         frontend_checkout = temporary / "frontend-checkout"
         _copy_frontend_checkout(extracted / "project", frontend_checkout)
+        _copy_sidecar_build_sources(project_root, frontend_checkout)
         pnpm = _resolve_executable("pnpm")
         frontend_environment = os.environ.copy()
         frontend_environment.update(
@@ -878,14 +1031,33 @@ def smoke_install(path: Path, project_root: Path, *, require_image: bool) -> dic
             cwd=frontend_checkout,
             env=frontend_environment,
         )
+        _run(
+            [
+                str(pnpm),
+                "--dir",
+                str(frontend_checkout / "apps" / "cline-sidecar"),
+                "build",
+            ],
+            cwd=frontend_checkout,
+            env=frontend_environment,
+        )
+        sidecar = manifest.get("coding_sidecar")
+        if not isinstance(sidecar, dict):
+            raise BundleError("offline bundle has no Cline sidecar build contract")
+        _require_compiled_sidecar(frontend_checkout, sidecar)
     return manifest
 
 
 def _summary(path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     sandbox = manifest["sandbox"]
+    sidecar = manifest["coding_sidecar"]
     return {
         "path": str(path.resolve()),
         "members": len(manifest["members"]),
+        "cline_sdk": sidecar["sdk_version"],
+        "cline_sidecar_offline_compile_verified": sidecar[
+            "offline_compile_verified"
+        ],
         "sandbox_image_bundled": sandbox["bundled"],
         "sandbox_image": sandbox.get("resolved_image") or sandbox["requested_image"],
         "compatibility": manifest["compatibility"],

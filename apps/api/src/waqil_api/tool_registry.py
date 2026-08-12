@@ -12,6 +12,7 @@ profiles (fail closed), and exposes two very different views:
 
 Definitions are content-hashed and immutable; changing one is a new version.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -58,7 +59,7 @@ _AUTHOR_DIAGRAM_CODE_PROMPT = (
     "- Import only: `from pathlib import Path`, "
     "`from diagrams import Cluster, Diagram, Edge`, "
     "`from diagrams.generic.blank import Blank`.\n"
-    "- Set OUTPUT_STEM = str(Path(__file__).resolve().parent / \"architecture\").\n"
+    '- Set OUTPUT_STEM = str(Path(__file__).resolve().parent / "architecture").\n'
     "- One `with Diagram(...)` using filename=OUTPUT_STEM, the given outformat, "
     "show=False, and the given direction. Improve layout with graph_attr, "
     "node_attr, and edge_attr (e.g. splines='ortho', sensible nodesep/ranksep).\n"
@@ -141,18 +142,18 @@ class ToolRegistry:
     def _model_authoring(self) -> bool:
         return bool(getattr(self._settings, "tool_model_authoring", False))
 
-    def trusted_auto_activation_eligible(
-        self, definition: ToolDefinitionV1
-    ) -> bool:
+    def trusted_auto_activation_eligible(self, definition: ToolDefinitionV1) -> bool:
         """Whether an evaluated definition fits the narrow trusted fast path."""
-        if not bool(
-            getattr(self._settings, "tool_trusted_auto_activation", True)
-        ):
+        if not bool(getattr(self._settings, "tool_trusted_auto_activation", True)):
             return False
         profile = definition.capability_profile
         if profile.network != "none" or profile.filesystem != "run-io":
             return False
-        if definition.route_facts.existing_risk not in {RiskLevel.R0, RiskLevel.R1, RiskLevel.R2}:
+        if definition.route_facts.existing_risk not in {
+            RiskLevel.R0,
+            RiskLevel.R1,
+            RiskLevel.R2,
+        }:
             return False
         try:
             self._require_profiles(definition)
@@ -173,7 +174,9 @@ class ToolRegistry:
             if not build.eval_report or not build.eval_report.passed:
                 continue
             definition = await self._db.get_tool_definition_by_id(build.definition_id)
-            if definition is None or not self.trusted_auto_activation_eligible(definition):
+            if definition is None or not self.trusted_auto_activation_eligible(
+                definition
+            ):
                 continue
             action_id = f"trusted-auto-activation:{build.id}:{build.content_hash[:16]}"
             await self._db.decide_tool_definition_build(
@@ -208,11 +211,12 @@ class ToolRegistry:
             definition = await self._db.get_tool_definition_by_id(
                 proposal.definition_id
             )
-            if definition is None or not self.trusted_auto_activation_eligible(definition):
+            if definition is None or not self.trusted_auto_activation_eligible(
+                definition
+            ):
                 continue
             action_id = (
-                f"trusted-auto-definition:{proposal.id}:"
-                f"{definition.content_hash[:16]}"
+                f"trusted-auto-definition:{proposal.id}:{definition.content_hash[:16]}"
             )
             await self._db.decide_tool_definition_proposal(
                 proposal.id,
@@ -278,15 +282,21 @@ class ToolRegistry:
         disabled = set(getattr(self._settings, "tool_disabled_slugs", []) or [])
         records: list[ToolDefinitionRecordV1] = []
         for definition in definitions:
-            is_architecture = definition.route_facts.input_pipeline == "architecture_spec"
+            is_architecture = (
+                definition.route_facts.input_pipeline == "architecture_spec"
+            )
             builds = build_index.get(definition.slug, {})
             runnable = (
-                definition.slug in active_image if is_architecture else bool(builds.get("active"))
+                definition.slug in active_image
+                if is_architecture
+                else bool(builds.get("active"))
             )
             if is_architecture:
                 buildable = not runnable
             else:
-                buildable = await self._db.get_buildable_definition(definition.slug) is not None
+                buildable = (
+                    await self._db.get_buildable_definition(definition.slug) is not None
+                )
             records.append(
                 ToolDefinitionRecordV1(
                     definition=definition,

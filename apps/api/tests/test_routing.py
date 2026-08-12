@@ -6,6 +6,7 @@ trusted catalog, and it opens the definition route on an explicit "toolify this"
 or a planner-proposed new tool. The architecture path stays byte-identical
 (covered in test_tool_registry.py); here we pin the new behaviors.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -43,7 +44,9 @@ def _catalog(*tools: ToolRoute, factory=True, definition=True) -> RoutingCatalog
     )
 
 
-def _declarative(slug: str, *, runnable=False, buildable=False, disabled=False) -> ToolRoute:
+def _declarative(
+    slug: str, *, runnable=False, buildable=False, disabled=False
+) -> ToolRoute:
     return ToolRoute(
         slug=slug,
         existing_risk=RiskLevel.R2,
@@ -56,7 +59,9 @@ def _declarative(slug: str, *, runnable=False, buildable=False, disabled=False) 
 
 
 def _proposed(route: str, slug: str | None) -> PlanEnvelopeV1:
-    return PlanEnvelopeV1(summary="x", route=route, tool_slug=slug, risk_level=RiskLevel.R0)
+    return PlanEnvelopeV1(
+        summary="x", route=route, tool_slug=slug, risk_level=RiskLevel.R0
+    )
 
 
 @pytest.mark.parametrize(
@@ -79,7 +84,9 @@ def test_explicit_toolify_detection(prompt: str, expected: bool) -> None:
 def test_runnable_declarative_routes_existing_tool() -> None:
     catalog = _catalog(_declarative("readme-summary", runnable=True))
     plan = normalize_plan_semantics(
-        _proposed("existing_tool", "readme-summary"), _request("do it", attach=True), catalog
+        _proposed("existing_tool", "readme-summary"),
+        _request("do it", attach=True),
+        catalog,
     )
     assert plan.route == "existing_tool"
     assert plan.tool_slug == "readme-summary"
@@ -90,7 +97,9 @@ def test_runnable_declarative_routes_existing_tool() -> None:
 def test_buildable_declarative_routes_tool_factory() -> None:
     catalog = _catalog(_declarative("readme-summary", buildable=True))
     plan = normalize_plan_semantics(
-        _proposed("existing_tool", "readme-summary"), _request("do it", attach=True), catalog
+        _proposed("existing_tool", "readme-summary"),
+        _request("do it", attach=True),
+        catalog,
     )
     assert plan.route == "tool_factory"
     assert plan.risk_level == RiskLevel.R3
@@ -101,7 +110,9 @@ def test_input_not_ready_falls_back_to_direct() -> None:
     catalog = _catalog(_declarative("readme-summary", runnable=True))
     # No attachment → the attachment_text pipeline can't be satisfied → direct.
     plan = normalize_plan_semantics(
-        _proposed("existing_tool", "readme-summary"), _request("do it", attach=False), catalog
+        _proposed("existing_tool", "readme-summary"),
+        _request("do it", attach=False),
+        catalog,
     )
     assert plan.route == "direct"
 
@@ -109,14 +120,18 @@ def test_input_not_ready_falls_back_to_direct() -> None:
 def test_disabled_tool_never_routes() -> None:
     catalog = _catalog(_declarative("readme-summary", runnable=True, disabled=True))
     plan = normalize_plan_semantics(
-        _proposed("existing_tool", "readme-summary"), _request("do it", attach=True), catalog
+        _proposed("existing_tool", "readme-summary"),
+        _request("do it", attach=True),
+        catalog,
     )
     assert plan.route == "direct"
 
 
 def test_explicit_toolify_opens_definition_route() -> None:
     catalog = _catalog()
-    plan = normalize_plan_semantics(_proposed("direct", None), _request("turn this into a tool"), catalog)
+    plan = normalize_plan_semantics(
+        _proposed("direct", None), _request("turn this into a tool"), catalog
+    )
     assert plan.route == "tool_definition"
     assert plan.tool_slug is None
     assert plan.risk_level == RiskLevel.R3
@@ -129,7 +144,9 @@ def test_planner_proposed_definition_needs_explicit_words() -> None:
     turned "research X for me" into a two-gate tool-factory detour."""
     catalog = _catalog()
     plan = normalize_plan_semantics(
-        _proposed("tool_definition", None), _request("draft me a widget summarizer"), catalog
+        _proposed("tool_definition", None),
+        _request("draft me a widget summarizer"),
+        catalog,
     )
     assert plan.route == "direct"
     # The same planner proposal WITH the user's own toolify words drafts.
@@ -145,22 +162,30 @@ def test_factory_kill_switch_blocks_build_and_definition() -> None:
     catalog = _catalog(_declarative("readme-summary", buildable=True), factory=False)
     # Buildable tool → cannot build while paused.
     plan = normalize_plan_semantics(
-        _proposed("existing_tool", "readme-summary"), _request("do it", attach=True), catalog
+        _proposed("existing_tool", "readme-summary"),
+        _request("do it", attach=True),
+        catalog,
     )
     assert plan.route == "direct"
     # And no new definitions may be drafted.
-    plan = normalize_plan_semantics(_proposed("direct", None), _request("turn this into a tool"), catalog)
+    plan = normalize_plan_semantics(
+        _proposed("direct", None), _request("turn this into a tool"), catalog
+    )
     assert plan.route == "direct"
 
 
 def test_definition_kill_switch_blocks_only_drafting() -> None:
     catalog = _catalog(_declarative("readme-summary", runnable=True), definition=False)
     # Drafting is off…
-    plan = normalize_plan_semantics(_proposed("direct", None), _request("turn this into a tool"), catalog)
+    plan = normalize_plan_semantics(
+        _proposed("direct", None), _request("turn this into a tool"), catalog
+    )
     assert plan.route == "direct"
     # …but running an already-active tool still works.
     plan = normalize_plan_semantics(
-        _proposed("existing_tool", "readme-summary"), _request("do it", attach=True), catalog
+        _proposed("existing_tool", "readme-summary"),
+        _request("do it", attach=True),
+        catalog,
     )
     assert plan.route == "existing_tool"
 
@@ -169,22 +194,36 @@ def test_pending_tool_is_built_not_redrafted() -> None:
     # The reported bug: after Gate-1 approval the tool is buildable; a build/toolify
     # follow-up must BUILD it, not draft a brand-new (and possibly unrelated) tool.
     catalog = _catalog(_declarative("meeting-tracker", buildable=True))
-    for prompt in ("build it", "build the tool now", "create this into a tool", "make it"):
-        plan = normalize_plan_semantics(_proposed("direct", None), _request(prompt), catalog)
+    for prompt in (
+        "build it",
+        "build the tool now",
+        "create this into a tool",
+        "make it",
+    ):
+        plan = normalize_plan_semantics(
+            _proposed("direct", None), _request(prompt), catalog
+        )
         assert plan.route == "tool_factory", prompt
         assert plan.tool_slug == "meeting-tracker", prompt
     # A fresh toolify when NOTHING is pending still drafts a new tool.
-    plan = normalize_plan_semantics(_proposed("direct", None), _request("turn this into a tool"), _catalog())
+    plan = normalize_plan_semantics(
+        _proposed("direct", None), _request("turn this into a tool"), _catalog()
+    )
     assert plan.route == "tool_definition"
     # An unrelated request while a tool is pending does NOT trigger a build.
-    plan = normalize_plan_semantics(_proposed("direct", None), _request("what is the capital of France?"), catalog)
+    plan = normalize_plan_semantics(
+        _proposed("direct", None), _request("what is the capital of France?"), catalog
+    )
     assert plan.route == "direct"
 
 
 def test_validate_rejects_risk_mismatch_for_declarative() -> None:
     catalog = _catalog(_declarative("readme-summary", runnable=True))
     bad = PlanEnvelopeV1(
-        summary="x", route="existing_tool", tool_slug="readme-summary", risk_level=RiskLevel.R0
+        summary="x",
+        route="existing_tool",
+        tool_slug="readme-summary",
+        risk_level=RiskLevel.R0,
     )
     with pytest.raises(ValueError, match="risk does not match"):
         validate_plan_semantics(bad, _request("do it", attach=True), catalog)
@@ -194,7 +233,12 @@ def test_validate_tool_definition_requires_r3_and_no_slug() -> None:
     catalog = _catalog()
     with pytest.raises(ValueError, match="carries no slug"):
         validate_plan_semantics(
-            PlanEnvelopeV1(summary="x", route="tool_definition", tool_slug="x", risk_level=RiskLevel.R3),
+            PlanEnvelopeV1(
+                summary="x",
+                route="tool_definition",
+                tool_slug="x",
+                risk_level=RiskLevel.R3,
+            ),
             _request("q"),
             catalog,
         )
@@ -219,7 +263,9 @@ def test_named_runnable_tool_is_rescued_when_planner_says_direct() -> None:
     catalog = _catalog(_runnable("break-even-calculator"))
     plan = normalize_plan_semantics(
         _proposed("direct", None),
-        _request("Use the break even calculator tool: fixed cost 50000, unit price 40, unit cost 25"),
+        _request(
+            "Use the break even calculator tool: fixed cost 50000, unit price 40, unit cost 25"
+        ),
         catalog,
     )
     assert plan.route == "existing_tool"
@@ -236,7 +282,9 @@ def test_rescue_requires_every_meaningful_slug_token() -> None:
         "is the price even worth it?",
         "break down the numbers for me",
     ):
-        plan = normalize_plan_semantics(_proposed("direct", None), _request(prompt), catalog)
+        plan = normalize_plan_semantics(
+            _proposed("direct", None), _request(prompt), catalog
+        )
         assert plan.route == "direct", prompt
 
 
@@ -244,24 +292,38 @@ def test_rescue_skips_disabled_unrunnable_and_ambiguous_tools() -> None:
     prompt = "use the break even calculator tool"
     disabled = _catalog(
         ToolRoute(
-            slug="break-even-calculator", existing_risk=RiskLevel.R2,
-            factory_risk=RiskLevel.R3, input_pipeline="message_text",
-            runnable=True, disabled=True,
+            slug="break-even-calculator",
+            existing_risk=RiskLevel.R2,
+            factory_risk=RiskLevel.R3,
+            input_pipeline="message_text",
+            runnable=True,
+            disabled=True,
         )
     )
-    assert normalize_plan_semantics(_proposed("direct", None), _request(prompt), disabled).route == "direct"
+    assert (
+        normalize_plan_semantics(
+            _proposed("direct", None), _request(prompt), disabled
+        ).route
+        == "direct"
+    )
 
     # A declarative attachment-pipeline tool with no attachment stays direct.
     attachment_only = _catalog(_declarative("break-even-calculator", runnable=True))
-    assert normalize_plan_semantics(
-        _proposed("direct", None), _request(prompt, attach=False), attachment_only
-    ).route == "direct"
+    assert (
+        normalize_plan_semantics(
+            _proposed("direct", None), _request(prompt, attach=False), attachment_only
+        ).route
+        == "direct"
+    )
 
     # Two equally-named runnable tools are ambiguous — the host refuses to guess.
     ambiguous = _catalog(_runnable("break-even-calculator"), _runnable("break-even"))
-    assert normalize_plan_semantics(
-        _proposed("direct", None), _request(prompt), ambiguous
-    ).route == "direct"
+    assert (
+        normalize_plan_semantics(
+            _proposed("direct", None), _request(prompt), ambiguous
+        ).route
+        == "direct"
+    )
 
 
 def test_rescue_never_overrides_an_explicit_build_request() -> None:
@@ -289,7 +351,7 @@ def test_authored_tool_runs_without_an_attachment() -> None:
 
 
 def test_explicit_web_request_bypasses_networkless_tools() -> None:
-    """"Research online…" cannot be honored by a network:none tool — routing
+    """ "Research online…" cannot be honored by a network:none tool — routing
     it to one turns a research request into confident recall."""
     catalog = _catalog(_declarative("model-benchmark-researcher", runnable=True))
     plan = normalize_plan_semantics(

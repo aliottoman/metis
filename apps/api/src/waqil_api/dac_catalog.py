@@ -11,6 +11,7 @@ over ~100 rows, so it costs microseconds, and doing it here rather than baking
 constants into source means the coefficients always match the benchmark data
 actually shipped alongside them.
 """
+
 from __future__ import annotations
 
 import json
@@ -73,7 +74,9 @@ class CatalogModel:
         }
 
 
-def _unsupported_reason(capability: str, architecture: dict[str, Any] | None) -> str | None:
+def _unsupported_reason(
+    capability: str, architecture: dict[str, Any] | None
+) -> str | None:
     if architecture is not None:
         return None
     if capability not in TEXT_GENERATION_CAPABILITIES:
@@ -116,7 +119,9 @@ class DacCatalog:
                 memory_bandwidth_gb_s=float(value["memory_bandwidth_gb_s"]),
                 dense_bf16_tflops=float(value["dense_bf16_tflops"]),
                 dense_fp8_tflops=(
-                    float(value["dense_fp8_tflops"]) if value.get("dense_fp8_tflops") else None
+                    float(value["dense_fp8_tflops"])
+                    if value.get("dense_fp8_tflops")
+                    else None
                 ),
                 supports_fp8=bool(value.get("supports_fp8")),
             )
@@ -150,7 +155,9 @@ class DacCatalog:
         if not key:
             return None
         name = key.strip().upper()
-        return self.shapes.get(name) or self.shapes.get(self.shape_aliases.get(name, ""))
+        return self.shapes.get(name) or self.shapes.get(
+            self.shape_aliases.get(name, "")
+        )
 
     @property
     def importable_shapes(self) -> list[ShapeSpec]:
@@ -177,7 +184,9 @@ class DacCatalog:
                 validated_shapes=tuple(record.get("validated_shapes") or ()),
                 architecture=architecture,
                 architecture_raw=raw if isinstance(raw, dict) else None,
-                unsupported_reason=_unsupported_reason(capability, raw if architecture else None),
+                unsupported_reason=_unsupported_reason(
+                    capability, raw if architecture else None
+                ),
             )
         return models
 
@@ -244,7 +253,12 @@ class DacCatalog:
         return frozenset(sample.shape.gpu.key for sample in self.calibration_samples)
 
     def published_row(
-        self, model_id: str, shape_key: str, prompt_tokens: int, response_tokens: int, concurrency: int
+        self,
+        model_id: str,
+        shape_key: str,
+        prompt_tokens: int,
+        response_tokens: int,
+        concurrency: int,
     ) -> dict[str, Any] | None:
         """An exact published measurement, if Oracle happens to have one."""
         for grid in self.benchmark_grids:
@@ -256,7 +270,11 @@ class DacCatalog:
                 continue
             for row in grid.get("rows") or []:
                 if int(row.get("concurrency", -1)) == concurrency:
-                    return {**row, "scenario": grid.get("scenario"), "source_url": grid.get("source_url")}
+                    return {
+                        **row,
+                        "scenario": grid.get("scenario"),
+                        "source_url": grid.get("source_url"),
+                    }
         return None
 
     def benchmarked_shapes_for(self, model_id: str) -> list[str]:
@@ -285,7 +303,9 @@ class DacCatalog:
 
     @property
     def price_per_ai_unit_hour(self) -> float:
-        return float((self._pricing_raw.get("price_per_ai_unit_hour") or {}).get("value") or 0.0)
+        return float(
+            (self._pricing_raw.get("price_per_ai_unit_hour") or {}).get("value") or 0.0
+        )
 
     @property
     def pricing(self) -> dict[str, Any]:
@@ -307,13 +327,20 @@ class DacCatalog:
                 "rows": self._benchmarks_raw.get("row_count"),
                 "calibration_grids": self._benchmarks_raw.get("calibration_grid_count"),
             },
-            "shapes": {"generated_at": self._shapes_raw.get("generated_at"), "count": len(self.shapes)},
+            "shapes": {
+                "generated_at": self._shapes_raw.get("generated_at"),
+                "count": len(self.shapes),
+            },
             "pricing": {
                 "generated_at": self._pricing_raw.get("generated_at"),
                 "rate_verified": bool(
-                    (self._pricing_raw.get("price_per_ai_unit_hour") or {}).get("verified")
+                    (self._pricing_raw.get("price_per_ai_unit_hour") or {}).get(
+                        "verified"
+                    )
                 ),
-                "label": (self._pricing_raw.get("price_per_ai_unit_hour") or {}).get("label"),
+                "label": (self._pricing_raw.get("price_per_ai_unit_hour") or {}).get(
+                    "label"
+                ),
             },
             "calibration": {
                 **self.coefficients.as_dict(),

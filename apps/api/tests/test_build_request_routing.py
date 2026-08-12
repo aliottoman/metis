@@ -5,6 +5,7 @@ host decides this deterministically, before any model runs — a build request
 routed to the diagram tool asks for a component graph and fails on the schema
 minutes later, which is the failure this pins shut.
 """
+
 from __future__ import annotations
 
 import time
@@ -42,7 +43,9 @@ def _request(prompt: str) -> PlanningRequestV1:
 
 
 def _direct() -> PlanEnvelopeV1:
-    return PlanEnvelopeV1(summary="answer directly", route="direct", risk_level=RiskLevel.R0)
+    return PlanEnvelopeV1(
+        summary="answer directly", route="direct", risk_level=RiskLevel.R0
+    )
 
 
 @pytest.mark.parametrize(
@@ -132,7 +135,9 @@ def test_build_instruction_needs_both_intent_and_a_build_signal() -> None:
     assert is_project_build_instruction("create a summary of this meeting") is False
 
 
-def test_build_request_without_a_project_explains_how_to_open_one(tmp_path: Path) -> None:
+def test_build_request_without_a_project_explains_how_to_open_one(
+    tmp_path: Path,
+) -> None:
     """The one answer the host can give deterministically, in one turn."""
     settings = Settings(
         _env_file=None,
@@ -154,9 +159,9 @@ def test_build_request_without_a_project_explains_how_to_open_one(tmp_path: Path
                 break
             time.sleep(0.01)
         assert run["status"] == "completed"
-        reply = client.get(
-            f"/api/v1/conversations/{conversation_id}/messages"
-        ).json()[-1]["content"]
+        reply = client.get(f"/api/v1/conversations/{conversation_id}/messages").json()[
+            -1
+        ]["content"]
         assert "no project is open" in reply
         assert "Project" in reply and "Assets" in reply
         # It must not have gone near the architecture tool. The events endpoint

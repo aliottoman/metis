@@ -12,8 +12,16 @@ from .asset_library import AssetManager
 from .answer_bank import AnswerBank
 from .attention import AttentionService, MorningBrief
 from .blob_store import BlobStore
+from .coding_contracts import CodingEngineInfoV1
 from .config import Settings
 from .control_plane import ControlPlane
+from .coding_engine import (
+    CodingEngine,
+    CodingEngineError,
+    CodingEngineProtocolError,
+    CodingSessionStore,
+    SidecarCodingEngine,
+)
 from .corpus import CorpusService
 from .customer_intelligence import CustomerIntelligenceService
 from .dac_catalog import DacCatalog
@@ -50,6 +58,21 @@ class AppRuntime:
             catalog_path=settings.asset_catalog_path,
         )
         self.database = Database(settings.database_path)
+        self.coding_sessions = CodingSessionStore(self.database)
+        # The client is lazy: constructing it starts no process. New project
+        # runs always use it; the same adapter also clears older session debt.
+        self.coding_engine: CodingEngine | None = SidecarCodingEngine(
+            settings.cline_sidecar_command,
+            cwd=settings.repo_root,
+            start_timeout_seconds=settings.cline_sidecar_start_timeout_seconds,
+            request_timeout_seconds=settings.cline_sidecar_request_timeout_seconds,
+            shutdown_timeout_seconds=settings.cline_sidecar_shutdown_timeout_seconds,
+            max_frame_bytes=settings.cline_sidecar_max_frame_bytes,
+            event_queue_size=settings.cline_sidecar_event_queue_size,
+        )
+        self.coding_engine_info: CodingEngineInfoV1 | None = None
+        self.coding_engine_ready = settings.project_coding_engine != "clinecore"
+        self.coding_engine_readiness_error: str | None = None
         self.blobs = BlobStore(settings.blob_dir)
         self.events = EventBus(self.database)
         self.retrieval = CohereRetrieval(settings)
@@ -60,9 +83,7 @@ class AppRuntime:
         self.run_history = RunHistoryService(settings, self.database, self.corpus)
         self.profile = ProfileStore(settings)
         self.model_preference = ModelPreferenceStore(settings)
-        self.model_session = LocalModelSessionManager(
-            settings, self.model_preference
-        )
+        self.model_session = LocalModelSessionManager(settings, self.model_preference)
         # Sizing reads a vendored catalog and needs no I/O, so it is built here
         # rather than in start(); the model provider is attached later so the
         # recommender can use whichever model the user has selected.
@@ -112,6 +133,8 @@ class AppRuntime:
 
     async def start(self) -> None:
         self.settings.prepare_directories()
+        if self.settings.project_coding_engine == "clinecore":
+            await self._probe_coding_engine()
         await self.database.open()
         await self.registry.seed_builtins()
         await self.registry.reconcile_trusted_definition_proposals()
@@ -120,11 +143,15 @@ class AppRuntime:
             self.settings, model_session=self.model_session
         )
         self.local_model = (
-            self.model.local if isinstance(self.model, RoutedModelProvider) else self.model
+            self.model.local
+            if isinstance(self.model, RoutedModelProvider)
+            else self.model
         )
         self.attention = AttentionService(self.database, assets=self.assets)
         self.brief = MorningBrief(
-            self.attention, self.database, model=self.model,
+            self.attention,
+            self.database,
+            model=self.model,
             preference=self.model_preference,
         )
         self.customers = CustomerIntelligenceService(
@@ -138,8 +165,10 @@ class AppRuntime:
             self.dac_catalog, model=self.model, preference=self.model_preference
         )
         self.win_valuation = WinValuationService(
-            self.database, self.sku_catalog,
-            model=self.model, preference=self.model_preference,
+            self.database,
+            self.sku_catalog,
+            model=self.model,
+            preference=self.model_preference,
         )
         self.project_sandbox = ProjectSandboxService(self.settings)
         self.projects = ProjectWorkspaceService(
@@ -183,10 +212,50 @@ class AppRuntime:
             model_session=self.model_session,
             web=WebResearch(self.settings),
             answers=self.answers,
+            coding_engine=self.coding_engine,
+            coding_sessions=self.coding_sessions,
         )
         await self.control_plane.reconcile_startup()
+        try:
+            await self.control_plane.reconcile_coding_cleanup()
+        except Exception as error:  # noqa: BLE001 - startup stays available/degraded
+            logger.info("coding cleanup startup pass deferred: %s", str(error)[:200])
         self.spawn(self._release_idle_model(), name="model-idle-release")
         self.spawn(self._refresh_notion(), name="notion-refresh")
+        self.spawn(self._retry_coding_cleanup(), name="coding-artifact-cleanup")
+
+    async def _probe_coding_engine(self) -> None:
+        """Validate the local child before it receives any project authority."""
+
+        engine = self.coding_engine
+        if engine is None:
+            self.coding_engine_ready = False
+            self.coding_engine_readiness_error = (
+                "Advanced project coding is selected, but its local coding service "
+                "is unavailable."
+            )
+            return
+        try:
+            info = await engine.get_info()
+            if info.runtime != "cline":
+                raise CodingEngineProtocolError(
+                    "the configured coding service is not running the ClineCore runtime"
+                )
+        except CodingEngineError as error:
+            logger.warning("coding engine readiness probe failed: %s", str(error)[:500])
+            self.coding_engine_ready = False
+            self.coding_engine_readiness_error = (
+                "Advanced project coding could not reach its local coding service. "
+                "Check that the service is running and try again."
+            )
+            await engine.close()
+            # The run alias remains `clinecore`; ControlPlane receives no engine
+            # and reports the unavailable route instead of silently using legacy.
+            self.coding_engine = None
+            return
+        self.coding_engine_info = info
+        self.coding_engine_ready = True
+        self.coding_engine_readiness_error = None
 
     async def _refresh_notion(self) -> None:
         """Keep the Notion mirror, and its embeddings, current on its own.
@@ -223,6 +292,18 @@ class AppRuntime:
             except Exception as error:  # noqa: BLE001 - retrieval quality only
                 logger.info("notion refresh skipped: %s", str(error)[:200])
             await asyncio.sleep(every * 3600)
+
+    async def _retry_coding_cleanup(self) -> None:
+        """Retry durable cleanup debt; this path never selects or calls a model."""
+
+        while True:
+            await asyncio.sleep(self.settings.cline_cleanup_interval_seconds)
+            if self.control_plane is None:
+                continue
+            try:
+                await self.control_plane.reconcile_coding_cleanup()
+            except Exception as error:  # noqa: BLE001 - maintenance is non-load-bearing
+                logger.info("coding cleanup pass deferred: %s", str(error)[:200])
 
     async def _release_idle_model(self) -> None:
         """Give the weights back once every Metis window has gone away.
@@ -265,6 +346,8 @@ class AppRuntime:
         await self.assets.shutdown()
         if self.control_plane is not None:
             await self.control_plane.shutdown()
+        if self.coding_engine is not None:
+            await self.coding_engine.close()
         if self.model is not None and hasattr(self.model, "close"):
             await self.model.close()
         if self._checkpointer_context is not None:

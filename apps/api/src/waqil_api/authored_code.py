@@ -20,6 +20,7 @@ the standard library — so this validator is a **denylist over a broad allowlis
 The validator is host code, mirrored in-container for the Podman path, and fails
 closed. It returns JSON-able evidence recorded with the build/run.
 """
+
 from __future__ import annotations
 
 import ast
@@ -108,12 +109,12 @@ _BANNED_NAMES: frozenset[str] = frozenset(
         "license",
         "__builtins__",
         "object",  # object().__subclasses__() escape
-        "type",    # type(...) metaclass tricks / type().__subclasses__()
+        "type",  # type(...) metaclass tricks / type().__subclasses__()
         "super",
         "classmethod",
         "staticmethod",
         "property",
-        "print",   # I/O — the harness owns stdio
+        "print",  # I/O — the harness owns stdio
     }
 )
 
@@ -223,12 +224,16 @@ class _Auditor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def validate_authored_source(source: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+def validate_authored_source(
+    source: str, context: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Validate model-authored ``run(input, model)`` source against the
     pure-python-authored profile. Raises ``AuthoredCodeError`` on any violation
     and otherwise returns JSON-able evidence."""
     if "\x00" in source or "\r" in source:
-        raise AuthoredCodeError("source must use LF line endings and contain no NUL bytes")
+        raise AuthoredCodeError(
+            "source must use LF line endings and contain no NUL bytes"
+        )
     encoded = source.encode("utf-8")
     if len(encoded) > MAX_SOURCE_BYTES:
         raise AuthoredCodeError(f"source exceeds {MAX_SOURCE_BYTES} bytes")
@@ -244,7 +249,9 @@ def validate_authored_source(source: str, context: dict[str, Any] | None = None)
     auditor = _Auditor()
     auditor.visit(tree)
     if not auditor.defines_run:
-        auditor.violations.append(f"missing a top-level `def {RUN_FUNCTION}(input, model)`")
+        auditor.violations.append(
+            f"missing a top-level `def {RUN_FUNCTION}(input, model)`"
+        )
     else:
         missing = [p for p in REQUIRED_PARAMS if p not in auditor.run_params]
         if missing:
@@ -265,18 +272,75 @@ def validate_authored_source(source: str, context: dict[str, Any] | None = None)
 # guarded __import__. Exception classes stay so code can raise and except.
 SAFE_BUILTINS: frozenset[str] = frozenset(
     {
-        "abs", "all", "any", "ascii", "bin", "bool", "bytes", "chr", "complex",
-        "dict", "divmod", "enumerate", "filter", "float", "format", "frozenset",
-        "hash", "hex", "int", "isinstance", "issubclass", "iter", "len", "list",
-        "map", "max", "min", "next", "oct", "ord", "pow", "range", "repr",
-        "reversed", "round", "set", "slice", "sorted", "str", "sum", "tuple",
-        "zip", "True", "False", "None", "NotImplemented", "Ellipsis",
+        "abs",
+        "all",
+        "any",
+        "ascii",
+        "bin",
+        "bool",
+        "bytes",
+        "chr",
+        "complex",
+        "dict",
+        "divmod",
+        "enumerate",
+        "filter",
+        "float",
+        "format",
+        "frozenset",
+        "hash",
+        "hex",
+        "int",
+        "isinstance",
+        "issubclass",
+        "iter",
+        "len",
+        "list",
+        "map",
+        "max",
+        "min",
+        "next",
+        "oct",
+        "ord",
+        "pow",
+        "range",
+        "repr",
+        "reversed",
+        "round",
+        "set",
+        "slice",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+        "zip",
+        "True",
+        "False",
+        "None",
+        "NotImplemented",
+        "Ellipsis",
         # exception hierarchy (so try/except/raise work)
-        "Exception", "ArithmeticError", "AssertionError", "AttributeError",
-        "EOFError", "FloatingPointError", "IndexError", "KeyError", "LookupError",
-        "MemoryError", "NameError", "NotImplementedError", "OverflowError",
-        "RecursionError", "RuntimeError", "StopIteration", "TypeError",
-        "ValueError", "ZeroDivisionError", "UnicodeError", "UnicodeDecodeError",
+        "Exception",
+        "ArithmeticError",
+        "AssertionError",
+        "AttributeError",
+        "EOFError",
+        "FloatingPointError",
+        "IndexError",
+        "KeyError",
+        "LookupError",
+        "MemoryError",
+        "NameError",
+        "NotImplementedError",
+        "OverflowError",
+        "RecursionError",
+        "RuntimeError",
+        "StopIteration",
+        "TypeError",
+        "ValueError",
+        "ZeroDivisionError",
+        "UnicodeError",
+        "UnicodeDecodeError",
         "UnicodeEncodeError",
     }
 )
@@ -340,7 +404,9 @@ async def execute_authored(
     # it gets its own allowance instead of eating the code budget. RLIMIT_CPU still
     # pins actual CPU burn to `timeout_seconds`, which is the runaway-code guard;
     # a tool that legitimately calls a model just needs wall-clock to wait.
-    model_wait = max(0, int(model_call_timeout_seconds)) * max(0, int(model_call_budget))
+    model_wait = max(0, int(model_call_timeout_seconds)) * max(
+        0, int(model_call_budget)
+    )
     wall_clock_budget = timeout_seconds + model_wait
 
     def bridge(params: dict[str, Any]) -> str:
@@ -353,7 +419,12 @@ async def execute_authored(
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(
-                _drive_sync, bootstrap, workdir, bridge, wall_clock_budget, max_frame_bytes
+                _drive_sync,
+                bootstrap,
+                workdir,
+                bridge,
+                wall_clock_budget,
+                max_frame_bytes,
             ),
             timeout=wall_clock_budget + 12,
         )
@@ -401,7 +472,11 @@ def _drive_sync(
     watchdog.daemon = True
     watchdog.start()
     try:
-        assert proc.stdout is not None and proc.stdin is not None and proc.stderr is not None
+        assert (
+            proc.stdout is not None
+            and proc.stdin is not None
+            and proc.stderr is not None
+        )
         while True:
             line = proc.stdout.readline()
             if not line:
@@ -435,14 +510,20 @@ def _drive_sync(
                     proc.stdin.write((json.dumps(response) + "\n").encode("utf-8"))
                     proc.stdin.flush()
                 except (BrokenPipeError, OSError) as exc:
-                    raise AuthoredExecutionError("authored tool closed the model channel") from exc
+                    raise AuthoredExecutionError(
+                        "authored tool closed the model channel"
+                    ) from exc
             elif kind == "result":
                 output = frame.get("output")
                 if not isinstance(output, dict):
-                    raise AuthoredExecutionError("authored tool returned a non-object output")
+                    raise AuthoredExecutionError(
+                        "authored tool returned a non-object output"
+                    )
                 return output
             elif kind == "error":
-                raise AuthoredExecutionError(str(frame.get("error", "authored tool failed")))
+                raise AuthoredExecutionError(
+                    str(frame.get("error", "authored tool failed"))
+                )
     finally:
         watchdog.cancel()
         _kill_group(proc)

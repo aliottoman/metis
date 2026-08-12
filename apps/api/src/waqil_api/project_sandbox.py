@@ -11,6 +11,7 @@ and there is no host fallback. When the sandbox cannot run — Podman is down, t
 image is missing, the project is too large — verification degrades to the static
 checks and says why, because a gate that quietly passes is worse than no gate.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,7 +32,17 @@ from .project_wiring import ERROR, WARNING, declared_distributions, module_name_
 
 # Directories that are never part of what a build should be judged on.
 _SKIP_DIRECTORIES = frozenset(
-    {".git", ".hg", ".venv", "venv", "node_modules", "__pycache__", "dist", "build", ".metis"}
+    {
+        ".git",
+        ".hg",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        "dist",
+        "build",
+        ".metis",
+    }
 )
 
 # Where a project's entrypoint conventionally lives, best first. Everything the
@@ -84,6 +95,7 @@ def podman_child_env() -> dict[str, str]:
             env["PATH"] = parent + os.pathsep + env.get("PATH", "")
     return env
 
+
 # Sandbox error codes that mean "the sandbox did not run", as opposed to "the
 # project is broken". These degrade to the static gate instead of being reported
 # to the model, which cannot do anything about any of them.
@@ -121,6 +133,15 @@ class SandboxOutcome:
 def _relative_parts_are_visible(relative: Path) -> bool:
     """Whether a project path belongs in the copy the sandbox will import."""
     return not any(part in _SKIP_DIRECTORIES for part in relative.parts)
+
+
+def _is_python_test_path(path: str) -> bool:
+    candidate = Path(path)
+    name = candidate.name.casefold()
+    return bool(
+        candidate.suffix.casefold() == ".py"
+        and (name.startswith("test_") or name.endswith("_test.py"))
+    )
 
 
 def materialize(
@@ -170,7 +191,9 @@ def materialize(
     return files
 
 
-def import_order(paths: list[str], staged: dict[str, dict[str, Any]], limit: int) -> list[str]:
+def import_order(
+    paths: list[str], staged: dict[str, dict[str, Any]], limit: int
+) -> list[str]:
     """The modules to import, entrypoints first, then everything staged.
 
     Entrypoints come first so the application object is found on the module that
@@ -181,6 +204,11 @@ def import_order(paths: list[str], staged: dict[str, dict[str, Any]], limit: int
     seen: set[str] = set()
     for candidate in (*_ENTRYPOINT_HINTS, *sorted(staged), *sorted(paths)):
         if candidate not in staged and candidate not in paths:
+            continue
+        # Test modules have their own collection/import lifecycle and now run
+        # once in an isolated pytest child. Importing them here first can execute
+        # module-level fixtures twice and contaminate the app probe process.
+        if _is_python_test_path(candidate):
             continue
         dotted = module_name_for(candidate)
         if dotted is None or dotted in seen or dotted.endswith("__init__"):
@@ -248,12 +276,21 @@ class ProjectSandboxService:
             return SandboxOutcome(reason=f"sandbox runner unavailable: {runner.name}")
         paths = list(project_paths or [])
         modules = import_order(paths, staged, self.settings.project_sandbox_max_modules)
-        if not modules:
+        has_python_change = any(
+            Path(path).suffix.casefold() == ".py" for path in staged
+        )
+        if not modules and not has_python_change:
             return SandboxOutcome(
                 available=True, reason="no Python module in this changeset to import"
             )
         return await asyncio.to_thread(
-            self._run, runner, root, staged, paths, requirements, modules,
+            self._run,
+            runner,
+            root,
+            staged,
+            paths,
+            requirements,
+            modules,
             list(scenarios or []),
         )
 
@@ -270,13 +307,17 @@ class ProjectSandboxService:
         """Materialize, invoke the wrapper, and read back its envelope."""
         self._last_used = time.monotonic()
         self.settings.run_dir.mkdir(parents=True, exist_ok=True)
-        workspace = Path(tempfile.mkdtemp(prefix="metis-verify-", dir=str(self.settings.run_dir)))
+        workspace = Path(
+            tempfile.mkdtemp(prefix="metis-verify-", dir=str(self.settings.run_dir))
+        )
         project = workspace / "project"
         try:
             try:
                 materialize(root, staged, project)
             except (OSError, ValueError) as exc:
-                return SandboxOutcome(reason=f"could not stage the project for verification: {exc}")
+                return SandboxOutcome(
+                    reason=f"could not stage the project for verification: {exc}"
+                )
             if self.settings.project_sandbox_autostart:
                 self._ensure_machine()
             request = json.dumps(
@@ -285,6 +326,10 @@ class ProjectSandboxService:
                     "modules": modules,
                     "app_attribute": "app",
                     "scenarios": list(scenarios or []),
+                    # Host-derived byte-diff paths only.  The in-container
+                    # verifier uses these to select and attribute a bounded
+                    # pytest slice; they never become argv or shell text.
+                    "changed_paths": list(staged),
                 }
             ).encode("utf-8")
             try:
@@ -337,7 +382,10 @@ class ProjectSandboxService:
             if probe.returncode == 0:
                 return
             started = subprocess.run(
-                [binary, "machine", "start"], capture_output=True, timeout=120, check=False
+                [binary, "machine", "start"],
+                capture_output=True,
+                timeout=120,
+                check=False,
             )
             self._machine_started_here = started.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
@@ -385,6 +433,11 @@ _CONFIG_SHAPED = re.compile(
     r"ConfigError|EnvironmentError|is not set|Field required|"
     r"validation error for|environment variable|\bOCI_[A-Z][A-Z0-9_]*|\bWAQIL_[A-Z][A-Z0-9_]*"
 )
+_TEST_ENV_SHAPED = re.compile(
+    r"ConnectionError|ConnectError|Network is unreachable|Name or service not known|"
+    r"Temporary failure in name resolution|environment variable|is not set|"
+    r"\b(?:OCI|AWS|AZURE|GOOGLE|OPENAI|WAQIL)_[A-Z][A-Z0-9_]*"
+)
 
 
 def classify_envelope(
@@ -423,7 +476,9 @@ def classify_envelope(
 
     checks = list(envelope.get("checks") or [])
     module_paths = {
-        module_name_for(path): path for path in (*staged, *paths) if module_name_for(path)
+        module_name_for(path): path
+        for path in (*staged, *paths)
+        if module_name_for(path)
     }
     local_roots = {name.split(".")[0] for name in module_paths if name}
     declared = declared_distributions(requirements)
@@ -487,17 +542,49 @@ def classify_envelope(
             # something stays advisory, because the scenario — not the app —
             # may be the wrong party, and false blocks cost more than they
             # catch.
+            #
+            # An exact JSON assertion is the opposite case and is never
+            # advisory: it names the precise structure that was requested, so
+            # a mismatch is the app being wrong, not the scenario. Keeping the
+            # guard explicit means a later change to containment semantics
+            # cannot quietly downgrade an exact claim — which is how two live
+            # models came to pass a listing check by appending a record next
+            # to the wrong one instead of correcting it.
+            advisory = bool(check.get("content_miss")) and not check.get("exact_miss")
             findings.append(
                 _finding(
                     path,
                     f"{name} failed: {detail}{location}",
-                    WARNING if check.get("content_miss") else ERROR,
+                    WARNING if advisory else ERROR,
                     kind="acceptance",
+                )
+            )
+        elif check.get("kind") == "test":
+            # A repository-authored regression, run against the exact staged
+            # copy in the networkless container, is stronger evidence than a
+            # synthetic route probe.  Keep its kind explicit so the shared
+            # approval/repair gate can always treat it as blocking unless the
+            # missing-dependency branch above proved the image could not run it.
+            findings.append(
+                _finding(
+                    path,
+                    f"{name} failed against the staged project: {detail}{location}",
+                    # The container deliberately has neither credentials nor a
+                    # network. A repository integration test that fails only
+                    # for that reason was not actually exercised; like a
+                    # declared package absent from the image, keep it visible
+                    # without asking the model to rewrite correct code.
+                    WARNING
+                    if _TEST_ENV_SHAPED.search(f"{error_type}: {detail}")
+                    else ERROR,
+                    kind="test",
                 )
             )
         elif check.get("kind") == "request":
             findings.append(
-                _finding(path, f"{name} failed when the project ran: {detail}{location}")
+                _finding(
+                    path, f"{name} failed when the project ran: {detail}{location}"
+                )
             )
         else:
             findings.append(_finding(path, f"{name} failed: {detail}{location}"))

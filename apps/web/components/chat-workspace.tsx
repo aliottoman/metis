@@ -8,12 +8,15 @@ import { ElicitationCard } from "@/components/elicitation-card";
 import { ApplyCard } from "@/components/apply-card";
 import { ArtifactViewer } from "@/components/artifact-viewer";
 import { CommandPicker, type PickerOption } from "@/components/command-picker";
+import { ComposerContextMenu } from "@/components/composer-context-menu";
 import { CustomerDashboardSnippet } from "@/components/customer-dashboard-snippet";
 import { MarkdownContent } from "@/components/markdown-content";
 import { RunTimeline } from "@/components/run-timeline";
 import { MetisCompanion } from "@/components/metis-companion";
 import { MetisWordmark } from "@/components/metis-mark";
 import { ModelControl } from "@/components/model-control";
+import { ProjectActivity } from "@/components/project-activity";
+import { SelectMenu } from "@/components/select-menu";
 import {
   ApiError,
   answerElicitation,
@@ -46,6 +49,7 @@ import {
   addDocumentToKnowledge,
 } from "@/lib/api";
 import { rememberConversation } from "@/lib/recent-conversations";
+import { clinePassReady, projectMappingReady } from "@/lib/model-route";
 import { freshToken } from "@/lib/token";
 import { mergeAssistantReasoning, mergeAssistantRunEvent, messageBelongsToRun } from "@/lib/run-history";
 import { attachmentBadge, CHAT_ATTACHMENT_ACCEPT } from "@/lib/attachments";
@@ -71,13 +75,14 @@ import { latestPendingElicitation } from "@/lib/elicitations";
 import { latestActionSuggestion } from "@/lib/suggestions";
 import { useRunEvents } from "@/hooks/use-run-events";
 import { useDictation } from "@/hooks/use-dictation";
+import { trackConversationRun, updateConversationRun } from "@/lib/run-indicators";
 
 /**
  * Why a continuous project mode cannot run, or null when it can.
  *
- * Both continuous modes ride entirely on one cloud provider, so choosing one
- * without its key is refused here rather than at the first step of a build.
- * The local-led mode names no provider and is never blocked.
+ * All project modes use the same local vertical-slice harness while their model
+ * calls follow the selected provider lane. Each lane is refused here when it is
+ * absent rather than at the first step of a build.
  */
 function projectModeBlocked(mode: ProjectMode, preference: ModelPreference | null): string | null {
   if (mode === "grok_continuous" && !preference?.oci_available) {
@@ -85,6 +90,13 @@ function projectModeBlocked(mode: ProjectMode, preference: ModelPreference | nul
   }
   if (mode === "cohere_continuous" && !preference?.cohere_available) {
     return "Command A+ mode needs a Cohere API key. Add WAQIL_COHERE_API_KEY in Settings first.";
+  }
+  if (
+    mode === "grok_bootstrap_local"
+    && preference?.provider === "cline"
+    && !clinePassReady(preference.cline_available, preference.cline_models)
+  ) {
+    return "The selected ClinePass role ladder needs WAQIL_CLINE_API_KEY in Settings first.";
   }
   return null;
 }
@@ -485,12 +497,11 @@ export function ChatWorkspace() {
     }
     const target = known.find((project) => project.id === projectId);
     const blocked = projectModeBlocked(projectMode, modelPreference)
-      // The first map is one cloud call. Grok makes it when OCI is configured
-      // and Command A+ stands in when it is not, so an unmapped project needs
-      // one of the two rather than OCI specifically.
-      ?? (target?.initialized || modelPreference?.oci_available || modelPreference?.cohere_available
+      // The first map is one cloud call. The selected ClinePass planner owns
+      // it when present; Grok and Command A+ remain the other configured lanes.
+      ?? (target?.initialized || projectMappingReady(modelPreference)
         ? null
-        : "Mapping a project for the first time needs a cloud model. Configure OCI or add a Cohere API key in Settings.");
+        : "Mapping a project for the first time needs ClinePass, Grok, or Command A+ configured in Settings.");
     if (blocked) {
       setError(blocked);
       return false;
@@ -568,6 +579,16 @@ export function ChatWorkspace() {
     }
     if (provider === "cohere" && !modelPreference?.cohere_available) {
       setError("Cohere is not configured yet. Add WAQIL_COHERE_API_KEY before selecting it.");
+      return;
+    }
+    if (
+      provider === "cline"
+      && !clinePassReady(
+        modelPreference?.cline_available === true,
+        modelPreference?.cline_models ?? [],
+      )
+    ) {
+      setError("ClinePass is not configured yet. Add WAQIL_CLINE_API_KEY before selecting it.");
       return;
     }
     setProviderSaving(true);
@@ -743,10 +764,17 @@ export function ChatWorkspace() {
 
     // A finished run is no longer "in flight" for its conversation, so stop
     // counting it as a live run to restore when the conversation is reopened.
-    if (["run.completed", "run.failed", "run.cancelled", "completed", "cancelled"].includes(type)) {
+    if (["run.completed", "run.failed", "run.cancelled", "completed", "failed", "cancelled"].includes(type)) {
       liveRunsRef.current.forEach((runId, convId) => {
         if (runId === event.run_id) liveRunsRef.current.delete(convId);
       });
+      updateConversationRun(
+        event.run_id,
+        type.includes("fail") ? "failed" : type.includes("cancel") ? "cancelled" : "done",
+        document.visibilityState !== "visible",
+      );
+    } else if (type === "run.awaiting_approval" || type === "run.interrupted" || type === "elicitation.requested") {
+      updateConversationRun(event.run_id, "attention", true);
     }
 
     if (type.includes("delta") || type.includes("failed") || ["assistant.message", "message.completed", "run.completed", "completed"].includes(type)) {
@@ -760,7 +788,7 @@ export function ChatWorkspace() {
   const runActive = Boolean(activeRunId) && !["closed", "error"].includes(connection);
 
   // The relaunch offer only makes sense for a genuine on-device model. A cloud
-  // pin (Command A+, Grok, a hosted model) resumes with nothing to launch, so
+  // pin (ClinePass, Command A+, Grok, or a hosted model) resumes with nothing to launch, so
   // an approval never names a stale local model. Shared by the inline approval
   // in the thread and the drawer timeline.
   const approveLabel =
@@ -1075,8 +1103,10 @@ export function ChatWorkspace() {
 
     try {
       let targetConversationId = conversationId;
+      let trackedTitle = conversationTitle;
       if (!targetConversationId) {
         const title = content.slice(0, 54) || outgoingAttachments[0]?.name || "New conversation";
+        trackedTitle = title;
         const created = await createConversation(title);
         if (generation !== workspaceGenerationRef.current) return;
         if (!created.id) throw new Error("The API did not return a conversation ID.");
@@ -1112,6 +1142,11 @@ export function ChatWorkspace() {
       setAnsweredElicitations(new Set());
       selfStartedRunsRef.current.add(run.run_id);
       liveRunsRef.current.set(targetConversationId, run.run_id);
+      trackConversationRun({
+        conversationId: targetConversationId,
+        runId: run.run_id,
+        title: trackedTitle,
+      });
       setActiveRunId(run.run_id);
       latestRunRef.current = run.run_id;
       setFeedbackMode("idle");
@@ -1449,6 +1484,10 @@ export function ChatWorkspace() {
   }
 
   const latestAssistant = useMemo(() => [...messages].reverse().find((message) => message.role === "assistant"), [messages]);
+  const hasActiveRunMessage = useMemo(
+    () => messages.some((message) => messageBelongsToRun(message, activeRunId)),
+    [activeRunId, messages],
+  );
 
   // Artifacts reach the UI as live run events, so a conversation reopened
   // later showed none — exactly when someone comes back for the file they
@@ -1534,7 +1573,7 @@ export function ChatWorkspace() {
       id: project.id,
       label: project.name,
       glyph: project.initialized ? "◆" : "◇",
-      meta: `${project.framework ? `${project.framework} · ` : ""}${project.initialized ? `${project.fileCount} files mapped` : "Grok map not created yet"}`,
+      meta: `${project.framework ? `${project.framework} · ` : ""}${project.initialized ? `${project.fileCount} files mapped` : "Project map not created yet"}`,
       keywords: project.framework ? [project.framework] : undefined,
       badge: selectedProjectId === project.id ? "Active" : undefined,
     })),
@@ -1749,15 +1788,15 @@ export function ChatWorkspace() {
                           spellCheck={false}
                           disabled={Boolean(folderBusy)}
                         />
-                        <select
-                          className="knowledgeInput"
+                        <SelectMenu
+                          className="folderKindSelect"
+                          hideLabel
+                          label="Source kind"
                           value={folderKind}
-                          onChange={(event) => setFolderKind(event.target.value as CorpusSource["kind"])}
-                          aria-label="Source kind"
+                          onChange={(value) => setFolderKind(value as CorpusSource["kind"])}
                           disabled={Boolean(folderBusy)}
-                        >
-                          {["code", "docs", "notes", "mixed"].map((item) => <option key={item} value={item}>{item}</option>)}
-                        </select>
+                          options={["code", "docs", "notes", "mixed"].map((item) => ({ value: item, label: item }))}
+                        />
                       </>
                     )}
                     {matchedSource?.consent ? null : (
@@ -1844,7 +1883,18 @@ export function ChatWorkspace() {
                   ) : null}
                   <div className="messageBody">
                     <div className="messageAuthor"><strong>{message.role === "user" ? "You" : "Metis"}</strong></div>
-                    {message.reasoning ? <ReasoningPanel reasoning={message.reasoning} live={Boolean(message.streaming) && !message.content} /> : null}
+                    {messageBelongsToRun(message, activeRunId) && (message.streaming || events.length) ? (
+                      <ProjectActivity
+                        events={events}
+                        reasoning={message.reasoning}
+                        live={Boolean(message.streaming) && !pendingApproval && !pendingElicitation}
+                        attention={Boolean(pendingApproval || pendingElicitation)}
+                        stageLabel={message.id === latestAssistant?.id ? stageLabel : null}
+                        projectName={selectedProject?.name}
+                      />
+                    ) : message.reasoning ? (
+                      <ReasoningPanel reasoning={message.reasoning} live={Boolean(message.streaming) && !message.content} />
+                    ) : null}
                     {editingMessageId === message.id ? (
                       <div className="messageEditor">
                         <textarea
@@ -1871,7 +1921,7 @@ export function ChatWorkspace() {
                       </div>
                     ) : message.content ? (
                       <MarkdownContent content={message.content} />
-                    ) : message.streaming && !message.reasoning ? (
+                    ) : message.streaming && !messageBelongsToRun(message, activeRunId) ? (
                       <p className="workingText">{(message.id === latestAssistant?.id ? stageLabel : null) ?? "Understanding the task and choosing a safe route…"}</p>
                     ) : null}
                     {/* Hover actions. Present on every settled message, not
@@ -1951,6 +2001,15 @@ export function ChatWorkspace() {
                   </div>
                 </article>
               ))}
+              {activeRunId && events.length > 0 && !hasActiveRunMessage ? (
+                <ProjectActivity
+                  events={events}
+                  live={runActive && !pendingApproval && !pendingElicitation}
+                  attention={Boolean(pendingApproval || pendingElicitation)}
+                  stageLabel={stageLabel}
+                  projectName={selectedProject?.name}
+                />
+              ) : null}
               {pendingApproval ? (
                 <div className="inlineApprovalDock">
                   <ApprovalCard
@@ -2095,33 +2154,26 @@ export function ChatWorkspace() {
                 <div className="composerScope">
                   <div className="headerPickerAnchor">
                     <button
+                      id="composer-context-trigger"
                       className="composerAddContext"
                       type="button"
                       aria-expanded={slashOpen}
-                      aria-haspopup="listbox"
+                      aria-haspopup="menu"
                       onClick={() => setSlashOpen((value) => !value)}
                       disabled={runActive}
-                      title="Add a customer or project to this message  ( / )"
+                      title="Add customer or project context ( / )"
                     >
                       <i aria-hidden="true">＋</i>
-                      <span>Context</span>
+                      <span>Add context</span>
                       <kbd>/</kbd>
                     </button>
                     {slashOpen ? (
-                      <CommandPicker
-                        label="Add to this message"
-                        placeholder="Type a command…"
-                        options={[
-                          { id: "customer", label: "Customer", meta: `Scope to one of ${customerOptions.length} accounts` },
-                          { id: "project", label: "Project", meta: "Open a project workspace" },
-                        ].filter((option) =>
-                          !slashQuery || option.id.startsWith(slashQuery.toLowerCase()),
-                        )}
-                        value={null}
-                        emptyMessage="No command matches that."
-                        onSelect={(id) => runSlashCommand(id)}
+                      <ComposerContextMenu
+                        customerCount={customerOptions.length}
+                        projectCount={projects.length}
+                        query={slashQuery}
+                        onSelect={runSlashCommand}
                         onDismiss={() => setSlashOpen(false)}
-                        footer={<span>Type <code>/</code> in the message box to reach this any time.</span>}
                       />
                     ) : null}
                     {customerPickerOpen ? (
@@ -2153,7 +2205,7 @@ export function ChatWorkspace() {
                         header={
                           <div className="projectWorkspaceIntro">
                             <span className="eyebrow">Whole-project mode</span>
-                            <p>Grok maps once, then Metis reads, searches, and proposes exact edits under approval. Pick who leads each step from the model control, top-right.</p>
+                            <p>Metis maps the workspace, then reads, searches, and proposes exact edits under approval. Choose who leads the work from the model control above.</p>
                           </div>
                         }
                         footer={<span>{projectOpening ? "Opening…" : "Writes always pause for approval"}</span>}

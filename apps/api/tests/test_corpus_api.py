@@ -81,9 +81,7 @@ def test_corpus_source_lifecycle_and_consent_gate(client, tmp_path) -> None:
     )
 
     # Indexing is refused until consent is granted (the egress boundary).
-    assert (
-        client.post(f"/api/v1/corpus/sources/{source_id}/reindex").status_code == 409
-    )
+    assert client.post(f"/api/v1/corpus/sources/{source_id}/reindex").status_code == 409
 
     granted = client.post(
         f"/api/v1/corpus/sources/{source_id}/consent",
@@ -93,9 +91,7 @@ def test_corpus_source_lifecycle_and_consent_gate(client, tmp_path) -> None:
     assert granted.json()["consent"] is True
 
     # With consent but no OCI configured in tests, indexing reports unavailable.
-    assert (
-        client.post(f"/api/v1/corpus/sources/{source_id}/reindex").status_code == 503
-    )
+    assert client.post(f"/api/v1/corpus/sources/{source_id}/reindex").status_code == 503
 
     listing = client.get("/api/v1/corpus/sources").json()
     assert any(item["id"] == source_id for item in listing)

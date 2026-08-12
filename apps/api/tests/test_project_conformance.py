@@ -4,6 +4,7 @@ Every case here is a defect taken from a measured build: six builds of the same
 request, three models, and each one produced a frontend posting a JSON body to a
 handler that reads the query string, while every other rung called it clean.
 """
+
 from __future__ import annotations
 
 from waqil_api.config import Settings
@@ -261,12 +262,96 @@ def test_a_planned_file_that_was_never_written_is_an_error() -> None:
     assert all(error["severity"] == "error" for error in errors)
 
 
-def test_a_planned_file_already_on_disk_is_not_owed() -> None:
-    """An edit turn must not be told to re-write files the project already has."""
+def test_a_planned_existing_file_must_be_written_in_this_changeset() -> None:
+    """Existing bytes cannot satisfy an explicit edit-turn commitment.
+
+    The planner is told not to list existing files unless this turn rewrites
+    them. Treating disk presence as completion let a Cline run omit README.md
+    while the host reported every planned artifact complete.
+    """
     staged = _staged(app__main_dot_py="x = 1\n")
 
     errors = staged_conformance_errors(
         staged, planned=["app/main.py", "README.md"], on_disk={"README.md"}
+    )
+
+    assert len(errors) == 1
+    assert errors[0]["path"] == "README.md"
+    assert "never written" in errors[0]["error"]
+
+
+# ── The live-canary failure: a plan that never named a required file ───────
+
+
+def test_a_file_the_request_required_but_the_plan_never_named_is_an_error() -> None:
+    """The exact live-canary shape: the planner's own plan covered only 5 of
+    16 explicitly required files, and the 11 missing ones were never even
+    `planned` -- so a check against `planned` alone cannot catch them.
+    `required` is independent of, and checked whether or not the plan
+    agrees."""
+    staged = _staged(
+        app__main_dot_py="x = 1\n",
+        app__config_dot_py="",
+        app__db_dot_py="",
+        app__models_dot_py="",
+        app__repository_dot_py="",
+    )
+    planned = [
+        "app/main.py",
+        "app/config.py",
+        "app/db.py",
+        "app/models.py",
+        "app/repository.py",
+    ]
+    required = [
+        *planned,
+        "app/extraction.py",
+        "app/services.py",
+        "requirements.txt",
+        "README.md",
+        "tests/test_workflows.py",
+    ]
+
+    # The verification of the smaller staged subset is clean: nothing planned
+    # was left unwritten, because nothing outside the 5 files was ever
+    # planned in the first place.
+    planned_only_errors = staged_conformance_errors(staged, planned=planned)
+    assert planned_only_errors == []
+
+    # The independent required-files check still blocks approval.
+    errors = staged_conformance_errors(staged, planned=planned, required=required)
+    missing = {error["path"] for error in errors}
+    assert missing == {
+        "app/extraction.py",
+        "app/services.py",
+        "requirements.txt",
+        "README.md",
+        "tests/test_workflows.py",
+    }
+    assert all(error["severity"] == "error" for error in errors)
+
+
+def test_a_required_file_already_flagged_as_planned_and_missing_is_not_doubled() -> (
+    None
+):
+    """A required file that was also planned and never written is one defect,
+    reported once -- not twice under two different messages."""
+    staged = _staged(app__main_dot_py="x = 1\n")
+
+    errors = staged_conformance_errors(
+        staged,
+        planned=["app/main.py", "README.md"],
+        required=["README.md"],
+    )
+
+    assert [error["path"] for error in errors] == ["README.md"]
+
+
+def test_a_required_file_that_was_written_is_not_an_error() -> None:
+    staged = _staged(app__main_dot_py="x = 1\n", README_dot_md="# Demo\n")
+
+    errors = staged_conformance_errors(
+        staged, planned=["app/main.py"], required=["app/main.py", "README.md"]
     )
 
     assert errors == []
@@ -326,9 +411,7 @@ def test_a_file_that_does_not_parse_is_left_to_the_syntax_rung() -> None:
 
 
 def _oci_provider() -> OCIResponsesModelProvider:
-    return OCIResponsesModelProvider(
-        Settings(_env_file=None, allow_test_backends=True)
-    )
+    return OCIResponsesModelProvider(Settings(_env_file=None, allow_test_backends=True))
 
 
 def test_owed_files_narrow_grok_to_writing_them() -> None:

@@ -6,6 +6,7 @@ bounded, content-hashed definition; a non-matching or hostile draft is refused;
 budgets can never exceed the global ceiling; identical drafts dedup while
 revisions diverge.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -29,7 +30,9 @@ def _draft(**overrides) -> ToolDefinitionDraftV1:
 
 
 def test_text_summary_draft_hardens_to_declarative_definition() -> None:
-    definition = tool_authoring.harden_draft(_draft(), slug="readme-summary", max_broker_calls=4)
+    definition = tool_authoring.harden_draft(
+        _draft(), slug="readme-summary", max_broker_calls=4
+    )
     assert definition.slug == "readme-summary"
     assert definition.archetype == "text-summary"
     assert definition.status == "proposed"
@@ -43,7 +46,10 @@ def test_text_summary_draft_hardens_to_declarative_definition() -> None:
     assert profile.model_access.max_calls_per_run == 1
     assert "summarize" in profile.model_access.prompt_templates
     # Content-hashed and self-consistent.
-    assert definition.content_hash and definition_hash(definition) == definition.content_hash
+    assert (
+        definition.content_hash
+        and definition_hash(definition) == definition.content_hash
+    )
     # The referenced code profile is a registered host profile.
     assert capability_profiles.exists(profile.code_allowlist)
 
@@ -60,7 +66,9 @@ def test_model_never_sets_capabilities_via_requested_capabilities() -> None:
             "execute arbitrary python",
         ]
     )
-    definition = tool_authoring.harden_draft(hostile, slug="readme-summary", max_broker_calls=4)
+    definition = tool_authoring.harden_draft(
+        hostile, slug="readme-summary", max_broker_calls=4
+    )
     assert definition.capability_profile.network == "none"
     assert definition.capability_profile.runtime_allowlists == {}
     assert definition.capability_profile.model_access.max_calls_per_run == 1
@@ -70,8 +78,12 @@ def test_unmatched_request_falls_back_to_code_authoring() -> None:
     # No specific archetype matches → the general code-authoring archetype (the
     # model writes AST-gated run() code). Capability stays bounded: no network,
     # authored-code profile, model access via the injected bridge only.
-    draft = ToolDefinitionDraftV1(name="Ticket Classifier", description="classify support tickets by topic")
-    definition = tool_authoring.harden_draft(draft, slug="ticket-classifier", max_broker_calls=4)
+    draft = ToolDefinitionDraftV1(
+        name="Ticket Classifier", description="classify support tickets by topic"
+    )
+    definition = tool_authoring.harden_draft(
+        draft, slug="ticket-classifier", max_broker_calls=4
+    )
     assert definition.archetype == "code-authoring"
     assert definition.capability_profile.code_allowlist == "pure-python-authored-v1"
     assert definition.capability_profile.network == "none"
@@ -125,7 +137,9 @@ def test_runtime_exception_output_fails_authored_tool_evaluation() -> None:
 
 def test_reserved_builtin_slug_is_refused() -> None:
     with pytest.raises(ToolAuthoringError, match="reserved"):
-        tool_authoring.harden_draft(_draft(), slug=REFERENCE_ARCHITECTURE_SLUG, max_broker_calls=4)
+        tool_authoring.harden_draft(
+            _draft(), slug=REFERENCE_ARCHITECTURE_SLUG, max_broker_calls=4
+        )
 
 
 def test_budget_over_global_ceiling_fails_closed() -> None:
@@ -174,8 +188,14 @@ def test_draft_coerces_nonstring_fields_from_the_model() -> None:
             "description": "Extract structured action items from meeting notes.",
             "intent": "Turn notes into a tracker.",
             "requested_capabilities": ["parse text", {"x": 1}],
-            "input_sketch": {"type": "object", "properties": {"notes": {"type": "string"}}},
-            "output_sketch": {"type": "object", "properties": {"items": {"type": "array"}}},
+            "input_sketch": {
+                "type": "object",
+                "properties": {"notes": {"type": "string"}},
+            },
+            "output_sketch": {
+                "type": "object",
+                "properties": {"items": {"type": "array"}},
+            },
         }
     )
     assert isinstance(draft.input_sketch, str) and isinstance(draft.output_sketch, str)
@@ -237,7 +257,9 @@ def test_computation_draft_mentioning_summary_stays_code_authoring() -> None:
 
 def test_genuine_readme_summary_still_selects_text_summary() -> None:
     """The disqualifiers must not swallow the archetype's own purpose."""
-    definition = tool_authoring.harden_draft(_draft(), slug="readme-summary", max_broker_calls=4)
+    definition = tool_authoring.harden_draft(
+        _draft(), slug="readme-summary", max_broker_calls=4
+    )
     assert definition.archetype == "text-summary"
     overview = ToolDefinitionDraftV1(
         name="Project Overview Card",

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { SelectMenu } from "@/components/select-menu";
+
 import {
   createMemoryProposal,
   decideMemoryProposal,
@@ -120,7 +122,17 @@ export function MemoryCenter() {
         </div>
         <textarea value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={20000} placeholder="For example: Use Chicago as the default OCI Generative AI region for this project." />
         <div className="memoryComposerActions">
-          <label>Kind<select value={draftKind} onChange={(event) => setDraftKind(event.target.value as "user" | "project" | "skill")}><option value="project">Project fact</option><option value="user">Personal preference</option><option value="skill">Reusable working rule</option></select></label>
+          <SelectMenu
+            className="memoryKindSelect"
+            label="Kind"
+            value={draftKind}
+            onChange={(value) => setDraftKind(value as "user" | "project" | "skill")}
+            options={[
+              { value: "project", label: "Project fact" },
+              { value: "user", label: "Personal preference" },
+              { value: "skill", label: "Reusable working rule" },
+            ]}
+          />
           <span>{draft.trim().length.toLocaleString()} / 20,000</span>
           <button className="primaryButton" type="button" disabled={draft.trim().length < 3 || savingDraft} onClick={() => void proposeMemory()}>{savingDraft ? "Proposing…" : "Create proposal"}</button>
         </div>

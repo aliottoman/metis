@@ -5,6 +5,7 @@ pure-compute works; model() calls bridge to the host; a tool can catch a rejecte
 model call and degrade; crashes/timeouts/bad output are contained; disallowed
 source never reaches execution.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -17,7 +18,9 @@ from waqil_api.authored_code import (
 
 
 def _run(body: str) -> str:
-    return "def run(inputs, model):\n" + "\n".join("    " + line for line in body.splitlines())
+    return "def run(inputs, model):\n" + "\n".join(
+        "    " + line for line in body.splitlines()
+    )
 
 
 @pytest.mark.asyncio
@@ -40,7 +43,9 @@ async def test_tool_can_call_the_model_via_bridge() -> None:
         return "SUMMARY: " + str(params.get("text", ""))[:10]
 
     source = _run("return {'summary': model({'text': inputs.get('text','')})}")
-    output = await execute_authored(source, {"text": "hello world"}, on_model_request=on_model_request)
+    output = await execute_authored(
+        source, {"text": "hello world"}, on_model_request=on_model_request
+    )
     assert output["summary"] == "SUMMARY: hello worl"
     assert calls == [{"text": "hello world"}]
 

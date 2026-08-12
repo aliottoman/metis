@@ -23,6 +23,7 @@ The result is that the worst a bad extraction can do is propose the wrong
 checkbox, in a card that names exactly what it will change, before anything
 happens.
 """
+
 from __future__ import annotations
 
 import re
@@ -363,7 +364,11 @@ def describe(
         lines.append("Create these follow-ups:")
         for candidate in proposal.new_actions:
             owner = f" (owner: {candidate.owner})" if candidate.owner else ""
-            due = f", due {candidate.due_at.date().isoformat()}" if candidate.due_at else ""
+            due = (
+                f", due {candidate.due_at.date().isoformat()}"
+                if candidate.due_at
+                else ""
+            )
             lines.append(f"  • {candidate.description}{owner}{due}")
     if proposal.unmatched:
         lines.append("Not applied — nothing in the record matched:")

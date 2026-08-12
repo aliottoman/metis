@@ -52,7 +52,10 @@ class FakeRetrieval:
             ),
             key=lambda pair: -pair[1],
         )
-        return [(index, float(score)) for index, score in scored[: (top_n or len(documents))]]
+        return [
+            (index, float(score))
+            for index, score in scored[: (top_n or len(documents))]
+        ]
 
     def extract_entities(self, text: str):
         """Deterministic stand-in for Command A entity extraction: emits known
@@ -79,7 +82,9 @@ async def _corpus(tmp_path, available: bool = True, **settings_kwargs):
         allow_test_backends=True,
         **settings_kwargs,
     )
-    return database, CorpusService(settings, database, FakeRetrieval(available=available))
+    return database, CorpusService(
+        settings, database, FakeRetrieval(available=available)
+    )
 
 
 # A tiny two-function module: charge_card() calls _settle(). The query below
@@ -204,7 +209,9 @@ async def test_retrieve_degrades_to_cosine_when_rerank_is_unavailable(tmp_path) 
 
 
 @pytest.mark.asyncio
-async def test_junk_dirs_are_skipped_inside_the_source_but_not_above_it(tmp_path) -> None:
+async def test_junk_dirs_are_skipped_inside_the_source_but_not_above_it(
+    tmp_path,
+) -> None:
     # Reproduces the Notion mirror case: the source itself lives under a
     # directory named in _SKIP_DIRS (.data/corpus/notion). Its files must still
     # index — only junk directories *inside* the source are skipped.
@@ -214,7 +221,9 @@ async def test_junk_dirs_are_skipped_inside_the_source_but_not_above_it(tmp_path
     (root / "acme.md").write_text("# Acme\nCall notes for the Acme account.\n")
     (root / "node_modules").mkdir()
     (root / "node_modules" / "vendor.md").write_text("# Vendor\nnoise\n")
-    source = await corpus.register_source(str(root), "Notion", "notes", provider="notion")
+    source = await corpus.register_source(
+        str(root), "Notion", "notes", provider="notion"
+    )
     await corpus.set_consent(source.id, True, "ok")
     result = await corpus.index_source(source.id)
     assert result.files_indexed == 1
@@ -292,9 +301,7 @@ async def test_page_expansion_completes_the_winning_document(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_page_expansion_can_be_disabled(tmp_path) -> None:
-    database, corpus = await _corpus(
-        tmp_path, corpus_top_k=1, corpus_page_expand=False
-    )
+    database, corpus = await _corpus(tmp_path, corpus_top_k=1, corpus_page_expand=False)
     root = tmp_path / "notes"
     root.mkdir()
     (root / "acme.md").write_text(
@@ -450,7 +457,8 @@ async def test_revoking_consent_purges_the_code_graph(tmp_path) -> None:
 async def test_graph_updates_incrementally_when_a_call_is_removed(tmp_path) -> None:
     database, corpus, source = await _indexed_service(tmp_path)
     assert any(
-        c.dst_name == "_settle" for c in (await corpus.graph_lookup("charge_card")).callees
+        c.dst_name == "_settle"
+        for c in (await corpus.graph_lookup("charge_card")).callees
     )
     # Rewrite the file so charge_card no longer calls _settle.
     (tmp_path / "proj" / "service.py").write_text(
@@ -488,7 +496,8 @@ async def test_entity_graph_is_extracted_from_prose_when_enabled(tmp_path) -> No
     assert "organization" in lookup.kinds
     # Metis --uses--> Cohere, so Cohere has an inbound relation from Metis.
     assert any(
-        rel.src_name == "Metis" and rel.relation == "uses" for rel in lookup.relations_in
+        rel.src_name == "Metis" and rel.relation == "uses"
+        for rel in lookup.relations_in
     )
     await database.close()
 

@@ -3,6 +3,7 @@
 The renderer is first-party code, so unlike an authored tool it can be pinned
 exactly — same outline in, valid file out, every time and on every provider.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -74,7 +75,10 @@ def test_requested_format(prompt: str, expected: str) -> None:
 
 
 def test_filename_is_slugged_and_bounded() -> None:
-    assert factory.filename_for("BAPCO — DAC expansion!", "pptx") == "bapco-dac-expansion.pptx"
+    assert (
+        factory.filename_for("BAPCO — DAC expansion!", "pptx")
+        == "bapco-dac-expansion.pptx"
+    )
     assert factory.filename_for("", "pdf") == "metis-document.pdf"
     assert len(factory.filename_for("x" * 200, "pdf")) <= 64
 
@@ -125,7 +129,9 @@ def test_markdown_table_is_parsed_out_of_the_body() -> None:
         "Intro line\n| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |\nAfter"
     )
     assert [type(block).__name__ for block in blocks] == [
-        "TextBlock", "TableBlock", "TextBlock",
+        "TextBlock",
+        "TableBlock",
+        "TextBlock",
     ]
     assert blocks[0].text == "Intro line"
     assert blocks[1].columns == ["A", "B", "C"]
@@ -134,7 +140,9 @@ def test_markdown_table_is_parsed_out_of_the_body() -> None:
 
 
 def test_ragged_table_rows_are_padded_not_dropped() -> None:
-    blocks = factory.split_body("| A | B | C |\n|---|---|---|\n| 1 | 2 |\n| 1 | 2 | 3 | 4 |")
+    blocks = factory.split_body(
+        "| A | B | C |\n|---|---|---|\n| 1 | 2 |\n| 1 | 2 | 3 | 4 |"
+    )
     assert blocks[0].rows == [["1", "2", ""], ["1", "2", "3"]]
 
 

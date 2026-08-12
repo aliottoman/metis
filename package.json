@@ -5,9 +5,11 @@
   "license": "MIT",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
+    "build:cline-sidecar": "pnpm --dir apps/cline-sidecar build",
     "dev:web": "pnpm --dir apps/web dev",
     "build:web": "pnpm --dir apps/web build",
     "lint:web": "pnpm --dir apps/web lint",
-    "test:web": "pnpm --dir apps/web test"
+    "test:web": "pnpm --dir apps/web test",
+    "test:cline-sidecar": "pnpm --dir apps/cline-sidecar test"
   }
 }

@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import {
+  COMPANION_ENERGY_CHANGED_EVENT,
+  readCompanionEnergy,
+  type CompanionEnergy,
+} from "@/lib/companion-preference";
 
 export type CompanionMood = "idle" | "listening" | "thinking" | "done" | "trouble";
 
@@ -24,14 +30,27 @@ export function MetisCompanion({
   mood = "idle",
   size,
   className = "",
+  energy: energyOverride,
 }: {
   mood?: CompanionMood;
   size?: number;
   className?: string;
+  energy?: CompanionEnergy;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [energy, setEnergy] = useState<CompanionEnergy>("expressive");
   // Below about 28px a morphing silhouette reads as a wobble, not a breath.
   const still = size !== undefined && size < 28;
+
+  useEffect(() => {
+    const sync = (event?: Event) => {
+      const selected = event instanceof CustomEvent ? event.detail : readCompanionEnergy();
+      setEnergy(selected === "calm" || selected === "playful" ? selected : "expressive");
+    };
+    sync();
+    window.addEventListener(COMPANION_ENERGY_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(COMPANION_ENERGY_CHANGED_EVENT, sync);
+  }, []);
 
   useEffect(() => {
     const node = ref.current;
@@ -53,6 +72,7 @@ export function MetisCompanion({
       ref={ref}
       className={`companion ${still ? "isSmall" : ""} ${className}`.trim()}
       data-mood={mood}
+      data-energy={energyOverride ?? energy}
       style={size ? { width: size, height: size } : undefined}
       aria-hidden="true"
     >
@@ -67,6 +87,8 @@ export function MetisCompanion({
         <span className="pearlFilm"><i className="pearlFilmInk" /></span>
         <span className="pearlSpec" />
       </div>
+      <span className="pearlAura" />
+      <span className="pearlSpark" />
       <span className="pearlShadow" />
     </div>
   );

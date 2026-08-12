@@ -12,18 +12,19 @@ The canonical roster stays ``PROJECT_TOOL_REQUIRED_ARGUMENTS`` in contracts.py;
 a module-level check below refuses to import a tool list that disagrees with
 it, and the parity tests pin every other enumeration to the same table.
 """
+
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from .contracts import PROJECT_TOOL_REQUIRED_ARGUMENTS
+from .contracts import PROJECT_TOOL_REQUIRED_ARGUMENTS, WHOLE_FILE_END_LINE
 
 # Every project path is relative to the project root. Models default to an
 # invented workspace prefix otherwise, and every such call is refused.
 _PROJECT_PATH_HELP = (
-    "Path relative to the project root, e.g. \"app/agents/planner.py\". "
-    "Absolute paths and \"..\" are refused."
+    'Path relative to the project root, e.g. "app/agents/planner.py". '
+    'Absolute paths and ".." are refused.'
 )
 
 # The completion channel: a function call rather than a workspace tool, so a
@@ -45,7 +46,7 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
             "name": "list_files",
             "description": (
                 "List bounded project-relative file paths. Use before guessing "
-                "structure. Omit path, or send \"\", to list the whole project."
+                'structure. Omit path, or send "", to list the whole project.'
             ),
             "parameters": {
                 "type": "object",
@@ -54,7 +55,7 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": (
                             "Optional directory prefix relative to the project "
-                            "root, e.g. \"app/agents\". Never absolute."
+                            'root, e.g. "app/agents". Never absolute.'
                         ),
                     },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 500},
@@ -85,7 +86,11 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "minLength": 1, "description": _PROJECT_PATH_HELP},
+                    "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": _PROJECT_PATH_HELP,
+                    },
                     "start_line": {"type": "integer", "minimum": 1},
                     "end_line": {"type": "integer", "minimum": 1},
                 },
@@ -100,7 +105,11 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "minLength": 1, "description": _PROJECT_PATH_HELP},
+                    "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": _PROJECT_PATH_HELP,
+                    },
                     "original": {"type": "string", "minLength": 1},
                     "replacement": {"type": "string"},
                 },
@@ -123,7 +132,11 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "minLength": 1, "description": _PROJECT_PATH_HELP},
+                    "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": _PROJECT_PATH_HELP,
+                    },
                     "start_line": {"type": "integer", "minimum": 1},
                     "end_line": {"type": "integer", "minimum": 1},
                     "replacement": {"type": "string"},
@@ -146,7 +159,11 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "minLength": 1, "description": _PROJECT_PATH_HELP},
+                    "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": _PROJECT_PATH_HELP,
+                    },
                     "content": {"type": "string", "minLength": 1},
                 },
                 "required": ["path", "content"],
@@ -262,10 +279,12 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
                 "Correct this turn's file manifest when what you have read "
                 "contradicts it — a planned path this project does not have, a "
                 "framework that makes the plan wrong, work that needs different "
-                "files than were named. Send the COMPLETE corrected list, not a "
-                "delta; send [] if the task needs no new files. Use this rather "
-                "than writing a file you believe is wrong, and rather than "
-                "finishing to escape the plan."
+                "files than were named. Omitted prior paths remain committed. "
+                "Send the corrected order and additions in files; name any "
+                "proven-invalid unstaged paths explicitly in remove_files and "
+                "explain the repository evidence in reason. Use this rather "
+                "than writing a file you believe is wrong or finishing to "
+                "escape the plan."
             ),
             "parameters": {
                 "type": "object",
@@ -275,8 +294,17 @@ def unrestricted_project_tools() -> list[dict[str, Any]]:
                         "items": {"type": "string"},
                         "maxItems": 24,
                         "description": (
-                            "The complete corrected list of project-relative "
-                            "paths this turn will write."
+                            "The proposed corrected order and any new project-"
+                            "relative paths. Omitted prior paths are retained."
+                        ),
+                    },
+                    "remove_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 24,
+                        "description": (
+                            "Prior, unstaged plan paths repository evidence proves "
+                            "invalid or unwritable. Omit this field to remove none."
                         ),
                     },
                     "reason": {
@@ -383,6 +411,44 @@ def directed_project_tools(owed: list[str] | None = None) -> list[dict[str, Any]
         for tool in narrowed_project_tools(owed)
         if tool.get("name") in DIRECTED_TOOLS
     ]
+
+
+def whole_file_repair_tools(path: str) -> list[dict[str, Any]]:
+    """The bounded strategy after an exact patch or line range was refused.
+
+    Keep revise_plan as the honest escape, but make the only edit a complete
+    replace_lines call whose path and range are host-owned. Tool-calling lanes
+    therefore receive the same structural recovery the local grammar gets.
+    """
+    tools: list[dict[str, Any]] = []
+    for tool in directed_project_tools([path]):
+        name = tool.get("name")
+        if name == "revise_plan":
+            tools.append(tool)
+            continue
+        if name != "replace_lines":
+            continue
+        replacement = json.loads(json.dumps(tool))
+        parameters = replacement["parameters"]
+        parameters["properties"]["path"] = {
+            "type": "string",
+            "enum": [path],
+            "description": _PROJECT_PATH_HELP,
+        }
+        parameters["properties"]["start_line"] = {
+            "type": "integer",
+            "enum": [1],
+        }
+        parameters["properties"]["end_line"] = {
+            "type": "integer",
+            "enum": [WHOLE_FILE_END_LINE],
+        }
+        replacement["description"] = (
+            f"Rewrite all of {path}. Send its complete corrected contents as "
+            f"replacement with start_line=1 and end_line={WHOLE_FILE_END_LINE}."
+        )
+        tools.append(replacement)
+    return tools
 
 
 def chat_tool_format(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

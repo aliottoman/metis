@@ -18,14 +18,29 @@ final class WebWindowController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()   // keeps localStorage: sidebar width, scope, recents
         configuration.preferences.isElementFullscreenEnabled = true
+        // Mark the document before its CSS is evaluated. The web UI uses this
+        // only to leave room for the native traffic lights; a normal browser
+        // keeps the original spacing.
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: "document.documentElement.classList.add('metisNativeWindow')",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = false
 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 840),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "Metis"
+        // Keep the familiar native controls, but let Metis paint the surface
+        // behind them. This removes the detached white title strip without
+        // replacing macOS window behaviour with imitation controls.
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.isMovableByWindowBackground = true
         window.minSize = NSSize(width: 900, height: 600)
         window.contentView = webView
         window.center()

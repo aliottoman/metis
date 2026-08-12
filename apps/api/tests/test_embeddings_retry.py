@@ -4,6 +4,7 @@ These exercise the real `_with_retry` / `embed` code paths with a stub client
 and no network — the exact gap that let a single 'Connection reset by peer'
 abort a whole index run.
 """
+
 from __future__ import annotations
 
 import pytest

@@ -30,7 +30,9 @@ async def test_production_runner_has_no_host_fallback(settings, tmp_path) -> Non
     runner = ReferenceArchitectureRunner(isolated)
     spec = ArchitectureSpecV1(
         title="Test",
-        components=[ArchitectureComponentV1(id="service", label="Service", kind="service")],
+        components=[
+            ArchitectureComponentV1(id="service", label="Service", kind="service")
+        ],
         edges=[],
     )
     with pytest.raises(ReferenceRunnerError, match="sandbox runner unavailable"):
@@ -62,18 +64,26 @@ def test_portable_integrity_ignores_transient_python_caches(settings, tmp_path) 
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"),
     )
     (isolated_root / "infra" / "sandbox").mkdir(parents=True)
-    for name in ("run_reference_architecture.py", "sandbox-policy.json", "Containerfile"):
+    for name in (
+        "run_reference_architecture.py",
+        "sandbox-policy.json",
+        "Containerfile",
+    ):
         shutil.copy2(
             source_root / "infra" / "sandbox" / name,
             isolated_root / "infra" / "sandbox" / name,
         )
-    runner = ReferenceArchitectureRunner(settings.model_copy(update={"repo_root": isolated_root}))
+    runner = ReferenceArchitectureRunner(
+        settings.model_copy(update={"repo_root": isolated_root})
+    )
     image = "image@sha256:" + "a" * 64
     before = runner.bundle_hash(image)
     cache = runner.settings.reference_skill_dir / "src" / "__pycache__"
     cache.mkdir()
     (cache / "validator.cpython-313.pyc").write_bytes(b"transient bytecode")
-    (runner.settings.reference_skill_dir / ".DS_Store").write_bytes(b"transient metadata")
+    (runner.settings.reference_skill_dir / ".DS_Store").write_bytes(
+        b"transient metadata"
+    )
     build = runner.settings.reference_skill_dir / "build"
     build.mkdir()
     (build / "generated.whl").write_bytes(b"transient build output")
@@ -82,7 +92,9 @@ def test_portable_integrity_ignores_transient_python_caches(settings, tmp_path) 
 
 
 @pytest.mark.asyncio
-async def test_approved_snapshot_survives_live_source_mutation(settings, tmp_path) -> None:
+async def test_approved_snapshot_survives_live_source_mutation(
+    settings, tmp_path
+) -> None:
     source_root = settings.repo_root
     isolated_root = tmp_path / "repo"
     shutil.copytree(
@@ -91,7 +103,11 @@ async def test_approved_snapshot_survives_live_source_mutation(settings, tmp_pat
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"),
     )
     (isolated_root / "infra" / "sandbox").mkdir(parents=True)
-    for name in ("run_reference_architecture.py", "sandbox-policy.json", "Containerfile"):
+    for name in (
+        "run_reference_architecture.py",
+        "sandbox-policy.json",
+        "Containerfile",
+    ):
         shutil.copy2(
             source_root / "infra" / "sandbox" / name,
             isolated_root / "infra" / "sandbox" / name,
@@ -110,7 +126,9 @@ async def test_approved_snapshot_survives_live_source_mutation(settings, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_runner_canonicalizes_model_order_before_exact_spec_validation(settings) -> None:
+async def test_runner_canonicalizes_model_order_before_exact_spec_validation(
+    settings,
+) -> None:
     runner = ReferenceArchitectureRunner(settings)
     spec = ArchitectureSpecV1(
         title="Unsorted architecture",
@@ -133,7 +151,9 @@ async def test_runner_canonicalizes_model_order_before_exact_spec_validation(set
     )
     output = await runner.run("run_order", "draw it", spec)
     artifact = json.loads(
-        next(path for path in output.files if path.name == "architecture-spec.json").read_text()
+        next(
+            path for path in output.files if path.name == "architecture-spec.json"
+        ).read_text()
     )["spec"]
     assert [item["id"] for item in artifact["components"]] == [
         "client",

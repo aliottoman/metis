@@ -6,6 +6,7 @@ factory build + hermetic eval → automatic activation inside the no-network,
 run-IO boundary → typed output. Broader deployments can still retain Gate-2,
 Gate-1 rejection tombstones the draft, and kill-switches pause the factory.
 """
+
 from __future__ import annotations
 
 import time
@@ -52,7 +53,9 @@ def _upload(client: TestClient) -> str:
     ).json()["id"]
 
 
-def _send(client: TestClient, conversation: str, content: str, attachments: list[str]) -> str:
+def _send(
+    client: TestClient, conversation: str, content: str, attachments: list[str]
+) -> str:
     response = client.post(
         f"/api/v1/conversations/{conversation}/messages",
         json={"content": content, "attachment_ids": attachments},
@@ -83,23 +86,33 @@ def test_explicit_toolify_uses_trusted_fast_path_end_to_end(tmp_path) -> None:
 
         # The explicit build action is authorization for the host-hardened,
         # network-free profile, so draft → eval → activation → use is one run.
-        run1 = _send(client, conversation, "turn this into a tool: summarize readmes", [upload])
-        assert _wait(client, run1, {"completed", "failed", "awaiting_approval"})["status"] == "completed"
+        run1 = _send(
+            client, conversation, "turn this into a tool: summarize readmes", [upload]
+        )
+        assert (
+            _wait(client, run1, {"completed", "failed", "awaiting_approval"})["status"]
+            == "completed"
+        )
 
         record = next(
-            item for item in client.get("/api/v1/tool-definitions").json()
+            item
+            for item in client.get("/api/v1/tool-definitions").json()
             if item["definition"]["slug"] == "readme-summary"
         )
         assert record["buildable"] is False and record["runnable"] is True
         assert record["definition"]["status"] == "defined"
-        assert record["definition"]["capability_profile"]["code_allowlist"] == "declarative-host-v1"
+        assert (
+            record["definition"]["capability_profile"]["code_allowlist"]
+            == "declarative-host-v1"
+        )
         builds = client.get("/api/v1/tool-definition-builds").json()
         assert builds and builds[0]["eval_report"]["passed"] is True
         assert builds[0]["status"] == "active"
 
         # Runnable now.
         record = next(
-            item for item in client.get("/api/v1/tool-definitions").json()
+            item
+            for item in client.get("/api/v1/tool-definitions").json()
             if item["definition"]["slug"] == "readme-summary"
         )
         assert record["runnable"] is True
@@ -123,13 +136,23 @@ def test_trusted_auto_activation_can_be_disabled(tmp_path) -> None:
     ) as client:
         conversation = client.post("/api/v1/conversations", json={}).json()["id"]
         upload = _upload(client)
-        run1 = _send(client, conversation, "turn this into a tool: summarize readmes", [upload])
-        assert _wait(client, run1, {"awaiting_approval", "failed"})["status"] == "awaiting_approval"
+        run1 = _send(
+            client, conversation, "turn this into a tool: summarize readmes", [upload]
+        )
+        assert (
+            _wait(client, run1, {"awaiting_approval", "failed"})["status"]
+            == "awaiting_approval"
+        )
         _decide(client, run1, "approve")
         assert _wait(client, run1, {"completed", "failed"})["status"] == "completed"
 
-        run2 = _send(client, conversation, "give me a readme summary of this project", [upload])
-        assert _wait(client, run2, {"awaiting_approval", "failed"})["status"] == "awaiting_approval"
+        run2 = _send(
+            client, conversation, "give me a readme summary of this project", [upload]
+        )
+        assert (
+            _wait(client, run2, {"awaiting_approval", "failed"})["status"]
+            == "awaiting_approval"
+        )
         assert _pending_approval(client, run2)["kind"] == "activate_definition"
 
 
@@ -138,8 +161,13 @@ def test_startup_promotes_legacy_pending_explicit_tool_request(tmp_path) -> None
     with TestClient(create_app(manual)) as client:
         conversation = client.post("/api/v1/conversations", json={}).json()["id"]
         upload = _upload(client)
-        run = _send(client, conversation, "turn this into a tool: summarize readmes", [upload])
-        assert _wait(client, run, {"awaiting_approval", "failed"})["status"] == "awaiting_approval"
+        run = _send(
+            client, conversation, "turn this into a tool: summarize readmes", [upload]
+        )
+        assert (
+            _wait(client, run, {"awaiting_approval", "failed"})["status"]
+            == "awaiting_approval"
+        )
         assert client.get("/api/v1/tool-definition-proposals?status=pending").json()
 
     # The next version recognizes that the human already issued an explicit build
@@ -160,45 +188,71 @@ def test_gate1_rejection_tombstones_the_definition(tmp_path) -> None:
     ) as client:
         conversation = client.post("/api/v1/conversations", json={}).json()["id"]
         upload = _upload(client)
-        run1 = _send(client, conversation, "turn this into a tool: summarize readmes", [upload])
-        assert _wait(client, run1, {"awaiting_approval", "failed"})["status"] == "awaiting_approval"
+        run1 = _send(
+            client, conversation, "turn this into a tool: summarize readmes", [upload]
+        )
+        assert (
+            _wait(client, run1, {"awaiting_approval", "failed"})["status"]
+            == "awaiting_approval"
+        )
         _decide(client, run1, "reject")
         assert _wait(client, run1, {"completed", "failed"})["status"] == "completed"
         # The proposal is rejected and the definition is not active/buildable.
         proposals = client.get("/api/v1/tool-definition-proposals").json()
         assert proposals and proposals[0]["status"] == "rejected"
         assert client.get("/api/v1/tool-definitions").json() == [
-            item for item in client.get("/api/v1/tool-definitions").json()
+            item
+            for item in client.get("/api/v1/tool-definitions").json()
             if item["definition"]["slug"] != "readme-summary"
         ]
         # Re-drafting the identical (rejected) definition is refused.
-        run2 = _send(client, conversation, "turn this into a tool: summarize readmes", [upload])
-        assert _wait(client, run2, {"completed", "failed", "awaiting_approval"})["status"] == "completed"
+        run2 = _send(
+            client, conversation, "turn this into a tool: summarize readmes", [upload]
+        )
+        assert (
+            _wait(client, run2, {"completed", "failed", "awaiting_approval"})["status"]
+            == "completed"
+        )
         messages = client.get(f"/api/v1/conversations/{conversation}/messages").json()
-        answer = [m for m in messages if m["role"] == "assistant"][-1]["content"].lower()
+        answer = [m for m in messages if m["role"] == "assistant"][-1][
+            "content"
+        ].lower()
         assert "previously rejected" in answer
 
 
 def test_factory_kill_switch_pauses_toolify(tmp_path) -> None:
-    with TestClient(create_app(_settings(tmp_path, tool_factory_enabled=False))) as client:
+    with TestClient(
+        create_app(_settings(tmp_path, tool_factory_enabled=False))
+    ) as client:
         conversation = client.post("/api/v1/conversations", json={}).json()["id"]
         upload = _upload(client)
-        run1 = _send(client, conversation, "turn this into a tool: summarize readmes", [upload])
+        run1 = _send(
+            client, conversation, "turn this into a tool: summarize readmes", [upload]
+        )
         # No gate — the factory is paused, so this is a direct answer, not a draft.
-        assert _wait(client, run1, {"completed", "failed", "awaiting_approval"})["status"] == "completed"
+        assert (
+            _wait(client, run1, {"completed", "failed", "awaiting_approval"})["status"]
+            == "completed"
+        )
         assert not client.get("/api/v1/tool-definition-proposals").json()
 
 
 def _slug_record(client: TestClient, slug: str) -> dict:
     return next(
-        item for item in client.get("/api/v1/tool-definitions").json()
+        item
+        for item in client.get("/api/v1/tool-definitions").json()
         if item["definition"]["slug"] == slug
     )
 
 
-def _lifecycle_to_active(client: TestClient, conversation: str, upload: str, toolify_prompt: str) -> None:
+def _lifecycle_to_active(
+    client: TestClient, conversation: str, upload: str, toolify_prompt: str
+) -> None:
     run1 = _send(client, conversation, toolify_prompt, [upload])
-    assert _wait(client, run1, {"completed", "failed", "awaiting_approval"})["status"] == "completed"
+    assert (
+        _wait(client, run1, {"completed", "failed", "awaiting_approval"})["status"]
+        == "completed"
+    )
 
 
 def test_revision_creates_new_version_and_supersedes(tmp_path) -> None:
@@ -206,15 +260,23 @@ def test_revision_creates_new_version_and_supersedes(tmp_path) -> None:
         conversation = client.post("/api/v1/conversations", json={}).json()["id"]
         upload = _upload(client)
 
-        _lifecycle_to_active(client, conversation, upload, "turn this into a tool: summarize readmes")
+        _lifecycle_to_active(
+            client, conversation, upload, "turn this into a tool: summarize readmes"
+        )
         v1 = _slug_record(client, "readme-summary")["definition"]["version"]
         assert _slug_record(client, "readme-summary")["runnable"] is True
 
         # A changed explicit toolify request replaces the evaluated trusted version.
         run3 = _send(
-            client, conversation, "turn this into a tool: summarize readmes and include the license", [upload]
+            client,
+            conversation,
+            "turn this into a tool: summarize readmes and include the license",
+            [upload],
         )
-        assert _wait(client, run3, {"completed", "failed", "awaiting_approval"})["status"] == "completed"
+        assert (
+            _wait(client, run3, {"completed", "failed", "awaiting_approval"})["status"]
+            == "completed"
+        )
         record = _slug_record(client, "readme-summary")
         assert record["runnable"] is True and record["buildable"] is False
 
@@ -227,12 +289,22 @@ def test_revision_creates_new_version_and_supersedes(tmp_path) -> None:
 
 
 def test_disabling_architecture_tool_routes_direct(tmp_path) -> None:
-    settings = _settings(tmp_path, tool_disabled_slugs=["reference-architecture-generator"])
+    settings = _settings(
+        tmp_path, tool_disabled_slugs=["reference-architecture-generator"]
+    )
     with TestClient(create_app(settings)) as client:
         conversation = client.post("/api/v1/conversations", json={}).json()["id"]
         upload = _upload(client)
-        run = _send(client, conversation, "make an architecture diagram from this README", [upload])
+        run = _send(
+            client,
+            conversation,
+            "make an architecture diagram from this README",
+            [upload],
+        )
         # The one built-in tool is disabled → no tool runs; a direct answer instead.
-        assert _wait(client, run, {"completed", "failed", "awaiting_approval"})["status"] == "completed"
+        assert (
+            _wait(client, run, {"completed", "failed", "awaiting_approval"})["status"]
+            == "completed"
+        )
         events = client.get(f"/api/v1/runs/{run}/events?after=0").text
         assert "architecture.spec_created" not in events

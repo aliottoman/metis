@@ -2,12 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { SelectMenu } from "@/components/select-menu";
+
 import {
   getLocalModelSession,
   launchLocalModel,
   setModelPreference,
   stopLocalModel,
 } from "@/lib/api";
+import {
+  clinePassReady,
+  conversationModelRoute,
+  shouldShowLocalSession,
+  type ModelRoute,
+} from "@/lib/model-route";
 import type {
   LocalModelSession,
   ModelPreference,
@@ -31,20 +39,6 @@ const CONTEXT_OPTIONS: Array<[LocalModelSession["context_window"], string]> = [
   [32768, "32K · recommended"],
   [65536, "64K · long documents"],
   [131072, "128K · heavy"],
-];
-
-// The three routing roles a preference may ladder, with the words a user
-// should see. Order matters: coder first, because its ladder steers builds.
-// The Cline gateway serves both seats from one key. Measured on the same
-// planning question: Opus answered correctly in 17 output tokens where the
-// open-weight models spent 186 to 1,129 — so the orchestrator seat leads with
-// it, and the coders are the ones the subscription covers.
-const CLINE_MODELS = [
-  "anthropic/claude-opus-4.5",
-  "cline-pass/deepseek-v4-pro",
-  "cline-pass/glm-5.2",
-  "cline-pass/kimi-k2.7-code",
-  "x-ai/grok-4.3",
 ];
 
 const ROLE_ROWS: Array<[ModelRole, string, string]> = [
@@ -145,12 +139,10 @@ type ModelControlProps = {
 /**
  * One control, top-right of the chat pane, for what runs the next message.
  *
- * Plain chat picks a provider — the Ollama lane, Grok, or Cohere. A project
- * has its own three modes instead (the Ollama lane runs each step, or Grok or
- * Command A+ leads every step), so when a project is scoped this shows those
- * rather than a provider toggle the project routing would ignore. The
- * on-device launch controls live under a divider, since both plain-local chat
- * and the Ollama-lane project mode run answers through the same daemon.
+ * Plain chat picks a provider — local/Ollama Cloud, ClinePass, Grok, or Cohere.
+ * The three persisted project provider modes all use the same verifier-gated
+ * vertical-slice coding engine. On-device launch controls appear only when the
+ * resolved model route really is Ollama.
  */
 export function ModelControl({
   preference,
@@ -165,6 +157,7 @@ export function ModelControl({
 }: ModelControlProps) {
   const [session, setSession] = useState<LocalModelSession | null>(null);
   const [open, setOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [model, setModel] = useState("");
@@ -190,6 +183,8 @@ export function ModelControl({
   const ociAvailable = preference?.oci_available === true;
   const cohereAvailable = preference?.cohere_available === true;
   const clineAvailable = preference?.cline_available === true;
+  const clineModels = preference?.cline_models ?? [];
+  const clineReady = clinePassReady(clineAvailable, clineModels);
 
   useEffect(() => {
     if (!chainsDirty) setChains(preference?.role_chains ?? {});
@@ -286,6 +281,7 @@ export function ModelControl({
     if (!open) return;
     formTouched.current = false;
     setOpenRole(null);
+    setAdvancedOpen(false);
     const live = sessionRef.current;
     if (live) {
       setIdle(live.idle_timeout_seconds);
@@ -391,7 +387,7 @@ export function ModelControl({
   // A pinned hosted model runs on Ollama Cloud: always available, nothing
   // resident locally, so the trigger reports it instead of the local session.
   const hostedPinned =
-    !project && provider !== "oci" && preference?.mode === "pinned" && isCloudModel(preference?.model);
+    !project && provider === "local" && preference?.mode === "pinned" && isCloudModel(preference?.model);
   const cloudSelected = isCloudModel(model);
 
   // Ollama serves local weights and hosted models through the same daemon and
@@ -406,18 +402,19 @@ export function ModelControl({
     () => session?.models.filter((item) => !isCloudModel(item.id)) ?? [],
     [session?.models],
   );
-  const route: "local" | "ollama_cloud" | "oci" | "cohere" =
-    provider === "oci" ? "oci" : provider === "cohere" ? "cohere" : hostedPinned ? "ollama_cloud" : "local";
+  const route = conversationModelRoute(provider, hostedPinned);
 
-  /** Move between the four routes, pinning a sensible model for each. */
-  async function chooseRoute(next: "local" | "ollama_cloud" | "oci" | "cohere") {
+  /** Move between the five routes, pinning a sensible Ollama model where needed. */
+  async function chooseRoute(next: ModelRoute) {
     if (next === route || busy || providerSaving) return;
-    if (next === "oci" || next === "cohere") {
+    if (next === "oci" || next === "cohere" || next === "cline") {
       onChooseProvider(next);
       return;
     }
     // Leaving a cloud provider goes through the parent, which owns that save.
-    if (provider === "oci" || provider === "cohere") onChooseProvider("local");
+    if (provider === "oci" || provider === "cohere" || provider === "cline") {
+      onChooseProvider("local");
+    }
     const target = next === "ollama_cloud"
       ? (isCloudModel(model) ? model : cloudModels[0]?.id)
       : (session?.selected_model && !isCloudModel(session.selected_model)
@@ -445,81 +442,102 @@ export function ModelControl({
   }
 
   // The trigger's dot state: for a live local session it mirrors the session;
-  // cloud/Grok shows a solid dot; a project shows its own steady green.
+  // hosted routes show a solid dot; projects reflect the provider behind the
+  // persisted mode rather than assuming the bounded mode is Ollama.
   const localState = session?.state ?? "off";
-  // A continuous project mode is only as live as the key behind it.
+  // A project mode is only as live as the provider lane behind it.
   const projectModeReady =
     projectMode === "grok_continuous"
       ? ociAvailable
       : projectMode === "cohere_continuous"
         ? cohereAvailable
-        : true;
+        : provider === "cline"
+          ? clineReady
+          : true;
   const dotState = project
     ? projectModeReady ? "ready" : "off"
     : provider === "oci"
       ? ociAvailable ? "ready" : "off"
       : provider === "cohere"
         ? cohereAvailable ? "ready" : "off"
+        : provider === "cline"
+          ? clineReady ? "ready" : "off"
         : hostedPinned
           ? "ready"
           : localState;
 
-  // The local-lane project mode runs steps on whatever the Ollama lane
-  // resolves: the pinned model when one is pinned there, else the session's.
+  // The local provider resolves to the pinned Ollama model when one is pinned,
+  // else the running session. Cloud providers must never inherit that display.
   const ollamaLaneModel =
-    provider === "local" && preference?.mode === "pinned" && preference.model
-      ? preference.model
-      : session?.selected_model ?? null;
+    provider === "local"
+      ? preference?.mode === "pinned" && preference.model
+        ? preference.model
+        : session?.selected_model ?? null
+      : null;
 
   const triggerLabel = project
     ? projectMode === "grok_continuous"
-      ? "Grok"
+      ? "Cloud-led"
       : projectMode === "cohere_continuous"
-        ? "Command A+"
-        : ollamaLaneModel
-          ? `Ollama · ${shortModel(ollamaLaneModel)}`
-          : `Local · ${localStateLabel(session, now)}`
+        ? "Enterprise-led"
+        : provider === "cline"
+          ? "Local-led · roles"
+          : "Local-led"
     : provider === "oci"
-      ? "Cloud · Grok"
+      ? "Largest context"
       : provider === "cohere"
-        ? "Cloud · Command A+"
+        ? "Enterprise reasoning"
+        : provider === "cline"
+          ? "Agent subscription"
         : hostedPinned
           ? `Hosted · ${shortModel(preference?.model)}`
-          : `Local · ${localStateLabel(session, now)}`;
+          : `On device · ${localStateLabel(session, now)}`;
 
-  const showLocalSession = !project || projectMode === "grok_bootstrap_local";
+  const showLocalSession = shouldShowLocalSession(
+    Boolean(project), projectMode, provider, route,
+  );
 
   /**
    * The routes as data, so each one is a single compact row instead of a card.
    *
    * The prose that used to sit under every option now appears once, for the
-   * route that is actually selected: four paragraphs to describe four choices
+   * route that is actually selected: repeated paragraphs for every choice
    * is what made this panel a form. An unavailable route still says so — as a
    * short state word in the row, and in full in its title — because "why is
    * this greyed out" is the one question the panel must always answer.
    */
   const routes = useMemo(() => {
     if (project) {
+      const boundedUsesCline = provider === "cline";
+      const boundedClineState = chains.coder?.length
+        ? chainSummary(chains.coder)
+        : "default roles";
       return [
         {
           key: "grok_bootstrap_local",
-          label: "Ollama lane",
-          state: ollamaLaneModel ? shortModel(ollamaLaneModel) : "local",
-          note: `A cloud model maps the repo once; ${
-            ollamaLaneModel ? shortModel(ollamaLaneModel) : "your Ollama model"
-          } runs each project step.`,
-          disabled: false,
-          title: undefined as string | undefined,
+          label: "Local-led",
+          provider: boundedUsesCline ? "ClinePass roles" : "Ollama",
+          state: boundedUsesCline
+            ? clineReady ? boundedClineState : "off"
+            : ollamaLaneModel ? shortModel(ollamaLaneModel) : "local",
+          note: boundedUsesCline
+            ? "Builds one verified vertical slice at a time with your planner and coder roles."
+            : "Builds one verified vertical slice at a time through your Ollama route.",
+          disabled: boundedUsesCline && !clineReady,
+          title: boundedUsesCline && !clineReady
+            ? "Add WAQIL_CLINE_API_KEY and load the ClinePass catalog first"
+            : undefined as string | undefined,
           selected: projectMode === "grok_bootstrap_local",
           choose: () => onChooseProjectMode("grok_bootstrap_local"),
         },
         {
           key: "grok_continuous",
-          label: "Grok",
+          label: "Cloud-led",
+          provider: "Grok via OCI",
           state: ociAvailable ? "ready" : "off",
           note: ociAvailable
-            ? "Grok leads every bounded project step — largest context."
-            : "Off — needs the Grok lane enabled and OCI Responses configured.",
+            ? "Best for very large codebases and long project history."
+            : "Connect OCI in Settings to use the largest-context project route.",
           disabled: !ociAvailable,
           title: ociAvailable
             ? undefined
@@ -529,11 +547,12 @@ export function ModelControl({
         },
         {
           key: "cohere_continuous",
-          label: "Command A+",
+          label: "Enterprise-led",
+          provider: "Command A+",
           state: cohereAvailable ? "ready" : "off",
           note: cohereAvailable
-            ? "Cohere Command A+ leads every bounded step."
-            : "Needs a Cohere API key configured.",
+            ? "Governed cloud reasoning for every project step."
+            : "Connect a Cohere account in Settings to use this route.",
           disabled: !cohereAvailable,
           title: cohereAvailable ? undefined : "Add WAQIL_COHERE_API_KEY first",
           selected: projectMode === "cohere_continuous",
@@ -544,9 +563,10 @@ export function ModelControl({
     return [
       {
         key: "local",
-        label: "Local",
+        label: "On device",
+        provider: "Ollama",
         state: localStateLabel(session, now),
-        note: "On-device weights. Nothing leaves this machine.",
+        note: "Private by default. Reasoning runs entirely on this Mac.",
         disabled: false,
         title: undefined as string | undefined,
         selected: route === "local",
@@ -554,23 +574,38 @@ export function ModelControl({
       },
       {
         key: "ollama_cloud",
-        label: "Ollama Cloud",
+        label: "Hosted",
+        provider: "Ollama Cloud",
         state: cloudModels.length ? `${cloudModels.length} hosted` : "off",
         note: cloudModels.length
-          ? `${cloudModels.length} hosted model${cloudModels.length === 1 ? "" : "s"} on your subscription — no local memory used.`
-          : "No hosted models are available to this Ollama.",
+          ? "Fast general work through your hosted subscription, with no local memory use."
+          : "Sign in to Ollama Cloud to make hosted models available.",
         disabled: !cloudModels.length,
         title: cloudModels.length ? undefined : "Sign in to Ollama Cloud, then refresh",
         selected: route === "ollama_cloud",
         choose: () => void chooseRoute("ollama_cloud"),
       },
       {
+        key: "cline",
+        label: "Agent subscription",
+        provider: "ClinePass",
+        state: clineReady ? `${clineModels.length} models` : "off",
+        note: clineReady
+          ? "Uses separate planner, coder, and review roles from your subscription."
+          : "Connect ClinePass in Settings to use subscription models and roles.",
+        disabled: !clineReady,
+        title: clineReady ? undefined : "Add WAQIL_CLINE_API_KEY first",
+        selected: route === "cline",
+        choose: () => void chooseRoute("cline"),
+      },
+      {
         key: "oci",
-        label: "Cloud · Grok",
+        label: "Largest context",
+        provider: "Grok via OCI",
         state: ociAvailable ? "ready" : "off",
         note: ociAvailable
-          ? "Grok 4.3 through OCI, for the largest context."
-          : "Needs OCI configured in Settings.",
+          ? "Best for very large source sets and long conversation history."
+          : "Connect OCI in Settings to use the largest-context route.",
         disabled: !ociAvailable,
         title: ociAvailable ? undefined : "Configure OCI in Settings first",
         selected: route === "oci",
@@ -578,11 +613,12 @@ export function ModelControl({
       },
       {
         key: "cohere",
-        label: "Cloud · Command A+",
+        label: "Enterprise reasoning",
+        provider: "Command A+",
         state: cohereAvailable ? "ready" : "off",
         note: cohereAvailable
-          ? "Cohere Command A+ through your Cohere key."
-          : "Needs a Cohere API key configured.",
+          ? "Governed cloud reasoning through your Cohere account."
+          : "Connect a Cohere account in Settings to use this route.",
         disabled: !cohereAvailable,
         title: cohereAvailable ? undefined : "Add WAQIL_COHERE_API_KEY first",
         selected: route === "cohere",
@@ -599,6 +635,10 @@ export function ModelControl({
     ollamaLaneModel,
     ociAvailable,
     cohereAvailable,
+    clineReady,
+    clineModels.length,
+    chains.coder,
+    provider,
     route,
     session,
     now,
@@ -625,11 +665,11 @@ export function ModelControl({
       {open ? (
         <section className="modelControlPanel" aria-label="Model for this conversation">
           <div className="modelControlBody">
-          {project ? (
-            <div className="modelControlEyebrow">
-              <span className="eyebrow">Whole-project mode</span>
-            </div>
-          ) : null}
+          <div className="modelControlIntro">
+            <span className="eyebrow">{project ? "Project reasoning" : "Reasoning"}</span>
+            <strong>{project ? "Choose who leads this project" : "Choose where Metis thinks"}</strong>
+            <p>Privacy and capability first. Model details stay below.</p>
+          </div>
           <div
             className="modelControlRoutes"
             role="radiogroup"
@@ -650,12 +690,28 @@ export function ModelControl({
                 title={item.title}
                 onClick={item.choose}
               >
-                <strong>{item.label}</strong>
+                <span className="modelControlRouteTitle">
+                  <strong>{item.label}</strong>
+                  <small>{item.provider}</small>
+                </span>
                 <em>{item.state}</em>
               </button>
             ))}
           </div>
           {selectedNote ? <p className="modelControlAdvice">{selectedNote}</p> : null}
+
+          <button
+            type="button"
+            className="modelControlAdvancedToggle"
+            aria-expanded={advancedOpen}
+            onClick={() => setAdvancedOpen((value) => !value)}
+          >
+            <span>Models, roles &amp; fallbacks</span>
+            <b aria-hidden="true">⌄</b>
+          </button>
+
+          {advancedOpen ? (
+            <div className="modelControlAdvanced">
 
           {/* Hosted models have no weights to place, so this route carries a
               model list and nothing else — no idle window, no context size,
@@ -667,23 +723,20 @@ export function ModelControl({
               <div className="modelControlSessionHead">
                 <span className="eyebrow">Hosted model</span>
               </div>
-              <label>
-                <select
+              <SelectMenu
+                  className="modelControlSelect"
+                  hideLabel
+                  label="Hosted model"
                   value={cloudSelected ? model : cloudModels[0]?.id ?? ""}
-                  onChange={(event) => {
+                  onChange={(value) => {
                     modelTouched.current = true;
-                    setModel(event.target.value);
+                    setModel(value);
                   }}
                   disabled={busy}
-                >
-                  {!cloudModels.length ? <option value="">No hosted models found</option> : null}
-                  {cloudModels.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}{item.parameter_size ? ` · ${item.parameter_size}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={cloudModels.length
+                    ? cloudModels.map((item) => ({ value: item.id, label: item.name, hint: item.parameter_size }))
+                    : [{ value: "", label: "No hosted models found", disabled: true }]}
+                />
               <p className="modelControlHosted">
                 Runs on Ollama Cloud under your subscription. Nothing is held in
                 this machine&rsquo;s memory, and there is nothing to launch or unload.
@@ -703,7 +756,7 @@ export function ModelControl({
             </div>
           ) : null}
 
-          {showLocalSession && (project || route === "local") ? (
+          {showLocalSession ? (
             <div className="modelControlSession">
               <div className="modelControlSessionHead">
                 <span className="eyebrow">On-device model</span>
@@ -713,51 +766,47 @@ export function ModelControl({
                   </button>
                 ) : null}
               </div>
-              <label>
-                <select
+              <SelectMenu
+                  className="modelControlSelect"
+                  hideLabel
+                  label="On-device model"
                   value={cloudSelected ? (localModels[0]?.id ?? "") : model}
-                  onChange={(event) => {
+                  onChange={(value) => {
                     modelTouched.current = true;
-                    setModel(event.target.value);
+                    setModel(value);
                   }}
                   disabled={busy}
-                >
-                  {!localModels.length ? <option value="">No installed models found</option> : null}
-                  {localModels.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}{item.parameter_size ? ` · ${item.parameter_size}` : ""}
-                      {item.size_bytes ? ` · ${gigabytes(item.size_bytes)}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  options={localModels.length
+                    ? localModels.map((item) => ({
+                        value: item.id,
+                        label: item.name,
+                        hint: [item.parameter_size, item.size_bytes ? gigabytes(item.size_bytes) : ""].filter(Boolean).join(" · "),
+                      }))
+                    : [{ value: "", label: "No installed models found", disabled: true }]}
+                />
               <div className="modelControlRow">
-                <label>
-                  <span>Unload after idle</span>
-                  <select
-                    value={idle}
-                    onChange={(event) => {
+                <SelectMenu
+                    className="modelControlSelect"
+                    label="Unload after idle"
+                    value={String(idle)}
+                    onChange={(value) => {
                       formTouched.current = true;
-                      setIdle(Number(event.target.value) as LocalModelSession["idle_timeout_seconds"]);
+                      setIdle(Number(value) as LocalModelSession["idle_timeout_seconds"]);
                     }}
                     disabled={busy}
-                  >
-                    {IDLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>Context</span>
-                  <select
-                    value={context}
-                    onChange={(event) => {
+                    options={IDLE_OPTIONS.map(([value, label]) => ({ value: String(value), label }))}
+                  />
+                <SelectMenu
+                    className="modelControlSelect"
+                    label="Context"
+                    value={String(context)}
+                    onChange={(value) => {
                       formTouched.current = true;
-                      setContext(Number(event.target.value) as LocalModelSession["context_window"]);
+                      setContext(Number(value) as LocalModelSession["context_window"]);
                     }}
                     disabled={busy}
-                  >
-                    {CONTEXT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </select>
-                </label>
+                    options={CONTEXT_OPTIONS.map(([value, label]) => ({ value: String(value), label }))}
+                  />
               </div>
               {memoryLine ? <p className="modelControlMemory">{memoryLine}</p> : null}
               <p className="modelControlAdvice">{advice}</p>
@@ -793,29 +842,21 @@ export function ModelControl({
                   {expanded ? (
                     <div className="modelControlRoleRungs">
                       {[0, 1, 2].map((slot) => (
-                        <label key={slot}>
-                          <span>{slot === 0 ? "Primary" : `Backup ${slot}`}</span>
-                          <select
-                            aria-label={`${label} ${slot === 0 ? "primary" : `backup ${slot}`}`}
+                        <SelectMenu
+                            key={slot}
+                            className="modelControlSelect"
+                            label={slot === 0 ? "Primary" : `Backup ${slot}`}
                             value={encodeRung(chains[role]?.[slot])}
-                            onChange={(event) => setRung(role, slot, event.target.value)}
+                            onChange={(value) => setRung(role, slot, value)}
                             disabled={busy || providerSaving}
-                          >
-                            <option value="">{slot === 0 ? "Current selection" : "— none —"}</option>
-                            {(session?.models ?? []).map((item) => (
-                              <option key={item.id} value={`local:${item.id}`}>{item.name}</option>
-                            ))}
-                            {cohereAvailable ? <option value="cohere:">Command A+ (Cohere)</option> : null}
-                            {ociAvailable ? <option value="oci:">Grok (OCI)</option> : null}
-                            {clineAvailable
-                              ? CLINE_MODELS.map((item) => (
-                                  <option key={item} value={`cline:${item}`}>
-                                    {item.split("/").pop()} (Cline)
-                                  </option>
-                                ))
-                              : null}
-                          </select>
-                        </label>
+                            options={[
+                              { value: "", label: slot === 0 ? "Current selection" : "— none —" },
+                              ...(session?.models ?? []).map((item) => ({ value: `local:${item.id}`, label: item.name, group: "Ollama" })),
+                              ...(cohereAvailable ? [{ value: "cohere:", label: "Command A+", group: "Cloud" }] : []),
+                              ...(ociAvailable ? [{ value: "oci:", label: "Grok", group: "Cloud" }] : []),
+                              ...(clineAvailable ? clineModels.map((item) => ({ value: `cline:${item}`, label: item.split("/").pop() ?? item, group: "ClinePass" })) : []),
+                            ]}
+                          />
                       ))}
                     </div>
                   ) : null}
@@ -827,6 +868,8 @@ export function ModelControl({
               next rung mid-run. The coder ladder steers project builds.
             </p>
           </div>
+            </div>
+          ) : null}
           </div>
 
           {/* Pinned outside the scrolling body: an unsaved ladder was exactly

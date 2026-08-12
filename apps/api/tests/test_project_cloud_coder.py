@@ -87,7 +87,8 @@ def test_a_corrupt_preference_file_does_not_break_the_default(tmp_path: Path) ->
     assert service.project_coder() == "gpt-oss:120b-cloud"
     # And a pinned cloud model still wins after the file is repaired.
     service._settings.model_preference_path.write_text(
-        json.dumps({"mode": "pinned", "model": "kimi-k2.7-code:cloud"}), encoding="utf-8"
+        json.dumps({"mode": "pinned", "model": "kimi-k2.7-code:cloud"}),
+        encoding="utf-8",
     )
     assert service.project_coder() == ""
 
@@ -155,4 +156,6 @@ async def test_a_hosted_model_needs_no_local_session(tmp_path: Path) -> None:
 
     async with session.use("gpt-oss:120b-cloud"):
         state = await session.status(include_models=False)
-        assert state.state == "off", "a hosted call must not report the local session busy"
+        assert state.state == "off", (
+            "a hosted call must not report the local session busy"
+        )

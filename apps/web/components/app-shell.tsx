@@ -5,8 +5,9 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { MetisMark, MetisWordmark } from "@/components/metis-mark";
-import { deleteConversation, listConversations } from "@/lib/api";
+import { MetisCompanion } from "@/components/metis-companion";
+import { MetisWordmark } from "@/components/metis-mark";
+import { deleteConversation, getRunRecord, listConversations } from "@/lib/api";
 import { freshToken } from "@/lib/token";
 import {
   CONVERSATIONS_CHANGED_EVENT,
@@ -14,6 +15,14 @@ import {
   readRecentConversations,
 } from "@/lib/recent-conversations";
 import type { ConversationSummary } from "@/lib/types";
+import {
+  RUN_INDICATORS_CHANGED_EVENT,
+  acknowledgeConversationRun,
+  readRunIndicators,
+  updateConversationRun,
+  type ConversationRunIndicator,
+  type ConversationRunState,
+} from "@/lib/run-indicators";
 
 type NavIconName =
   | "chat"
@@ -45,6 +54,7 @@ const navigation: Array<{ href: string; label: string; icon: NavIconName }> = [
 const DEFAULT_SIDEBAR_WIDTH = 254;
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 390;
+const COMPACT_HISTORY_LIMIT = 12;
 
 function clampSidebarWidth(value: number): number {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, value));
@@ -114,6 +124,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [animate, setAnimate] = useState(false);
   const [apiConnected, setApiConnected] = useState(true);
   const [deletingConversation, setDeletingConversation] = useState<string | null>(null);
+  const [runIndicators, setRunIndicators] = useState<Record<string, ConversationRunIndicator>>({});
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const resizingRef = useRef(false);
   const resizeOriginRef = useRef({ pointerX: 0, width: DEFAULT_SIDEBAR_WIDTH });
@@ -138,6 +150,54 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
     return () => cancelAnimationFrame(id);
   }, []);
+
+  useEffect(() => {
+    const sync = () => setRunIndicators(readRunIndicators());
+    sync();
+    window.addEventListener(RUN_INDICATORS_CHANGED_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(RUN_INDICATORS_CHANGED_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
+  // Runs keep going when Chat is no longer the visible page. The shell stays
+  // mounted across navigation, so it owns the small background status check and
+  // turns completion into a durable, per-conversation unread signal.
+  useEffect(() => {
+    let stopped = false;
+    const poll = async () => {
+      const current = readRunIndicators();
+      const pending = Object.values(current).filter((item) => item.state === "working" || item.state === "attention");
+      await Promise.all(pending.map(async (item) => {
+        try {
+          const run = await getRunRecord(item.runId);
+          if (stopped) return;
+          const state: ConversationRunState =
+            run.status === "completed" ? "done"
+              : run.status === "failed" ? "failed"
+                : run.status === "cancelled" ? "cancelled"
+                  : run.status === "awaiting_approval" || run.status === "awaiting_input" ? "attention"
+                    : "working";
+          const visibleHere = pathname === "/" && activeConversation === item.conversationId && document.visibilityState === "visible";
+          const unread = state === "working" ? false : !visibleHere;
+          if (state !== item.state || unread !== item.unread) updateConversationRun(item.runId, state, unread);
+        } catch {
+          // The chat itself owns detailed connection recovery. A shell badge is
+          // advisory and should not flash failure on a brief API interruption.
+        }
+      }));
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2500);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [activeConversation, pathname]);
+
+  useEffect(() => {
+    if (pathname !== "/" || !activeConversation) return;
+    acknowledgeConversationRun(activeConversation);
+  }, [activeConversation, pathname]);
 
   const toggleCollapsed = () => {
     resizingRef.current = false;
@@ -247,13 +307,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }, [conversations, query]);
 
+  // The rail is for returning to current work, not for displaying the entire
+  // database at once. Search always sees everything; the resting view shows a
+  // compact recent set and offers the full history on request.
+  const visibleHistory = useMemo(
+    () => query.trim() || historyExpanded ? filtered : filtered.slice(0, COMPACT_HISTORY_LIMIT),
+    [filtered, historyExpanded, query],
+  );
+
   const grouped = useMemo(() => {
-    return filtered.reduce<Record<string, ConversationSummary[]>>((result, item) => {
+    return visibleHistory.reduce<Record<string, ConversationSummary[]>>((result, item) => {
       const label = groupLabel(item.updated_at ?? item.created_at);
       result[label] = [...(result[label] ?? []), item];
       return result;
     }, {});
-  }, [filtered]);
+  }, [visibleHistory]);
+
+  const unreadRunCount = useMemo(
+    () => Object.values(runIndicators).filter((item) => item.unread).length,
+    [runIndicators],
+  );
 
   const removeConversation = async (conversation: ConversationSummary) => {
     if (deletingConversation || !window.confirm(`Delete “${conversation.title}”? This permanently removes this chat and its messages.`)) return;
@@ -297,8 +370,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <button
         className="mobileMenuButton"
         type="button"
-        aria-label="Open navigation"
-        onClick={() => setDrawerOpen(true)}
+        aria-label={drawerOpen ? "Close navigation" : "Open navigation"}
+        aria-expanded={drawerOpen}
+        aria-controls="metis-main-navigation"
+        onClick={() => setDrawerOpen((current) => !current)}
       >
         <span />
         <span />
@@ -309,6 +384,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       ) : null}
 
       <aside
+        id="metis-main-navigation"
         className={`sidebar ${drawerOpen ? "sidebarOpen" : ""}`}
         aria-label="Main navigation"
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
@@ -316,7 +392,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="brandRow">
           <Link href="/" className="brand" aria-label="Metis home">
             <span className="brandMark" aria-hidden="true">
-              <MetisMark />
+              <MetisCompanion size={32} energy="expressive" />
             </span>
             <span>
               <strong><MetisWordmark /></strong>
@@ -351,7 +427,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link key={item.href} href={item.href} className={active ? "active" : ""} title={item.label}>
                 <span className="navGlyph" aria-hidden="true"><NavIcon name={item.icon} /></span>
                 <span className="navLabel">{item.label}</span>
-                <span className="navSignal" aria-hidden="true" />
+                <span className={`navSignal ${item.href === "/" && unreadRunCount ? "hasUnread" : ""}`} aria-hidden="true">
+                  {item.href === "/" && unreadRunCount ? unreadRunCount : null}
+                </span>
               </Link>
             );
           })}
@@ -381,15 +459,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <section key={label}>
               <h2>{label}</h2>
               {items.map((conversation) => (
-                <div key={conversation.id} className="conversationHistoryItem">
-                  <Link href={`/?conversation=${encodeURIComponent(conversation.id)}`} className={pathname === "/" && activeConversation === conversation.id ? "active" : ""} title={conversation.title}>
+                <div key={conversation.id} className={`conversationHistoryItem run-${runIndicators[conversation.id]?.state ?? "idle"} ${runIndicators[conversation.id]?.unread ? "hasUnread" : ""}`}>
+                  <Link href={`/?conversation=${encodeURIComponent(conversation.id)}`} onClick={() => acknowledgeConversationRun(conversation.id)} className={pathname === "/" && activeConversation === conversation.id ? "active" : ""} title={conversation.title}>
                     <span>{conversation.title}</span>
+                    {runIndicators[conversation.id] && (
+                      runIndicators[conversation.id].state !== "done" || runIndicators[conversation.id].unread
+                    ) ? (
+                      <small className="conversationRunState">
+                        <i aria-hidden="true" />
+                        {runIndicators[conversation.id].state === "working" ? "Working"
+                          : runIndicators[conversation.id].state === "attention" ? "Needs you"
+                            : runIndicators[conversation.id].state === "failed" ? "Interrupted"
+                              : runIndicators[conversation.id].state === "cancelled" ? "Stopped"
+                                : runIndicators[conversation.id].unread ? "Done" : ""}
+                      </small>
+                    ) : null}
                   </Link>
                   <button type="button" className="conversationDeleteButton" aria-label={`Delete ${conversation.title}`} title="Delete conversation" disabled={deletingConversation === conversation.id} onClick={() => void removeConversation(conversation)}>×</button>
                 </div>
               ))}
             </section>
           ))}
+          {!query.trim() && filtered.length > COMPACT_HISTORY_LIMIT ? (
+            <button
+              className="historyExpandButton"
+              type="button"
+              aria-expanded={historyExpanded}
+              onClick={() => setHistoryExpanded((value) => !value)}
+            >
+              <span>{historyExpanded ? "Show recent only" : `View all ${filtered.length} conversations`}</span>
+              <b aria-hidden="true">{historyExpanded ? "↑" : "↓"}</b>
+            </button>
+          ) : null}
           {!filtered.length ? (
             <p className="historyEmpty">{query ? "No matching conversations" : "Your local conversations will appear here."}</p>
           ) : null}

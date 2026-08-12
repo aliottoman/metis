@@ -32,7 +32,10 @@ def _patch_entry(path: str = "app/rules.py", ok: bool = False) -> dict[str, Any]
     return {
         "tool": "apply_patch",
         "arguments": {"path": path, "original": "a", "replacement": "b"},
-        "result": {"ok": ok, "error": "" if ok else "exact patch context matched 0 times"},
+        "result": {
+            "ok": ok,
+            "error": "" if ok else "exact patch context matched 0 times",
+        },
     }
 
 

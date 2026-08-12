@@ -6,6 +6,7 @@ gate, and needed a reference document written by hand to prevent. A type checker
 resolving against the installed package rejects it in a second, and a lookup
 tool lets the model find that out before writing the line.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -107,7 +108,9 @@ async def test_a_project_without_init_files_is_still_checked() -> None:
 async def test_style_opinions_never_reach_the_findings() -> None:
     """Only rules meaning "this cannot work as written" are reported. A checker's
     view on line length must never be able to withhold Approve."""
-    staged = _staged({"app/x.py": "import os\nx=1\ny  =  2\n" + "z = 1  # " + "n" * 200})
+    staged = _staged(
+        {"app/x.py": "import os\nx=1\ny  =  2\n" + "z = 1  # " + "n" * 200}
+    )
 
     findings = await staged_static_analysis(staged)
 
@@ -174,7 +177,7 @@ async def test_a_name_that_is_not_a_module_is_refused(bad: str) -> None:
 
 @pytest.mark.asyncio
 async def test_a_missing_package_names_the_remedy() -> None:
-    """"Not installed" is a different problem from "wrong name", and the model
+    """ "Not installed" is a different problem from "wrong name", and the model
     can act on it: declare it, or pick something available."""
     with pytest.raises(LookupError_, match="not installed here"):
         await inspect_installed_api("definitely_not_a_real_package_xyz")

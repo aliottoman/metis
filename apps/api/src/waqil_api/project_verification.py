@@ -12,6 +12,7 @@ child runs as the user's own account with that account's filesystem and network
 access. `explain_recipe` exists so the approval card can say that in plain
 English, including for commands whose argv is not self-explanatory.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -211,7 +212,9 @@ def _describe_program(command: tuple[str, ...]) -> str:
             # `-c` is inline source, not a path; calling it a script would point
             # a reviewer at a file that does not exist.
             return "Runs a short Python program written inline in the recipe"
-        return f"Runs the Python script `{target}`" if target else "Runs a Python command"
+        return (
+            f"Runs the Python script `{target}`" if target else "Runs a Python command"
+        )
     if program in {"gradle", "gradlew", "./gradlew"}:
         return f"Runs the Gradle `{target or 'build'}` task"
     if program in {"mvn", "maven"}:
@@ -319,11 +322,15 @@ def read_recipe(project: Path, settings: Settings) -> VerificationRecipe:
     path = metis_dir / "verify.json"
     try:
         if metis_dir.is_symlink() or path.is_symlink():
-            return VerificationRecipe(error="the verification file may not be a symlink")
+            return VerificationRecipe(
+                error="the verification file may not be a symlink"
+            )
         if not path.is_file():
             return VerificationRecipe()
         if path.stat().st_size > _MANIFEST_LIMIT:
-            return VerificationRecipe(present=True, error="the verification file is too large")
+            return VerificationRecipe(
+                present=True, error="the verification file is too large"
+            )
         raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return VerificationRecipe(error="the verification file could not be read")
@@ -331,20 +338,26 @@ def read_recipe(project: Path, settings: Settings) -> VerificationRecipe:
     try:
         body = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
-        return VerificationRecipe(present=True, error="the verification file is not valid JSON")
+        return VerificationRecipe(
+            present=True, error="the verification file is not valid JSON"
+        )
     if not isinstance(body, dict) or body.get("schema_version") != "1":
         return VerificationRecipe(
             present=True, error='the verification file needs "schema_version": "1"'
         )
     declared = body.get("checks")
     if not isinstance(declared, list) or not declared:
-        return VerificationRecipe(present=True, error="the verification file declares no checks")
+        return VerificationRecipe(
+            present=True, error="the verification file declares no checks"
+        )
 
     checks: list[VerificationCheck] = []
     seen: set[str] = set()
     for item in declared[:_MAX_CHECKS]:
         if not isinstance(item, dict):
-            return VerificationRecipe(present=True, error="every check must be a JSON object")
+            return VerificationRecipe(
+                present=True, error="every check must be a JSON object"
+            )
         name = _clean_text(item.get("name"), 32).casefold()
         if not _CHECK_NAME.fullmatch(name):
             return VerificationRecipe(
@@ -352,14 +365,18 @@ def read_recipe(project: Path, settings: Settings) -> VerificationRecipe:
                 error=f"check name {name or '(missing)'!r} must be lowercase letters, digits, - or _",
             )
         if name in seen:
-            return VerificationRecipe(present=True, error=f"check {name!r} is declared twice")
+            return VerificationRecipe(
+                present=True, error=f"check {name!r} is declared twice"
+            )
         command = _valid_command(item.get("command"))
         if command is None:
             return VerificationRecipe(
                 present=True,
                 error=f"check {name!r} needs a bounded argv array, not a shell string",
             )
-        raw_timeout = item.get("timeout_seconds", settings.project_verify_timeout_seconds)
+        raw_timeout = item.get(
+            "timeout_seconds", settings.project_verify_timeout_seconds
+        )
         try:
             timeout = int(raw_timeout)
         except (TypeError, ValueError):
@@ -392,7 +409,9 @@ def read_recipe(project: Path, settings: Settings) -> VerificationRecipe:
 class ProjectVerificationService:
     """Owns recipe approval and bounded execution of reviewed checks."""
 
-    def __init__(self, settings: Settings, *, approval_path: Path | None = None) -> None:
+    def __init__(
+        self, settings: Settings, *, approval_path: Path | None = None
+    ) -> None:
         self._settings = settings
         self._approval_path = approval_path
         self._approvals = self._load_approvals()
@@ -403,8 +422,7 @@ class ProjectVerificationService:
 
     def is_approved(self, project_id: str, recipe: VerificationRecipe) -> bool:
         return bool(
-            recipe.fingerprint
-            and self._approvals.get(project_id) == recipe.fingerprint
+            recipe.fingerprint and self._approvals.get(project_id) == recipe.fingerprint
         )
 
     async def approve(self, project_id: str, recipe: VerificationRecipe) -> None:
@@ -425,9 +443,7 @@ class ProjectVerificationService:
             if self._approvals.pop(project_id, None) is not None:
                 self._save_approvals()
 
-    async def run(
-        self, project: Path, check: VerificationCheck
-    ) -> VerificationRun:
+    async def run(self, project: Path, check: VerificationCheck) -> VerificationRun:
         """Execute one reviewed check, always returning evidence.
 
         A failing check is a normal, expected outcome — it is the signal the

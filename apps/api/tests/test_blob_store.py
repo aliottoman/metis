@@ -1,4 +1,5 @@
 """Content-addressed blob storage: what is stored must be what was sent."""
+
 from __future__ import annotations
 
 import hashlib

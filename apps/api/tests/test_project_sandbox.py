@@ -9,8 +9,10 @@ directions are pinned here.
 The container itself is exercised by one integration test that skips unless the
 image is actually built, so the suite never depends on a running VM.
 """
+
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -36,7 +38,12 @@ def _staged(files: dict[str, str]) -> dict[str, dict[str, str]]:
 
 def _succeeded(checks: list[dict[str, object]]) -> dict[str, object]:
     """A sandbox envelope that ran to completion and reported these checks."""
-    return {"schema_version": "1", "status": "succeeded", "checks": checks, "routes": []}
+    return {
+        "schema_version": "1",
+        "status": "succeeded",
+        "checks": checks,
+        "routes": [],
+    }
 
 
 # ── Materializing what the approval would actually write ─────────────────────
@@ -55,13 +62,19 @@ def test_materialize_lays_the_overlay_over_the_project_on_disk(tmp_path: Path) -
         destination,
     )
 
-    assert (destination / "app" / "config.py").read_text(encoding="utf-8") == "URL = 'new'\n"
+    assert (destination / "app" / "config.py").read_text(
+        encoding="utf-8"
+    ) == "URL = 'new'\n"
     assert (destination / "app" / "keep.py").read_text(encoding="utf-8") == "KEEP = 1\n"
     assert (destination / "app" / "main.py").read_text(encoding="utf-8") == "X = 2\n"
-    assert (project / "app" / "config.py").read_text(encoding="utf-8") == "URL = 'old'\n"
+    assert (project / "app" / "config.py").read_text(
+        encoding="utf-8"
+    ) == "URL = 'old'\n"
 
 
-def test_materialize_leaves_out_directories_that_are_not_the_project(tmp_path: Path) -> None:
+def test_materialize_leaves_out_directories_that_are_not_the_project(
+    tmp_path: Path,
+) -> None:
     project = tmp_path / "project"
     (project / ".git").mkdir(parents=True)
     (project / ".git" / "HEAD").write_text("ref: main\n", encoding="utf-8")
@@ -93,12 +106,15 @@ def test_import_order_puts_the_entrypoint_first(tmp_path: Path) -> None:
             "app/main.py": "",
             "README.md": "",
             "app/__init__.py": "",
+            "tests/test_main.py": "",
         }
     )
 
-    assert import_order([], staged, limit=10)[0] == "app.main"
-    assert "app.agents.base" in import_order([], staged, limit=10)
-    assert all(not name.endswith("__init__") for name in import_order([], staged, limit=10))
+    modules = import_order([], staged, limit=10)
+    assert modules[0] == "app.main"
+    assert "app.agents.base" in modules
+    assert "tests.test_main" not in modules
+    assert all(not name.endswith("__init__") for name in modules)
 
 
 # ── Classifying what came back ───────────────────────────────────────────────
@@ -192,6 +208,35 @@ def test_a_route_that_raises_is_reported_where_it_raised() -> None:
     assert "ZeroDivisionError" in outcome.findings[0]["error"]
 
 
+def test_a_response_failure_is_classified_against_the_route_module() -> None:
+    """Wrong statuses have no traceback; route attribution must survive host
+    classification so repair targets the handler, not the entrypoint."""
+    outcome = classify_envelope(
+        _succeeded(
+            [
+                {
+                    "name": "acceptance: document upload",
+                    "kind": "acceptance",
+                    "ok": False,
+                    "detail": "POST /api/documents returned HTTP 503, expected 2xx",
+                    "where": "app/routes/documents.py line 27",
+                }
+            ]
+        ),
+        staged=_staged(
+            {
+                "app/main.py": "",
+                "app/routes/documents.py": "",
+            }
+        ),
+    )
+
+    (finding,) = outcome.findings
+    assert finding["path"] == "app/routes/documents.py"
+    assert finding["kind"] == "acceptance"
+    assert "line 27" in finding["error"]
+
+
 def test_a_clean_run_reports_no_findings_at_all() -> None:
     outcome = classify_envelope(
         _succeeded([{"name": "import app.main", "kind": "import", "ok": True}]),
@@ -204,11 +249,18 @@ def test_a_clean_run_reports_no_findings_at_all() -> None:
 
 
 @pytest.mark.parametrize(
-    "code", ["PODMAN_UNAVAILABLE", "ROOTLESS_REQUIRED", "UNAPPROVED_IMAGE", "INPUT_TOO_LARGE"]
+    "code",
+    ["PODMAN_UNAVAILABLE", "ROOTLESS_REQUIRED", "UNAPPROVED_IMAGE", "INPUT_TOO_LARGE"],
 )
-def test_a_sandbox_that_could_not_run_degrades_instead_of_blaming_the_code(code: str) -> None:
+def test_a_sandbox_that_could_not_run_degrades_instead_of_blaming_the_code(
+    code: str,
+) -> None:
     outcome = classify_envelope(
-        {"schema_version": "1", "status": "failed", "error": {"code": code, "message": "nope"}},
+        {
+            "schema_version": "1",
+            "status": "failed",
+            "error": {"code": code, "message": "nope"},
+        },
         staged=_staged({"app/main.py": ""}),
     )
 
@@ -222,7 +274,10 @@ def test_a_project_that_hangs_on_import_is_a_defect_not_a_degrade() -> None:
         {
             "schema_version": "1",
             "status": "failed",
-            "error": {"code": "SANDBOX_TIMEOUT", "message": "sandbox exceeded 90 seconds"},
+            "error": {
+                "code": "SANDBOX_TIMEOUT",
+                "message": "sandbox exceeded 90 seconds",
+            },
         },
         staged=_staged({"app/main.py": ""}),
     )
@@ -235,7 +290,9 @@ def test_a_project_that_hangs_on_import_is_a_defect_not_a_degrade() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_deterministic_backend_never_reaches_for_a_container(tmp_path: Path) -> None:
+async def test_the_deterministic_backend_never_reaches_for_a_container(
+    tmp_path: Path,
+) -> None:
     """A suite whose result depends on whether a VM happens to be up is not a
     suite, so the test backend degrades silently rather than shelling out."""
     settings = Settings(
@@ -288,14 +345,18 @@ async def test_a_machine_metis_did_not_start_is_never_stopped(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_a_machine_metis_started_is_stopped_when_it_goes_idle(tmp_path: Path) -> None:
+async def test_a_machine_metis_started_is_stopped_when_it_goes_idle(
+    tmp_path: Path,
+) -> None:
     service = _sandbox(tmp_path)
     calls: list[list[str]] = []
 
     def record(command, **_kwargs):
         calls.append(list(command))
         # `podman info` fails, so the machine is down and Metis starts it.
-        returncode = 1 if [Path(command[0]).name, command[1]] == ["podman", "info"] else 0
+        returncode = (
+            1 if [Path(command[0]).name, command[1]] == ["podman", "info"] else 0
+        )
         return SimpleNamespace(returncode=returncode, stdout=b"", stderr=b"")
 
     monkey = pytest.MonkeyPatch()
@@ -313,7 +374,9 @@ async def test_a_machine_metis_started_is_stopped_when_it_goes_idle(tmp_path: Pa
     finally:
         monkey.undo()
 
-    stops = [c for c in calls if [Path(c[0]).name, *c[1:3]] == ["podman", "machine", "stop"]]
+    stops = [
+        c for c in calls if [Path(c[0]).name, *c[1:3]] == ["podman", "machine", "stop"]
+    ]
     assert len(stops) == 1
 
 
@@ -345,8 +408,51 @@ def _verify(project: Path, modules: list[str]) -> dict:
     return json.loads(completed.stdout.decode("utf-8"))
 
 
-@pytest.mark.skipif(not _image_available(), reason="verify sandbox image is not built here")
-def test_the_sandbox_runs_as_the_project_so_relative_paths_resolve(tmp_path: Path) -> None:
+@pytest.mark.skipif(
+    not _image_available(), reason="verify sandbox image is not built here"
+)
+def test_the_verify_image_contains_the_tested_verifier_source() -> None:
+    """Do not let source-only tests certify code the production image lacks."""
+    source = (
+        Path(__file__).resolve().parents[3]
+        / "infra"
+        / "sandbox"
+        / "project-verify"
+        / "verify_tool.py"
+    )
+    source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    completed = subprocess.run(
+        [
+            "podman",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--network=none",
+            "--read-only",
+            "--entrypoint=sha256sum",
+            "localhost/metis/project-verify:0.3.0",
+            "/opt/metis/verify/verify_tool.py",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    image_digest = completed.stdout.split(maxsplit=1)[0]
+    assert image_digest == source_digest, (
+        "the project-verify image is stale; rebuild it with "
+        "infra/sandbox/project-verify/build_project_verify_image.sh"
+    )
+
+
+@pytest.mark.skipif(
+    not _image_available(), reason="verify sandbox image is not built here"
+)
+def test_the_sandbox_runs_as_the_project_so_relative_paths_resolve(
+    tmp_path: Path,
+) -> None:
     """Caught on a live build: `StaticFiles(directory="app/static")` is ordinary
     correct code, and a verifier that imports from its own working directory
     reports it as a missing directory. A false failure costs more than the check
@@ -354,7 +460,9 @@ def test_the_sandbox_runs_as_the_project_so_relative_paths_resolve(tmp_path: Pat
     project = tmp_path / "project"
     (project / "app" / "static").mkdir(parents=True)
     (project / "app" / "__init__.py").write_text("", encoding="utf-8")
-    (project / "app" / "static" / "index.html").write_text("<html></html>", encoding="utf-8")
+    (project / "app" / "static" / "index.html").write_text(
+        "<html></html>", encoding="utf-8"
+    )
     (project / "app" / "main.py").write_text(
         "from fastapi import FastAPI\n"
         "from fastapi.staticfiles import StaticFiles\n"
@@ -372,7 +480,9 @@ def test_the_sandbox_runs_as_the_project_so_relative_paths_resolve(tmp_path: Pat
     assert [check for check in envelope["checks"] if not check["ok"]] == []
 
 
-@pytest.mark.skipif(not _image_available(), reason="verify sandbox image is not built here")
+@pytest.mark.skipif(
+    not _image_available(), reason="verify sandbox image is not built here"
+)
 def test_the_sandbox_runs_a_project_and_reports_a_failing_route(tmp_path: Path) -> None:
     """End to end through the real wrapper and container: a route that raises is
     caught with its file and line, which no static check could ever produce."""
@@ -391,7 +501,9 @@ def test_the_sandbox_runs_a_project_and_reports_a_failing_route(tmp_path: Path) 
 
     completed = subprocess.run(
         [sys.executable, str(runner), "--project-dir", str(project)],
-        input=json.dumps({"schema_version": "1", "modules": ["app.main"]}).encode("utf-8"),
+        input=json.dumps({"schema_version": "1", "modules": ["app.main"]}).encode(
+            "utf-8"
+        ),
         capture_output=True,
         timeout=180,
         check=False,
@@ -403,6 +515,113 @@ def test_the_sandbox_runs_a_project_and_reports_a_failing_route(tmp_path: Path) 
     assert [check["name"] for check in failed] == ["GET /boom"]
     assert failed[0]["error_type"] == "ZeroDivisionError"
     assert failed[0]["where"] == "app/main.py line 5"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not _image_available(), reason="verify sandbox image is not built here"
+)
+async def test_project_tests_run_against_exact_staged_bytes_without_network(
+    tmp_path: Path,
+) -> None:
+    """The production path, not an in-process approximation: the disk version
+    fails the regression, the staged overlay passes it, and the same test process
+    proves Podman's network namespace has no outbound route."""
+    project = tmp_path / "project"
+    (project / "app").mkdir(parents=True)
+    (project / "tests").mkdir()
+    (project / "app" / "__init__.py").write_text("", encoding="utf-8")
+    (project / "app" / "value.py").write_text(
+        "def current():\n    return 'disk-bug'\n", encoding="utf-8"
+    )
+    (project / "tests" / "test_value.py").write_text(
+        "import errno\n"
+        "import socket\n"
+        "from app.value import current\n"
+        "\n"
+        "def test_exact_staged_value():\n"
+        "    assert current() == 'staged-fix'\n"
+        "\n"
+        "def test_network_is_absent():\n"
+        "    client = socket.socket()\n"
+        "    client.settimeout(0.2)\n"
+        "    try:\n"
+        "        status = client.connect_ex(('1.1.1.1', 80))\n"
+        "    finally:\n"
+        "        client.close()\n"
+        "    assert status in {errno.ENETUNREACH, errno.EHOSTUNREACH}\n",
+        encoding="utf-8",
+    )
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        repo_root=Path(__file__).resolve().parents[3],
+        project_sandbox_autostart=False,
+    )
+    service = ProjectSandboxService(settings)
+
+    broken = await service.verify(
+        root=project,
+        staged=_staged({"app/value.py": "def current():\n    return 'still-broken'\n"}),
+        project_paths=[
+            "app/__init__.py",
+            "app/value.py",
+            "tests/test_value.py",
+        ],
+    )
+
+    assert broken.available, broken.reason
+    test_failures = [
+        finding for finding in broken.findings if finding.get("kind") == "test"
+    ]
+    assert len(test_failures) == 1
+    assert test_failures[0]["path"] == "app/value.py"
+    assert "test_exact_staged_value" in test_failures[0]["error"]
+
+    outcome = await service.verify(
+        root=project,
+        staged=_staged({"app/value.py": "def current():\n    return 'staged-fix'\n"}),
+        project_paths=[
+            "app/__init__.py",
+            "app/value.py",
+            "tests/test_value.py",
+        ],
+    )
+
+    assert outcome.available, outcome.reason
+    assert outcome.findings == []
+    test_checks = [check for check in outcome.checks if check.get("kind") == "test"]
+    assert len(test_checks) == 1
+    assert test_checks[0]["ok"] is True
+    assert "2 passed" in test_checks[0]["detail"]
+    assert (
+        (project / "app" / "value.py")
+        .read_text(encoding="utf-8")
+        .endswith("return 'disk-bug'\n")
+    )
+
+    # A test-only follow-up still enters pytest even though test modules are
+    # deliberately excluded from the app import probe.
+    staged_test = (
+        (project / "tests" / "test_value.py")
+        .read_text(encoding="utf-8")
+        .replace("'staged-fix'", "'disk-bug'")
+    )
+    test_only = await service.verify(
+        root=project,
+        staged=_staged({"tests/test_value.py": staged_test}),
+        project_paths=[
+            "app/__init__.py",
+            "app/value.py",
+            "tests/test_value.py",
+        ],
+    )
+    assert test_only.available, test_only.reason
+    assert test_only.findings == []
+    assert any(
+        check.get("kind") == "test" and "2 passed" in str(check.get("detail"))
+        for check in test_only.checks
+    )
 
 
 def test_podman_resolution_survives_a_launcher_with_a_bare_path(
@@ -462,7 +681,9 @@ def test_a_machine_is_never_poked_when_podman_is_genuinely_absent(
     from waqil_api import project_sandbox
 
     monkeypatch.setenv("PATH", str(tmp_path))  # an empty directory
-    monkeypatch.setattr(project_sandbox, "_PODMAN_FALLBACK_DIRS", (str(tmp_path / "nowhere"),))
+    monkeypatch.setattr(
+        project_sandbox, "_PODMAN_FALLBACK_DIRS", (str(tmp_path / "nowhere"),)
+    )
     calls: list[list[str]] = []
     monkeypatch.setattr(
         project_sandbox.subprocess,

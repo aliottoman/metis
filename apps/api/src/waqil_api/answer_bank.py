@@ -21,6 +21,7 @@ Three things make it a memory rather than a pile:
   generated deck, and inside a customer answer, and the claim gate checks its
   figures like any other evidence.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -123,7 +124,10 @@ class AnswerBank:
 
     async def sync(self) -> int:
         """Embed active atoms that have no vector yet. Returns how many."""
-        if self.retrieval is None or not getattr(self.retrieval, "available", lambda: False)():
+        if (
+            self.retrieval is None
+            or not getattr(self.retrieval, "available", lambda: False)()
+        ):
             return 0
         pending = await self.database.atoms_missing_vectors()
         if not pending:
@@ -205,7 +209,9 @@ class AnswerBank:
         rows = await self.database.answer_atoms_by_entities(named, limit=limit)
         return [(str(row["id"]), float(row.get("overlap") or 1)) for row in rows]
 
-    async def conflicts(self, atom: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+    async def conflicts(
+        self, atom: dict[str, Any], limit: int = 5
+    ) -> list[dict[str, Any]]:
         """Active atoms this one might replace.
 
         Candidate-finding only, and deliberately cheap: shared entities plus
@@ -224,7 +230,10 @@ class AnswerBank:
         )
 
     async def _dense_recall(self, query: str, limit: int) -> list[tuple[str, float]]:
-        if self.retrieval is None or not getattr(self.retrieval, "available", lambda: False)():
+        if (
+            self.retrieval is None
+            or not getattr(self.retrieval, "available", lambda: False)()
+        ):
             return []
         rows = await self.database.answer_atom_vectors()
         if not rows:
@@ -251,7 +260,10 @@ class AnswerBank:
         Fusion decides who is worth reading; the reranker decides who actually
         answers the question. Absent the cloud reranker the fused order stands,
         which is a weaker ordering rather than a broken one."""
-        if self.retrieval is None or not getattr(self.retrieval, "available", lambda: False)():
+        if (
+            self.retrieval is None
+            or not getattr(self.retrieval, "available", lambda: False)()
+        ):
             return candidates
         documents = [_embed_text(atom) for atom in candidates]
         try:
@@ -260,7 +272,9 @@ class AnswerBank:
             )
         except Exception:  # noqa: BLE001 - fused order is a fine second best
             return candidates
-        return [candidates[index] for index, _ in ranked if 0 <= index < len(candidates)]
+        return [
+            candidates[index] for index, _ in ranked if 0 <= index < len(candidates)
+        ]
 
     @staticmethod
     def _snippet(atom: dict[str, Any]) -> KnowledgeSnippetV1:
@@ -268,7 +282,11 @@ class AnswerBank:
             citations = json.loads(atom.get("citations_json") or "[]")
         except (ValueError, TypeError):
             citations = []
-        trail = f"\n\nOriginally grounded in: {'; '.join(str(c) for c in citations[:4])}" if citations else ""
+        trail = (
+            f"\n\nOriginally grounded in: {'; '.join(str(c) for c in citations[:4])}"
+            if citations
+            else ""
+        )
         return KnowledgeSnippetV1(
             source_label="Your answer",
             provider="answer",

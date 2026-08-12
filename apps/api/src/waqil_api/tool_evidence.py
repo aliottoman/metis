@@ -17,7 +17,12 @@ class SnapshotVerifier(Protocol):
 _MAX_FILE_BYTES = 100_000
 _MAX_TOTAL_BYTES = 600_000
 _MAX_DIFF_CHARACTERS = 240_000
-_ROOT_FILES = {"SKILL.md", "metis.tool.json", "workflow.yaml", "requirements-runtime.lock"}
+_ROOT_FILES = {
+    "SKILL.md",
+    "metis.tool.json",
+    "workflow.yaml",
+    "requirements-runtime.lock",
+}
 _SOURCE_SUFFIXES = {".py", ".json", ".jsonl", ".yaml", ".yml", ".md", ".lock"}
 
 
@@ -48,7 +53,9 @@ def _read_files(root: Path) -> tuple[list[ToolSourceFileV1], bool]:
         if not path.is_file() or path.is_symlink():
             continue
         resolved = path.resolve()
-        if not resolved.is_relative_to(root) or any(parent.is_symlink() for parent in path.parents if parent != root):
+        if not resolved.is_relative_to(root) or any(
+            parent.is_symlink() for parent in path.parents if parent != root
+        ):
             raise ValueError("tool evidence contains an unsafe symbolic link")
         relative = resolved.relative_to(root)
         if not _is_reviewable(relative):
@@ -57,7 +64,9 @@ def _read_files(root: Path) -> tuple[list[ToolSourceFileV1], bool]:
         digest = hashlib.sha256(raw).hexdigest()
         if len(raw) > _MAX_FILE_BYTES or total + len(raw) > _MAX_TOTAL_BYTES:
             truncated = True
-            content = "[Content omitted because this evidence file exceeds the review limit.]"
+            content = (
+                "[Content omitted because this evidence file exceeds the review limit.]"
+            )
         else:
             try:
                 content = raw.decode("utf-8")

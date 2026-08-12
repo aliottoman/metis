@@ -4,6 +4,7 @@ Each quirk below was found by calling the real endpoint, not by reading
 documentation, and each would have produced a failure that looked like a bad
 model rather than a bad client.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,8 +13,18 @@ from typing import Any
 import pytest
 
 from waqil_api.config import Settings
-from waqil_api.contracts import ModelRequestV1, ProjectDirectionV1
-from waqil_api.model_provider import ClineModelProvider, ModelProviderError
+from waqil_api.contracts import (
+    AssetRecipeV1,
+    ModelRequestV1,
+    PlanningRequestV1,
+    ProjectBuildPlanV1,
+    ProjectDirectionV1,
+)
+from waqil_api.model_provider import (
+    ClineModelProvider,
+    ModelProviderError,
+    RoutedModelProvider,
+)
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -88,7 +99,9 @@ def _tool_reply(name: str, arguments: Any) -> _Response:
 async def test_the_reply_is_unwrapped_from_its_data_envelope() -> None:
     """The gateway wraps what it proxies, so an OpenAI-shaped client reading
     `choices` off the top level finds nothing and reports an empty model."""
-    client = _Client(_Response(200, {"data": {"choices": [{"message": {"content": "hello"}}]}}))
+    client = _Client(
+        _Response(200, {"data": {"choices": [{"message": {"content": "hello"}}]}})
+    )
     result = await _provider(client).generate(
         ModelRequestV1(role="planner", system_prompt="s", user_prompt="u")
     )
@@ -100,7 +113,9 @@ async def test_the_budget_is_sent_as_max_completion_tokens() -> None:
     """With `max_tokens` the reasoning trace is charged against the budget and
     the content comes back empty with finish_reason=length — which reads
     exactly like a model that failed the task."""
-    client = _Client(_Response(200, {"data": {"choices": [{"message": {"content": "x"}}]}}))
+    client = _Client(
+        _Response(200, {"data": {"choices": [{"message": {"content": "x"}}]}})
+    )
     await _provider(client).generate(
         ModelRequestV1(role="planner", system_prompt="s", user_prompt="u")
     )
@@ -140,19 +155,65 @@ async def test_a_rate_limit_is_retried() -> None:
     assert len(client.sent) == 2
 
 
+@pytest.mark.asyncio
+async def test_weekly_provider_cap_is_not_retried_and_marks_health() -> None:
+    """The ClinePass cap applies to the account, not the selected model."""
+    client = _Client(
+        _Response(
+            429,
+            {
+                "error": {
+                    "code": "INFERENCE_CAP_ERROR",
+                    "message": (
+                        "You have reached your weekly Clinepass limit. "
+                        "The limit resets in 6d 2h"
+                    ),
+                }
+            },
+        )
+    )
+    provider = _provider(client)
+
+    with pytest.raises(ModelProviderError) as caught:
+        await provider.generate(
+            ModelRequestV1(role="planner", system_prompt="s", user_prompt="u")
+        )
+    assert getattr(caught.value, "reason", "") == "provider_exhausted"
+    assert len(client.sent) == 1
+
+    health = await provider.health()
+    assert health["configured"] is True
+    assert health["reachable"] is False
+    assert health["reason"] == "provider_exhausted"
+    assert health["retry_after_seconds"] > 6 * 86_400
+
+    # The in-process readiness signal prevents another known-doomed request;
+    # the control plane can now skip to a different provider without spending
+    # a second gateway call.
+    with pytest.raises(ModelProviderError) as cached:
+        await provider.generate(
+            ModelRequestV1(role="coder", system_prompt="s", user_prompt="u")
+        )
+    assert getattr(cached.value, "reason", "") == "provider_exhausted"
+    assert len(client.sent) == 1
+
+
 # ── Two seats, two models ──────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_the_orchestrator_and_the_coder_are_different_models() -> None:
     """The whole point of this lane. Directing runs on the model that answers
-    a planning question in seventeen tokens; writing runs on the subscription."""
+    a planning question; writing runs on a separate ClinePass model."""
     client = _Client(
-        _tool_reply("return_projectdirectionv1", '{"path": "app/main.py", "instruction": "write it"}'),
+        _tool_reply(
+            "return_projectdirectionv1",
+            '{"path": "app/main.py", "instruction": "write it"}',
+        ),
     )
     provider = _provider(client)
     await provider.project_direction({"planned_files": ["app/main.py"]})
-    assert client.sent[0]["model"] == "anthropic/claude-opus-4.5"
+    assert client.sent[0]["model"] == "cline-pass/qwen3.7-plus"
 
     client = _Client(_tool_reply("read_file", '{"path": "app/main.py"}'))
     provider = _provider(client)
@@ -161,13 +222,105 @@ async def test_the_orchestrator_and_the_coder_are_different_models() -> None:
 
 
 @pytest.mark.asyncio
+async def test_the_one_shot_manifest_has_a_bounded_planner_budget() -> None:
+    direction_client = _Client(
+        _tool_reply(
+            "return_projectdirectionv1",
+            '{"path":"app/main.py","instruction":"write it"}',
+        )
+    )
+    await _provider(direction_client, cline_max_output_tokens=32_768).project_direction(
+        {}
+    )
+    # A compatibility checkpoint without the compact-plan marker falls back to
+    # a full-context direction; a real repo made the tempting 4K cap empty twice.
+    assert direction_client.sent[0]["max_completion_tokens"] == 32_768
+
+    plan_client = _Client(
+        _tool_reply(
+            "return_projectbuildplanv1",
+            '{"intent":"build","scope":"whole_app","files":["app/main.py"]}',
+        )
+    )
+    await _provider(plan_client, cline_max_output_tokens=32_768).project_plan_files({})
+    assert plan_client.sent[0]["max_completion_tokens"] == 8192
+
+
+def test_the_manifest_schema_stays_small_enough_for_a_planner() -> None:
+    properties = ProjectBuildPlanV1.model_json_schema()["properties"]
+    assert set(properties) == {"intent", "scope", "files", "scenarios", "slices"}
+
+
+@pytest.mark.asyncio
 async def test_a_ladder_rung_may_name_the_model_for_that_seat() -> None:
     client = _Client(
-        _tool_reply("return_projectdirectionv1", '{"path": "a.py", "instruction": "go"}')
+        _tool_reply(
+            "return_projectdirectionv1", '{"path": "a.py", "instruction": "go"}'
+        )
     )
     provider = _provider(client)
-    await provider.project_direction({}, model_aliases={"_cline_model": "x-ai/grok-4.3"})
+    await provider.project_direction(
+        {}, model_aliases={"_cline_model": "x-ai/grok-4.3"}
+    )
     assert client.sent[0]["model"] == "x-ai/grok-4.3"
+
+
+@pytest.mark.asyncio
+async def test_routed_recipe_keeps_the_selected_cline_coder_rung() -> None:
+    client = _Client(
+        _tool_reply(
+            "return_assetrecipev1",
+            '{"entrypoint":"app.py","launch_command":["python","app.py"]}',
+        )
+    )
+    cline = _provider(client)
+    routed = RoutedModelProvider(object(), object(), cline=cline)  # type: ignore[arg-type]
+    aliases = {
+        "_provider": "cline",
+        "_cline_model": "cline-pass/kimi-k2.7-code",
+    }
+
+    recipe = await routed.draft_asset_recipe(
+        {"files": ["app.py"]}, model_aliases=aliases
+    )
+
+    assert isinstance(recipe, AssetRecipeV1)
+    assert recipe.entrypoint == "app.py"
+    assert client.sent[0]["model"] == "cline-pass/kimi-k2.7-code"
+
+
+@pytest.mark.asyncio
+async def test_cline_supports_selected_one_shot_authoring_capabilities() -> None:
+    client = _Client(
+        _tool_reply(
+            "return_tooldefinitiondraftv1",
+            '{"name":"Invoice Helper","description":"Extract invoice fields"}',
+        ),
+        _tool_reply(
+            "return_architecturespecv1",
+            '{"title":"Invoice Service","components":['
+            '{"id":"api","label":"API","kind":"service"}]}',
+        ),
+    )
+    provider = _provider(client)
+    aliases = {"_cline_model": "cline-pass/qwen3.7-plus"}
+    request = PlanningRequestV1(
+        run_id="run_1",
+        conversation_id="conversation_1",
+        prompt="Create a reusable invoice extraction tool",
+    )
+
+    draft = await provider.draft_tool_definition(request, model_aliases=aliases)
+    architecture = await provider.architecture_spec(
+        "Draw the invoice service", "API service", model_aliases=aliases
+    )
+
+    assert draft.name == "Invoice Helper"
+    assert architecture.components[0].id == "api"
+    assert [call["model"] for call in client.sent] == [
+        "cline-pass/qwen3.7-plus",
+        "cline-pass/qwen3.7-plus",
+    ]
 
 
 # ── Decode ─────────────────────────────────────────────────────────────────
@@ -181,7 +334,9 @@ async def test_a_direction_decodes_through_the_advertised_function() -> None:
             '{"path": "app/main.py", "instruction": "Define create_app().", "reuse": ["appkit.web.page"]}',
         )
     )
-    direction = await _provider(client).project_direction({"planned_files": ["app/main.py"]})
+    direction = await _provider(client).project_direction(
+        {"planned_files": ["app/main.py"]}
+    )
     assert isinstance(direction, ProjectDirectionV1)
     assert direction.path == "app/main.py"
     assert direction.reuse == ["appkit.web.page"]
@@ -207,7 +362,10 @@ async def test_prose_is_a_completion_on_this_lane_too() -> None:
     """A lane that raised on prose spent three malformed strikes on a model
     that had simply answered the question."""
     client = _Client(
-        _Response(200, {"data": {"choices": [{"message": {"content": "The app uses FastAPI."}}]}})
+        _Response(
+            200,
+            {"data": {"choices": [{"message": {"content": "The app uses FastAPI."}}]}},
+        )
     )
     step = await _provider(client).project_step({"build_turn": False})
     assert step.status == "complete"
@@ -216,8 +374,12 @@ async def test_prose_is_a_completion_on_this_lane_too() -> None:
 
 @pytest.mark.asyncio
 async def test_a_project_step_becomes_a_tool_call() -> None:
-    client = _Client(_tool_reply("create_file", '{"path": "app/main.py", "content": "x = 1\\n"}'))
-    step = await _provider(client).project_step({"build_turn": True, "files_still_to_write": ["app/main.py"]})
+    client = _Client(
+        _tool_reply("create_file", '{"path": "app/main.py", "content": "x = 1\\n"}')
+    )
+    step = await _provider(client).project_step(
+        {"build_turn": True, "files_still_to_write": ["app/main.py"]}
+    )
     assert step.tool_call is not None
     assert step.tool_call.name == "create_file"
     assert step.tool_call.arguments["path"] == "app/main.py"
@@ -227,7 +389,10 @@ async def test_a_project_step_becomes_a_tool_call() -> None:
 
 
 def test_the_lane_is_unavailable_without_a_key() -> None:
-    assert ClineModelProvider(Settings(_env_file=None, cline_api_key="")).available is False
+    assert (
+        ClineModelProvider(Settings(_env_file=None, cline_api_key="")).available
+        is False
+    )
     assert ClineModelProvider(_settings()).available is True
 
 
@@ -244,7 +409,15 @@ async def test_no_credits_names_the_subscription_boundary() -> None:
     cline-pass/* models; Anthropic and xAI bill against credits, and an empty
     balance is a configuration fact, not a model failing."""
     client = _Client(
-        _Response(402, {"error": {"code": "insufficient_credits", "message": "Insufficient balance."}})
+        _Response(
+            402,
+            {
+                "error": {
+                    "code": "insufficient_credits",
+                    "message": "Insufficient balance.",
+                }
+            },
+        )
     )
     with pytest.raises(ModelProviderError) as caught:
         await _provider(client).project_direction({})

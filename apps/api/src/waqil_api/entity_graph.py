@@ -13,6 +13,7 @@ you have already consented to embed. This module holds the pure, model-free
 parts — the extraction prompt and a defensive parser — so they unit-test without
 any cloud call; the call itself lives in `embeddings.CohereRetrieval`.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,8 +23,15 @@ from dataclasses import dataclass, field
 # The kinds we ask for. Anything else the model returns is coerced to "other",
 # so storage stays bounded to a known vocabulary.
 ENTITY_KINDS = {
-    "person", "project", "organization", "technology", "concept",
-    "place", "product", "event", "other",
+    "person",
+    "project",
+    "organization",
+    "technology",
+    "concept",
+    "place",
+    "product",
+    "event",
+    "other",
 }
 
 _MAX_ENTITIES = 64
@@ -113,7 +121,9 @@ def parse(raw: str) -> EntityExtraction:
 
     entities: list[Entity] = []
     seen_entities: set[tuple[str, str]] = set()
-    for item in obj.get("entities", []) if isinstance(obj.get("entities"), list) else []:
+    for item in (
+        obj.get("entities", []) if isinstance(obj.get("entities"), list) else []
+    ):
         if not isinstance(item, dict):
             continue
         name = _clean(item.get("name"))
@@ -132,7 +142,9 @@ def parse(raw: str) -> EntityExtraction:
 
     relations: list[Relation] = []
     seen_relations: set[tuple[str, str, str]] = set()
-    for item in obj.get("relations", []) if isinstance(obj.get("relations"), list) else []:
+    for item in (
+        obj.get("relations", []) if isinstance(obj.get("relations"), list) else []
+    ):
         if not isinstance(item, dict):
             continue
         source = _clean(item.get("source"))

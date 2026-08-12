@@ -201,7 +201,9 @@ def test_notion_client_paces_successive_requests(
 
 
 @pytest.mark.asyncio
-async def test_manual_notion_sync_mirrors_markdown_without_exposing_token(tmp_path) -> None:
+async def test_manual_notion_sync_mirrors_markdown_without_exposing_token(
+    tmp_path,
+) -> None:
     settings = Settings(
         _env_file=None,
         data_dir=tmp_path / "data",
@@ -249,7 +251,9 @@ async def test_manual_notion_sync_mirrors_markdown_without_exposing_token(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_sync_keeps_parent_page_when_unknown_child_is_not_shared(tmp_path) -> None:
+async def test_sync_keeps_parent_page_when_unknown_child_is_not_shared(
+    tmp_path,
+) -> None:
     settings = Settings(
         _env_file=None,
         data_dir=tmp_path / "data",

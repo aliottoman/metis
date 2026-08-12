@@ -5,6 +5,7 @@ need a full validator — only enough to gate a tool's output against its declar
 contract (object with required string / array-of-string / object properties).
 Kept deliberately minimal and total: it returns problems rather than raising.
 """
+
 from __future__ import annotations
 
 from typing import Any

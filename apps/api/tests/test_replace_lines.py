@@ -35,11 +35,15 @@ def test_splice_replaces_an_inclusive_range() -> None:
 
 def test_splice_covers_whole_file_rewrite_and_deletion() -> None:
     text = "a\nb\n"
-    assert _splice_lines(
-        text, {"start_line": 1, "end_line": 2, "replacement": "c\n"}
-    ) == "c\n"
+    assert (
+        _splice_lines(text, {"start_line": 1, "end_line": 2, "replacement": "c\n"})
+        == "c\n"
+    )
     # An empty replacement deletes the range.
-    assert _splice_lines(text, {"start_line": 1, "end_line": 1, "replacement": ""}) == "b\n"
+    assert (
+        _splice_lines(text, {"start_line": 1, "end_line": 1, "replacement": ""})
+        == "b\n"
+    )
 
 
 def test_splice_repairs_a_replacement_missing_its_newline() -> None:
@@ -57,9 +61,10 @@ def test_out_of_range_and_inverted_ranges_refuse() -> None:
         _splice_lines("a\n", {"start_line": 3, "end_line": 2, "replacement": "x"})
     # An end past the file is clamped, not refused: the model asked for "to
     # the end", and refusing that teaches nothing.
-    assert _splice_lines(
-        "a\nb\n", {"start_line": 2, "end_line": 99, "replacement": "B\n"}
-    ) == "a\nB\n"
+    assert (
+        _splice_lines("a\nb\n", {"start_line": 2, "end_line": 99, "replacement": "B\n"})
+        == "a\nB\n"
+    )
 
 
 def test_the_expect_guard_shows_what_the_range_actually_holds() -> None:
