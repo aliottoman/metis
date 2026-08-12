@@ -364,3 +364,71 @@ Run the full suite before declaring done. Report the actual result, including fa
 ## 12. Reporting back
 
 When done, state plainly: what landed, what the test suite actually reported, which of §3's decisions were confirmed versus assumed, and anything in §7 you did not complete and why.
+---
+
+## Appendix A — §3 decisions, as answered
+
+Recorded 2026-08-13, before any implementation. The brief above is the owner's
+text, unaltered; this appendix is the answer to its §3.
+
+### A.1 Auto-link confidence — §3.1, §7 item 10
+
+**There was no score to set a threshold on.** `/customers/search`
+(`api.py:493` → `Database.search_customer_records`, `database.py:6045`) is a
+SQLite `LIKE '%needle%'` scan across six tables ordered by recency;
+`CustomerSearchHitV1` has no score field and the match is boolean. The
+docstring says the substring scan is deliberate — it keeps partial words
+matching for search-as-you-type, which an FTS index would not.
+`entity_graph.Entity` and `Relation` carry no confidence or weight either. The
+`confidence: float` fields on `CustomerFactV1` and `MemoryProposalV1` are a
+model's confidence in an extracted *claim*, not a match score, and nothing in
+the tree gates on them. The retrieval scores in `corpus.py` and
+`answer_bank.py` are rank-derived (RRF, `1/(60+rank+1)`) and not comparable
+across queries, so they cannot carry an absolute threshold.
+
+So item 10 defines the scale before it uses one. A deterministic name-match
+score, not a model float: which customer this is, is a string-identity
+question, and a deterministic scale stays auditable and stable across queries.
+Scored against the account's `name` and `aliases_json`:
+
+| Score | Condition |
+|---|---|
+| 1.00 | Exact case-folded match on the name or a registered alias |
+| 0.92 | Exact after normalizing — punctuation, whitespace, legal suffixes (Ltd, LLC, BSC, WLL, Inc, SAOG) |
+| 0.75–0.90 | Token-set overlap or bounded edit distance |
+| < 0.75 | Substring or single-token overlap only |
+
+**Decided: auto-link at `>= 0.90` when the runner-up trails by `>= 0.15`.**
+Everything else is proposed, not committed. An account links itself only when
+the transcript names it essentially exactly and no other account comes close;
+a near-miss spelling, or two plausible accounts, becomes a one-click proposal.
+Both numbers are module constants, so the margin can be tightened after real
+meetings without hunting for a literal.
+
+### A.2 Voice identity — §3.2
+
+`WAQIL_ELEVENLABS_VOICE_ID` — **still owed.** The owner supplied
+`WAQIL_ELEVENLABS_API_KEY` instead; that is a different setting and does not
+substitute. Per §3, stub the setting empty and proceed; it blocks only actual
+TTS playback.
+
+No key value belongs in this repository. `.env.example` carries the empty key
+in the `WAQIL_COHERE_API_KEY` pattern; the real value lives in `.env`, which
+is gitignored.
+
+### A.3 Corporate device and tunnel — §3.3
+
+**This Mac is Oracle-managed. Confirmed, not assumed:**
+
+```
+MDM enrollment: Yes (User Approved)
+MDM server:     https://cell-1.endpoint-management.us-phoenix-1.oci.oraclecloud.com/v1/api/mdm
+Enrolled via DEP: No
+```
+
+The owner authorized an outbound Cloudflare named-tunnel connector exposing
+**only** the isolated shim process of §4.3 — never port 8000 — before this
+status was confirmed. The authorization stands, and §7 item 4 is in scope.
+Because the endpoint is managed rather than personal, take one further
+explicit go-ahead at the moment `cloudflared` is first installed, configured
+or started, rather than treating this appendix as that go-ahead.
