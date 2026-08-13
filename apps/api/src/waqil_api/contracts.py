@@ -2174,6 +2174,113 @@ class VoiceWriteReceiptV1(Contract):
     undo_token: str = Field(default="", max_length=120)
 
 
+class MeetingWordV1(Contract):
+    """One word and when it was said. `None` where the provider gave nothing."""
+
+    text: str = Field(default="", max_length=200)
+    start: float | None = None
+    end: float | None = None
+
+
+class MeetingTurnV1(Contract):
+    """One contiguous stretch of one speaker.
+
+    `original_text` is what the provider heard and is never overwritten, so a
+    correction can always be read against it.
+    """
+
+    id: str
+    ordinal: int = Field(default=0, ge=0)
+    speaker_id: str = ""
+    text: str = ""
+    original_text: str = ""
+    start_seconds: float = 0.0
+    end_seconds: float = 0.0
+    words: list[MeetingWordV1] = Field(default_factory=list)
+    corrected_at: datetime | None = None
+
+
+class MeetingSpeakerV1(Contract):
+    speaker_id: str
+    display_name: str = Field(default="", max_length=120)
+    person_id: str | None = None
+
+
+class MeetingProposalV1(Contract):
+    """Something the meeting suggests, which nobody has agreed to yet.
+
+    Every one carries the turn and the seconds that produced it, so accepting
+    it is a four-second check against the audio rather than an act of faith.
+    """
+
+    id: str
+    kind: Literal["account_link", "action", "decision"]
+    payload: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["proposed", "accepted", "rejected"] = "proposed"
+    score: float | None = None
+    evidence_turn_id: str | None = None
+    evidence_start: float | None = None
+    evidence_end: float | None = None
+    created_at: datetime
+    decided_at: datetime | None = None
+
+
+class MeetingEventV1(Contract):
+    """One observable step of the ingestion job."""
+
+    stage: str
+    message: str = ""
+    created_at: datetime
+
+
+class MeetingV1(Contract):
+    id: str
+    title: str = ""
+    audio_sha256: str = ""
+    audio_filename: str = ""
+    audio_media_type: str = ""
+    audio_bytes: int = Field(default=0, ge=0)
+    isolated_sha256: str | None = None
+    duration_seconds: float | None = None
+    language: str = ""
+    transcript: str = ""
+    provider_request_id: str = ""
+    stage: Literal[
+        "uploaded", "isolating", "transcribing", "analyzing", "ready", "failed"
+    ] = "uploaded"
+    error: str = ""
+    attempts: int = Field(default=0, ge=0)
+    account_id: str | None = None
+    linked_at: datetime | None = None
+    link_score: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MeetingDetailV1(Contract):
+    meeting: MeetingV1
+    turns: list[MeetingTurnV1] = Field(default_factory=list)
+    speakers: list[MeetingSpeakerV1] = Field(default_factory=list)
+    proposals: list[MeetingProposalV1] = Field(default_factory=list)
+    events: list[MeetingEventV1] = Field(default_factory=list)
+    # People on the linked account, offered as speaker names. Suggestions only:
+    # naming a speaker is a person's judgment about a voice they recognize.
+    suggested_names: list[str] = Field(default_factory=list, max_length=40)
+
+
+class MeetingSpeakerUpdateV1(Contract):
+    display_name: str = Field(default="", max_length=120)
+    person_id: str | None = None
+
+
+class MeetingTurnCorrectionV1(Contract):
+    text: str = Field(min_length=1, max_length=4_000)
+
+
+class MeetingProposalDecisionV1(Contract):
+    status: Literal["accepted", "rejected"]
+
+
 class VoiceUndoV1(Contract):
     """Reverse exactly the record one receipt created.
 

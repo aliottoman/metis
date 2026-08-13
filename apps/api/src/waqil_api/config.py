@@ -155,6 +155,20 @@ class Settings(BaseSettings):
         default=25 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024
     )
 
+    # Meetings. A recording is minutes or hours of audio, so it gets its own
+    # ceilings: the dictation limits are sized for a sentence and would refuse
+    # a stand-up.
+    meeting_max_bytes: int = Field(
+        default=500 * 1024 * 1024, ge=1024, le=2 * 1024 * 1024 * 1024
+    )
+    meeting_transcribe_timeout_seconds: float = Field(
+        default=1_800.0, ge=60.0, le=7_200.0
+    )
+    # Cleaning the room out of a recording costs a second call over the whole
+    # file. Off by default: it improves a noisy transcript and is pure spend on
+    # a clean one, and which is which is the owner's call, not a guess.
+    meeting_audio_isolation: bool = False
+
     # Voice mode's reasoning model, held apart from the chat preference: a
     # spoken turn has to come back in seconds, and the model chosen to write a
     # build plan is not that model. This is the startup default; the owner may

@@ -3888,3 +3888,129 @@ select { border-radius: var(--m-r-field); }
 }
 .voiceReceipt.is-undone .voiceReceiptKind { color: var(--m-ink-3); }
 .voiceReceipt.is-failed { background: rgba(255, 119, 89, 0.12); border-color: var(--m-coral-soft, #ffad9b); }
+
+/* ── 9 · Meetings ────────────────────────────────────────────────────────
+   Recordings left, one transcript right, audio underneath. The transcript is
+   the point, so it gets the space: words highlight as they are spoken and
+   clicking one seeks to it, which is what makes two hours navigable. */
+.meetingsLayout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 900px) { .meetingsLayout { grid-template-columns: 1fr; } }
+
+.meetingsList {
+  border: 1px dashed transparent;
+  border-radius: var(--m-r-field, 12px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 160px;
+  padding: 4px;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.meetingsList.isDragging { background: var(--m-lav-surface); border-color: var(--m-lav-edge); }
+.meetingRow {
+  background: none;
+  border: 1px solid var(--m-line);
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  text-align: left;
+}
+.meetingRow strong { color: var(--m-ink); font-size: 13px; font-weight: 500; }
+.meetingRow:hover { background: var(--m-surface); }
+.meetingRow.selected { background: var(--m-paper-lift); border-color: var(--m-ink-3); }
+
+.meetingStage { color: var(--m-ink-2); font-size: 11.5px; }
+.meetingStage.is-ready { color: var(--m-green-ink, #00754e); }
+.meetingStage.is-failed { color: #b8341a; }
+
+.meetingDetail {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r-field, 12px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px 18px;
+}
+.meetingHead { align-items: center; display: flex; gap: 10px; }
+.meetingHead h2 { font-size: 16px; margin: 0; }
+.meetingPlayer { width: 100%; }
+
+.meetingProgress { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.meetingProgress li {
+  background: var(--m-surface);
+  border-radius: 999px;
+  font-size: 11.5px;
+  padding: 3px 10px;
+}
+.meetingProgress b { color: var(--m-ink); font-weight: 500; }
+.meetingProgress span { color: var(--m-ink-2); margin-left: 5px; }
+
+.meetingProposals { display: flex; flex-direction: column; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.meetingProposals li {
+  align-items: center;
+  background: var(--m-surface);
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 11px;
+}
+.meetingProposals p { color: var(--m-ink); flex: 1 1 220px; font-size: 12.5px; margin: 0; }
+.meetingProposalKind {
+  color: var(--m-ink-3);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.meetingTranscript {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  max-height: 58vh;
+  overflow-y: auto;
+  padding: 0;
+}
+.meetingTranscript > li.isCorrected { border-left: 2px solid var(--m-lav-edge); padding-left: 10px; }
+.meetingTurnHead { align-items: center; display: flex; gap: 8px; }
+.meetingSpeaker {
+  background: none;
+  border: 0;
+  border-bottom: 1px dashed var(--m-line);
+  color: var(--m-ink);
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 180px;
+  padding: 1px 2px;
+}
+.meetingSpeaker:focus { border-bottom-color: var(--m-purple); outline: none; }
+.meetingTurnText { color: var(--m-ink-2); font-size: 13.5px; line-height: 1.6; margin: 3px 0 0; }
+.meetingTurnText span { cursor: pointer; }
+/* The word being spoken right now. A tint rather than a box: a box on every
+   word in turn is a strobe, and this text is meant to be read while it plays. */
+.meetingTurnText span.isSpoken { background: rgba(194, 156, 224, 0.35); border-radius: 3px; color: var(--m-ink); }
+.meetingEditor {
+  border: 1px solid var(--m-purple);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13.5px;
+  padding: 6px 8px;
+  resize: vertical;
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meetingsList, .meetingRow { transition: none !important; }
+}

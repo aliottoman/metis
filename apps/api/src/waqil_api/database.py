@@ -1163,6 +1163,124 @@ CREATE INDEX IF NOT EXISTS idx_customer_notes_account
     ON customer_notes(account_id, pinned DESC, updated_at DESC);
 """
 
+SCHEMA_V28 = """
+-- Meetings: an audio file, what was said in it, and what nobody has decided
+-- about it yet.
+--
+-- The shape is driven by one requirement: a stage that fails must be
+-- retryable without orphaning or duplicating the blob. So the blob is
+-- content-addressed and recorded on the meeting row *before* any provider is
+-- called, `stage` names exactly where the job got to, and every retry resumes
+-- from that stage rather than from the upload. A crash between two stages
+-- costs the stage, never the audio.
+CREATE TABLE IF NOT EXISTS meetings (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    audio_sha256 TEXT NOT NULL,
+    audio_filename TEXT NOT NULL DEFAULT '',
+    audio_media_type TEXT NOT NULL DEFAULT '',
+    audio_bytes INTEGER NOT NULL DEFAULT 0,
+    -- Set only when isolation actually ran. The original is never replaced:
+    -- an isolated track is a derived artifact, and the recording is evidence.
+    isolated_sha256 TEXT,
+    duration_seconds REAL,
+    language TEXT NOT NULL DEFAULT '',
+    transcript TEXT NOT NULL DEFAULT '',
+    -- Whose request produced this transcript, for the day a provider's output
+    -- is disputed and "which call was that" is the only useful question.
+    provider_request_id TEXT NOT NULL DEFAULT '',
+    stage TEXT NOT NULL DEFAULT 'uploaded'
+        CHECK(stage IN ('uploaded','isolating','transcribing','analyzing',
+                        'ready','failed')),
+    error TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    -- An accepted or auto-passed customer link. Nullable because most meetings
+    -- start unlinked and a wrong link is worse than none.
+    account_id TEXT REFERENCES customer_accounts(id) ON DELETE SET NULL,
+    linked_at TEXT,
+    link_score REAL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_meetings_recent ON meetings(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_meetings_stage ON meetings(stage)
+    WHERE stage NOT IN ('ready','failed');
+
+-- One diarized speaker turn. `original_text` is never overwritten, so a
+-- correction can always be read against what the provider actually heard.
+CREATE TABLE IF NOT EXISTS meeting_turns (
+    id TEXT PRIMARY KEY,
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    speaker_id TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL,
+    original_text TEXT NOT NULL,
+    start_seconds REAL NOT NULL DEFAULT 0,
+    end_seconds REAL NOT NULL DEFAULT 0,
+    words_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(words_json)),
+    corrected_at TEXT,
+    UNIQUE(meeting_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_turns_order
+    ON meeting_turns(meeting_id, ordinal);
+
+-- Speaker 0 becomes "Sara" once, and stays Sara. Optionally bound to a person
+-- on the linked account, which is where the name suggestions come from.
+CREATE TABLE IF NOT EXISTS meeting_speakers (
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    speaker_id TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    person_id TEXT,
+    PRIMARY KEY(meeting_id, speaker_id)
+);
+
+-- Everything derived from a meeting that a person has not yet agreed to.
+-- Nothing here is a customer record: an action stays a proposal until it is
+-- accepted, and a link below the threshold stays a question.
+CREATE TABLE IF NOT EXISTS meeting_proposals (
+    id TEXT PRIMARY KEY,
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('account_link','action','decision')),
+    payload_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(payload_json)),
+    status TEXT NOT NULL DEFAULT 'proposed'
+        CHECK(status IN ('proposed','accepted','rejected')),
+    score REAL,
+    -- Which words produced it. A link with no span behind it is an assertion;
+    -- with one it is a claim you can check in four seconds.
+    evidence_turn_id TEXT,
+    evidence_start REAL,
+    evidence_end REAL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_proposals_open
+    ON meeting_proposals(meeting_id, status);
+
+-- The audit trail for a corrected line, kept whole. The original transcript
+-- survives in meeting_turns.original_text; this is the history of changes.
+CREATE TABLE IF NOT EXISTS meeting_edits (
+    id TEXT PRIMARY KEY,
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    turn_id TEXT NOT NULL,
+    before_text TEXT NOT NULL,
+    after_text TEXT NOT NULL,
+    realigned INTEGER NOT NULL DEFAULT 0 CHECK(realigned IN (0,1)),
+    created_at TEXT NOT NULL
+);
+
+-- Replayable progress. The stage column says where the job is; this says how
+-- it got there, which is what a stuck import needs to be diagnosable.
+CREATE TABLE IF NOT EXISTS meeting_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_events_meeting
+    ON meeting_events(meeting_id, id);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -1191,6 +1309,7 @@ MIGRATIONS: dict[int, str] = {
     25: SCHEMA_V25,
     26: SCHEMA_V26,
     27: SCHEMA_V27,
+    28: SCHEMA_V28,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -1519,6 +1638,458 @@ class Database:
                     .fetchall()
                 )
             return [dict(row) for row in rows]
+
+        return await self._call(operation)
+
+    # -- meetings ---------------------------------------------------------
+
+    async def create_meeting(
+        self,
+        *,
+        title: str,
+        audio_sha256: str,
+        audio_filename: str,
+        audio_media_type: str,
+        audio_bytes: int,
+    ) -> dict[str, Any]:
+        """Record the recording before any provider is called.
+
+        This ordering is the retry story. The blob is content-addressed and
+        committed here, so a crash at any later stage leaves an hour of audio
+        safely stored under its own digest and a job that can resume — rather
+        than asking somebody to upload it again.
+        """
+        meeting_id, timestamp = _id("mtg"), _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO meetings
+                    (id, title, audio_sha256, audio_filename, audio_media_type,
+                     audio_bytes, stage, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'uploaded', ?, ?)""",
+                    (
+                        meeting_id,
+                        title.strip(),
+                        audio_sha256,
+                        audio_filename.strip(),
+                        audio_media_type.strip(),
+                        audio_bytes,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO meeting_events (meeting_id, stage, message, created_at)"
+                    " VALUES (?, 'uploaded', 'recording stored', ?)",
+                    (meeting_id, timestamp),
+                )
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM meetings WHERE id = ?", (meeting_id,)
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def advance_meeting(
+        self, meeting_id: str, stage: str, *, message: str = ""
+    ) -> None:
+        """Commit the stage before the work it names begins.
+
+        Recorded first on purpose: a stage written only on success cannot tell
+        a resumed job which step was interrupted, which is the difference
+        between resuming and starting over.
+        """
+        timestamp = _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "UPDATE meetings SET stage = ?, error = '', updated_at = ?, "
+                    "attempts = CASE WHEN ? = 'ready' THEN attempts ELSE attempts END "
+                    "WHERE id = ?",
+                    (stage, timestamp, stage, meeting_id),
+                )
+                conn.execute(
+                    "INSERT INTO meeting_events (meeting_id, stage, message, created_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (meeting_id, stage, message[:400], timestamp),
+                )
+
+        await self._call(operation)
+
+    async def fail_meeting(self, meeting_id: str, error: str) -> None:
+        timestamp = _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "UPDATE meetings SET stage = 'failed', error = ?, "
+                    "attempts = attempts + 1, updated_at = ? WHERE id = ?",
+                    (error, timestamp, meeting_id),
+                )
+                conn.execute(
+                    "INSERT INTO meeting_events (meeting_id, stage, message, created_at)"
+                    " VALUES (?, 'failed', ?, ?)",
+                    (meeting_id, error[:400], timestamp),
+                )
+
+        await self._call(operation)
+
+    async def set_meeting_isolated(self, meeting_id: str, digest: str) -> None:
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "UPDATE meetings SET isolated_sha256 = ?, updated_at = ? WHERE id = ?",
+                    (digest, _now(), meeting_id),
+                )
+
+        await self._call(operation)
+
+    async def store_meeting_transcript(
+        self,
+        meeting_id: str,
+        *,
+        transcript: str,
+        language: str,
+        provider_request_id: str,
+        duration_seconds: float,
+        turns: list[dict[str, Any]],
+    ) -> None:
+        """The transcript and every speaker turn, in one transaction.
+
+        Turns are replaced rather than appended, so a retried transcription
+        produces one set of lines and not two interleaved ones.
+        """
+        timestamp = _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "UPDATE meetings SET transcript = ?, language = ?, "
+                    "provider_request_id = ?, duration_seconds = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (
+                        transcript,
+                        language,
+                        provider_request_id,
+                        duration_seconds,
+                        timestamp,
+                        meeting_id,
+                    ),
+                )
+                conn.execute(
+                    "DELETE FROM meeting_turns WHERE meeting_id = ?", (meeting_id,)
+                )
+                for turn in turns:
+                    conn.execute(
+                        """INSERT INTO meeting_turns
+                        (id, meeting_id, ordinal, speaker_id, text, original_text,
+                         start_seconds, end_seconds, words_json, corrected_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                        (
+                            _id("mturn"),
+                            meeting_id,
+                            int(turn["ordinal"]),
+                            str(turn.get("speaker_id") or ""),
+                            str(turn.get("text") or ""),
+                            str(turn.get("text") or ""),
+                            float(turn.get("start_seconds") or 0.0),
+                            float(turn.get("end_seconds") or 0.0),
+                            _json(turn.get("words") or []),
+                        ),
+                    )
+                for speaker in {str(turn.get("speaker_id") or "") for turn in turns}:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO meeting_speakers "
+                        "(meeting_id, speaker_id, display_name) VALUES (?, ?, '')",
+                        (meeting_id, speaker),
+                    )
+
+        await self._call(operation)
+
+    async def store_meeting_proposals(
+        self, meeting_id: str, proposals: list[dict[str, Any]]
+    ) -> None:
+        """Replace this meeting's open proposals; keep every decided one.
+
+        A re-analysis must not resurrect something a person already rejected,
+        and must not duplicate one they already accepted.
+        """
+        timestamp = _now()
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "DELETE FROM meeting_proposals "
+                    "WHERE meeting_id = ? AND status = 'proposed'",
+                    (meeting_id,),
+                )
+                decided = {
+                    str(row["kind"]) + str(row["payload_json"])
+                    for row in conn.execute(
+                        "SELECT kind, payload_json FROM meeting_proposals "
+                        "WHERE meeting_id = ? AND status != 'proposed'",
+                        (meeting_id,),
+                    ).fetchall()
+                }
+                for proposal in proposals:
+                    payload = _json(proposal.get("payload") or {})
+                    if str(proposal["kind"]) + payload in decided:
+                        continue
+                    turn_id = None
+                    if proposal.get("turn_ordinal") is not None:
+                        row = conn.execute(
+                            "SELECT id FROM meeting_turns "
+                            "WHERE meeting_id = ? AND ordinal = ?",
+                            (meeting_id, int(proposal["turn_ordinal"])),
+                        ).fetchone()
+                        turn_id = row["id"] if row else None
+                    conn.execute(
+                        """INSERT INTO meeting_proposals
+                        (id, meeting_id, kind, payload_json, status, score,
+                         evidence_turn_id, evidence_start, evidence_end,
+                         created_at, decided_at)
+                        VALUES (?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, NULL)""",
+                        (
+                            _id("mprop"),
+                            meeting_id,
+                            str(proposal["kind"]),
+                            payload,
+                            proposal.get("score"),
+                            turn_id,
+                            proposal.get("start"),
+                            proposal.get("end"),
+                            timestamp,
+                        ),
+                    )
+
+        await self._call(operation)
+
+    async def link_meeting_account(
+        self, meeting_id: str, account_id: str, *, score: float | None = None
+    ) -> None:
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "UPDATE meetings SET account_id = ?, linked_at = ?, "
+                    "link_score = ?, updated_at = ? WHERE id = ?",
+                    (account_id, _now(), score, _now(), meeting_id),
+                )
+
+        await self._call(operation)
+
+    async def decide_meeting_proposal(
+        self, meeting_id: str, proposal_id: str, status: str
+    ) -> dict[str, Any] | None:
+        if status not in ("accepted", "rejected"):
+            raise ValueError("a proposal is accepted or rejected")
+
+        def operation() -> dict[str, Any] | None:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    "UPDATE meeting_proposals SET status = ?, decided_at = ? "
+                    "WHERE id = ? AND meeting_id = ? AND status = 'proposed'",
+                    (status, _now(), proposal_id, meeting_id),
+                )
+                if cursor.rowcount == 0:
+                    return None
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM meeting_proposals WHERE id = ?", (proposal_id,)
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def name_meeting_speaker(
+        self,
+        meeting_id: str,
+        speaker_id: str,
+        *,
+        display_name: str,
+        person_id: str | None = None,
+    ) -> None:
+        """Speaker 0 becomes Sara once, and stays Sara."""
+
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO meeting_speakers
+                    (meeting_id, speaker_id, display_name, person_id)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(meeting_id, speaker_id) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        person_id = excluded.person_id""",
+                    (meeting_id, speaker_id, display_name.strip()[:120], person_id),
+                )
+
+        await self._call(operation)
+
+    async def correct_meeting_turn(
+        self,
+        meeting_id: str,
+        turn_id: str,
+        *,
+        text: str,
+        words: list[dict[str, Any]] | None,
+        realigned: bool,
+    ) -> dict[str, Any]:
+        """Correct one line, keeping the original and the history of changes.
+
+        `original_text` is never touched, so the provider's own hearing stays
+        readable next to the correction. Word timings are replaced only when a
+        realignment actually produced trustworthy ones.
+        """
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                row = conn.execute(
+                    "SELECT * FROM meeting_turns WHERE id = ? AND meeting_id = ?",
+                    (turn_id, meeting_id),
+                ).fetchone()
+                if row is None:
+                    raise KeyError("meeting turn not found")
+                before = dict(row)
+                conn.execute(
+                    "UPDATE meeting_turns SET text = ?, corrected_at = ?"
+                    + (", words_json = ?" if words is not None else "")
+                    + " WHERE id = ?",
+                    (
+                        (text, timestamp, _json(words), turn_id)
+                        if words is not None
+                        else (text, timestamp, turn_id)
+                    ),
+                )
+                conn.execute(
+                    """INSERT INTO meeting_edits
+                    (id, meeting_id, turn_id, before_text, after_text, realigned,
+                     created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        _id("medit"),
+                        meeting_id,
+                        turn_id,
+                        before["text"],
+                        text,
+                        int(realigned),
+                        timestamp,
+                    ),
+                )
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM meeting_turns WHERE id = ?", (turn_id,)
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def get_meeting(self, meeting_id: str) -> dict[str, Any] | None:
+        def operation() -> dict[str, Any] | None:
+            with self._lock:
+                row = (
+                    self._connection()
+                    .execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,))
+                    .fetchone()
+                )
+            return dict(row) if row else None
+
+        return await self._call(operation)
+
+    async def list_meetings(self, limit: int = 50) -> list[dict[str, Any]]:
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                rows = (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM meetings ORDER BY created_at DESC LIMIT ?",
+                        (max(1, min(limit, 200)),),
+                    )
+                    .fetchall()
+                )
+            return [dict(row) for row in rows]
+
+        return await self._call(operation)
+
+    async def list_meeting_turns(self, meeting_id: str) -> list[dict[str, Any]]:
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                rows = (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM meeting_turns WHERE meeting_id = ? "
+                        "ORDER BY ordinal",
+                        (meeting_id,),
+                    )
+                    .fetchall()
+                )
+            return [dict(row) for row in rows]
+
+        return await self._call(operation)
+
+    async def get_meeting_turn(
+        self, meeting_id: str, turn_id: str
+    ) -> dict[str, Any] | None:
+        def operation() -> dict[str, Any] | None:
+            with self._lock:
+                row = (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM meeting_turns WHERE id = ? AND meeting_id = ?",
+                        (turn_id, meeting_id),
+                    )
+                    .fetchone()
+                )
+            return dict(row) if row else None
+
+        return await self._call(operation)
+
+    async def meeting_detail(self, meeting_id: str) -> dict[str, Any] | None:
+        def operation() -> dict[str, Any] | None:
+            with self._lock:
+                conn = self._connection()
+                meeting = conn.execute(
+                    "SELECT * FROM meetings WHERE id = ?", (meeting_id,)
+                ).fetchone()
+                if meeting is None:
+                    return None
+                return {
+                    "meeting": dict(meeting),
+                    "turns": [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT * FROM meeting_turns WHERE meeting_id = ? "
+                            "ORDER BY ordinal",
+                            (meeting_id,),
+                        ).fetchall()
+                    ],
+                    "speakers": [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT * FROM meeting_speakers WHERE meeting_id = ? "
+                            "ORDER BY speaker_id",
+                            (meeting_id,),
+                        ).fetchall()
+                    ],
+                    "proposals": [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT * FROM meeting_proposals WHERE meeting_id = ? "
+                            "ORDER BY created_at",
+                            (meeting_id,),
+                        ).fetchall()
+                    ],
+                    "events": [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT * FROM meeting_events WHERE meeting_id = ? "
+                            "ORDER BY id",
+                            (meeting_id,),
+                        ).fetchall()
+                    ],
+                }
 
         return await self._call(operation)
 

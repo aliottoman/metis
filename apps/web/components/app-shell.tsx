@@ -30,6 +30,7 @@ type NavIconName =
   | "assets"
   | "tools"
   | "knowledge"
+  | "meetings"
   | "memory"
   | "sizing"
   | "today"
@@ -44,6 +45,7 @@ const navigation: Array<{ href: string; label: string; icon: NavIconName }> = [
   { href: "/customers", label: "Customers", icon: "customers" },
   { href: "/assets", label: "Assets", icon: "assets" },
   { href: "/tools", label: "Tool Workshop", icon: "tools" },
+  { href: "/meetings", label: "Meetings", icon: "meetings" },
   { href: "/knowledge", label: "Knowledge", icon: "knowledge" },
   { href: "/answers", label: "Answers", icon: "answers" },
   { href: "/memory", label: "Memory", icon: "memory" },
@@ -90,6 +92,9 @@ function NavIcon({ name }: { name: NavIconName }) {
   }
   if (name === "knowledge") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M3.7 4.3h4.1c1.2 0 2.2.8 2.2 1.8v9.3c0-1-1-1.8-2.2-1.8H3.7zM16.3 4.3h-4.1c-1.2 0-2.2.8-2.2 1.8v9.3c0-1 1-1.8 2.2-1.8h4.1z" /></svg>;
+  }
+  if (name === "meetings") {
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M10 3.2a2 2 0 0 1 2 2v4.4a2 2 0 1 1-4 0V5.2a2 2 0 0 1 2-2ZM5.4 9.2a4.6 4.6 0 0 0 9.2 0M10 13.8v3" /></svg>;
   }
   if (name === "memory") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M10 3.4a6.6 6.6 0 1 1-4.7 2M3.4 3.8v3h3M10 6.6v3.7l2.6 1.5" /></svg>;

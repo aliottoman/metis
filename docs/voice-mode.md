@@ -249,3 +249,65 @@ sqlite3 .data/waqil.db "SELECT created_at, record_type, account_name, undone_at,
 
 The ingress writes no access log. Every line would carry a conversation
 identifier, and that process has no reason to keep a record of who spoke when.
+
+## Meetings
+
+A separate surface (`/meetings`) and the only new main route. Upload a
+recording, get a diarized transcript with word timings, and a set of proposals
+nobody has agreed to yet.
+
+### The pipeline
+
+```
+uploaded → isolating → transcribing → analyzing → ready
+```
+
+Each stage is committed **before** the work it names begins, which is why the
+stages exist as a column rather than as local variables: a resumed job needs
+to know which step was interrupted, and a stage written only on success cannot
+say. The blob is content-addressed and stored before any provider is called,
+so a failure at any later stage is retryable without re-uploading an hour of
+audio — `POST /meetings/{id}/retry` resumes from the failed stage, never from
+the upload. After three failures it stops offering, because a recording that
+fails three times is failing for a reason retrying will not fix.
+
+Audio isolation is off by default (`WAQIL_MEETING_AUDIO_ISOLATION`). It costs a
+second call over the whole file, it helps a noisy recording and is pure spend
+on a clean one, and which is which is your call. When it is on and it fails,
+the job transcribes the original instead — a noisy transcript beats no
+transcript. The isolated track never replaces the original: the recording is
+evidence, the isolated version is a derived artifact.
+
+### What a meeting produces
+
+Proposals, and only proposals. An action stays a proposal until you accept it,
+and accepting it marks the proposal — it does not silently create a customer
+action. A transcript is a machine's best guess at what a room said.
+
+Customer linking uses the same deterministic name-match scale as a spoken
+write (Appendix A.1): auto-link only at `>= 0.90` with the runner-up trailing
+by `>= 0.15`, scored against the title and the transcript's opening — where a
+meeting names who it is with — rather than the whole hour, so one passing
+mention of a competitor cannot outweigh the actual host. Anything below that
+is a one-click proposal. Every proposal carries the turn and the seconds that
+produced it, so accepting one is a four-second check against the audio.
+
+### Correcting a line
+
+Double-click any line. The correction saves, and `original_text` keeps what the
+provider actually heard so the two can be read side by side; every change is
+recorded in `meeting_edits`.
+
+Realignment is deliberately narrow. Forced alignment is a **single-speaker**
+service, so the corrected line is realigned against its own speaker's seconds
+of audio and never a diarized span — handing it a multi-speaker passage
+produces timings that look right and are not. Spliced timings are checked for
+monotonicity and discarded if they go backwards, because a player that jumps
+is indistinguishable from a transcript that is wrong.
+
+If realignment is impossible — no ffmpeg, a provider failure, non-monotonic
+output — the correction still lands with its original timings. A correct line
+with slightly stale timings beats a correct line that will not save.
+
+Segment extraction needs `ffmpeg` (`brew install ffmpeg`); afconvert cannot
+trim. Without it, corrections save and keep their original timings.
