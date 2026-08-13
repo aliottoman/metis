@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { transcribeAudio } from "@/lib/api";
+import { getSpeechPreference, transcribeAudio } from "@/lib/api";
+import type { SpeechPreference } from "@/lib/types";
 
 export type DictationState = "idle" | "recording" | "transcribing" | "unsupported";
 
@@ -19,10 +20,16 @@ export type DictationState = "idle" | "recording" | "transcribing" | "unsupporte
  *
  * `onText` receives the transcript. The caller decides where it lands, which
  * is what lets dictation append to a half-typed message rather than replace it.
+ *
+ * `provider` is who is about to hear it. The server picks the transcriber and
+ * the clip goes to the same place either way; this exists so the button can
+ * name the service honestly instead of hard-coding the one that used to be
+ * the only option.
  */
 export function useDictation(onText: (text: string) => void) {
   const [state, setState] = useState<DictationState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [provider, setProvider] = useState<SpeechPreference["stt_provider"]>("cohere");
   // How loud it is right now, 0–1, for the level ring on the button. Kept in
   // a ref-fed state rather than recomputed from the stream by the consumer.
   const [level, setLevel] = useState(0);
@@ -42,6 +49,17 @@ export function useDictation(onText: (text: string) => void) {
       typeof window.MediaRecorder !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia);
     if (!supported) setState("unsupported");
+  }, []);
+
+  // Read once, on mount. Changing the transcriber in Settings is rare and the
+  // choice is the server's anyway — this only decides which name the button
+  // shows, so a label that is one navigation stale is not worth polling for.
+  useEffect(() => {
+    let current = true;
+    void getSpeechPreference()
+      .then((preference) => { if (current) setProvider(preference.stt_provider); })
+      .catch(() => undefined);
+    return () => { current = false; };
   }, []);
 
   const teardown = useCallback(() => {
@@ -95,8 +113,10 @@ export function useDictation(onText: (text: string) => void) {
     }
 
     // Safari records mp4, Chrome and Firefox webm. Whichever the browser
-    // picks is what Cohere is told it is receiving, so the container type is
-    // read back off the recorder rather than assumed here.
+    // picks is what the transcriber is told it is receiving, so the container
+    // type is read back off the recorder rather than assumed here. What
+    // happens next differs by service — one of them needs the clip decoded
+    // first — and that decision belongs to the host, not to this button.
     const recorder = new MediaRecorder(stream);
     recorderRef.current = recorder;
     chunksRef.current = [];
@@ -135,5 +155,5 @@ export function useDictation(onText: (text: string) => void) {
     else void start();
   }, [start, state, stop]);
 
-  return { state, level, error, toggle, dismissError: () => setError(null) };
+  return { state, level, error, provider, toggle, dismissError: () => setError(null) };
 }

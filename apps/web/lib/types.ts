@@ -545,6 +545,15 @@ export interface ModelPreference {
   cline_models: string[];
 }
 
+export interface SpeechPreference {
+  stt_provider: "cohere" | "elevenlabs";
+  spoken_confirmation: boolean;
+  voice_model: string;
+  cohere_available: boolean;
+  elevenlabs_available: boolean;
+  voice_models: string[];
+}
+
 export interface LocalModelOption {
   id: string;
   name: string;

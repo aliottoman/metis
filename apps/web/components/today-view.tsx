@@ -7,13 +7,14 @@
 // inside the card only when there are many, so the page itself never grows.
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   batchAttention,
   deferAttention,
   getAttention,
   getMorningBrief,
+  getMorningBriefAudio,
   undeferAttention,
 } from "@/lib/api";
 import type { AttentionFeed, AttentionItem, AttentionKind, MorningBrief } from "@/lib/types";
@@ -78,6 +79,9 @@ function todayLabel(): string {
 function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }
+
+/** Where the Listen button is in its own little life cycle. */
+type ListenState = "idle" | "loading" | "playing" | "paused";
 
 /** What a single deck card is about. */
 interface Slide {
@@ -163,6 +167,49 @@ export function TodayView() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [batchNote, setBatchNote] = useState<string | null>(null);
   const [brief, setBrief] = useState<MorningBrief | null>(null);
+  const [listen, setListen] = useState<ListenState>("idle");
+  const [listenError, setListenError] = useState<string | null>(null);
+  const playerRef = useRef<HTMLAudioElement | null>(null);
+  // The rendered clip, held for the session. Fetched once; replaying it after
+  // that is a local decision rather than a second request, and the server has
+  // already cached the rendering behind it either way.
+  const clipUrlRef = useRef<string | null>(null);
+
+  useEffect(
+    () => () => {
+      if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
+    },
+    [],
+  );
+
+  /** Play, pause, resume, or replay — whichever the button currently means. */
+  async function toggleListen() {
+    const player = playerRef.current;
+    if (!player) return;
+    if (listen === "playing") {
+      player.pause();
+      return;
+    }
+    if (listen === "paused" || clipUrlRef.current) {
+      // Ended clips land back on "idle" with the URL still loaded, so this is
+      // both "resume" and "replay" depending on where the playhead is.
+      void player.play().catch(() => setListenError("That recording could not be played."));
+      return;
+    }
+    setListen("loading");
+    setListenError(null);
+    try {
+      const clip = await getMorningBriefAudio();
+      clipUrlRef.current = URL.createObjectURL(clip);
+      player.src = clipUrlRef.current;
+      await player.play();
+    } catch (playError) {
+      setListen("idle");
+      setListenError(
+        playError instanceof Error ? playError.message : "The brief could not be read aloud.",
+      );
+    }
+  }
 
   // Load the queue.
   const refresh = useCallback(async () => {
@@ -339,10 +386,50 @@ export function TodayView() {
           <span className="eyebrow">{todayLabel()}</span>
           <h1>{loading && !feed ? "Checking what's waiting" : headline}</h1>
         </div>
-        <button className="secondaryButton todayRefresh" type="button" onClick={() => void refresh()} disabled={loading}>
-          {loading ? "Checking…" : "Refresh"}
-        </button>
+        <div className="todayTopbarActions">
+          {/* Playback, not conversation: this reads the brief already on
+              screen and opens nothing you can talk back to. */}
+          <button
+            className="secondaryButton todayListen"
+            type="button"
+            onClick={() => void toggleListen()}
+            disabled={listen === "loading"}
+            aria-label={listen === "playing" ? "Pause the brief" : "Listen to the brief"}
+          >
+            {listen === "loading"
+              ? "Preparing…"
+              : listen === "playing"
+                ? "Pause"
+                : listen === "paused"
+                  ? "Resume"
+                  : clipUrlRef.current
+                    ? "Replay"
+                    : "Listen"}
+          </button>
+          <button className="secondaryButton todayRefresh" type="button" onClick={() => void refresh()} disabled={loading}>
+            {loading ? "Checking…" : "Refresh"}
+          </button>
+        </div>
+        <audio
+          ref={playerRef}
+          hidden
+          onPlay={() => setListen("playing")}
+          onPause={() => setListen((state) => (state === "playing" ? "paused" : state))}
+          onEnded={() => setListen("idle")}
+          onError={() => {
+            setListen("idle");
+            setListenError("That recording could not be played.");
+          }}
+        />
       </header>
+
+      {listenError ? (
+        <div className="composerError todayError" role="alert">
+          <span>!</span>
+          <p>{listenError}</p>
+          <button className="errorDismiss" type="button" aria-label="Dismiss" onClick={() => setListenError(null)}>×</button>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="composerError todayError" role="alert">

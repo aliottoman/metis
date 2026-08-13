@@ -36,6 +36,8 @@ from .memory_index import MemoryIndex
 from .local_model_session import LocalModelSessionManager
 from .model_preference import ModelPreferenceStore
 from .model_provider import RoutedModelProvider, build_model_provider
+from .speech_preference import SpeechPreferenceStore
+from .voice_audio import SpokenAudioCache
 from .notion import NotionService
 from .web_research import WebResearch
 from .profile import ProfileStore
@@ -83,6 +85,8 @@ class AppRuntime:
         self.run_history = RunHistoryService(settings, self.database, self.corpus)
         self.profile = ProfileStore(settings)
         self.model_preference = ModelPreferenceStore(settings)
+        self.speech_preference = SpeechPreferenceStore(settings)
+        self.voice_audio = SpokenAudioCache(settings.voice_cache_dir)
         self.model_session = LocalModelSessionManager(settings, self.model_preference)
         # Sizing reads a vendored catalog and needs no I/O, so it is built here
         # rather than in start(); the model provider is attached later so the

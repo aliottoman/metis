@@ -21,6 +21,7 @@ import pytest
 
 from waqil_api.audio_transcode import (
     COHERE_NATIVE_SUFFIXES,
+    ELEVENLABS_NATIVE_SUFFIXES,
     TranscodeError,
     needs_transcoding,
     to_wav,
@@ -58,6 +59,27 @@ def test_the_decision_matches_coheres_accepted_list() -> None:
         assert not needs_transcoding(f"clip.{suffix}", "audio/whatever")
     assert needs_transcoding("dictation.m4a", "audio/mp4")
     assert needs_transcoding("dictation.webm", "audio/webm")
+
+
+def test_the_decision_is_per_provider_and_never_a_union() -> None:
+    """Scribe reads what the browser records; Cohere's list stays narrow.
+
+    The failure this guards is the tempting one: widening the allowlist
+    globally because the second provider accepts more. That turns every
+    Chrome dictation on the Cohere path into an HTTP 400 the user reads as
+    dictation being broken.
+    """
+    for suffix in ELEVENLABS_NATIVE_SUFFIXES:
+        assert not needs_transcoding(
+            f"clip.{suffix}", "audio/whatever", provider="elevenlabs"
+        )
+    assert not needs_transcoding("dictation.webm", "audio/webm", provider="elevenlabs")
+    assert not needs_transcoding("dictation.m4a", "audio/mp4", provider="elevenlabs")
+    assert needs_transcoding("dictation.webm", "audio/webm", provider="cohere")
+    # An unnamed provider gets the narrow list, so a caller that has not been
+    # taught about the choice cannot send a container to a service that refuses it.
+    assert needs_transcoding("dictation.webm", "audio/webm")
+    assert needs_transcoding("dictation.webm", "audio/webm", provider="unknown")
     # No extension: the media type decides.
     assert needs_transcoding("dictation", "audio/mp4")
     assert not needs_transcoding("dictation", "audio/wav")

@@ -48,6 +48,7 @@ import type {
   MemoryProposal,
   ModelHealth,
   ModelPreference,
+  SpeechPreference,
   LocalModelSession,
   NotionConnection,
   NotionSyncResult,
@@ -1277,6 +1278,27 @@ export async function setModelPreference(
   );
 }
 
+export async function getSpeechPreference(): Promise<SpeechPreference> {
+  return request<SpeechPreference>(`${API_PREFIX}/settings/speech`);
+}
+
+export async function setSpeechPreference(
+  sttProvider: SpeechPreference["stt_provider"],
+  spokenConfirmation = false,
+  // undefined leaves the stored voice model untouched, so a surface that only
+  // knows about dictation cannot reset it; "" returns it to the default.
+  voiceModel?: string,
+): Promise<SpeechPreference> {
+  return request<SpeechPreference>(`${API_PREFIX}/settings/speech`, {
+    method: "PUT",
+    body: JSON.stringify({
+      stt_provider: sttProvider,
+      spoken_confirmation: spokenConfirmation,
+      ...(voiceModel !== undefined ? { voice_model: voiceModel } : {}),
+    }),
+  });
+}
+
 export async function getLocalModelSession(): Promise<LocalModelSession> {
   return request<LocalModelSession>(`${API_PREFIX}/model-session`);
 }
@@ -1995,6 +2017,29 @@ export async function batchAttention(
 /** The day's brief. Facts are counted server-side; only the prose is written. */
 export async function getMorningBrief(hours = 24): Promise<MorningBrief> {
   return request<MorningBrief>(`${API_PREFIX}/attention/brief?hours=${hours}`);
+}
+
+/** The same brief, read aloud.
+ *
+ * Returns the audio rather than a URL so the caller holds the blob for the
+ * rest of the session: replaying it is then a local decision, not a second
+ * request. `request` is not reused because it parses JSON, and the error path
+ * still has to — a failure here is a JSON detail, a success is an MP3. */
+export async function getMorningBriefAudio(hours = 24): Promise<Blob> {
+  const response = await fetch(apiUrl(`${API_PREFIX}/attention/brief/audio?hours=${hours}`), {
+    headers: { accept: "audio/*" },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const detail = await readError(response);
+    const record = asRecord(detail);
+    throw new ApiError(
+      stringValue(record.detail ?? record.message, `Could not read the brief aloud (${response.status})`),
+      response.status,
+      detail,
+    );
+  }
+  return response.blob();
 }
 
 /** The answer bank. `status` is one of active | pending | superseded | rejected. */

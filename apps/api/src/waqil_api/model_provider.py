@@ -4171,6 +4171,179 @@ class CohereModelProvider:
         }
 
 
+class ElevenLabsSpeechProvider:
+    """Ears and mouth, and deliberately nothing else.
+
+    The only provider here that does not reason. It has no `generate`, no
+    `plan`, no `project_step` and no `_structured`, because it is never a
+    Metis model: `RoutedModelProvider` carries it as an attribute but can
+    never *select* it, so no run can be routed to a transport that would have
+    to invent an answer. What it does is convert between audio and text —
+    dictation in, spoken renditions out — while every thought stays with the
+    reasoning lane the user actually chose.
+
+    Beside Cohere rather than instead of it. Cohere Transcribe keeps the
+    dictation path it has always had; this is a second option the owner picks
+    in Settings, and the two differ in what they accept (this one takes the
+    browser's own containers untouched) rather than in what dictation means.
+    """
+
+    name = "elevenlabs"
+
+    BASE_URL = "https://api.elevenlabs.io"
+    # Voice mode is English only by decision, and Scribe's own default is to
+    # detect the language — which is a worse answer than a stated one when
+    # every clip is known to be English. No setting: a second language is a
+    # product decision, not a configuration one.
+    LANGUAGE = "en"
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self._client_instance: Any | None = None
+        self._client_lock = asyncio.Lock()
+
+    @property
+    def available(self) -> bool:
+        return bool(self.settings.elevenlabs_api_key.strip())
+
+    async def _client(self) -> Any:
+        if self._client_instance is not None:
+            return self._client_instance
+        async with self._client_lock:
+            if self._client_instance is not None:
+                return self._client_instance
+            if not self.available:
+                raise ModelProviderError("ElevenLabs requires WAQIL_ELEVENLABS_API_KEY")
+            try:
+                import httpx
+            except ImportError as exc:
+                raise ModelProviderError(
+                    "ElevenLabs requires the optional cloud dependencies"
+                ) from exc
+            # Only the key is a client-wide default, for the reason the Cohere
+            # client documents: a client-level Content-Type wins the merge and
+            # would stamp JSON onto the multipart audio upload, boundary and all.
+            self._client_instance = httpx.AsyncClient(
+                base_url=self.BASE_URL,
+                headers={"xi-api-key": self.settings.elevenlabs_api_key.strip()},
+                timeout=self.settings.model_call_timeout_seconds,
+            )
+            return self._client_instance
+
+    async def close(self) -> None:
+        if self._client_instance is not None:
+            await self._client_instance.aclose()
+            self._client_instance = None
+
+    async def transcribe(
+        self, audio: bytes, filename: str, media_type: str, *, language: str = ""
+    ) -> str:
+        """Spoken audio to text, via Scribe.
+
+        Same signature and same contract as the Cohere method it stands beside:
+        bytes in, one plain string out, nothing stored on either side.
+        """
+        if not audio:
+            raise ModelProviderError("No audio was recorded.")
+        ceiling = self.settings.elevenlabs_transcribe_max_bytes
+        if len(audio) > ceiling:
+            raise ModelProviderError(
+                f"Recording is {len(audio) / 1024 / 1024:.1f} MB, past the "
+                f"{ceiling / 1024 / 1024:.0f} MB dictation limit."
+            )
+        client = await self._client()
+        try:
+            async with asyncio.timeout(self.settings.model_call_timeout_seconds):
+                response = await client.post(
+                    "/v1/speech-to-text",
+                    data={
+                        "model_id": self.settings.elevenlabs_stt_model,
+                        "language_code": language.strip() or self.LANGUAGE,
+                    },
+                    files={"file": (filename or "audio.webm", audio, media_type)},
+                )
+        except TimeoutError as exc:
+            raise ModelProviderError(
+                "Transcription timed out after "
+                f"{self.settings.model_call_timeout_seconds:g} seconds"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - network errors become model errors
+            raise ModelProviderError(f"Transcription failed: {str(exc)[:400]}") from exc
+        if response.status_code >= 400:
+            raise ModelProviderError(
+                f"ElevenLabs Scribe returned HTTP {response.status_code}: "
+                f"{response.text[:400]}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ModelProviderError(
+                "ElevenLabs Scribe returned a non-JSON reply"
+            ) from exc
+        text = payload.get("text") if isinstance(payload, dict) else None
+        if not isinstance(text, str):
+            raise ModelProviderError("ElevenLabs Scribe returned no transcript")
+        return text.strip()
+
+    async def synthesize(
+        self, text: str, *, voice_id: str = "", model: str = ""
+    ) -> tuple[bytes, str]:
+        """One spoken rendition, as `(audio bytes, media type)`.
+
+        Returns the bytes rather than a stream: every caller so far renders
+        once and caches the result, and a file the browser can seek through
+        beats a stream it cannot replay without spending the call again.
+        """
+        spoken = text.strip()
+        if not spoken:
+            raise ModelProviderError("There is nothing to say.")
+        voice = voice_id.strip() or self.settings.elevenlabs_voice_id.strip()
+        if not voice:
+            raise ModelProviderError("Speaking requires WAQIL_ELEVENLABS_VOICE_ID")
+        client = await self._client()
+        try:
+            async with asyncio.timeout(self.settings.model_call_timeout_seconds):
+                response = await client.post(
+                    f"/v1/text-to-speech/{voice}",
+                    params={"output_format": "mp3_44100_128"},
+                    json={
+                        "text": spoken,
+                        "model_id": model.strip() or self.settings.elevenlabs_tts_model,
+                    },
+                )
+        except TimeoutError as exc:
+            raise ModelProviderError(
+                "Speech synthesis timed out after "
+                f"{self.settings.model_call_timeout_seconds:g} seconds"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - network errors become model errors
+            raise ModelProviderError(
+                f"Speech synthesis failed: {str(exc)[:400]}"
+            ) from exc
+        if response.status_code >= 400:
+            # The body is audio on success, so it is only ever read as text here.
+            raise ModelProviderError(
+                f"ElevenLabs speech returned HTTP {response.status_code}: "
+                f"{response.text[:400]}"
+            )
+        audio = response.content
+        if not audio:
+            raise ModelProviderError("ElevenLabs speech returned no audio")
+        media_type = (response.headers.get("content-type") or "audio/mpeg").split(
+            ";", 1
+        )[0]
+        return audio, media_type
+
+    async def health(self) -> dict[str, Any]:
+        return {
+            "reachable": self.available,
+            "configured": self.available,
+            "stt_model": self.settings.elevenlabs_stt_model,
+            "tts_model": self.settings.elevenlabs_tts_model,
+            "base_url": self.BASE_URL,
+        }
+
+
 CLINE_PREAMBLE = """You are a cloud reasoning provider for Metis, a local-first
 assistant. Answer only from the bounded context on this request. Never invent a
 fact about the user's project, files or data that the context does not contain."""
@@ -4776,11 +4949,16 @@ class RoutedModelProvider:
         oci: OCIResponsesModelProvider,
         cohere: CohereModelProvider | None = None,
         cline: "ClineModelProvider | None" = None,
+        elevenlabs: "ElevenLabsSpeechProvider | None" = None,
     ) -> None:
         self.local = local
         self.oci = oci
         self.cohere = cohere
         self.cline = cline
+        # Carried, never selected. `_selected` has no branch that can return it
+        # and cannot grow one: it reasons about nothing, so a run routed here
+        # would have to invent its answer. Speech callers reach it by name.
+        self.elevenlabs = elevenlabs
 
     def _selected(self, model_aliases: dict[str, str] | None) -> ModelProvider:
         provider = (model_aliases or {}).get("_provider")
@@ -5045,6 +5223,8 @@ class RoutedModelProvider:
             await self.cohere.close()
         if self.cline is not None:
             await self.cline.close()
+        if self.elevenlabs is not None:
+            await self.elevenlabs.close()
 
 
 class DeterministicModelProvider:
@@ -5752,6 +5932,7 @@ def build_model_provider(
                 OCIResponsesModelProvider(settings),
                 cohere=CohereModelProvider(settings),
                 cline=ClineModelProvider(settings),
+                elevenlabs=ElevenLabsSpeechProvider(settings),
             )
         except ModelProviderError:
             if settings.model_backend == "auto" and settings.allow_test_backends:

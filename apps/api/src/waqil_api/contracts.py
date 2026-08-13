@@ -2072,6 +2072,40 @@ class ModelPreferenceUpdateV1(Contract):
     role_chains: dict[str, list[RoleChainEntryV1]] | None = None
 
 
+class SpeechPreferenceV1(Contract):
+    """How Metis listens, and how it speaks back.
+
+    Kept apart from the model preference because these are different
+    decisions: dictating through one service says nothing about which model
+    should answer a chat message. The availability flags travel with the
+    choice so a provider with no key behind it reads as unavailable rather
+    than as something that saves and then fails.
+    """
+
+    stt_provider: Literal["cohere", "elevenlabs"] = "cohere"
+    # Read the exact record back and wait for a yes before committing a voice
+    # write. Off by default: the visual receipt and its undo are the standing
+    # safety mechanism, and a spoken read-back on every append taxes the
+    # ordinary case to catch the rare one.
+    spoken_confirmation: bool = False
+    # Which model reasons during a voice conversation, from the server-owned
+    # allowlist below. Separate from the chat model on purpose — the model
+    # that should answer a spoken question in two seconds is not the one that
+    # should write a build plan.
+    voice_model: str = ""
+    cohere_available: bool = False
+    elevenlabs_available: bool = False
+    voice_models: list[str] = Field(default_factory=list, max_length=16)
+
+
+class SpeechPreferenceUpdateV1(Contract):
+    stt_provider: Literal["cohere", "elevenlabs"]
+    spoken_confirmation: bool = False
+    # None keeps the stored model; "" clears it back to the configured default.
+    voice_model: str | None = Field(default=None, max_length=200)
+
+
+
 class LocalModelOptionV1(Contract):
     id: str
     name: str
