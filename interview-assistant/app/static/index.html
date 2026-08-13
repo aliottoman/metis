@@ -1,0 +1,52 @@
+<!doctype html>
+<!-- The interview page: context form on the right, the talk button on the left. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interviews</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="stage">
+      <header class="stage-head">
+        <h1>Interviews</h1>
+        <p class="sub">Practice a round, get scored on it.</p>
+      </header>
+
+      <div class="orb-wrap">
+        <div id="orb" class="orb" data-state="idle"></div>
+        <p id="state-label" class="state-label">Fill in the role, then start.</p>
+      </div>
+
+      <div class="controls">
+        <button id="start" type="button" class="primary" disabled>Start interview</button>
+        <button id="stop" type="button" class="ghost" hidden>End interview</button>
+      </div>
+
+      <p id="error" class="error" hidden></p>
+
+      <section class="log-wrap">
+        <ul id="log" class="log"></ul>
+      </section>
+    </main>
+
+    <aside class="panel">
+      <h2>Context</h2>
+      <p class="hint">The agent gets this before it says hello, so it never has to ask.</p>
+
+      <label for="job-title">Job title</label>
+      <input id="job-title" type="text" placeholder="Cloud Solutions Engineer" autocomplete="off" />
+
+      <label for="company">Company</label>
+      <input id="company" type="text" placeholder="Oracle" autocomplete="off" />
+
+      <label for="jd">Job description</label>
+      <textarea id="jd" rows="16" placeholder="Paste the full job description here."></textarea>
+
+      <p id="panel-status" class="panel-status"></p>
+    </aside>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>
