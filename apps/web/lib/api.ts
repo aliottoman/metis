@@ -53,6 +53,9 @@ import type {
   VoiceSession,
   VoiceSessionStart,
   VoiceWriteReceipt,
+  Meeting,
+  MeetingDetail,
+  MeetingTurn,
   LocalModelSession,
   NotionConnection,
   NotionSyncResult,
@@ -1345,6 +1348,67 @@ export async function undoVoiceWrite(
     `${API_PREFIX}/voice/receipts/${encodeURIComponent(receiptId)}/undo`,
     { method: "POST", body: JSON.stringify({ undo_token: undoToken }) },
   );
+}
+
+/** Meetings. Upload starts a background job; progress is on the stage. */
+export async function uploadMeeting(file: File, title = ""): Promise<Meeting> {
+  const body = new FormData();
+  body.append("file", file, file.name);
+  const query = title ? `?title=${encodeURIComponent(title)}` : "";
+  return request<Meeting>(`${API_PREFIX}/meetings${query}`, { method: "POST", body });
+}
+
+export async function listMeetings(): Promise<Meeting[]> {
+  return request<Meeting[]>(`${API_PREFIX}/meetings`);
+}
+
+export async function getMeeting(meetingId: string): Promise<MeetingDetail> {
+  return request<MeetingDetail>(`${API_PREFIX}/meetings/${encodeURIComponent(meetingId)}`);
+}
+
+/** Resume the job from the stage that failed — never from the upload. */
+export async function retryMeeting(meetingId: string): Promise<Meeting> {
+  return request<Meeting>(
+    `${API_PREFIX}/meetings/${encodeURIComponent(meetingId)}/retry`,
+    { method: "POST" },
+  );
+}
+
+export async function nameMeetingSpeaker(
+  meetingId: string,
+  speakerId: string,
+  displayName: string,
+): Promise<MeetingDetail> {
+  return request<MeetingDetail>(
+    `${API_PREFIX}/meetings/${encodeURIComponent(meetingId)}/speakers/${encodeURIComponent(speakerId)}`,
+    { method: "PUT", body: JSON.stringify({ display_name: displayName }) },
+  );
+}
+
+export async function correctMeetingTurn(
+  meetingId: string,
+  turnId: string,
+  text: string,
+): Promise<MeetingTurn> {
+  return request<MeetingTurn>(
+    `${API_PREFIX}/meetings/${encodeURIComponent(meetingId)}/turns/${encodeURIComponent(turnId)}`,
+    { method: "PATCH", body: JSON.stringify({ text }) },
+  );
+}
+
+export async function decideMeetingProposal(
+  meetingId: string,
+  proposalId: string,
+  status: "accepted" | "rejected",
+): Promise<unknown> {
+  return request<unknown>(
+    `${API_PREFIX}/meetings/${encodeURIComponent(meetingId)}/proposals/${encodeURIComponent(proposalId)}`,
+    { method: "POST", body: JSON.stringify({ status }) },
+  );
+}
+
+export function meetingAudioUrl(meetingId: string): string {
+  return apiUrl(`${API_PREFIX}/meetings/${encodeURIComponent(meetingId)}/audio`);
 }
 
 export async function getLocalModelSession(): Promise<LocalModelSession> {

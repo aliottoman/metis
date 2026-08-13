@@ -632,6 +632,85 @@ export interface VoiceSessionStart {
   lease_seconds: number;
 }
 
+export type MeetingStage =
+  | "uploaded"
+  | "isolating"
+  | "transcribing"
+  | "analyzing"
+  | "ready"
+  | "failed";
+
+export interface MeetingWord {
+  text: string;
+  start: number | null;
+  end: number | null;
+}
+
+export interface MeetingTurn {
+  id: string;
+  ordinal: number;
+  speaker_id: string;
+  text: string;
+  /** What the provider heard. Never overwritten by a correction. */
+  original_text: string;
+  start_seconds: number;
+  end_seconds: number;
+  words: MeetingWord[];
+  corrected_at: string | null;
+}
+
+export interface MeetingSpeaker {
+  speaker_id: string;
+  display_name: string;
+  person_id: string | null;
+}
+
+export interface MeetingProposal {
+  id: string;
+  kind: "account_link" | "action" | "decision";
+  payload: Record<string, string>;
+  status: "proposed" | "accepted" | "rejected";
+  score: number | null;
+  evidence_turn_id: string | null;
+  evidence_start: number | null;
+  evidence_end: number | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+export interface MeetingEvent {
+  stage: string;
+  message: string;
+  created_at: string;
+}
+
+export interface Meeting {
+  id: string;
+  title: string;
+  audio_filename: string;
+  audio_media_type: string;
+  audio_bytes: number;
+  duration_seconds: number | null;
+  language: string;
+  transcript: string;
+  stage: MeetingStage;
+  error: string;
+  attempts: number;
+  account_id: string | null;
+  link_score: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MeetingDetail {
+  meeting: Meeting;
+  turns: MeetingTurn[];
+  speakers: MeetingSpeaker[];
+  proposals: MeetingProposal[];
+  events: MeetingEvent[];
+  suggested_names: string[];
+}
+
 export interface LocalModelOption {
   id: string;
   name: string;

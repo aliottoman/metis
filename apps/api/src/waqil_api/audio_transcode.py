@@ -154,3 +154,81 @@ def _to_wav_blocking(audio: bytes, suffix: str, timeout_seconds: float) -> bytes
         raise TranscodeError(
             f"this {suffix} recording could not be converted ({'; '.join(failures)}).{hint}"
         )
+
+
+async def slice_wav(
+    audio: bytes,
+    filename: str,
+    media_type: str,
+    *,
+    start: float,
+    end: float,
+    timeout_seconds: float = 60.0,
+) -> bytes:
+    """One bounded interval of a recording, as WAV.
+
+    Exists for transcript correction, and the bound is the reason it exists.
+    Forced alignment is a single-speaker service: handing it a whole meeting
+    would produce timings that look right and are not, so a corrected line is
+    realigned against its own speaker's seconds and nothing else.
+
+    Deliberately not a general trimming utility — it takes the interval it is
+    given, clamped to something sane, and returns the same WAV LEI16/16k/mono
+    the transcription path uses.
+    """
+    if end <= start:
+        raise TranscodeError("that interval has no length")
+    # A pad on each side so a word clipped at the boundary still has its onset.
+    head = max(0.0, start - 0.25)
+    span = min((end - start) + 0.5, 600.0)
+    suffix = _suffix_of(filename, media_type) or "bin"
+    return await asyncio.to_thread(
+        _slice_blocking, audio, suffix, head, span, timeout_seconds
+    )
+
+
+def _slice_blocking(
+    audio: bytes, suffix: str, start: float, span: float, timeout_seconds: float
+) -> bytes:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        # afconvert cannot trim, so this one genuinely needs ffmpeg. Said
+        # plainly: the caller keeps the original timings and the correction
+        # still lands, which is the outcome that matters.
+        raise TranscodeError(
+            "realigning a corrected line needs ffmpeg (brew install ffmpeg); "
+            "the correction was saved with its original timings"
+        )
+    with tempfile.TemporaryDirectory(prefix="metis-meeting-") as scratch:
+        source = Path(scratch) / f"clip.{suffix}"
+        target = Path(scratch) / "segment.wav"
+        source.write_bytes(audio)
+        completed = subprocess.run(
+            [
+                ffmpeg,
+                "-nostdin",
+                "-ss",
+                f"{start:.3f}",
+                "-t",
+                f"{span:.3f}",
+                "-i",
+                str(source),
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-acodec",
+                "pcm_s16le",
+                str(target),
+            ],
+            capture_output=True,
+            timeout=timeout_seconds,
+        )
+        if (
+            completed.returncode != 0
+            or not target.is_file()
+            or not target.stat().st_size
+        ):
+            detail = (completed.stderr or b"").decode("utf-8", "replace").strip()[:200]
+            raise TranscodeError(f"that interval could not be extracted ({detail})")
+        return target.read_bytes()

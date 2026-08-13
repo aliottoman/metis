@@ -97,6 +97,13 @@ from .contracts import (
     SkuRateCardUpdateV1,
     SkuRateCardV1,
     SkuRateV1,
+    MeetingDetailV1,
+    MeetingProposalDecisionV1,
+    MeetingProposalV1,
+    MeetingSpeakerUpdateV1,
+    MeetingTurnCorrectionV1,
+    MeetingTurnV1,
+    MeetingV1,
     SpeechPreferenceUpdateV1,
     SpeechPreferenceV1,
     VoiceAvailabilityV1,
@@ -166,6 +173,7 @@ from .reference_architecture import ReferenceRunnerError
 from .project_verification import ProjectVerificationError
 from .project_env import asset_environment
 from .project_workspace import ProjectWorkspaceError
+from .meetings import MAX_ATTEMPTS, MeetingError, MeetingService
 from .runtime import AppRuntime
 from .spoken_text import brief_to_speech
 from .tool_evidence import build_tool_version_evidence
@@ -1898,6 +1906,219 @@ async def voice_turn(body: VoiceTurnRequestV1, request: Request) -> VoiceRenditi
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ModelProviderError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+def _meetings(request: Request) -> MeetingService:
+    service = runtime(request).meetings
+    if service is None:
+        raise HTTPException(status_code=503, detail="meetings are not available yet")
+    return service
+
+
+def _meeting_detail(payload: dict[str, Any], suggested: list[str]) -> MeetingDetailV1:
+    """One stored meeting as its contract, with word timings parsed out."""
+    return MeetingDetailV1.model_validate(
+        {
+            "meeting": payload["meeting"],
+            "turns": [
+                {**turn, "words": json.loads(turn.get("words_json") or "[]")}
+                for turn in payload["turns"]
+            ],
+            "speakers": payload["speakers"],
+            "proposals": [
+                {**item, "payload": json.loads(item.get("payload_json") or "{}")}
+                for item in payload["proposals"]
+            ],
+            "events": payload["events"],
+            "suggested_names": suggested,
+        }
+    )
+
+
+@router.post("/meetings", response_model=MeetingV1, status_code=status.HTTP_201_CREATED)
+async def upload_meeting(
+    request: Request,
+    background: BackgroundTasks,
+    file: Annotated[UploadFile, File(...)],
+    title: str = "",
+) -> MeetingV1:
+    """Store a recording and start transcribing it.
+
+    The blob is committed before anything else happens, so every later stage
+    is retryable without re-uploading an hour of audio. Transcription runs in
+    the background because it takes minutes; progress is observable on the
+    meeting's own stage and events.
+    """
+    app = runtime(request)
+    media_type = (file.content_type or "audio/mpeg").split(";", 1)[0].lower()
+    if not media_type.startswith("audio/") and not media_type.startswith("video/"):
+        raise HTTPException(
+            status_code=415, detail="only audio or video recordings are accepted"
+        )
+    filename = _SAFE_FILENAME.sub("_", Path(file.filename or "meeting.mp3").name)
+    try:
+        blob = await app.blobs.put_stream(
+            _chunks(file), max_bytes=app.settings.meeting_max_bytes
+        )
+    except BlobTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    finally:
+        await file.close()
+    meeting = await app.database.create_meeting(
+        title=title or Path(filename).stem.replace("_", " "),
+        audio_sha256=blob.sha256,
+        audio_filename=filename,
+        audio_media_type=media_type,
+        audio_bytes=blob.size,
+    )
+    background.add_task(_ingest_meeting, app, meeting["id"])
+    return MeetingV1.model_validate(meeting)
+
+
+async def _chunks(file: UploadFile) -> AsyncIterator[bytes]:
+    while chunk := await file.read(1024 * 1024):
+        yield chunk
+
+
+async def _ingest_meeting(app: AppRuntime, meeting_id: str) -> None:
+    """The background job. Its failures are stored, never raised at a client."""
+    if app.meetings is None:
+        return
+    try:
+        await app.meetings.ingest(meeting_id)
+    except Exception as error:  # noqa: BLE001 - the stage carries the failure
+        await app.database.fail_meeting(meeting_id, str(error)[:400])
+
+
+@router.get("/meetings", response_model=list[MeetingV1])
+async def list_meetings(request: Request) -> list[MeetingV1]:
+    rows = await runtime(request).database.list_meetings()
+    return [MeetingV1.model_validate(row) for row in rows]
+
+
+@router.get("/meetings/{meeting_id}", response_model=MeetingDetailV1)
+async def get_meeting(meeting_id: str, request: Request) -> MeetingDetailV1:
+    app = runtime(request)
+    payload = await app.database.meeting_detail(meeting_id)
+    if payload is None:
+        raise not_found("meeting")
+    # Speaker-name suggestions come from the people on an *accepted* linked
+    # account, so a proposed link never quietly starts naming voices.
+    suggested: list[str] = []
+    account_id = payload["meeting"].get("account_id")
+    if account_id and app.customers is not None:
+        try:
+            detail = await app.customers.account(account_id)
+            suggested = [person.name for person in (detail.people if detail else [])]
+        except Exception:  # noqa: BLE001 - suggestions are a convenience
+            suggested = []
+    return _meeting_detail(payload, suggested)
+
+
+@router.get("/meetings/{meeting_id}/audio")
+async def meeting_audio(meeting_id: str, request: Request) -> FileResponse:
+    """The original recording, for the player. Never the isolated derivative."""
+    app = runtime(request)
+    meeting = await app.database.get_meeting(meeting_id)
+    if meeting is None:
+        raise not_found("meeting")
+    path = app.blobs.path_for(meeting["audio_sha256"])
+    if not path.is_file():
+        raise not_found("recording")
+    return FileResponse(
+        path,
+        media_type=meeting["audio_media_type"] or "audio/mpeg",
+        filename=meeting["audio_filename"] or "meeting.mp3",
+    )
+
+
+@router.post("/meetings/{meeting_id}/retry", response_model=MeetingV1)
+async def retry_meeting(
+    meeting_id: str, request: Request, background: BackgroundTasks
+) -> MeetingV1:
+    """Resume the job from the stage that failed — never from the upload."""
+    app = runtime(request)
+    meeting = await app.database.get_meeting(meeting_id)
+    if meeting is None:
+        raise not_found("meeting")
+    if meeting["attempts"] >= MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"this recording has failed {meeting['attempts']} times; "
+                "retrying again is unlikely to help"
+            ),
+        )
+    background.add_task(_ingest_meeting, app, meeting_id)
+    return MeetingV1.model_validate(meeting)
+
+
+@router.put(
+    "/meetings/{meeting_id}/speakers/{speaker_id}", response_model=MeetingDetailV1
+)
+async def name_meeting_speaker(
+    meeting_id: str,
+    speaker_id: str,
+    body: MeetingSpeakerUpdateV1,
+    request: Request,
+) -> MeetingDetailV1:
+    app = runtime(request)
+    await app.database.name_meeting_speaker(
+        meeting_id,
+        speaker_id,
+        display_name=body.display_name,
+        person_id=body.person_id,
+    )
+    payload = await app.database.meeting_detail(meeting_id)
+    if payload is None:
+        raise not_found("meeting")
+    return _meeting_detail(payload, [])
+
+
+@router.patch("/meetings/{meeting_id}/turns/{turn_id}", response_model=MeetingTurnV1)
+async def correct_meeting_turn(
+    meeting_id: str, turn_id: str, body: MeetingTurnCorrectionV1, request: Request
+) -> MeetingTurnV1:
+    """Correct one line, realigning only that speaker's own audio interval."""
+    try:
+        turn = await _meetings(request).correct_turn(meeting_id, turn_id, body.text)
+    except MeetingError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return MeetingTurnV1.model_validate(
+        {**turn, "words": json.loads(turn.get("words_json") or "[]")}
+    )
+
+
+@router.post(
+    "/meetings/{meeting_id}/proposals/{proposal_id}", response_model=MeetingProposalV1
+)
+async def decide_meeting_proposal(
+    meeting_id: str,
+    proposal_id: str,
+    body: MeetingProposalDecisionV1,
+    request: Request,
+) -> MeetingProposalV1:
+    """Accept or reject one proposal.
+
+    Accepting a customer link records it on the meeting. Accepting an action
+    does *not* silently create a customer action — it marks the proposal
+    accepted, and the customer workbench is where a commitment becomes a
+    commitment. A transcript is a machine's best guess at what a room said.
+    """
+    app = runtime(request)
+    decided = await app.database.decide_meeting_proposal(
+        meeting_id, proposal_id, body.status
+    )
+    if decided is None:
+        raise HTTPException(
+            status_code=409, detail="that proposal has already been decided"
+        )
+    payload = json.loads(decided.get("payload_json") or "{}")
+    if body.status == "accepted" and decided["kind"] == "account_link":
+        await app.database.link_meeting_account(
+            meeting_id, str(payload.get("account_id")), score=decided.get("score")
+        )
+    return MeetingProposalV1.model_validate({**decided, "payload": payload})
 
 
 @router.post("/voice/receipts/{receipt_id}/undo", response_model=VoiceWriteReceiptV1)

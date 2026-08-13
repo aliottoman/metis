@@ -4285,6 +4285,135 @@ class ElevenLabsSpeechProvider:
             raise ModelProviderError("ElevenLabs Scribe returned no transcript")
         return text.strip()
 
+    async def transcribe_meeting(
+        self, audio: bytes, filename: str, media_type: str
+    ) -> dict[str, Any]:
+        """A recording, diarized, with a timestamp on every word.
+
+        Different from `transcribe` in what it asks for rather than how: the
+        same endpoint, with diarization and word granularity turned on. Kept
+        as its own method because dictation must never pay for either — a
+        four-second composer clip has one speaker and needs no word timings,
+        and asking for them would cost latency on the one path where latency
+        is the whole product.
+
+        Returns the provider's payload as-is. Shaping it into turns is the
+        host's job, and doing it here would hide which parts are the
+        provider's claims and which are ours.
+        """
+        if not audio:
+            raise ModelProviderError("No audio was uploaded.")
+        client = await self._client()
+        try:
+            async with asyncio.timeout(
+                self.settings.meeting_transcribe_timeout_seconds
+            ):
+                response = await client.post(
+                    "/v1/speech-to-text",
+                    data={
+                        "model_id": self.settings.elevenlabs_stt_model,
+                        "language_code": self.LANGUAGE,
+                        "diarize": "true",
+                        "timestamps_granularity": "word",
+                    },
+                    files={"file": (filename or "meeting.mp3", audio, media_type)},
+                )
+        except TimeoutError as exc:
+            raise ModelProviderError(
+                "Transcription timed out after "
+                f"{self.settings.meeting_transcribe_timeout_seconds:g} seconds"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - network errors become model errors
+            raise ModelProviderError(f"Transcription failed: {str(exc)[:400]}") from exc
+        if response.status_code >= 400:
+            raise ModelProviderError(
+                f"ElevenLabs Scribe returned HTTP {response.status_code}: "
+                f"{response.text[:400]}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ModelProviderError(
+                "ElevenLabs Scribe returned a non-JSON reply"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ModelProviderError("ElevenLabs Scribe returned no transcript")
+        payload["_request_id"] = response.headers.get("request-id", "")
+        return payload
+
+    async def isolate_audio(
+        self, audio: bytes, filename: str, media_type: str
+    ) -> tuple[bytes, str]:
+        """The voices, with the room taken out.
+
+        Optional, and its failure is never the job's: a noisy transcript is a
+        worse transcript, not a missing one, so a caller that cannot isolate
+        transcribes the original instead.
+        """
+        if not audio:
+            raise ModelProviderError("No audio was uploaded.")
+        client = await self._client()
+        try:
+            async with asyncio.timeout(
+                self.settings.meeting_transcribe_timeout_seconds
+            ):
+                response = await client.post(
+                    "/v1/audio-isolation",
+                    files={"audio": (filename or "meeting.mp3", audio, media_type)},
+                )
+        except Exception as exc:  # noqa: BLE001 - network errors become model errors
+            raise ModelProviderError(
+                f"Audio isolation failed: {str(exc)[:400]}"
+            ) from exc
+        if response.status_code >= 400:
+            raise ModelProviderError(
+                f"ElevenLabs isolation returned HTTP {response.status_code}"
+            )
+        isolated = response.content
+        if not isolated:
+            raise ModelProviderError("ElevenLabs isolation returned no audio")
+        return isolated, (response.headers.get("content-type") or "audio/mpeg").split(
+            ";", 1
+        )[0]
+
+    async def force_align(
+        self, audio: bytes, text: str, *, filename: str = "segment.wav"
+    ) -> list[dict[str, Any]]:
+        """Word timings for one corrected line, against its own audio interval.
+
+        Single-speaker only, by the service's own contract — which is why the
+        caller sends one speaker's segment and never a diarized span. Handing
+        forced alignment a multi-speaker passage produces timings that look
+        right and are not, which is worse than declining to realign.
+        """
+        spoken = text.strip()
+        if not audio or not spoken:
+            raise ModelProviderError("Alignment needs both audio and text.")
+        client = await self._client()
+        try:
+            async with asyncio.timeout(self.settings.model_call_timeout_seconds):
+                response = await client.post(
+                    "/v1/forced-alignment",
+                    data={"text": spoken},
+                    files={"file": (filename, audio, "audio/wav")},
+                )
+        except Exception as exc:  # noqa: BLE001 - network errors become model errors
+            raise ModelProviderError(f"Alignment failed: {str(exc)[:400]}") from exc
+        if response.status_code >= 400:
+            raise ModelProviderError(
+                f"ElevenLabs alignment returned HTTP {response.status_code}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ModelProviderError(
+                "ElevenLabs alignment returned a non-JSON reply"
+            ) from exc
+        words = (payload or {}).get("words")
+        if not isinstance(words, list):
+            raise ModelProviderError("ElevenLabs alignment returned no words")
+        return words
+
     async def synthesize(
         self, text: str, *, voice_id: str = "", model: str = ""
     ) -> tuple[bytes, str]:
