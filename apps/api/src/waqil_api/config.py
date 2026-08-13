@@ -154,6 +154,13 @@ class Settings(BaseSettings):
     elevenlabs_transcribe_max_bytes: int = Field(
         default=25 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024
     )
+    # The private Agents Platform agent behind the /interviews page (Chiron).
+    # Deliberately a different agent from voice mode: voice talks through a
+    # Custom LLM pointed back at this machine, while the interviewer runs
+    # entirely on ElevenLabs' hosted model and never calls home. Created by
+    # the owner in the console per docs/interviews-elevenlabs-agent.md, never
+    # by this code.
+    interview_elevenlabs_agent_id: str = ""
 
     # Meetings. A recording is minutes or hours of audio, so it gets its own
     # ceilings: the dictation limits are sized for a sentence and would refuse

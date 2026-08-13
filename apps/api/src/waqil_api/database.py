@@ -1281,6 +1281,50 @@ CREATE INDEX IF NOT EXISTS idx_meeting_events_meeting
     ON meeting_events(meeting_id, id);
 """
 
+SCHEMA_V29 = """
+-- Interviews: one five-question mock round, its transcript, and the verdict.
+--
+-- The session row is created before the provider is called, so a token mint
+-- that fails leaves a 'failed' session rather than nothing — the page can say
+-- what happened. The scorecard is one JSON column, not normalized: it is
+-- written exactly once by the evaluation tool, never queried by parts, and a
+-- shape that can only be replaced whole cannot be half-updated.
+CREATE TABLE IF NOT EXISTS interview_sessions (
+    id TEXT PRIMARY KEY,
+    provider_conversation_id TEXT NOT NULL DEFAULT '',
+    job_title TEXT NOT NULL,
+    company_name TEXT NOT NULL,
+    job_description TEXT NOT NULL,
+    interview_type TEXT NOT NULL
+        CHECK(interview_type IN ('hr_recruiter','hiring_manager','technical')),
+    question_limit INTEGER NOT NULL DEFAULT 5,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active','complete','ended_early','failed')),
+    scorecard_json TEXT
+        CHECK(scorecard_json IS NULL OR json_valid(scorecard_json)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_interview_sessions_recent
+    ON interview_sessions(created_at DESC);
+
+-- Transcript lines in the order they were heard. The ordinal comes from the
+-- browser, which is the only party that saw the conversation; the UNIQUE
+-- constraint is what makes a retried batch an absorption instead of a
+-- duplication.
+CREATE TABLE IF NOT EXISTS interview_turns (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES interview_sessions(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user','agent')),
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(session_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_interview_turns_session
+    ON interview_turns(session_id, ordinal);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -1310,6 +1354,7 @@ MIGRATIONS: dict[int, str] = {
     26: SCHEMA_V26,
     27: SCHEMA_V27,
     28: SCHEMA_V28,
+    29: SCHEMA_V29,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -2090,6 +2135,214 @@ class Database:
                         ).fetchall()
                     ],
                 }
+
+        return await self._call(operation)
+
+    async def create_interview_session(
+        self,
+        *,
+        job_title: str,
+        company_name: str,
+        job_description: str,
+        interview_type: str,
+        question_limit: int = 5,
+    ) -> dict[str, Any]:
+        """Record the session before the provider is called, so a failed token
+        mint leaves a diagnosable row rather than nothing."""
+        session_id, timestamp = _id("ivw"), _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO interview_sessions
+                    (id, job_title, company_name, job_description,
+                     interview_type, question_limit, status, created_at,
+                     updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                    (
+                        session_id,
+                        job_title.strip(),
+                        company_name.strip(),
+                        job_description.strip(),
+                        interview_type,
+                        question_limit,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM interview_sessions WHERE id = ?",
+                        (session_id,),
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def interview_session_detail(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
+        """The session and its transcript, in spoken order."""
+
+        def operation() -> dict[str, Any] | None:
+            with self._lock:
+                conn = self._connection()
+                session = conn.execute(
+                    "SELECT * FROM interview_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if session is None:
+                    return None
+                return {
+                    "session": dict(session),
+                    "turns": [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT * FROM interview_turns WHERE session_id = ? "
+                            "ORDER BY ordinal",
+                            (session_id,),
+                        ).fetchall()
+                    ],
+                }
+
+        return await self._call(operation)
+
+    async def set_interview_conversation_id(
+        self, session_id: str, provider_conversation_id: str
+    ) -> dict[str, Any] | None:
+        """Attach ElevenLabs' own conversation id once the SDK reports it."""
+        timestamp = _now()
+
+        def operation() -> dict[str, Any] | None:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    "UPDATE interview_sessions SET provider_conversation_id = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (provider_conversation_id.strip(), timestamp, session_id),
+                )
+                if cursor.rowcount == 0:
+                    return None
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM interview_sessions WHERE id = ?",
+                        (session_id,),
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def append_interview_turns(
+        self, session_id: str, turns: list[dict[str, Any]]
+    ) -> int | None:
+        """Append transcript lines; re-sent ordinals are absorbed, not doubled.
+
+        Returns the total number of stored turns, or None when the session
+        does not exist — the caller turns that into a 404 rather than
+        silently accepting a transcript for nothing.
+        """
+        timestamp = _now()
+
+        def operation() -> int | None:
+            with self._transaction() as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM interview_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if exists is None:
+                    return None
+                for turn in turns:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO interview_turns
+                        (id, session_id, ordinal, role, text, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)""",
+                        (
+                            _id("iturn"),
+                            session_id,
+                            int(turn["ordinal"]),
+                            str(turn["role"]),
+                            str(turn["text"]),
+                            timestamp,
+                        ),
+                    )
+                conn.execute(
+                    "UPDATE interview_sessions SET updated_at = ? WHERE id = ?",
+                    (timestamp, session_id),
+                )
+                row = conn.execute(
+                    "SELECT COUNT(*) AS stored FROM interview_turns "
+                    "WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                return int(row["stored"])
+
+        return await self._call(operation)
+
+    async def save_interview_scorecard(
+        self, session_id: str, *, scorecard_json: str, status: str
+    ) -> dict[str, Any] | None:
+        """Write the verdict exactly once. A second submission changes nothing —
+        the blocking tool may be retried, and a retry must not rewrite a score
+        the candidate already heard."""
+        timestamp = _now()
+
+        def operation() -> dict[str, Any] | None:
+            with self._transaction() as conn:
+                session = conn.execute(
+                    "SELECT * FROM interview_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if session is None:
+                    return None
+                if session["scorecard_json"] is None:
+                    conn.execute(
+                        "UPDATE interview_sessions SET scorecard_json = ?, "
+                        "status = ?, updated_at = ? WHERE id = ?",
+                        (scorecard_json, status, timestamp, session_id),
+                    )
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM interview_sessions WHERE id = ?",
+                        (session_id,),
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def end_interview_session(
+        self, session_id: str, *, status: str
+    ) -> dict[str, Any] | None:
+        """Close an active session. Ending an already-ended one is a no-op that
+        returns the settled row, which is what makes teardown safe to repeat."""
+        timestamp = _now()
+
+        def operation() -> dict[str, Any] | None:
+            with self._transaction() as conn:
+                session = conn.execute(
+                    "SELECT * FROM interview_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if session is None:
+                    return None
+                if session["status"] == "active":
+                    conn.execute(
+                        "UPDATE interview_sessions SET status = ?, updated_at = ? "
+                        "WHERE id = ?",
+                        (status, timestamp, session_id),
+                    )
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM interview_sessions WHERE id = ?",
+                        (session_id,),
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def delete_interview_session(self, session_id: str) -> bool:
+        """Delete a session and its transcript. False means already gone."""
+
+        def operation() -> bool:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM interview_sessions WHERE id = ?", (session_id,)
+                )
+                return cursor.rowcount > 0
 
         return await self._call(operation)
 

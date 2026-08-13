@@ -632,6 +632,85 @@ export interface VoiceSessionStart {
   lease_seconds: number;
 }
 
+export type InterviewType = "hr_recruiter" | "hiring_manager" | "technical";
+
+export interface InterviewContext {
+  job_title: string;
+  company_name: string;
+  job_description: string;
+  interview_type: InterviewType;
+}
+
+export interface InterviewAvailability {
+  available: boolean;
+  reason: string;
+  /** Every missing configuration item, each a full sentence naming its variable. */
+  missing: string[];
+}
+
+export interface InterviewTurn {
+  id: string;
+  ordinal: number;
+  role: "user" | "agent";
+  text: string;
+  created_at: string;
+}
+
+export interface InterviewImprovement {
+  what_happened: string;
+  evidence: string;
+  why_it_hurt: string;
+  better_approach: string;
+}
+
+/** What the agent's blocking tool submits. Deliberately no overall score. */
+export interface InterviewEvaluation {
+  specific_evidence: number;
+  role_depth: number;
+  relevance: number;
+  structure: number;
+  communication: number;
+  verdict: string;
+  strongest_answer_quote: string;
+  strongest_answer_reason: string;
+  improvements: InterviewImprovement[];
+  drill: string;
+  completed_question_count: number;
+  incomplete: boolean;
+}
+
+export interface InterviewScorecard {
+  evaluation: InterviewEvaluation;
+  /** Computed by the backend; null when under three questions were answered. */
+  overall_score: number | null;
+  recommendation: "advance" | "borderline" | "do_not_advance" | null;
+  provisional: boolean;
+  created_at: string;
+}
+
+export interface InterviewSession {
+  id: string;
+  provider_conversation_id: string;
+  job_title: string;
+  company_name: string;
+  job_description: string;
+  interview_type: InterviewType;
+  question_limit: number;
+  status: "active" | "complete" | "ended_early" | "failed";
+  turns: InterviewTurn[];
+  scorecard: InterviewScorecard | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InterviewSessionStart {
+  session: InterviewSession;
+  /** A WebRTC conversation token, minted server-side and handed over once. */
+  conversation_token: string;
+  /** Everything the agent will know, question_limit fixed server-side to "5". */
+  dynamic_variables: Record<string, string>;
+}
+
 export type MeetingStage =
   | "uploaded"
   | "isolating"

@@ -32,6 +32,7 @@ from .database import Database
 from .deep_worker import build_deep_worker_factory
 from .embeddings import CohereRetrieval
 from .events import EventBus
+from .interviews import InterviewService
 from .meetings import MeetingService
 from .memory_index import MemoryIndex
 from .local_model_session import LocalModelSessionManager
@@ -109,6 +110,7 @@ class AppRuntime:
         self.projects: ProjectWorkspaceService | None = None
         self.voice: VoiceSessionService | None = None
         self.meetings: MeetingService | None = None
+        self.interviews: InterviewService | None = None
         # Create-only, and the only path from voice to a customer record. Held
         # on the runtime rather than inside the graph because undo is a UI
         # action on a receipt, so the API route needs the same token store.
@@ -256,6 +258,12 @@ class AppRuntime:
             speech_preference=self.speech_preference,
             model=self.model,
             database=self.database,
+        )
+        # Interviews borrow the speech provider's client for token minting and
+        # otherwise touch only the database. Deliberately handed nothing else:
+        # the agent runs on ElevenLabs' hosted model and never calls back in.
+        self.interviews = InterviewService(
+            self.settings, self.database, model=self.model
         )
         await self.control_plane.reconcile_startup()
         try:
