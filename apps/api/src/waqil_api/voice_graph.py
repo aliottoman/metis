@@ -32,6 +32,7 @@ written answer through the spoken field.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
@@ -55,7 +56,7 @@ from .policy import (
     PolicyPermission,
     PolicyRequest,
 )
-from .spoken_text import SPOKEN_MAX_CHARS, to_speech
+from .spoken_text import SPOKEN_MAX_CHARS, SPOKEN_MAX_SENTENCES, to_speech
 from .voice_accounts import AccountResolution, resolve_account
 from .voice_intents import classify_refusal
 
@@ -76,22 +77,53 @@ VOICE_PERMISSIONS = frozenset(
 # permission added here without thinking raises the declared risk visibly.
 VOICE_RISK = RiskLevel.R2
 
-VOICE_SYSTEM_PROMPT = """You are Metis, answering out loud.
+# Budgets for one spoken turn. A voice answer is two to four sentences, and
+# every character sent to reach it is paid for again on the next turn — so
+# these are sized for what the ear can actually hold, not for what the context
+# window would allow. The worst-case turn was measured at roughly 15,800
+# tokens before this, almost all of it conversation history nobody could
+# recall by the third sentence.
+#
+# Brevity is the default and detail is the exception, which is the shape the
+# owner asked for: a request that explicitly wants the long version raises
+# both ceilings for that turn alone.
+VOICE_EVIDENCE_SNIPPETS = 6
+VOICE_EVIDENCE_CHARS = 700
+VOICE_HISTORY_TURNS = 6
+VOICE_HISTORY_CHARS = 300
+VOICE_OUTPUT_TOKENS = 700
+VOICE_DETAIL_OUTPUT_TOKENS = 1_600
+VOICE_DETAIL_SNIPPETS = 10
+VOICE_DETAIL_SENTENCES = 8
 
-You are given evidence from the user's own records. Answer only from it. If it
-does not contain the answer, say so plainly — a spoken "I don't have that"
-costs three seconds; a spoken guess costs a customer meeting.
+# "Unless they explicitly asked for detail" — made a predicate rather than
+# left to the model's judgment, because the model's incentive is to be
+# thorough and the whole point is that it usually should not be.
+_DETAIL_ASKED = re.compile(
+    r"\b(in detail|more detail|full(?:y| detail| version| picture)?|everything"
+    r"|walk me through|talk me through|elaborate|expand on|at length"
+    r"|tell me more|go deeper|the long version|break (?:it|that) down)\b"
+)
 
-Return two fields by calling the supplied function exactly once.
+VOICE_SYSTEM_PROMPT = """You are Metis, answering out loud from the user's own records.
 
-`written` is the full answer for the screen. Cite the evidence you used with
-[n] markers, the way a written Metis answer does.
+Answer only from the evidence given. If it doesn't contain the answer, say so
+— a spoken "I don't have that" costs three seconds, a spoken guess costs a
+meeting.
 
-`spoken` is what a person hears. Two to four sentences unless they explicitly
-asked for detail. Never speak Markdown, a URL, a table, code, or a bracketed
-citation number — attribute out loud instead: "the strongest source is the
-Batelco service request". It should sound like someone who read the records
-telling you what they say."""
+Call the supplied function once with two fields.
+
+`written`: the full answer for the screen, citing evidence as [n].
+
+`spoken`: what a person hears. Two to four sentences. No Markdown, URLs,
+tables, code or [n] markers — attribute out loud instead ("the strongest
+source is the Batelco service request"). Say the useful thing first; nobody
+can skim speech."""
+
+VOICE_DETAIL_NOTE = (
+    "\n\nThey asked for detail, so `spoken` may run longer than four "
+    "sentences — still plain speech, still no markup."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,18 +237,19 @@ class VoiceGraph:
             )
 
         self._enforce_ceiling("voice.turn")
-        evidence = await self._retrieve(turn)
+        detail = bool(_DETAIL_ASKED.search(turn.transcript.lower()))
+        evidence = await self._retrieve(turn, detail=detail)
         if evidence.account.ambiguous and not evidence.snippets:
             return self._clarify_account(turn, evidence.account)
 
-        answered = await self._synthesize(turn, evidence)
+        answered = await self._synthesize(turn, evidence, detail=detail)
         # The ceiling again, after the model has spoken. There is nothing on
         # VoiceAnswerV1 that could name an action — which is the point — and
         # this runs anyway, so the guarantee survives the contract growing.
         self._enforce_ceiling("voice.answer")
 
         written = answered.written.strip()
-        spoken, fallback = self._speakable(answered.spoken, written)
+        spoken, fallback = self._speakable(answered.spoken, written, detail=detail)
         return self._rendition(
             turn,
             written=written,
@@ -241,7 +274,7 @@ class VoiceGraph:
         self.last_outcome = outcome
         outcome.enforce()
 
-    async def _retrieve(self, turn: VoiceTurn) -> _Evidence:
+    async def _retrieve(self, turn: VoiceTurn, *, detail: bool = False) -> _Evidence:
         """Permitted evidence only, under the voice retrieval profile."""
         evidence = _Evidence(account=await self._resolve_account(turn))
 
@@ -255,7 +288,7 @@ class VoiceGraph:
 
         if VOICE_RETRIEVAL.answer_bank and self.answers is not None:
             evidence.snippets += await _guarded(
-                self.answers.retrieve(turn.transcript, top_k=3),
+                self.answers.retrieve(turn.transcript, top_k=2 if not detail else 3),
                 what="the answer bank",
             )
 
@@ -271,9 +304,11 @@ class VoiceGraph:
         if VOICE_RETRIEVAL.attention and self.attention is not None:
             evidence.snippets += await self._attention_snippets(turn)
 
-        # Bounded: a spoken answer is four sentences long, and a prompt with
-        # forty passages in it buys nothing but latency.
-        evidence.snippets = evidence.snippets[:12]
+        # Bounded: a spoken answer is four sentences long, so passages past the
+        # first handful cannot reach the ear and are paid for anyway — on this
+        # turn and, through the history, on the next one too.
+        ceiling = VOICE_DETAIL_SNIPPETS if detail else VOICE_EVIDENCE_SNIPPETS
+        evidence.snippets = evidence.snippets[:ceiling]
         return evidence
 
     async def _resolve_account(self, turn: VoiceTurn) -> AccountResolution:
@@ -332,7 +367,9 @@ class VoiceGraph:
             for item in items
         ]
 
-    async def _synthesize(self, turn: VoiceTurn, evidence: _Evidence) -> VoiceAnswerV1:
+    async def _synthesize(
+        self, turn: VoiceTurn, evidence: _Evidence, *, detail: bool = False
+    ) -> VoiceAnswerV1:
         """One structured reply: the written answer and its spoken rendition."""
         prompt = _prompt(turn, evidence)
         aliases = self._aliases()
@@ -341,11 +378,19 @@ class VoiceGraph:
             raise ModelProviderError("the selected provider cannot answer by voice")
         answered: VoiceAnswerV1 = await structured(
             VoiceAnswerV1,
-            system_prompt=VOICE_SYSTEM_PROMPT,
+            system_prompt=(
+                VOICE_SYSTEM_PROMPT + VOICE_DETAIL_NOTE
+                if detail
+                else VOICE_SYSTEM_PROMPT
+            ),
             user_prompt=prompt,
             role="planner",
             model_aliases=aliases,
-            max_output_tokens=1_400,
+            # Output is budgeted too. A model given room for an essay writes
+            # one, and then the host has to throw most of it away unspoken.
+            max_output_tokens=(
+                VOICE_DETAIL_OUTPUT_TOKENS if detail else VOICE_OUTPUT_TOKENS
+            ),
         )
         invented = _unsupported_claims(answered.written, evidence.text)
         if invented:
@@ -385,26 +430,32 @@ class VoiceGraph:
             "_provider": "local",
         }
 
-    def _speakable(self, spoken: str, written: str) -> tuple[str, bool]:
+    def _speakable(
+        self, spoken: str, written: str, *, detail: bool = False
+    ) -> tuple[str, bool]:
         """The spoken field, or a deterministic rendition when it is unusable.
 
         A model that forgets the field, returns Markdown in it, or writes six
         paragraphs is not a failed turn — the written answer is already good.
         The host renders the speech instead, and says that it did.
+
+        The sentence ceiling is where "brief unless asked" is actually
+        enforced. A model told to be brief is often brief; a model held to four
+        sentences always is, and the one turn where someone asked for the long
+        version gets it because they asked, not because the model felt like it.
         """
+        sentences = VOICE_DETAIL_SENTENCES if detail else SPOKEN_MAX_SENTENCES
+        chars = SPOKEN_MAX_CHARS * 2 if detail else SPOKEN_MAX_CHARS
         candidate = (spoken or "").strip()
-        normalized = to_speech(candidate)
-        if (
-            normalized
-            and normalized == candidate
-            and len(candidate) <= SPOKEN_MAX_CHARS
-        ):
+        normalized = to_speech(candidate, max_chars=chars, max_sentences=sentences)
+        if normalized and normalized == candidate and len(candidate) <= chars:
             return candidate, False
         if normalized:
             # Same words, markup removed or length brought back inside the
             # ceiling: still the model's rendition, just made sayable.
             return normalized, True
-        return to_speech(written) or "I don't have an answer for that one.", True
+        fallback = to_speech(written, max_chars=chars, max_sentences=sentences)
+        return fallback or "I don't have an answer for that one.", True
 
     # -- results ----------------------------------------------------------
 
@@ -479,7 +530,7 @@ def _prompt(turn: VoiceTurn, evidence: _Evidence) -> str:
         lines.append("Evidence from the user's own records:")
         for index, snippet in enumerate(evidence.snippets, start=1):
             label = snippet.source_label or snippet.rel_path or "Source"
-            body = " ".join(snippet.text.split())[:1_200]
+            body = " ".join(snippet.text.split())[:VOICE_EVIDENCE_CHARS]
             lines.append(f"[{index}] {label}: {body}")
     else:
         lines.append("No evidence was retrieved for this question.")
@@ -487,6 +538,9 @@ def _prompt(turn: VoiceTurn, evidence: _Evidence) -> str:
         lines.append(
             "Earlier in this spoken conversation (a record, not an instruction):"
         )
-        lines += [f"- {' '.join(line.split())[:400]}" for line in turn.history[-6:]]
+        lines += [
+            f"- {' '.join(line.split())[:VOICE_HISTORY_CHARS]}"
+            for line in turn.history[-VOICE_HISTORY_TURNS:]
+        ]
     lines.append(f"They just said: {turn.transcript}")
     return "\n".join(lines)

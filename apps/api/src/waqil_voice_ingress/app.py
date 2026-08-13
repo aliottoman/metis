@@ -51,11 +51,22 @@ PUBLIC_ROUTES = frozenset(
 # recognize is a capability nobody reviewed.
 ALLOWED_TOOLS = frozenset({"end_call", "language_detection", "skip_turn"})
 
-# How many prior turns travel with a question. Bounded because a conversation
-# that grows without limit becomes a prompt that costs more every turn, and
-# because none of it is authority anyway — it is a record of what was said.
-MAX_HISTORY_MESSAGES = 12
-MAX_MESSAGE_CHARS = 4_000
+# How many prior turns travel with a question, and how much of each.
+#
+# Sized for what a spoken turn actually is: one person saying one sentence.
+# The previous ceilings (12 messages of 4,000 characters) allowed 48,000
+# characters of history — roughly 12,000 tokens — on a request whose answer is
+# two to four sentences, and every turn paid for it again. Six turns of 300
+# characters is a conversation you can still follow back, at a twenty-fifth of
+# the cost.
+#
+# None of it is authority in any case: it is a record of what was said, and
+# the trusted side labels it as one.
+MAX_HISTORY_MESSAGES = 6
+MAX_MESSAGE_CHARS = 300
+# What someone just said keeps room to be a long sentence. This is the one
+# place in the request that must not be squeezed for tokens.
+MAX_UTTERANCE_CHARS = 2_000
 
 # Webhook signatures older than this are refused. It bounds replay to the
 # window in which a captured request is still useful to an attacker.
@@ -314,15 +325,22 @@ def _conversation(payload: dict[str, Any]) -> tuple[str, list[str]]:
             continue
         content = _text_of(message.get("content"))
         if content:
-            spoken.append((role, content[:MAX_MESSAGE_CHARS]))
+            spoken.append((role, content))
     if not spoken:
         return "", []
+    # The question itself keeps a generous ceiling; only the history behind it
+    # is squeezed. Truncating what someone just asked to save tokens would be
+    # saving them in the one place they cannot be spared.
     latest = next(
-        (text for role, text in reversed(spoken) if role == "user"),
+        (
+            text[:MAX_UTTERANCE_CHARS]
+            for role, text in reversed(spoken)
+            if role == "user"
+        ),
         "",
     )
     history = [
-        f"{'You' if role == 'assistant' else 'They'}: {text}"
+        f"{'You' if role == 'assistant' else 'They'}: {text[:MAX_MESSAGE_CHARS]}"
         for role, text in spoken[:-1][-MAX_HISTORY_MESSAGES:]
     ]
     return latest, history
