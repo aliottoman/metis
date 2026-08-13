@@ -38,6 +38,8 @@ from .model_preference import ModelPreferenceStore
 from .model_provider import RoutedModelProvider, build_model_provider
 from .speech_preference import SpeechPreferenceStore
 from .voice_audio import SpokenAudioCache
+from .voice_graph import VoiceGraph
+from .voice_session import VoiceSessionService
 from .notion import NotionService
 from .web_research import WebResearch
 from .profile import ProfileStore
@@ -103,6 +105,7 @@ class AppRuntime:
             settings, approval_path=settings.project_verify_approval_path
         )
         self.projects: ProjectWorkspaceService | None = None
+        self.voice: VoiceSessionService | None = None
         self.registry = ToolRegistry(self.database, settings)
         self.model = None
         self.local_model = None
@@ -219,6 +222,26 @@ class AppRuntime:
             coding_engine=self.coding_engine,
             coding_sessions=self.coding_sessions,
         )
+        # The voice path is constructed here, from services rather than from
+        # the control plane, and is handed exactly four read-only ones. What it
+        # is NOT given — the registry, the sandbox, the project engine, the
+        # coding sessions, the approval path — is the boundary, and this call
+        # site is the only place any of it could have been passed in.
+        self.voice = VoiceSessionService(
+            self.settings,
+            graph=VoiceGraph(
+                self.settings,
+                model=self.model,
+                speech_preference=self.speech_preference,
+                corpus=self.corpus,
+                answers=self.answers,
+                customers=self.customers,
+                attention=self.attention,
+            ),
+            speech_preference=self.speech_preference,
+            model=self.model,
+            database=self.database,
+        )
         await self.control_plane.reconcile_startup()
         try:
             await self.control_plane.reconcile_coding_cleanup()
@@ -227,6 +250,7 @@ class AppRuntime:
         self.spawn(self._release_idle_model(), name="model-idle-release")
         self.spawn(self._refresh_notion(), name="notion-refresh")
         self.spawn(self._retry_coding_cleanup(), name="coding-artifact-cleanup")
+        self.spawn(self._sweep_voice_leases(), name="voice-lease-sweep")
 
     async def _probe_coding_engine(self) -> None:
         """Validate the local child before it receives any project authority."""
@@ -309,6 +333,22 @@ class AppRuntime:
             except Exception as error:  # noqa: BLE001 - maintenance is non-load-bearing
                 logger.info("coding cleanup pass deferred: %s", str(error)[:200])
 
+    async def _sweep_voice_leases(self) -> None:
+        """Close what a crashed browser could not close for itself.
+
+        The whole reason leases are short. A tab that goes away mid-sentence
+        cannot say so, and without this the tunnel it opened would stay open
+        for as long as the process lives.
+        """
+        while True:
+            await asyncio.sleep(10)
+            if self.voice is None:
+                continue
+            try:
+                await self.voice.sweep()
+            except Exception as error:  # noqa: BLE001 - a sweep never breaks the app
+                logger.info("voice lease sweep deferred: %s", str(error)[:200])
+
     async def _release_idle_model(self) -> None:
         """Give the weights back once every Metis window has gone away.
 
@@ -341,6 +381,10 @@ class AppRuntime:
     async def close(self) -> None:
         # Before the loop goes away, so the unload request can still be sent.
         await self.model_session.release_owned()
+        if self.voice is not None:
+            # Ends every session and stops both child processes. A tunnel that
+            # outlived the app that opened it is the failure this prevents.
+            await self.voice.shutdown()
         if self.project_sandbox is not None:
             await self.project_sandbox.release_machine()
         for task in list(self._background):

@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     # The voice id names a public stock voice rather than authenticating
     # anything, so unlike the key it ships as a default.
     elevenlabs_api_key: str = ""
+    # The Agents Platform agent voice mode talks through. Created by the owner
+    # in the ElevenLabs console, never by this code: it is an external resource
+    # with its own billing, and a program that creates one on your behalf is a
+    # program that surprises you.
+    elevenlabs_agent_id: str = ""
     elevenlabs_stt_model: str = "scribe_v1"
     elevenlabs_tts_model: str = "eleven_flash_v2_5"
     elevenlabs_voice_id: str = "r1KmysJdVYZjJCm4mL3b"
@@ -155,6 +160,38 @@ class Settings(BaseSettings):
     # build plan is not that model. This is the startup default; the owner may
     # pick another from the allowlist in speech_preference.py.
     voice_model: str = "deepseek-v4-flash:cloud"
+
+    # Interactive voice. Off is a real state, not a degraded one: dictation and
+    # the spoken brief both work without any of this.
+    voice_enabled: bool = True
+    # The bearer the isolated ingress checks. Empty mints one locally on first
+    # use (0600, beside the rest of the local state) rather than defaulting to
+    # something guessable — see VoiceSessionService.shared_secret.
+    voice_shared_secret: str = ""
+    # The model name ElevenLabs is configured to send. Checked by the ingress,
+    # never used to route: which model reasons is the stored preference.
+    voice_public_model_alias: str = "metis-voice"
+    voice_ingress_host: str = "127.0.0.1"
+    voice_ingress_port: int = Field(default=8788, ge=1, le=65535)
+    # The interpreter the ingress runs under. Its own process, never a thread
+    # of this one — a compromise of the internet-facing adapter must not land
+    # inside the process holding the database and every credential.
+    voice_ingress_command: str = "python3"
+    cloudflared_path: str = "cloudflared"
+    voice_tunnel_name: str = "metis-voice"
+    voice_tunnel_hostname: str = ""
+    # The A.3 go-ahead. This Mac is Oracle-managed, and the brief's appendix
+    # asks for one further explicit authorization at the moment a connector is
+    # first started here rather than treating the recorded decision as that
+    # authorization. Absent, voice refuses to start and says why.
+    voice_tunnel_authorized: bool = False
+    # How long a browser lease lasts before it must be renewed. Short on
+    # purpose: it is the only thing that closes the tunnel after a crashed tab,
+    # and a long lease is a long time to leave one open for nobody.
+    voice_lease_seconds: int = Field(default=45, ge=15, le=600)
+    # A hard ceiling on one conversation, so a forgotten open tab cannot bill
+    # all afternoon.
+    voice_session_max_seconds: int = Field(default=1_800, ge=60, le=14_400)
 
     # Cloud retrieval (OCI Cohere embed, rerank, Command A). Opt-in; any unmet
     # precondition falls back to local keyword search. Vectors are stored locally.
@@ -720,6 +757,11 @@ class Settings(BaseSettings):
     def model_session_path(self) -> Path:
         """Last explicit local-model session choices (never credentials)."""
         return self.data_dir / "model_session.json"
+
+    @property
+    def voice_secret_path(self) -> Path:
+        """The locally minted ingress bearer. Never returned by the API."""
+        return self.data_dir / "voice-secret"
 
     @property
     def voice_cache_dir(self) -> Path:

@@ -1060,6 +1060,39 @@ ALTER TABLE coding_sessions ADD COLUMN sidecar_ancestry_json TEXT NOT NULL DEFAU
     CHECK(json_valid(sidecar_ancestry_json));
 """
 
+SCHEMA_V26 = """
+-- What a verified ElevenLabs post-call webhook left behind. Evidence, and
+-- deliberately nothing more: no row here becomes a customer fact, an action,
+-- a durable memory or an account link on its own. The provider's own analysis
+-- is stored under a column that says what it is, so nothing downstream can
+-- mistake a transcription service's opinion for a decision this host made.
+--
+-- The body hash is of the raw bytes the signature was checked against, which
+-- is the only version of the payload anyone can prove arrived.
+CREATE TABLE IF NOT EXISTS voice_post_calls (
+    id TEXT PRIMARY KEY,
+    provider_conversation_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    voice_session_id TEXT NOT NULL DEFAULT '',
+    conversation_id TEXT,
+    body_sha256 TEXT NOT NULL DEFAULT '',
+    transcript_json TEXT NOT NULL DEFAULT '[]'
+        CHECK(json_valid(transcript_json)),
+    provider_analysis_json TEXT NOT NULL DEFAULT '{}'
+        CHECK(json_valid(provider_analysis_json)),
+    status TEXT NOT NULL DEFAULT 'stored'
+        CHECK(status IN ('stored','processing','processed','failed')),
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+);
+-- Idempotent on the provider's own identifiers: ElevenLabs retries, and a
+-- retry must not become a second record of the same conversation.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_post_calls_event
+    ON voice_post_calls(provider_conversation_id, event_type);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -1086,6 +1119,7 @@ MIGRATIONS: dict[int, str] = {
     23: SCHEMA_V23,
     24: SCHEMA_V24,
     25: SCHEMA_V25,
+    26: SCHEMA_V26,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -1178,6 +1212,74 @@ class Database:
         def operation() -> bool:
             with self._lock:
                 return self._connection().execute("SELECT 1").fetchone()[0] == 1
+
+        return await self._call(operation)
+
+    async def record_voice_post_call(
+        self,
+        *,
+        provider_conversation_id: str,
+        event_type: str,
+        voice_session_id: str = "",
+        conversation_id: str | None = None,
+        body_sha256: str = "",
+        transcript: list[dict[str, Any]] | None = None,
+        provider_analysis: dict[str, Any] | None = None,
+    ) -> str:
+        """Store one verified post-call payload as evidence, exactly once.
+
+        Idempotent on the provider's own conversation and event type, because
+        ElevenLabs retries and a retry is the same conversation, not a second
+        one. Nothing written here is a customer fact, an action, a memory or
+        an account link — those all stay proposals a person accepts.
+        """
+        record_id, timestamp = _id("vpc"), _now()
+
+        def operation() -> str:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM voice_post_calls "
+                    "WHERE provider_conversation_id = ? AND event_type = ?",
+                    (provider_conversation_id, event_type),
+                ).fetchone()
+                if existing is not None:
+                    return str(existing["id"])
+                conn.execute(
+                    """INSERT INTO voice_post_calls
+                    (id, provider_conversation_id, event_type, voice_session_id,
+                     conversation_id, body_sha256, transcript_json,
+                     provider_analysis_json, status, error, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stored', '', ?, ?)""",
+                    (
+                        record_id,
+                        provider_conversation_id,
+                        event_type,
+                        voice_session_id,
+                        conversation_id,
+                        body_sha256,
+                        json.dumps(transcript or []),
+                        json.dumps(provider_analysis or {}),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                return record_id
+
+        return await self._call(operation)
+
+    async def list_voice_post_calls(self, limit: int = 50) -> list[dict[str, Any]]:
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                rows = (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM voice_post_calls "
+                        "ORDER BY created_at DESC LIMIT ?",
+                        (max(1, min(limit, 200)),),
+                    )
+                    .fetchall()
+                )
+            return [dict(row) for row in rows]
 
         return await self._call(operation)
 

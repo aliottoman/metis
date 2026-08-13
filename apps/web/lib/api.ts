@@ -49,6 +49,9 @@ import type {
   ModelHealth,
   ModelPreference,
   SpeechPreference,
+  VoiceAvailability,
+  VoiceSession,
+  VoiceSessionStart,
   LocalModelSession,
   NotionConnection,
   NotionSyncResult,
@@ -1297,6 +1300,35 @@ export async function setSpeechPreference(
       ...(voiceModel !== undefined ? { voice_model: voiceModel } : {}),
     }),
   });
+}
+
+/** Whether voice can start, and what is missing when it cannot. */
+export async function getVoiceAvailability(): Promise<VoiceAvailability> {
+  return request<VoiceAvailability>(`${API_PREFIX}/voice`);
+}
+
+/** Open a session. The conversation token comes back exactly once, here. */
+export async function startVoiceSession(): Promise<VoiceSessionStart> {
+  return request<VoiceSessionStart>(`${API_PREFIX}/voice/sessions`, { method: "POST" });
+}
+
+/** Renew the lease. Stop calling this and the server closes the tunnel. */
+export async function renewVoiceSession(sessionId: string): Promise<VoiceSession> {
+  return request<VoiceSession>(
+    `${API_PREFIX}/voice/sessions/${encodeURIComponent(sessionId)}/lease`,
+    { method: "POST" },
+  );
+}
+
+export async function endVoiceSession(sessionId: string): Promise<VoiceSession> {
+  return request<VoiceSession>(
+    `${API_PREFIX}/voice/sessions/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function voiceEventsUrl(sessionId: string): string {
+  return apiUrl(`${API_PREFIX}/voice/sessions/${encodeURIComponent(sessionId)}/events`);
 }
 
 export async function getLocalModelSession(): Promise<LocalModelSession> {

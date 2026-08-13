@@ -3758,3 +3758,100 @@ select { border-radius: var(--m-r-field); }
   .composerContextChoices > button:hover,
   .modelControlRoute:hover:not(:disabled) { transform: none; }
 }
+
+/* ── 8 · Voice ───────────────────────────────────────────────────────────
+   Talking, as opposed to dictating. The panel sits above the composer rather
+   than on a page of its own, because a refusal lands in the draft you are
+   already looking at. Every spoken answer keeps its written twin here: an ear
+   cannot scroll back, so the screen holds what the voice only said once. */
+.voiceToggle {
+  background: none;
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  color: var(--m-ink-2);
+  cursor: pointer;
+  font-size: 11px;
+  height: 28px;
+  padding: 0 12px;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+.voiceToggle:hover { background: var(--m-surface); color: var(--m-ink); }
+.voiceToggle.selected {
+  background: var(--m-lav-surface);
+  border-color: var(--m-lav-edge);
+  color: #6b4b86;
+}
+
+.voicePanel {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r-field, 12px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 14px 16px;
+}
+.voicePanel h3 { font-size: 14px; margin: 0; }
+.voicePanel p { color: var(--m-ink-2); font-size: 13px; line-height: 1.5; margin: 0; }
+
+.voicePanelHead { align-items: center; display: flex; gap: 10px; }
+.voicePanelActions { display: flex; gap: 6px; margin-left: auto; }
+
+/* The state label is the honest one: silence during retrieval reads as
+   "looking through your records", never as a connection that quietly died. */
+.voiceState {
+  align-items: center;
+  color: var(--m-ink-2);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 7px;
+}
+.voiceState i {
+  background: var(--m-ink-3);
+  border-radius: 50%;
+  height: 7px;
+  width: 7px;
+}
+.voiceState.is-listening i { animation: mVoicePulse 1.6s ease-in-out infinite; background: var(--m-green-ink, #00754e); }
+.voiceState.is-speaking i { animation: mVoicePulse 0.9s ease-in-out infinite; background: var(--m-violet, #d18ee2); }
+.voiceState.is-thinking i { animation: mVoicePulse 1.2s ease-in-out infinite; background: var(--m-gold, #ffe08a); }
+.voiceState.is-connecting i,
+.voiceState.is-reconnecting i { animation: mVoicePulse 1.2s ease-in-out infinite; background: var(--m-blue, #9cb8ec); }
+.voiceState.is-failed i { background: var(--m-coral, #ff7759); }
+@keyframes mVoicePulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+.voiceElapsed {
+  color: var(--m-ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.voiceTurns { display: flex; flex-direction: column; gap: 12px; list-style: none; margin: 0; padding: 0; }
+.voiceTurn { border-left: 2px solid var(--m-line); padding-left: 12px; }
+.voiceTurn.is-refuse_build,
+.voiceTurn.is-refuse_protected { border-left-color: var(--m-coral, #ff7759); }
+.voiceTurn.is-clarify { border-left-color: var(--m-gold, #ffe08a); }
+.voiceSaid { color: var(--m-ink); font-size: 13px; font-weight: 500; margin: 0 0 5px; }
+.voiceAnswer p { color: var(--m-ink-2); font-size: 13px; }
+
+.voiceCitations { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 8px 0 0; padding: 0; }
+.voiceCitations li {
+  align-items: center;
+  background: var(--m-surface);
+  border-radius: 999px;
+  color: var(--m-ink-2);
+  display: inline-flex;
+  font-size: 11px;
+  gap: 5px;
+  padding: 3px 9px;
+}
+.voiceCitations li span { color: var(--m-ink-3); font-variant-numeric: tabular-nums; }
+
+.voiceHandoffNote { color: #6b4b86; font-size: 12px; margin-top: 8px; }
+.voiceDisclosure, .voiceUnavailable { gap: 8px; }
+.voiceUnavailable code { background: var(--m-surface); border-radius: 4px; font-size: 11.5px; padding: 1px 5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .voiceState i { animation: none !important; }
+}
