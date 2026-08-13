@@ -1,9 +1,15 @@
-"""Recordings into a container Cohere Transcribe accepts.
+"""Recordings into a container the selected transcriber accepts.
 
 The browser picks the recording container, not us: Safari and the native
 Metis.app (WKWebView) produce MP4/AAC, Chrome produces WebM/Opus. Cohere
 accepts neither — its 400 lists flac, mp3, mpeg, mpga, ogg, wav — so the clip
 is converted here, on the host, before it ever leaves the machine.
+
+What counts as acceptable is per provider, and deliberately not a union.
+ElevenLabs takes the browser's own containers, so a clip bound for Scribe
+skips the decode entirely; Cohere's allowlist stays exactly as narrow as
+Cohere's own error message says it is, because the cost of widening it by
+accident is a 400 the user reads as dictation being broken.
 
 Two converters, in order of preference:
   afconvert   ships with macOS, decodes everything CoreAudio does (mp4, m4a,
@@ -30,6 +36,18 @@ from pathlib import Path
 # containers is sent untouched — no decode, no generation loss.
 COHERE_NATIVE_SUFFIXES = frozenset({"flac", "mp3", "mpeg", "mpga", "ogg", "wav"})
 
+# Scribe reads what the browser records. The two containers that cost Cohere a
+# transcode — WebM from Chrome, MP4/M4A from Safari and the native app — are
+# the whole reason this list exists.
+ELEVENLABS_NATIVE_SUFFIXES = COHERE_NATIVE_SUFFIXES | frozenset(
+    {"aac", "m4a", "mp4", "oga", "opus", "webm"}
+)
+
+NATIVE_SUFFIXES_BY_PROVIDER = {
+    "cohere": COHERE_NATIVE_SUFFIXES,
+    "elevenlabs": ELEVENLABS_NATIVE_SUFFIXES,
+}
+
 _AFCONVERT = "/usr/bin/afconvert"
 
 
@@ -37,9 +55,18 @@ class TranscodeError(RuntimeError):
     """The clip could not be converted; the message is user-facing."""
 
 
-def needs_transcoding(filename: str, media_type: str) -> bool:
-    """Whether this clip must be converted before Cohere will take it."""
-    return _suffix_of(filename, media_type) not in COHERE_NATIVE_SUFFIXES
+def needs_transcoding(
+    filename: str, media_type: str, *, provider: str = "cohere"
+) -> bool:
+    """Whether this clip must be converted before `provider` will take it.
+
+    Cohere is the default because it was the only transcriber: an unnamed
+    provider gets the narrow allowlist, so a caller that has not been taught
+    about the choice can never accidentally send a container to a service that
+    refuses it.
+    """
+    accepted = NATIVE_SUFFIXES_BY_PROVIDER.get(provider, COHERE_NATIVE_SUFFIXES)
+    return _suffix_of(filename, media_type) not in accepted
 
 
 def _suffix_of(filename: str, media_type: str) -> str:

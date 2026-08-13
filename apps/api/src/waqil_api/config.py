@@ -131,6 +131,31 @@ class Settings(BaseSettings):
         default=25 * 1024 * 1024, ge=1024, le=25 * 1024 * 1024
     )
 
+    # ElevenLabs: the second speech provider, and the one voice mode is built
+    # on. Dictation may use either — which one is a runtime preference the
+    # owner sets in Settings, not an environment variable — while everything
+    # *spoken* is ElevenLabs only. Absent key means the provider is simply not
+    # offered, exactly the posture the Cohere key takes.
+    #
+    # The voice id names a public stock voice rather than authenticating
+    # anything, so unlike the key it ships as a default.
+    elevenlabs_api_key: str = ""
+    elevenlabs_stt_model: str = "scribe_v1"
+    elevenlabs_tts_model: str = "eleven_flash_v2_5"
+    elevenlabs_voice_id: str = "r1KmysJdVYZjJCm4mL3b"
+    # A dictation ceiling, not the service's: ElevenLabs accepts clips far
+    # larger than this. Stated here so an oversized recording is refused
+    # before it is read into memory rather than after a round trip.
+    elevenlabs_transcribe_max_bytes: int = Field(
+        default=25 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024
+    )
+
+    # Voice mode's reasoning model, held apart from the chat preference: a
+    # spoken turn has to come back in seconds, and the model chosen to write a
+    # build plan is not that model. This is the startup default; the owner may
+    # pick another from the allowlist in speech_preference.py.
+    voice_model: str = "deepseek-v4-flash:cloud"
+
     # Cloud retrieval (OCI Cohere embed, rerank, Command A). Opt-in; any unmet
     # precondition falls back to local keyword search. Vectors are stored locally.
     allow_cloud_embeddings: bool = False
@@ -695,6 +720,21 @@ class Settings(BaseSettings):
     def model_session_path(self) -> Path:
         """Last explicit local-model session choices (never credentials)."""
         return self.data_dir / "model_session.json"
+
+    @property
+    def voice_cache_dir(self) -> Path:
+        """Rendered speech, kept so the same words cost one call, not many."""
+        return self.data_dir / "voice-audio"
+
+    @property
+    def speech_preference_path(self) -> Path:
+        """Which speech provider to dictate through (local, user-owned JSON).
+
+        Separate from the model preference on purpose: speech is a different
+        decision from reasoning, and the environment only supplies this file's
+        startup defaults. Nothing here is a credential.
+        """
+        return self.data_dir / "speech_preference.json"
 
     @property
     def sku_rates_path(self) -> Path:

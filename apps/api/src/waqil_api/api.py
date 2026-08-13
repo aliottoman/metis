@@ -96,6 +96,8 @@ from .contracts import (
     SkuRateCardUpdateV1,
     SkuRateCardV1,
     SkuRateV1,
+    SpeechPreferenceUpdateV1,
+    SpeechPreferenceV1,
     WinValuationAcceptV1,
     WinValuationV1,
     Decision,
@@ -156,7 +158,9 @@ from .project_verification import ProjectVerificationError
 from .project_env import asset_environment
 from .project_workspace import ProjectWorkspaceError
 from .runtime import AppRuntime
+from .spoken_text import brief_to_speech
 from .tool_evidence import build_tool_version_evidence
+from .voice_audio import SpokenAudioCache
 
 
 router = APIRouter(prefix="/api/v1")
@@ -303,6 +307,25 @@ async def put_model_preference(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+@router.get("/settings/speech", response_model=SpeechPreferenceV1)
+async def get_speech_preference(request: Request) -> SpeechPreferenceV1:
+    return runtime(request).speech_preference.load()
+
+
+@router.put("/settings/speech", response_model=SpeechPreferenceV1)
+async def put_speech_preference(
+    body: SpeechPreferenceUpdateV1, request: Request
+) -> SpeechPreferenceV1:
+    try:
+        return runtime(request).speech_preference.save(
+            body.stt_provider,
+            spoken_confirmation=body.spoken_confirmation,
+            voice_model=body.voice_model,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @router.get("/model-session", response_model=LocalModelSessionV1)
 async def get_model_session(request: Request) -> LocalModelSessionV1:
     return await runtime(request).model_session.status()
@@ -432,6 +455,53 @@ async def morning_brief(
             "brief prose unavailable: %s", app.brief.last_error
         )
     return composed
+
+
+@router.get("/attention/brief/audio")
+async def morning_brief_audio(request: Request, hours: int = 24) -> Response:
+    """The day's brief, read aloud.
+
+    A playback action on Today, and deliberately nothing more: no
+    conversation is opened, no tunnel is started, and nothing here can be
+    spoken back to. The words are composed on the host from the same brief
+    the page is showing — the counts stay host-counted all the way to the
+    speaker — and the rendering is paid for once per day, then served from
+    disk however often it is replayed.
+    """
+    app = runtime(request)
+    speech = getattr(app.model, "elevenlabs", None)
+    if speech is None or not speech.available:
+        raise HTTPException(
+            status_code=503,
+            detail="Listening to the brief requires WAQIL_ELEVENLABS_API_KEY",
+        )
+    brief = await app.brief.compose(hours=max(1, min(hours, 168)))
+    spoken = brief_to_speech(brief)
+    voice_id = app.settings.elevenlabs_voice_id
+    tts_model = app.settings.elevenlabs_tts_model
+    key = SpokenAudioCache.key(
+        spoken,
+        # The date, so a new morning is a new recording even in the rare case
+        # where its words come out identical to yesterday's.
+        scope=brief.generated_at.date().isoformat(),
+        voice_id=voice_id,
+        model=tts_model,
+    )
+    rendition = app.voice_audio.read(key)
+    if rendition is None:
+        try:
+            rendition = await speech.synthesize(spoken, voice_id=voice_id)
+        except ModelProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        app.voice_audio.write(key, *rendition)
+    audio, media_type = rendition
+    return Response(
+        content=audio,
+        media_type=media_type,
+        # The server cache is the one that matters and it is keyed on content;
+        # a browser cache on this URL would replay yesterday's brief today.
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/attention/batch", response_model=AttentionBatchResultV1)
@@ -1919,20 +1989,35 @@ async def upload_file(
 async def transcribe_audio(
     request: Request, file: Annotated[UploadFile, File(...)]
 ) -> TranscriptV1:
-    """Dictated audio to composer text, through Cohere Transcribe.
+    """Dictated audio to composer text, through the selected transcriber.
 
     Nothing is stored. The clip is read, sent, and dropped — it never becomes
     an upload record, never reaches the blob store, and is not written to the
     conversation. What the user gets back is draft text they can still edit
     before sending, which is why this is not treated as an attachment.
+
+    Which service hears it is the owner's stored choice, and everything
+    downstream of that choice moves with it: the size ceiling and the set of
+    containers that need transcoding are the selected provider's own, never a
+    union of both. Cohere's path is byte-for-byte what it always was.
     """
     app = runtime(request)
-    provider = getattr(app.model, "cohere", None)
+    selected = app.speech_preference.load().stt_provider
+    provider = getattr(app.model, selected, None)
     if provider is None or not provider.available:
         raise HTTPException(
             status_code=503,
-            detail="Dictation requires WAQIL_COHERE_API_KEY",
+            detail=(
+                "Dictation requires WAQIL_ELEVENLABS_API_KEY"
+                if selected == "elevenlabs"
+                else "Dictation requires WAQIL_COHERE_API_KEY"
+            ),
         )
+    ceiling = (
+        app.settings.elevenlabs_transcribe_max_bytes
+        if selected == "elevenlabs"
+        else app.settings.cohere_transcribe_max_bytes
+    )
     media_type = (file.content_type or "audio/webm").split(";", 1)[0].lower()
     if not media_type.startswith("audio/") and not media_type.startswith("video/"):
         # A browser records webm/ogg containers and labels some of them
@@ -1941,25 +2026,26 @@ async def transcribe_audio(
             status_code=415, detail="only audio recordings are accepted"
         )
     try:
-        audio = await file.read(app.settings.cohere_transcribe_max_bytes + 1)
+        audio = await file.read(ceiling + 1)
     finally:
         await file.close()
-    if len(audio) > app.settings.cohere_transcribe_max_bytes:
+    if len(audio) > ceiling:
         raise HTTPException(
             status_code=413, detail="recording is too long to transcribe"
         )
     filename = Path(file.filename or "dictation.webm").name
-    if needs_transcoding(filename, media_type):
+    if needs_transcoding(filename, media_type, provider=selected):
         # The browser chose this container, not the user: Safari and the
         # native app record MP4, Chrome records WebM, and Cohere takes
         # neither. Converted here on the host — the raw clip never leaves
-        # the machine in a form the transcriber would refuse.
+        # the machine in a form the transcriber would refuse. Scribe reads
+        # both, so a clip bound for it skips this entirely.
         try:
             audio = await to_wav(audio, filename, media_type)
         except TranscodeError as exc:
             raise HTTPException(status_code=415, detail=str(exc)) from exc
         filename, media_type = "dictation.wav", "audio/wav"
-        if len(audio) > app.settings.cohere_transcribe_max_bytes:
+        if len(audio) > ceiling:
             # Decoding a long compressed clip can overshoot the ceiling the
             # compressed upload passed. Same limit, honestly applied.
             raise HTTPException(

@@ -10149,7 +10149,11 @@ body {
   vertical-align: 1px;
   width: 6px;
 }
+.todayTopbarActions { display: flex; flex: none; gap: 8px; }
 .todayRefresh { flex: none; }
+/* Listen sits beside Refresh rather than in the head: it is playback of the
+   brief already on screen, not a second way to read it. */
+.todayListen { flex: none; }
 .todayError { flex: 0 0 auto; margin: 0; }
 
 /* The rail — the whole day at a glance, and the deck's controls. A row of

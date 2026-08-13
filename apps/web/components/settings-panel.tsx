@@ -2,9 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { API_BASE, getHealth, getModelPreference, setModelPreference } from "@/lib/api";
+import {
+  API_BASE,
+  getHealth,
+  getModelPreference,
+  getSpeechPreference,
+  setModelPreference,
+  setSpeechPreference,
+} from "@/lib/api";
 import { clinePassReady } from "@/lib/model-route";
-import type { HealthSnapshot, ModelPreference } from "@/lib/types";
+import type { HealthSnapshot, ModelPreference, SpeechPreference } from "@/lib/types";
 import { MetisCompanion } from "@/components/metis-companion";
 import { SelectMenu } from "@/components/select-menu";
 import {
@@ -26,6 +33,9 @@ export function SettingsPanel() {
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [ociTools, setOciTools] = useState<Array<"x_search" | "code_interpreter">>(["code_interpreter"]);
   const [companionEnergy, setCompanionEnergy] = useState<CompanionEnergy>("expressive");
+  const [speech, setSpeech] = useState<SpeechPreference | null>(null);
+  const [savingSpeech, setSavingSpeech] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
 
   // The installed local lineup, straight from the runtime — a hardcoded list
   // here went stale the first time the lineup changed, and stayed stale.
@@ -72,6 +82,27 @@ export function SettingsPanel() {
     return save("pinned", model, preference?.provider ?? "local", ociTools, "Could not update model routing.");
   };
 
+  const loadSpeech = useCallback(async () => {
+    try {
+      setSpeech(await getSpeechPreference());
+    } catch {
+      // Non-fatal, like the model preference above: dictation keeps working on
+      // whatever the server already has stored.
+    }
+  }, []);
+
+  async function chooseTranscriber(provider: SpeechPreference["stt_provider"]) {
+    setSavingSpeech(true);
+    setSpeechError(null);
+    try {
+      setSpeech(await setSpeechPreference(provider, speech?.spoken_confirmation ?? false));
+    } catch (saveError) {
+      setSpeechError(saveError instanceof Error ? saveError.message : "Could not change the transcriber.");
+    } finally {
+      setSavingSpeech(false);
+    }
+  }
+
   async function toggleOciTool(tool: "x_search" | "code_interpreter") {
     const selected = ociTools.includes(tool)
       ? ociTools.filter((item) => item !== tool)
@@ -97,9 +128,10 @@ export function SettingsPanel() {
     setCompanionEnergy(readCompanionEnergy());
     void refresh();
     void loadPreference();
+    void loadSpeech();
     const timer = window.setInterval(() => void refresh(), 15_000);
     return () => window.clearInterval(timer);
-  }, [refresh, loadPreference]);
+  }, [refresh, loadPreference, loadSpeech]);
 
   const isPinned = preference?.mode === "pinned";
   const provider = preference?.provider ?? "local";
@@ -116,6 +148,8 @@ export function SettingsPanel() {
         : provider === "cline"
           ? "Cloud · ClinePass"
           : "Local";
+  const transcriber = speech?.stt_provider ?? "cohere";
+  const transcriberBadge = transcriber === "elevenlabs" ? "Cloud · Scribe" : "Cloud · Cohere Transcribe";
   const projectCoding = health?.project_coding_engine;
   const systemStatusTitle =
     health?.status === "ok"
@@ -208,6 +242,20 @@ export function SettingsPanel() {
           <label><input type="checkbox" checked={ociTools.includes("x_search")} onChange={() => void toggleOciTool("x_search")} disabled={savingPreference || !preference?.oci_available} /><span><strong>X Search</strong><small>Native X search — the Web scope in chat is the general one</small></span></label>
         </div>
         <p className="sectionLede">Metis tools remain available through the governed planner. Model calls made while a tool executes follow the same provider as the run, under each tool&apos;s per-run call budget and pinned prompts. Cloud service-side memory remains off.</p>
+      </section>
+
+      <section className="settingsSection">
+        <div className="sectionTitle"><div><h2>Speech</h2><p>Which service hears the composer&apos;s microphone. The clip is sent, transcribed, and dropped — it is never stored on either side.</p></div><span className="sectionBadge">{transcriberBadge}</span></div>
+        <div className="providerChoiceGrid">
+          <button type="button" className={`providerChoice ${transcriber === "cohere" ? "selected" : ""}`} onClick={() => void chooseTranscriber("cohere")} disabled={savingSpeech || !speech?.cohere_available}>
+            <span>Cohere</span><strong>Transcribe</strong><small>{speech?.cohere_available ? "Browser recordings are converted to WAV on this device before they are sent." : "Add WAQIL_COHERE_API_KEY to enable."}</small>
+          </button>
+          <button type="button" className={`providerChoice ${transcriber === "elevenlabs" ? "selected" : ""}`} onClick={() => void chooseTranscriber("elevenlabs")} disabled={savingSpeech || !speech?.elevenlabs_available}>
+            <span>ElevenLabs</span><strong>Scribe</strong><small>{speech?.elevenlabs_available ? "Takes the browser's own recording, so nothing is re-encoded on the way out." : "Add WAQIL_ELEVENLABS_API_KEY to enable."}</small>
+          </button>
+        </div>
+        <p className="sectionLede">Dictation is the only thing this choice governs. The transcript arrives as draft text in your composer, and sending it is still your decision.</p>
+        {speechError ? <span className="mutedMeta" role="alert">{speechError}</span> : null}
       </section>
 
       <section className="settingsSection">
