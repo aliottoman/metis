@@ -3855,3 +3855,36 @@ select { border-radius: var(--m-r-field); }
 @media (prefers-reduced-motion: reduce) {
   .voiceState i { animation: none !important; }
 }
+
+/* The receipt card. It quotes what was committed rather than describing it,
+   because "Added note to Batelco" tells you something happened and the quote
+   lets you notice it is wrong. Undo lives here and nowhere else — a spoken
+   "undo that" is refused. */
+.voiceReceipt {
+  align-items: center;
+  background: var(--m-mint-surface, #e5f4ef);
+  border: 1px solid var(--m-mint-edge, #c6e3d6);
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px 12px;
+}
+.voiceReceipt p { color: var(--m-ink); flex: 1 1 200px; font-size: 12.5px; margin: 0; }
+.voiceReceiptKind {
+  background: var(--m-paper-lift, #fcfaf6);
+  border-radius: 999px;
+  color: var(--m-green-ink, #00754e);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  text-transform: uppercase;
+}
+.voiceReceipt.is-undone {
+  background: var(--m-surface);
+  border-color: var(--m-line);
+  opacity: 0.75;
+}
+.voiceReceipt.is-undone .voiceReceiptKind { color: var(--m-ink-3); }
+.voiceReceipt.is-failed { background: rgba(255, 119, 89, 0.12); border-color: var(--m-coral-soft, #ffad9b); }

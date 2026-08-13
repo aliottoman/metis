@@ -62,6 +62,10 @@ class FakeGraph:
 
     def __init__(self) -> None:
         self.turns: list = []
+        self.forgotten: list[str] = []
+
+    def forget(self, voice_session_id: str) -> None:
+        self.forgotten.append(voice_session_id)
 
     async def answer(self, turn):
         self.turns.append(turn)

@@ -40,6 +40,7 @@ from .speech_preference import SpeechPreferenceStore
 from .voice_audio import SpokenAudioCache
 from .voice_graph import VoiceGraph
 from .voice_session import VoiceSessionService
+from .voice_writes import VoiceWriteService
 from .notion import NotionService
 from .web_research import WebResearch
 from .profile import ProfileStore
@@ -106,6 +107,10 @@ class AppRuntime:
         )
         self.projects: ProjectWorkspaceService | None = None
         self.voice: VoiceSessionService | None = None
+        # Create-only, and the only path from voice to a customer record. Held
+        # on the runtime rather than inside the graph because undo is a UI
+        # action on a receipt, so the API route needs the same token store.
+        self.voice_writes = VoiceWriteService(self.database)
         self.registry = ToolRegistry(self.database, settings)
         self.model = None
         self.local_model = None
@@ -237,6 +242,7 @@ class AppRuntime:
                 answers=self.answers,
                 customers=self.customers,
                 attention=self.attention,
+                writes=self.voice_writes,
             ),
             speech_preference=self.speech_preference,
             model=self.model,

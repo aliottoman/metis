@@ -10,8 +10,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { ConversationProvider } from "@elevenlabs/react";
 
-import { getVoiceAvailability } from "@/lib/api";
-import type { VoiceAvailability } from "@/lib/types";
+import { getVoiceAvailability, undoVoiceWrite } from "@/lib/api";
+import type { VoiceAvailability, VoiceWriteReceipt } from "@/lib/types";
 import { useVoiceSession, type VoiceHandoff, type VoiceState } from "@/hooks/use-voice-session";
 
 /** Read once, and only ever set to true — the disclosure is not a nag. */
@@ -30,6 +30,53 @@ const STATE_LABEL: Record<VoiceState, string> = {
 function elapsedLabel(seconds: number): string {
   const whole = Math.max(0, Math.floor(seconds));
   return `${String(Math.floor(whole / 60)).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+/** What voice just added, and the one control that takes it back.
+ *
+ * The card is the safety mechanism, which is why it quotes the committed text
+ * rather than describing it: "Added note to Batelco" tells you something
+ * happened, "Added note to Batelco: 'Workshop moved to Thursday'" lets you
+ * notice it is wrong. Undo lives here and only here — a spoken "undo that" is
+ * refused, because deleting a customer record on a misheard word is precisely
+ * what the refusal list exists for. */
+function VoiceReceiptCard({ receipt }: { receipt: VoiceWriteReceipt }) {
+  const [state, setState] = useState<"idle" | "undoing" | "undone" | "failed">(
+    receipt.undone_at ? "undone" : "idle",
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  async function undo() {
+    setState("undoing");
+    setError(null);
+    try {
+      await undoVoiceWrite(receipt.id, receipt.undo_token);
+      setState("undone");
+    } catch (undoError) {
+      setState("failed");
+      setError(undoError instanceof Error ? undoError.message : "Could not undo that.");
+    }
+  }
+
+  return (
+    <div className={`voiceReceipt is-${state}`} role="status">
+      <span className="voiceReceiptKind">{receipt.record_type}</span>
+      <p>{receipt.summary}</p>
+      {state === "undone" ? (
+        <span className="mutedMeta">Undone. The receipt stays in your audit trail.</span>
+      ) : (
+        <button
+          className="textButton"
+          type="button"
+          onClick={() => void undo()}
+          disabled={state === "undoing" || !receipt.undo_token}
+        >
+          {state === "undoing" ? "Undoing…" : "Undo"}
+        </button>
+      )}
+      {error ? <span className="mutedMeta" role="alert">{error}</span> : null}
+    </div>
+  );
 }
 
 export function VoicePanel({ onHandoff }: { onHandoff: (handoff: VoiceHandoff) => void }) {
@@ -80,8 +127,12 @@ function VoicePanelBody({ onHandoff }: { onHandoff: (handoff: VoiceHandoff) => v
         <p>
           Your microphone audio goes to ElevenLabs, which turns it into text and speaks
           the reply. The question and whatever records answer it go to the model you
-          selected. Your vectors and indexes stay on this machine, and voice can read
-          your records but cannot build, approve, delete, or run anything.
+          selected. Your vectors and indexes stay on this machine.
+        </p>
+        <p>
+          Voice can read your records, and can add a note, fact, action, contact or win
+          when you explicitly ask it to — each one shows a card here with an Undo. It
+          cannot build, approve, delete, overwrite, or run anything.
         </p>
         <button className="primaryButton" type="button" onClick={acceptDisclosure}>
           Understood
@@ -156,6 +207,9 @@ function VoicePanelBody({ onHandoff }: { onHandoff: (handoff: VoiceHandoff) => v
                       </li>
                     ))}
                   </ul>
+                ) : null}
+                {turn.rendition.write ? (
+                  <VoiceReceiptCard receipt={turn.rendition.write} />
                 ) : null}
                 {turn.rendition.intent === "refuse_build" ? (
                   <p className="voiceHandoffNote">

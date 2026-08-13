@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Sequence
 
 from .config import Settings
@@ -43,6 +44,7 @@ from .contracts import (
     VoiceAnswerV1,
     VoiceCitationV1,
     VoiceRenditionV1,
+    VoiceWriteCandidateV1,
 )
 
 # The same deterministic claim gate the written path uses, shared rather than
@@ -59,6 +61,14 @@ from .policy import (
 from .spoken_text import SPOKEN_MAX_CHARS, SPOKEN_MAX_SENTENCES, to_speech
 from .voice_accounts import AccountResolution, resolve_account
 from .voice_intents import classify_refusal
+from .voice_writes import (
+    VoiceWriteIntent,
+    VoiceWriteRefused,
+    detect_write_intent,
+    parse_due_date,
+    receipt_sentence,
+    validate_payload,
+)
 
 logger = logging.getLogger("waqil.voice")
 
@@ -73,9 +83,24 @@ VOICE_PERMISSIONS = frozenset(
         PolicyPermission.MODEL_BROKER,
     }
 )
-# MODEL_BROKER is R2, so the ceiling is R2. Stated rather than derived so a
-# permission added here without thinking raises the declared risk visibly.
+# The append ceiling, evaluated separately and only on a turn that has already
+# been proven to be an explicit instruction to file something. Starting a voice
+# session pre-authorizes this one narrow capability; it does not become one of
+# Metis's two tool approvals, and no transcript can widen it.
+VOICE_WRITE_PERMISSIONS = VOICE_PERMISSIONS | {PolicyPermission.CUSTOMER_APPEND}
+# MODEL_BROKER and CUSTOMER_APPEND are both R2, so the ceiling is R2. Stated
+# rather than derived so a permission added here without thinking raises the
+# declared risk visibly.
 VOICE_RISK = RiskLevel.R2
+
+VOICE_WRITE_SYSTEM_PROMPT = """You are shaping one record the user just asked to file.
+
+You are NOT deciding whether to file it, what kind it is, or which account it
+belongs to — all three are already settled. Fill only the fields for the record
+type named below, using the user's own words. Invent nothing: if they didn't
+say a role, leave it empty.
+
+Call the supplied function exactly once."""
 
 # Budgets for one spoken turn. A voice answer is two to four sentences, and
 # every character sent to reach it is paid for again on the next turn — so
@@ -170,6 +195,57 @@ class VoiceRetrievalProfile:
 VOICE_RETRIEVAL = VoiceRetrievalProfile()
 
 
+# How long a spoken read-back stays answerable. A yes arriving a minute after
+# the question is a yes to something else.
+CONFIRMATION_WINDOW_SECONDS = 45
+
+# What counts as an unambiguous yes. Narrow on purpose: "yeah, but change the
+# date" contains "yeah" and is not consent, so anything with a qualifier in it
+# has to fail. Everything that is not on this list drops the pending write and
+# is handled as an ordinary turn.
+_YES = re.compile(
+    r"^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|please do|"
+    r"that's right|thats right|correct|confirmed?)\s*[.!]?$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingWrite:
+    """A record read back and waiting for a yes."""
+
+    intent: VoiceWriteIntent
+    account_id: str
+    account_name: str
+    payload: dict[str, str]
+    asked_at: datetime
+
+    def fresh(self) -> bool:
+        age = (datetime.now(UTC) - self.asked_at).total_seconds()
+        return age <= CONFIRMATION_WINDOW_SECONDS
+
+
+def _is_yes(transcript: str) -> bool:
+    return bool(_YES.match((transcript or "").strip().lower()))
+
+
+def _candidate_from_transcript(intent: VoiceWriteIntent) -> VoiceWriteCandidateV1:
+    """The utterance itself as a record, when no model shaped it.
+
+    Someone said a whole sentence about what they wanted filed. Losing it
+    because a model call failed would be the worst of both outcomes: they
+    believe it was recorded, and it was not.
+    """
+    said = intent.transcript
+    return VoiceWriteCandidateV1(
+        title="Voice note",
+        body=said,
+        kind="detail",
+        content=said,
+        description=said,
+        name=said,
+    )
+
+
 @dataclass
 class _Evidence:
     """Retrieved passages, plus the account they were scoped to."""
@@ -195,22 +271,34 @@ class VoiceGraph:
         answers: Any = None,
         customers: Any = None,
         attention: Any = None,
+        writes: Any = None,
         policy: PolicyEngine | None = None,
     ) -> None:
         self.settings = settings
         self.model = model
         self.speech_preference = speech_preference
-        # Every one of these is read-only. There is no registry, sandbox,
-        # project engine, approval service or mutation client here, and this
-        # constructor is the only way anything gets in.
+        # These four are read-only. There is no registry, sandbox, project
+        # engine or approval service here, and this constructor is the only way
+        # anything gets in.
         self.corpus = corpus
         self.answers = answers
         self.customers = customers
         self.attention = attention
+        # The one thing that can change a record, and it is not the general
+        # customer client: a create-only service over five INSERTs, with no
+        # update, no status change and no delete reachable through it.
+        self.writes = writes
         self.policy = policy or PolicyEngine()
+        # Records read back and waiting for a yes, per session. In memory and
+        # short-lived by design — see CONFIRMATION_WINDOW_SECONDS.
+        self._pending: dict[str, _PendingWrite] = {}
         # Proof, for the tests and for anyone reading a stack trace, that the
         # ceiling was evaluated rather than assumed.
         self.last_outcome: Any = None
+
+    def forget(self, voice_session_id: str) -> None:
+        """Drop any pending read-back. Called when a session ends."""
+        self._pending.pop(voice_session_id, None)
 
     # -- the turn ---------------------------------------------------------
 
@@ -237,6 +325,22 @@ class VoiceGraph:
             )
 
         self._enforce_ceiling("voice.turn")
+
+        # A pending read-back is resolved before anything else, and popped
+        # either way: a confirmation that survived the turn after it was asked
+        # would be a yes collected for a question nobody remembers.
+        pending = self._pending.pop(turn.voice_session_id, None)
+        if pending is not None and pending.fresh() and _is_yes(turn.transcript):
+            return await self._commit_confirmed(turn, pending)
+
+        # The write path is entered only from an explicit imperative in *this*
+        # utterance. An earlier turn asking for a note, a retrieved document
+        # suggesting one, or a model that thinks one would be helpful all end
+        # up here with `None` and are answered instead.
+        write_intent = detect_write_intent(turn.transcript)
+        if write_intent is not None:
+            return await self._append(turn, write_intent)
+
         detail = bool(_DETAIL_ASKED.search(turn.transcript.lower()))
         evidence = await self._retrieve(turn, detail=detail)
         if evidence.account.ambiguous and not evidence.snippets:
@@ -259,15 +363,167 @@ class VoiceGraph:
             spoken_fallback=fallback,
         )
 
+    # -- the narrow write path --------------------------------------------
+
+    async def _append(
+        self, turn: VoiceTurn, intent: VoiceWriteIntent
+    ) -> VoiceRenditionV1:
+        """One explicit append, or one short question about it.
+
+        The order here is the whole safety argument. The account is resolved
+        before a model is asked for anything, so an ambiguous account costs a
+        question rather than a wrong record. The payload the model returns is
+        validated and bounded by the host. The transcript excerpt is copied
+        verbatim rather than summarized. And the ceiling is evaluated twice —
+        once before the model, once after — so a reply cannot widen it.
+        """
+        if intent.ambiguous_types:
+            kinds = " or ".join(intent.ambiguous_types)
+            return self._clarify(turn, f"Do you want a {kinds}? I'll file one.")
+        if self.customers is None or self.writes is None:
+            return self._clarify(turn, "I can't reach your customer records.")
+
+        account = await self._resolve_account(turn)
+        if account.best is None:
+            return self._clarify(turn, "Which account should that go on?")
+        if not account.decisive:
+            names = [match.name for match in account.candidates[:3]]
+            return self._clarify(
+                turn,
+                f"Which account do you mean — {' or '.join(names)}?"
+                if len(names) > 1
+                else f"Should that go on {account.best.name}?",
+            )
+
+        self._enforce_ceiling("voice.append", permissions=VOICE_WRITE_PERMISSIONS)
+        candidate = await self._draft_record(turn, intent)
+        try:
+            payload = validate_payload(intent.record_type, candidate.model_dump())
+        except VoiceWriteRefused as error:
+            return self._clarify(turn, f"I need a bit more — {error}.")
+        if intent.record_type == "action" and payload.get("due_at") is None:
+            # Parsed by the host from what was actually said. A model inventing
+            # "next Friday" is a deadline nobody agreed to.
+            payload["due_at"] = parse_due_date(turn.transcript)
+
+        if self._confirming():
+            # Two turns instead of one, when the owner has asked for it. The
+            # read-back quotes the exact record about to be filed, and only an
+            # unambiguous yes in the very next turn commits it. Anything else —
+            # a correction, a new subject, a silence long enough to time out —
+            # drops it, because a confirmation you have to remember agreeing to
+            # is not a confirmation.
+            self._pending[turn.voice_session_id] = _PendingWrite(
+                intent=intent,
+                account_id=account.best.account_id,
+                account_name=account.best.name,
+                payload=payload,
+                asked_at=datetime.now(UTC),
+            )
+            preview = receipt_sentence(intent.record_type, account.best.name, payload)
+            proposed = preview.replace("Added", "I'll add", 1)
+            return self._clarify(turn, f"{proposed}. Shall I?")
+
+        self._enforce_ceiling("voice.append", permissions=VOICE_WRITE_PERMISSIONS)
+        try:
+            receipt = await self.writes.commit(
+                record_type=intent.record_type,
+                account_id=account.best.account_id,
+                account_name=account.best.name,
+                payload=payload,
+                transcript=intent.transcript,
+                turn=turn,
+            )
+        except VoiceWriteRefused as error:
+            # A person who already exists, or an account that vanished between
+            # resolution and commit. Said plainly rather than merged away —
+            # and narrowly typed, so a contract bug surfaces instead of
+            # arriving as a polite question.
+            return self._clarify(turn, str(error).capitalize() + ".")
+
+        spoken = receipt_sentence(intent.record_type, account.best.name, payload)
+        return self._rendition(
+            turn, written=spoken, spoken=spoken, intent="customer_append", write=receipt
+        )
+
+    async def _commit_confirmed(
+        self, turn: VoiceTurn, pending: _PendingWrite
+    ) -> VoiceRenditionV1:
+        """A yes, to the record read back on the previous turn and no other.
+
+        The payload committed is the one that was read aloud, not a re-draft:
+        agreeing to a sentence and then filing a different one is the failure
+        a read-back exists to prevent.
+        """
+        self._enforce_ceiling("voice.append", permissions=VOICE_WRITE_PERMISSIONS)
+        try:
+            receipt = await self.writes.commit(
+                record_type=pending.intent.record_type,
+                account_id=pending.account_id,
+                account_name=pending.account_name,
+                payload=pending.payload,
+                transcript=pending.intent.transcript,
+                turn=turn,
+            )
+        except VoiceWriteRefused as error:
+            return self._clarify(turn, str(error).capitalize() + ".")
+        spoken = receipt_sentence(
+            pending.intent.record_type, pending.account_name, pending.payload
+        )
+        return self._rendition(
+            turn, written=spoken, spoken=spoken, intent="customer_append", write=receipt
+        )
+
+    async def _draft_record(
+        self, turn: VoiceTurn, intent: VoiceWriteIntent
+    ) -> VoiceWriteCandidateV1:
+        """The model's one contribution: the shape of the text, nothing else.
+
+        A failure here is not a failed write. The utterance itself is a usable
+        record — someone said a whole sentence about what they wanted filed —
+        so the host falls back to it rather than losing what was said.
+        """
+        structured = getattr(self.model, "_structured", None)
+        if not callable(structured):
+            return _candidate_from_transcript(intent)
+        try:
+            return await structured(
+                VoiceWriteCandidateV1,
+                system_prompt=VOICE_WRITE_SYSTEM_PROMPT,
+                user_prompt=(
+                    f"Record type: {intent.record_type}\nThey said: {intent.transcript}"
+                ),
+                role="planner",
+                model_aliases=self._aliases(),
+                max_output_tokens=VOICE_OUTPUT_TOKENS,
+            )
+        except Exception as error:  # noqa: BLE001 - the sentence is still a record
+            logger.info("voice write drafting fell back: %s", str(error)[:200])
+            return _candidate_from_transcript(intent)
+
+    def _confirming(self) -> bool:
+        """Whether the owner asked for a spoken read-back before committing."""
+        try:
+            return bool(self.speech_preference.load().spoken_confirmation)
+        except Exception:  # noqa: BLE001 - a preference read never fails a turn
+            return False
+
     # -- the steps --------------------------------------------------------
 
-    def _enforce_ceiling(self, action: str) -> None:
-        """Evaluate the fixed voice ceiling, and refuse to proceed without it."""
+    def _enforce_ceiling(
+        self, action: str, *, permissions: frozenset | set | None = None
+    ) -> None:
+        """Evaluate the fixed voice ceiling, and refuse to proceed without it.
+
+        Two ceilings, and the wider one is reachable from exactly one place:
+        a turn already proven to be an explicit instruction to file a record.
+        The permission is never read from anything a model or a caller said.
+        """
         outcome = self.policy.evaluate(
             PolicyRequest.from_raw(
                 action=action,
                 declared_risk=VOICE_RISK,
-                additional_permissions=VOICE_PERMISSIONS,
+                additional_permissions=permissions or VOICE_PERMISSIONS,
                 execution_boundary=ExecutionBoundary.NONE,
             )
         )
@@ -463,11 +719,14 @@ class VoiceGraph:
         self, turn: VoiceTurn, account: AccountResolution
     ) -> VoiceRenditionV1:
         names = [match.name for match in account.candidates[:3]]
-        question = (
+        return self._clarify(
+            turn,
             f"Which account do you mean — {' or '.join(names)}?"
             if len(names) > 1
-            else "Which account do you mean?"
+            else "Which account do you mean?",
         )
+
+    def _clarify(self, turn: VoiceTurn, question: str) -> VoiceRenditionV1:
         return self._rendition(
             turn, written=question, spoken=question, intent="clarify"
         )
@@ -481,6 +740,7 @@ class VoiceGraph:
         intent: str,
         citations: list[VoiceCitationV1] | None = None,
         spoken_fallback: bool = False,
+        write: Any = None,
     ) -> VoiceRenditionV1:
         return VoiceRenditionV1(
             written=written,
@@ -492,6 +752,7 @@ class VoiceGraph:
             turn_id=turn.turn_id,
             run_id=turn.run_id,
             spoken_fallback=spoken_fallback,
+            write=write,
         )
 
 
