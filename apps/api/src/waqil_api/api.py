@@ -105,6 +105,8 @@ from .contracts import (
     VoiceSessionStartV1,
     VoiceSessionV1,
     VoiceTurnRequestV1,
+    VoiceUndoV1,
+    VoiceWriteReceiptV1,
     WinValuationAcceptV1,
     WinValuationV1,
     Decision,
@@ -1896,6 +1898,35 @@ async def voice_turn(body: VoiceTurnRequestV1, request: Request) -> VoiceRenditi
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ModelProviderError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@router.post("/voice/receipts/{receipt_id}/undo", response_model=VoiceWriteReceiptV1)
+async def undo_voice_write(
+    receipt_id: str, body: VoiceUndoV1, request: Request
+) -> VoiceWriteReceiptV1:
+    """Reverse exactly the record one receipt created.
+
+    Loopback only, and driven by the browser rather than by voice: there is no
+    undo in the Custom LLM schema and none on the voice service interface, so
+    a spoken "undo that" is a refusal, not a delete. What authorizes this is
+    the single-use token handed over with the write, which is bound to that one
+    receipt — the caller cannot name a record type or a record id at all, so
+    this cannot be pointed at a row voice never wrote.
+
+    The receipt itself survives. "This was added and then taken back" is a
+    different fact from "this never happened", and only one of them is true.
+    """
+    service = runtime(request).voice_writes
+    try:
+        return await service.undo(receipt_id, body.undo_token)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except KeyError as error:
+        raise not_found("receipt") from error
+    except ValueError as error:
+        # Already undone, already gone, or edited since. Each is a reason the
+        # user can act on rather than a failure they have to guess at.
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.post("/voice/post-call")

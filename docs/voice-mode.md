@@ -161,9 +161,54 @@ files, activate a tool, run code, or select a model. Each gets a fixed spoken
 refusal, and the build and approval refusals prefill your composer with the
 verbatim utterance so the chat window can finish the job.
 
-The voice graph is constructed with four read-only services and nothing else.
-It holds no registry, sandbox, project engine, coding session, approval path
-or customer mutation client — not disabled, never passed in.
+The voice graph is constructed with four read-only services plus one
+create-only write service, and nothing else. It holds no registry, sandbox,
+project engine, coding session or approval path — not disabled, never passed
+in. The write service exposes exactly two methods, `commit` and `undo`; there
+is no update, no status change and no delete reachable through it, and
+`upsert_customer_person` — which would turn a duplicate contact into a silent
+edit of the existing one — is deliberately not among them.
+
+## What voice can add
+
+Five record types, create-only: a note, a fact, an action, a person, or a win.
+
+A write happens **only** when the utterance in front of Metis is an explicit
+imperative to file one:
+
+| Said | Result |
+|---|---|
+| "Add a note to Batelco that the workshop moved to Thursday" | writes |
+| "Create an action for me to send the sizing by Friday" | writes |
+| "The workshop moved to Thursday" | answers, writes nothing |
+| "We should probably add a note about that" | answers, writes nothing |
+| "Add a note and an action for Batelco" | asks which one |
+| "Add a note about Bahrain" (two matching accounts) | asks which account |
+
+Detection is deterministic and the model is never asked *whether* to write. It
+is asked only to shape the text of a write the host already decided on, and
+even then the host copies the transcript verbatim, parses any due date itself,
+and bounds every field before committing.
+
+Starting a voice session pre-authorizes this one narrow R2 capability
+(`customer:append`). It is not either of Metis's two tool approvals, and no
+transcript can widen it.
+
+**Undo** is a browser action on the receipt card, never a spoken one — "undo
+that" is refused, because deleting a customer record on a misheard word is
+exactly what the refusal list exists for. The token is single-use, expires in
+fifteen minutes, and is bound to one receipt; it cannot name a record type or
+a record id at all. Undo also refuses a record someone has edited since.
+
+The receipt survives an undo. "This was added and then taken back" is a
+different fact from "this never happened".
+
+**Spoken confirmation** (Settings → Speech) turns every write into two turns:
+Metis reads the exact record back and waits for an unambiguous yes in the very
+next turn. Anything else — a correction, a new subject, forty-five seconds of
+silence — drops it. Off by default, because the receipt card and its Undo are
+the standing safety mechanism and a read-back on every append taxes the
+ordinary case to catch the rare one.
 
 ## Inspecting what happened
 
@@ -181,6 +226,12 @@ an action, a memory or an account link on its own.
 
 Written answers land in the voice session's conversation, so a spoken
 conversation can be read back in the chat window afterwards.
+
+Everything voice added, including what was later undone:
+
+```bash
+sqlite3 .data/waqil.db "SELECT created_at, record_type, account_name, undone_at, transcript_excerpt FROM voice_write_receipts ORDER BY created_at DESC LIMIT 20;"
+```
 
 ## When something breaks
 

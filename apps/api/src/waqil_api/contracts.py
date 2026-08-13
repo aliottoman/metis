@@ -2112,9 +2112,77 @@ VoiceIntent = Literal[
     "read",
     "clarify",
     "navigation",
+    "customer_append",
     "refuse_build",
     "refuse_protected",
 ]
+
+VoiceRecordType = Literal["note", "fact", "action", "person", "win"]
+
+
+class VoiceWriteCandidateV1(Contract):
+    """The only thing a model may propose for a voice write.
+
+    Fields, and not one of them decisive. The record type was chosen by the
+    host from the utterance, the account was resolved by the host, and the
+    transcript excerpt is copied by the host verbatim — what the model
+    contributes is the shape of the text, which the host then validates and
+    bounds. There is no account, no record type, and no id on this contract,
+    because a model that could name any of those could redirect a write.
+    """
+
+    title: str = Field(default="", max_length=400)
+    body: str = Field(default="", max_length=2_000)
+    kind: str = Field(default="", max_length=400)
+    content: str = Field(default="", max_length=400)
+    description: str = Field(default="", max_length=400)
+    owner: str = Field(default="", max_length=400)
+    name: str = Field(default="", max_length=400)
+    role: str = Field(default="", max_length=400)
+    organization: str = Field(default="", max_length=400)
+    brief: str = Field(default="", max_length=400)
+
+
+class VoiceWriteReceiptV1(Contract):
+    """The immutable record of one thing voice added.
+
+    It survives an undo. A reversal sets `undone_at` and nothing else, because
+    "this was added and then taken back" is a different fact from "this never
+    happened", and only one of them is true.
+    """
+
+    id: str
+    record_type: VoiceRecordType
+    record_id: str
+    account_id: str
+    account_name: str
+    source: Literal["voice"] = "voice"
+    voice_session_id: str = ""
+    provider_conversation_id: str = ""
+    turn_id: str = ""
+    run_id: str = ""
+    transcript_excerpt: str = Field(default="", max_length=8_000)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    undone_at: datetime | None = None
+    undone_by: str = ""
+    # What the card says. Quotes the committed text rather than describing it,
+    # so a wrong record is visibly wrong at a glance.
+    summary: str = Field(default="", max_length=400)
+    # Single-use, short-lived, and bound to this receipt. Returned once, with
+    # the write; a receipt read back later carries no token.
+    undo_token: str = Field(default="", max_length=120)
+
+
+class VoiceUndoV1(Contract):
+    """Reverse exactly the record one receipt created.
+
+    The receipt id and its token are the whole request. There is deliberately
+    no record type and no record id: a caller that could name those could
+    point undo at a row voice never wrote.
+    """
+
+    undo_token: str = Field(min_length=1, max_length=120)
 
 
 class VoiceCitationV1(Contract):
@@ -2153,6 +2221,9 @@ class VoiceRenditionV1(Contract):
     spoken: str = Field(default="", max_length=1_200)
     citations: list[VoiceCitationV1] = Field(default_factory=list, max_length=12)
     intent: VoiceIntent = "read"
+    # Present only on a committed append, and the reason the surface can show a
+    # card with an Undo on it the moment the words stop.
+    write: VoiceWriteReceiptV1 | None = None
     # The finalized utterance this answered, verbatim. Carried so a refusal can
     # hand the composer exactly what was said rather than a paraphrase.
     transcript: str = Field(default="", max_length=8_000)

@@ -572,8 +572,31 @@ export type VoiceIntent =
   | "read"
   | "clarify"
   | "navigation"
+  | "customer_append"
   | "refuse_build"
   | "refuse_protected";
+
+export type VoiceRecordType = "note" | "fact" | "action" | "person" | "win";
+
+export interface VoiceWriteReceipt {
+  id: string;
+  record_type: VoiceRecordType;
+  record_id: string;
+  account_id: string;
+  account_name: string;
+  source: "voice";
+  voice_session_id: string;
+  turn_id: string;
+  run_id: string;
+  transcript_excerpt: string;
+  payload: Record<string, string>;
+  created_at: string;
+  undone_at: string | null;
+  undone_by: string;
+  summary: string;
+  /** Single-use and short-lived. Present only on the write that created it. */
+  undo_token: string;
+}
 
 export interface VoiceRendition {
   written: string;
@@ -585,6 +608,7 @@ export interface VoiceRendition {
   turn_id: string;
   run_id: string;
   spoken_fallback: boolean;
+  write: VoiceWriteReceipt | null;
 }
 
 export interface VoiceSession {

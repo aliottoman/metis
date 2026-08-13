@@ -1093,6 +1093,76 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_post_calls_event
     ON voice_post_calls(provider_conversation_id, event_type);
 """
 
+SCHEMA_V27 = """
+-- The receipt for one thing voice added to the customer record.
+--
+-- It is the provenance, the audit row and the timeline entry at once, which is
+-- deliberate: this codebase has no outbox, and inventing one nobody reads
+-- would be a fifth place for the same facts to disagree. What a receipt has to
+-- answer is "what was added, to which account, from which spoken words, in
+-- which session" -- and it answers that whether or not the record still
+-- exists, because the receipt outlives an undo.
+--
+-- Immutable except for the two undo columns. Nothing updates a receipt's
+-- record, account, transcript or payload, ever: a reversal is a new fact
+-- about an old receipt, not an edit of what happened.
+CREATE TABLE IF NOT EXISTS voice_write_receipts (
+    id TEXT PRIMARY KEY,
+    record_type TEXT NOT NULL
+        CHECK(record_type IN ('note','fact','action','person','win')),
+    record_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    account_name TEXT NOT NULL,
+    -- Not a column that varies. It is here so a query over the customer
+    -- record can say where a row came from without joining to find out.
+    source TEXT NOT NULL DEFAULT 'voice' CHECK(source = 'voice'),
+    voice_session_id TEXT NOT NULL,
+    provider_conversation_id TEXT NOT NULL DEFAULT '',
+    turn_id TEXT NOT NULL,
+    run_id TEXT NOT NULL DEFAULT '',
+    -- The words themselves, copied by the host rather than summarized by the
+    -- model. What was said is the evidence; a paraphrase of it is not.
+    transcript_excerpt TEXT NOT NULL,
+    payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+    created_at TEXT NOT NULL,
+    undone_at TEXT,
+    undone_by TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY(account_id) REFERENCES customer_accounts(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_voice_receipts_recent
+    ON voice_write_receipts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_voice_receipts_record
+    ON voice_write_receipts(record_type, record_id);
+
+-- A note filed by voice says so on its own row, not only in its receipt.
+-- `origin` is what the workbench reads to show where a note came from, and a
+-- voice note recorded as 'manual' would be a small lie told on every screen
+-- that displays it. SQLite cannot alter a CHECK constraint, so the table is
+-- rebuilt — the same shape the conversation_projects widening used at V16.
+CREATE TABLE customer_notes_v27 (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES customer_accounts(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0 CHECK(pinned IN (0,1)),
+    origin TEXT NOT NULL DEFAULT 'manual'
+        CHECK(origin IN ('manual','chat','voice')),
+    origin_ref TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+INSERT INTO customer_notes_v27
+    SELECT id, account_id, title, body, pinned, origin, origin_ref,
+           created_at, updated_at
+    FROM customer_notes;
+DROP TABLE customer_notes;
+ALTER TABLE customer_notes_v27 RENAME TO customer_notes;
+-- Dropping the table dropped its index with it. Recreated here rather than
+-- left to the next slow account page nobody connects to this migration.
+CREATE INDEX IF NOT EXISTS idx_customer_notes_account
+    ON customer_notes(account_id, pinned DESC, updated_at DESC);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -1120,6 +1190,7 @@ MIGRATIONS: dict[int, str] = {
     24: SCHEMA_V24,
     25: SCHEMA_V25,
     26: SCHEMA_V26,
+    27: SCHEMA_V27,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -1212,6 +1283,242 @@ class Database:
         def operation() -> bool:
             with self._lock:
                 return self._connection().execute("SELECT 1").fetchone()[0] == 1
+
+        return await self._call(operation)
+
+    # The five INSERTs voice may make. Written here, inline, rather than by
+    # calling the per-type creators above, because those each own their own
+    # transaction and the receipt has to commit with the row it describes — a
+    # record that exists with no receipt is a customer record from nowhere.
+    #
+    # Every one of them is a plain INSERT. There is no ON CONFLICT clause in
+    # this table: an append that quietly became an update is the failure the
+    # whole create-only rule exists to prevent, and `upsert_customer_person`
+    # is exactly the method voice must never reach.
+    _VOICE_INSERTS: dict[str, str] = {
+        "note": """INSERT INTO customer_notes
+            (id, account_id, title, body, pinned, origin, origin_ref,
+             created_at, updated_at)
+            VALUES (:id, :account_id, :title, :body, 0, 'voice', :turn_id,
+                    :now, :now)""",
+        "fact": """INSERT INTO customer_facts
+            (id, account_id, interaction_id, kind, content, status, confidence,
+             evidence_json, created_at)
+            VALUES (:id, :account_id, NULL, :kind, :content, 'active', 1.0,
+                    '{}', :now)""",
+        "action": """INSERT INTO customer_actions
+            (id, account_id, interaction_id, description, owner, due_at,
+             status, evidence_json, created_at, updated_at)
+            VALUES (:id, :account_id, NULL, :description, :owner, :due_at,
+                    'open', '{}', :now, :now)""",
+        "person": """INSERT INTO customer_people
+            (id, account_id, name, role, organization, evidence_json,
+             created_at, updated_at)
+            VALUES (:id, :account_id, :name, :role, :organization, '{}',
+                    :now, :now)""",
+        "win": """INSERT INTO customer_wins
+            (id, account_id, title, brief, services_json, dac_shape,
+             yearly_arr, won_at, source_ref, created_at, updated_at)
+            VALUES (:id, :account_id, :title, :brief, '[]', '', NULL, NULL,
+                    :source_ref, :now, :now)""",
+    }
+
+    _VOICE_TABLES: dict[str, str] = {
+        "note": "customer_notes",
+        "fact": "customer_facts",
+        "action": "customer_actions",
+        "person": "customer_people",
+        "win": "customer_wins",
+    }
+
+    _VOICE_ID_PREFIX: dict[str, str] = {
+        "note": "cnote",
+        "fact": "cfact",
+        "action": "cact",
+        "person": "cp",
+        "win": "cwin",
+    }
+
+    async def commit_voice_append(
+        self,
+        *,
+        idempotency_key: str,
+        record_type: str,
+        account_id: str,
+        account_name: str,
+        payload: dict[str, Any],
+        transcript_excerpt: str,
+        voice_session_id: str,
+        turn_id: str,
+        run_id: str = "",
+        provider_conversation_id: str = "",
+    ) -> dict[str, Any]:
+        """One append, its receipt and its idempotency record, in one transaction.
+
+        Returns the receipt. A repeated key returns the original receipt and
+        creates nothing — the Custom LLM request can be retried by the
+        provider, and a retry must not be a second note.
+
+        Raises KeyError when the account is gone and ValueError when a person
+        of that name already exists, which is the one collision that must
+        never become an update.
+        """
+        if record_type not in self._VOICE_INSERTS:
+            raise ValueError(f"voice cannot write a {record_type}")
+        receipt_id = _id("vwr")
+        record_id = _id(self._VOICE_ID_PREFIX[record_type])
+        timestamp = _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                existing = conn.execute(
+                    "SELECT result_json FROM idempotency_actions WHERE action_id = ?",
+                    (idempotency_key,),
+                ).fetchone()
+                if existing is not None:
+                    return json.loads(existing["result_json"])
+                if (
+                    conn.execute(
+                        "SELECT 1 FROM customer_accounts WHERE id = ?", (account_id,)
+                    ).fetchone()
+                    is None
+                ):
+                    raise KeyError("customer account not found")
+                if record_type == "person":
+                    # Refused rather than merged. The UNIQUE constraint would
+                    # raise here anyway; saying so first turns a database error
+                    # into an answer the user can act on.
+                    clash = conn.execute(
+                        "SELECT 1 FROM customer_people "
+                        "WHERE account_id = ? AND name = ?",
+                        (account_id, str(payload.get("name", "")).strip()),
+                    ).fetchone()
+                    if clash is not None:
+                        raise ValueError("that person is already on this account")
+                conn.execute(
+                    self._VOICE_INSERTS[record_type],
+                    {
+                        "id": record_id,
+                        "account_id": account_id,
+                        "now": timestamp,
+                        "turn_id": turn_id,
+                        "source_ref": f"voice:{turn_id}",
+                        **payload,
+                    },
+                )
+                conn.execute(
+                    "UPDATE customer_accounts SET updated_at = ? WHERE id = ?",
+                    (timestamp, account_id),
+                )
+                conn.execute(
+                    """INSERT INTO voice_write_receipts
+                    (id, record_type, record_id, account_id, account_name, source,
+                     voice_session_id, provider_conversation_id, turn_id, run_id,
+                     transcript_excerpt, payload_json, created_at, undone_at,
+                     undone_by)
+                    VALUES (?, ?, ?, ?, ?, 'voice', ?, ?, ?, ?, ?, ?, ?, NULL, '')""",
+                    (
+                        receipt_id,
+                        record_type,
+                        record_id,
+                        account_id,
+                        account_name,
+                        voice_session_id,
+                        provider_conversation_id,
+                        turn_id,
+                        run_id,
+                        transcript_excerpt,
+                        _json(payload),
+                        timestamp,
+                    ),
+                )
+                receipt = dict(
+                    conn.execute(
+                        "SELECT * FROM voice_write_receipts WHERE id = ?",
+                        (receipt_id,),
+                    ).fetchone()
+                )
+                conn.execute(
+                    "INSERT INTO idempotency_actions VALUES (?, ?, ?)",
+                    (idempotency_key, _json(receipt), timestamp),
+                )
+                return receipt
+
+        return await self._call(operation)
+
+    async def undo_voice_append(
+        self, receipt_id: str, *, actor: str = "you"
+    ) -> dict[str, Any]:
+        """Reverse exactly the record one receipt created. Atomic, and once.
+
+        The receipt is the only argument that matters: there is no way to name
+        a record type or a record id from outside, so this cannot be pointed at
+        a row voice did not create.
+
+        Refuses a record that has been edited since. Undo is a compensating
+        action for a mistake you just heard, not a way to discard work someone
+        did in the meantime.
+        """
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                row = conn.execute(
+                    "SELECT * FROM voice_write_receipts WHERE id = ?", (receipt_id,)
+                ).fetchone()
+                if row is None:
+                    raise KeyError("receipt not found")
+                receipt = dict(row)
+                if receipt["undone_at"]:
+                    raise ValueError("that one was already undone")
+                table = self._VOICE_TABLES[receipt["record_type"]]
+                record = conn.execute(
+                    f"SELECT * FROM {table} WHERE id = ?",  # noqa: S608 - fixed table map
+                    (receipt["record_id"],),
+                ).fetchone()
+                if record is None:
+                    raise ValueError("that record is already gone")
+                stored = dict(record)
+                # `updated_at` moving means a person edited it after the fact.
+                # Facts have no updated_at, so their guard is the content
+                # itself, which the receipt recorded verbatim.
+                edited = stored.get("updated_at") is not None and stored.get(
+                    "updated_at"
+                ) != stored.get("created_at")
+                if edited:
+                    raise ValueError("that record has been edited since")
+                conn.execute(
+                    f"DELETE FROM {table} WHERE id = ?",  # noqa: S608 - fixed table map
+                    (receipt["record_id"],),
+                )
+                # The receipt stays. It is the audit trail, and an audit trail
+                # that disappears when something is reversed is not one.
+                conn.execute(
+                    "UPDATE voice_write_receipts SET undone_at = ?, undone_by = ? "
+                    "WHERE id = ?",
+                    (_now(), actor, receipt_id),
+                )
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM voice_write_receipts WHERE id = ?",
+                        (receipt_id,),
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def list_voice_receipts(self, limit: int = 50) -> list[dict[str, Any]]:
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                rows = (
+                    self._connection()
+                    .execute(
+                        "SELECT * FROM voice_write_receipts "
+                        "ORDER BY created_at DESC LIMIT ?",
+                        (max(1, min(limit, 200)),),
+                    )
+                    .fetchall()
+                )
+            return [dict(row) for row in rows]
 
         return await self._call(operation)
 

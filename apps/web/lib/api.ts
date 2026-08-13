@@ -52,6 +52,7 @@ import type {
   VoiceAvailability,
   VoiceSession,
   VoiceSessionStart,
+  VoiceWriteReceipt,
   LocalModelSession,
   NotionConnection,
   NotionSyncResult,
@@ -1329,6 +1330,21 @@ export async function endVoiceSession(sessionId: string): Promise<VoiceSession> 
 
 export function voiceEventsUrl(sessionId: string): string {
   return apiUrl(`${API_PREFIX}/voice/sessions/${encodeURIComponent(sessionId)}/events`);
+}
+
+/** Reverse exactly the record one receipt created.
+ *
+ * The token is the authorization and the receipt is the target; there is no
+ * record type or record id to pass, by design — a caller that could name those
+ * could point undo at a row voice never wrote. */
+export async function undoVoiceWrite(
+  receiptId: string,
+  undoToken: string,
+): Promise<VoiceWriteReceipt> {
+  return request<VoiceWriteReceipt>(
+    `${API_PREFIX}/voice/receipts/${encodeURIComponent(receiptId)}/undo`,
+    { method: "POST", body: JSON.stringify({ undo_token: undoToken }) },
+  );
 }
 
 export async function getLocalModelSession(): Promise<LocalModelSession> {

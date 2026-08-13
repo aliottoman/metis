@@ -201,6 +201,9 @@ class VoiceSessionService:
         now = datetime.now(UTC)
         if session.live:
             session.state, session.ended_at, session.reason = "ended", now, reason
+            # A read-back waiting for a yes does not outlive the conversation
+            # it was asked in.
+            self.graph.forget(session.id)
             await self._publish(session, {"type": "voice.ended", "reason": reason})
             for listener in session.listeners:
                 # None is the stream's own end-of-stream marker.

@@ -15,6 +15,12 @@ class PolicyPermission(StrEnum):
     READ_RUN_INPUTS = "read:run-inputs"
     READ_GRANTED_WORKSPACE = "read:granted-workspace"
     WRITE_RUN_ARTIFACTS = "write:run-artifacts"
+    # Appending to the customer record: a new note, fact, action, person or
+    # win. Its own capability rather than a use of WRITE_RUN_ARTIFACTS, which
+    # names a run's own scratch output — this is a different domain, it
+    # outlives the run, and a permission that means two things cannot be
+    # granted for one of them.
+    CUSTOMER_APPEND = "customer:append"
     SANDBOX_EXECUTION = "execute:sandboxed"
     MODEL_BROKER = "model:broker"
     TOOL_DEFINITION = "tool:define"
@@ -62,6 +68,7 @@ _MINIMUM_RISK = {
     PolicyPermission.READ_RUN_INPUTS: RiskLevel.R1,
     PolicyPermission.READ_GRANTED_WORKSPACE: RiskLevel.R1,
     PolicyPermission.WRITE_RUN_ARTIFACTS: RiskLevel.R2,
+    PolicyPermission.CUSTOMER_APPEND: RiskLevel.R2,
     PolicyPermission.SANDBOX_EXECUTION: RiskLevel.R2,
     PolicyPermission.MODEL_BROKER: RiskLevel.R2,
     PolicyPermission.TOOL_DEFINITION: RiskLevel.R3,
