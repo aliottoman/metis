@@ -4465,3 +4465,379 @@ select { border-radius: var(--m-r-field); }
   .meetingInsights > header, .meetingTranscriptSection > header { align-items: flex-start; flex-direction: column; gap: 3px; }
 }
 @media (prefers-reduced-motion: reduce) { .meetingHeroOrb { animation: none !important; } }
+/* ── 10 · Interviews ─────────────────────────────────────────────────────
+   A form, then a room, then a verdict. The live stage borrows chat's
+   lavender field and chrome forms wholesale so speaking to Chiron feels
+   like speaking to Metis; the scorecard that replaces it is deliberately
+   plain paper — a verdict is read, not celebrated. */
+.interviewsPage { display: flex; flex-direction: column; gap: 14px; }
+
+.interviewSetup {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 16px;
+  display: grid;
+  gap: 16px;
+  padding: 20px 22px;
+}
+.interviewUnavailable ul {
+  color: var(--m-ink-2);
+  display: grid;
+  font-size: 12.5px;
+  gap: 5px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.interviewFormGrid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+.interviewField { display: grid; gap: 6px; }
+.interviewField > span {
+  color: var(--m-ink-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.interviewField input,
+.interviewField textarea {
+  background: var(--m-paper);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r-field, 12px);
+  color: var(--m-ink);
+  font: inherit;
+  font-size: 13.5px;
+  padding: 9px 12px;
+  width: 100%;
+}
+.interviewField textarea { line-height: 1.55; min-height: 200px; resize: vertical; }
+.interviewField input:focus-visible,
+.interviewField textarea:focus-visible,
+.interviewRoundCard:focus-visible,
+.interviewActionButton:focus-visible,
+.interviewTypedRow input:focus-visible {
+  outline: 2px solid var(--m-ink);
+  outline-offset: 2px;
+}
+.interviewFieldProblem { color: #9c3522; font-size: 12px; }
+
+.interviewRounds { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
+.interviewRoundCard {
+  background: var(--m-paper);
+  border: 1px solid var(--m-line);
+  border-radius: 12px;
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+  padding: 13px 15px;
+  text-align: left;
+  transition: background 0.18s var(--m-ease), border-color 0.18s var(--m-ease);
+}
+.interviewRoundCard strong { color: var(--m-ink); font-size: 13px; }
+.interviewRoundCard span { color: var(--m-ink-2); font-size: 12px; line-height: 1.45; }
+.interviewRoundCard:hover { border-color: var(--m-ink-3); }
+.interviewRoundCard.selected {
+  background: var(--m-lav-surface);
+  border-color: var(--m-purple);
+}
+.interviewStartRow { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; }
+
+/* The room. Chat's field, reused: .atmos and .chromeForm carry the metal and
+   the purple; everything interview-specific sits above them on z-index 2. */
+.interviewLive {
+  background: var(--m-purple);
+  border-radius: 18px;
+  min-height: 540px;
+  overflow: hidden;
+  position: relative;
+}
+.interviewLiveInner {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 540px;
+  padding: 20px 24px 22px;
+  position: relative;
+  z-index: 2;
+}
+.interviewLiveHeader {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+.interviewLiveRole { display: grid; gap: 5px; }
+.interviewLiveEyebrow {
+  color: rgba(33, 31, 29, 0.62);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.interviewLiveRole strong { color: var(--m-ink); font-size: 14px; font-weight: 500; }
+.interviewLiveMeta { display: grid; gap: 6px; justify-items: end; }
+.interviewProgress {
+  background: rgba(252, 250, 246, 0.72);
+  border-radius: 999px;
+  color: var(--m-ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 11px;
+}
+.interviewElapsed {
+  color: rgba(33, 31, 29, 0.65);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.interviewOrbStage {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  justify-content: center;
+  min-height: 250px;
+}
+.interviewOrbShell { display: grid; height: 186px; place-items: center; width: 186px; }
+.interviewOrbRenderer {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  box-shadow: 0 24px 62px rgba(33, 31, 29, 0.22);
+  clip-path: circle(50% at 50% 50%);
+  contain: paint;
+  height: 170px;
+  overflow: hidden;
+  width: 170px;
+}
+.interviewLive.is-failed .interviewOrbRenderer { filter: grayscale(0.55); }
+/* Reduced motion gets a still instrument: same size, same palette, a state
+   ring instead of a shader. Nothing here moves. */
+.interviewOrbStill {
+  background: var(--m-fringe);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 50%;
+  box-shadow: 0 22px 60px rgba(61, 35, 78, 0.25);
+  height: 150px;
+  position: relative;
+  width: 150px;
+}
+.interviewOrbStill i {
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  filter: blur(12px);
+  inset: 34px;
+  position: absolute;
+}
+.interviewOrbStill.is-listening { border-color: var(--m-green-ink, #00754e); }
+.interviewOrbStill.is-agent_speaking { border-color: var(--m-violet, #d18ee2); }
+.interviewOrbStill.is-connecting,
+.interviewOrbStill.is-evaluating { border-color: var(--m-gold, #ffe08a); }
+.interviewStageCopy { display: grid; gap: 5px; justify-items: center; max-width: 520px; text-align: center; }
+.interviewStageCopy strong {
+  color: var(--m-ink);
+  font-size: clamp(20px, 2.6vw, 28px);
+  font-weight: 430;
+  letter-spacing: -0.03em;
+}
+.interviewStageCopy p { color: rgba(33, 31, 29, 0.72); font-size: 13px; line-height: 1.5; margin: 0; }
+
+.interviewControls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.interviewActionButton {
+  align-items: center;
+  backdrop-filter: blur(14px);
+  background: rgba(252, 250, 246, 0.7);
+  border: 1px solid rgba(33, 31, 29, 0.14);
+  border-radius: 999px;
+  color: var(--m-ink);
+  display: inline-flex;
+  font-size: 11.5px;
+  gap: 7px;
+  height: 34px;
+  padding: 0 14px;
+}
+.interviewActionButton:hover { background: rgba(252, 250, 246, 0.94); }
+.interviewActionButton:disabled { cursor: default; opacity: 0.55; }
+.interviewActionButton.isStop { color: #9c3522; }
+.interviewEndConfirm {
+  align-items: center;
+  background: rgba(252, 250, 246, 0.88);
+  border-radius: 999px;
+  color: var(--m-ink);
+  display: inline-flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 8px;
+  padding: 4px 6px 4px 14px;
+}
+.interviewTypedRow {
+  display: flex;
+  gap: 8px;
+  margin: 0 auto;
+  max-width: 560px;
+  width: 100%;
+}
+.interviewTypedRow input {
+  backdrop-filter: blur(18px);
+  background: rgba(252, 250, 246, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 999px;
+  color: var(--m-ink);
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  height: 36px;
+  padding: 0 16px;
+}
+
+.interviewTranscriptPanel {
+  backdrop-filter: blur(18px);
+  background: rgba(252, 250, 246, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 14px;
+  padding: 10px 14px;
+}
+.interviewTranscriptPanel summary { color: var(--m-ink-2); cursor: pointer; font-size: 12px; }
+.interviewTranscript {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 10px 0 0;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 0;
+}
+.interviewTranscript li { border-left: 2px solid var(--m-line); display: grid; gap: 3px; padding-left: 10px; }
+.interviewTranscript li span {
+  color: var(--m-ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.interviewTranscript li.is-agent { border-left-color: var(--m-purple); }
+.interviewTranscript li.is-agent span { color: #6b4b86; }
+.interviewTranscript li p { color: var(--m-ink); font-size: 13px; line-height: 1.5; margin: 0; }
+
+/* The verdict. Plain paper on purpose: no confetti, no congratulations —
+   the number is the number and the problems get the space. */
+.interviewScorecard {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 16px;
+  display: grid;
+  gap: 18px;
+  padding: 20px 22px;
+}
+.interviewScoreHead { align-items: center; display: flex; flex-wrap: wrap; gap: 20px; }
+.interviewScoreDial { align-items: baseline; display: flex; gap: 4px; }
+.interviewScoreDial strong {
+  color: var(--m-ink);
+  font-size: 46px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 460;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+.interviewScoreDial span { color: var(--m-ink-3); font-size: 14px; }
+.interviewScoreSummary { display: grid; flex: 1; gap: 7px; min-width: 260px; }
+.interviewScoreBadges { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.interviewRecommendation {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  padding: 3px 10px;
+  text-transform: uppercase;
+}
+.interviewRecommendation.is-advance {
+  background: var(--m-mint-surface, #e5f4ef);
+  border-color: var(--m-mint-edge, #c6e3d6);
+  color: var(--m-green-ink, #00754e);
+}
+.interviewRecommendation.is-borderline {
+  background: rgba(255, 224, 138, 0.35);
+  border-color: rgba(214, 178, 84, 0.5);
+  color: #7a5f14;
+}
+.interviewRecommendation.is-do_not_advance {
+  background: rgba(255, 119, 89, 0.13);
+  border-color: var(--m-coral-soft, #ffad9b);
+  color: #9c3522;
+}
+.interviewRecommendation.is-unscored { background: var(--m-surface); color: var(--m-ink-2); }
+.interviewProvisional {
+  background: rgba(255, 224, 138, 0.35);
+  border-radius: 999px;
+  color: #7a5f14;
+  font-size: 11.5px;
+  padding: 3px 10px;
+}
+.interviewVerdict { color: var(--m-ink); font-size: 15px; line-height: 1.5; margin: 0; max-width: 680px; }
+.interviewUnscored { color: var(--m-ink-2); font-size: 13px; margin: 0; }
+
+.interviewRubric { display: grid; gap: 8px; max-width: 560px; }
+.interviewRubricRow {
+  align-items: center;
+  color: var(--m-ink-2);
+  display: grid;
+  font-size: 12.5px;
+  gap: 10px;
+  grid-template-columns: 140px 1fr 24px;
+}
+.interviewRubricRow strong {
+  color: var(--m-ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.interviewRubricTrack { background: var(--m-surface); border-radius: 999px; height: 6px; overflow: hidden; }
+.interviewRubricTrack i { background: var(--m-bloom); border-radius: 999px; display: block; height: 100%; }
+
+.interviewScoreBlock { display: grid; gap: 7px; }
+.interviewScoreBlock h3 { color: var(--m-ink); font-size: 13px; margin: 0; }
+.interviewScoreBlock blockquote {
+  background: var(--m-lav-surface, #f0dff3);
+  border-left: 3px solid var(--m-purple);
+  border-radius: 0 10px 10px 0;
+  color: var(--m-ink);
+  font-size: 13.5px;
+  line-height: 1.55;
+  margin: 0;
+  padding: 8px 12px;
+}
+.interviewScoreBlock > p { color: var(--m-ink-2); font-size: 13px; line-height: 1.55; margin: 0; }
+.interviewProblems { display: grid; gap: 14px; margin: 0; padding-left: 18px; }
+.interviewProblems li { display: grid; gap: 4px; }
+.interviewProblems strong { color: var(--m-ink); font-size: 13px; }
+.interviewProblems p { color: var(--m-ink-2); font-size: 12.5px; line-height: 1.5; margin: 0; }
+.interviewProblems .interviewEvidence { font-style: italic; }
+.interviewProblems .interviewBetter { color: var(--m-green-ink, #00754e); }
+.interviewNextActions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.interviewInterrupted {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-coral-soft, #ffad9b);
+  border-radius: 16px;
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+}
+.interviewInterrupted h2 { color: var(--m-ink); font-size: 16px; margin: 0; }
+.interviewInterrupted p { color: var(--m-ink-2); font-size: 13px; line-height: 1.55; margin: 0; }
+
+@media (max-width: 900px) {
+  .interviewRounds { grid-template-columns: 1fr; }
+}
+@media (max-width: 720px) {
+  .interviewFormGrid { grid-template-columns: 1fr; }
+  .interviewLiveInner { padding: 16px 14px 18px; }
+  .interviewLiveMeta { justify-items: start; }
+  .interviewOrbShell { height: 160px; width: 160px; }
+  .interviewOrbRenderer { height: 146px; width: 146px; }
+  .interviewRubricRow { grid-template-columns: 108px 1fr 22px; }
+  .interviewScoreDial strong { font-size: 38px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .interviewRoundCard,
+  .interviewActionButton { transition: none !important; }
+}

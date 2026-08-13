@@ -53,6 +53,12 @@ import type {
   VoiceSession,
   VoiceSessionStart,
   VoiceWriteReceipt,
+  InterviewAvailability,
+  InterviewContext,
+  InterviewEvaluation,
+  InterviewScorecard,
+  InterviewSession,
+  InterviewSessionStart,
   Meeting,
   MeetingDetail,
   MeetingTurn,
@@ -1352,6 +1358,86 @@ export async function undoVoiceWrite(
   return request<VoiceWriteReceipt>(
     `${API_PREFIX}/voice/receipts/${encodeURIComponent(receiptId)}/undo`,
     { method: "POST", body: JSON.stringify({ undo_token: undoToken }) },
+  );
+}
+
+/** Whether an interview can start, and every missing piece when it cannot. */
+export async function getInterviewAvailability(): Promise<InterviewAvailability> {
+  return request<InterviewAvailability>(`${API_PREFIX}/interviews/availability`);
+}
+
+/** Open an interview session. The conversation token comes back exactly once,
+ * alongside the dynamic variables the agent will see — question_limit is fixed
+ * server-side, the browser decides nothing about the interview's shape. */
+export async function startInterviewSession(
+  context: InterviewContext,
+): Promise<InterviewSessionStart> {
+  return request<InterviewSessionStart>(`${API_PREFIX}/interviews/sessions`, {
+    method: "POST",
+    body: JSON.stringify(context),
+  });
+}
+
+export async function getInterviewSession(sessionId: string): Promise<InterviewSession> {
+  return request<InterviewSession>(
+    `${API_PREFIX}/interviews/sessions/${encodeURIComponent(sessionId)}`,
+  );
+}
+
+/** Attach ElevenLabs' own conversation id once the SDK reports it. */
+export async function attachInterviewConversation(
+  sessionId: string,
+  providerConversationId: string,
+): Promise<InterviewSession> {
+  return request<InterviewSession>(
+    `${API_PREFIX}/interviews/sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ provider_conversation_id: providerConversationId }),
+    },
+  );
+}
+
+/** Append transcript turns in spoken order. Re-sent ordinals are absorbed. */
+export async function appendInterviewTurns(
+  sessionId: string,
+  turns: Array<{ ordinal: number; role: "user" | "agent"; text: string }>,
+): Promise<{ stored: number }> {
+  return request<{ stored: number }>(
+    `${API_PREFIX}/interviews/sessions/${encodeURIComponent(sessionId)}/turns`,
+    { method: "POST", body: JSON.stringify({ turns }) },
+  );
+}
+
+/** The blocking client tool's round trip: submit the five criterion scores,
+ * get back the stored scorecard with the overall score Metis calculated. */
+export async function submitInterviewEvaluation(
+  sessionId: string,
+  evaluation: InterviewEvaluation,
+): Promise<InterviewScorecard> {
+  return request<InterviewScorecard>(
+    `${API_PREFIX}/interviews/sessions/${encodeURIComponent(sessionId)}/evaluation`,
+    { method: "POST", body: JSON.stringify(evaluation) },
+  );
+}
+
+/** Close the session. Safe to repeat: unmount, pagehide and an explicit stop
+ * may all fire, and none of them conflicts with the others. */
+export async function endInterviewSession(
+  sessionId: string,
+  reason: "completed" | "ended_early" | "failed",
+): Promise<InterviewSession> {
+  return request<InterviewSession>(
+    `${API_PREFIX}/interviews/sessions/${encodeURIComponent(sessionId)}/end`,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
+}
+
+/** Remove a session and its transcript. Already gone is success. */
+export async function deleteInterviewSession(sessionId: string): Promise<void> {
+  return request<void>(
+    `${API_PREFIX}/interviews/sessions/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE" },
   );
 }
 

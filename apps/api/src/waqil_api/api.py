@@ -97,6 +97,16 @@ from .contracts import (
     SkuRateCardUpdateV1,
     SkuRateCardV1,
     SkuRateV1,
+    InterviewAvailabilityV1,
+    InterviewContextV1,
+    InterviewEndV1,
+    InterviewEvaluationV1,
+    InterviewScorecardV1,
+    InterviewSessionStartV1,
+    InterviewSessionUpdateV1,
+    InterviewSessionV1,
+    InterviewTurnsAppendV1,
+    InterviewTurnsReceiptV1,
     MeetingDetailV1,
     MeetingProposalDecisionV1,
     MeetingProposalV1,
@@ -173,6 +183,7 @@ from .reference_architecture import ReferenceRunnerError
 from .project_verification import ProjectVerificationError
 from .project_env import asset_environment
 from .project_workspace import ProjectWorkspaceError
+from .interviews import InterviewError, InterviewService
 from .meetings import MAX_ATTEMPTS, MeetingError, MeetingService
 from .runtime import AppRuntime
 from .spoken_text import brief_to_speech
@@ -2132,6 +2143,152 @@ async def decide_meeting_proposal(
             meeting_id, str(payload.get("account_id")), score=decided.get("score")
         )
     return MeetingProposalV1.model_validate({**decided, "payload": payload})
+
+
+def _interviews(request: Request) -> InterviewService:
+    service = runtime(request).interviews
+    if service is None:
+        raise HTTPException(status_code=503, detail="interviews are not available yet")
+    return service
+
+
+# Maps the browser's teardown reason onto a stored session status.
+_INTERVIEW_END_STATUS = {
+    "completed": "complete",
+    "ended_early": "ended_early",
+    "failed": "failed",
+}
+
+
+@router.get("/interviews/availability", response_model=InterviewAvailabilityV1)
+async def interview_availability(request: Request) -> InterviewAvailabilityV1:
+    """Whether an interview can start, and every missing piece when it cannot."""
+    service = runtime(request).interviews
+    if service is None:
+        return InterviewAvailabilityV1(
+            available=False, reason="interviews are not available yet"
+        )
+    missing = service.missing_configuration()
+    return InterviewAvailabilityV1(
+        available=not missing,
+        reason=missing[0] if missing else "",
+        missing=missing,
+    )
+
+
+@router.post(
+    "/interviews/sessions",
+    response_model=InterviewSessionStartV1,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_interview_session(
+    body: InterviewContextV1, request: Request
+) -> InterviewSessionStartV1:
+    """Open a session: persist the context, mint the one-conversation token.
+
+    The response carries every dynamic variable the agent will see, with
+    question_limit fixed server-side to five — the browser sends the context
+    and decides nothing about the interview's shape. The ElevenLabs API key
+    stays in this process; what leaves is a token good for one conversation.
+    """
+    try:
+        return await _interviews(request).start(body)
+    except InterviewError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ModelProviderError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@router.get("/interviews/sessions/{session_id}", response_model=InterviewSessionV1)
+async def get_interview_session(
+    session_id: str, request: Request
+) -> InterviewSessionV1:
+    session = await _interviews(request).session(session_id)
+    if session is None:
+        raise not_found("interview session")
+    return session
+
+
+@router.patch("/interviews/sessions/{session_id}", response_model=InterviewSessionV1)
+async def update_interview_session(
+    session_id: str, body: InterviewSessionUpdateV1, request: Request
+) -> InterviewSessionV1:
+    """Attach ElevenLabs' own conversation id once the SDK reports it."""
+    service = _interviews(request)
+    row = await runtime(request).database.set_interview_conversation_id(
+        session_id, body.provider_conversation_id
+    )
+    if row is None:
+        raise not_found("interview session")
+    session = await service.session(session_id)
+    if session is None:
+        raise not_found("interview session")
+    return session
+
+
+@router.post(
+    "/interviews/sessions/{session_id}/turns",
+    response_model=InterviewTurnsReceiptV1,
+)
+async def append_interview_transcript(
+    session_id: str, body: InterviewTurnsAppendV1, request: Request
+) -> InterviewTurnsReceiptV1:
+    """Append transcript turns in spoken order. Re-sends are absorbed."""
+    stored = await runtime(request).database.append_interview_turns(
+        session_id, [turn.model_dump() for turn in body.turns]
+    )
+    if stored is None:
+        raise not_found("interview session")
+    return InterviewTurnsReceiptV1(stored=stored)
+
+
+@router.post(
+    "/interviews/sessions/{session_id}/evaluation",
+    response_model=InterviewScorecardV1,
+)
+async def submit_interview_evaluation(
+    session_id: str, body: InterviewEvaluationV1, request: Request
+) -> InterviewScorecardV1:
+    """The blocking client tool's endpoint: score, store once, return stored.
+
+    Metis does the arithmetic here — the model never submits an overall
+    score, and whatever this returns is what the agent speaks. A retried
+    submission returns the scorecard the candidate already heard.
+    """
+    scorecard = await _interviews(request).evaluate(session_id, body)
+    if scorecard is None:
+        raise not_found("interview session")
+    return scorecard
+
+
+@router.post(
+    "/interviews/sessions/{session_id}/end", response_model=InterviewSessionV1
+)
+async def end_interview_session(
+    session_id: str, body: InterviewEndV1, request: Request
+) -> InterviewSessionV1:
+    """Close the session. Repeating the call returns the settled row unchanged,
+    so unmount, pagehide and an explicit stop can all fire without conflict."""
+    service = _interviews(request)
+    row = await runtime(request).database.end_interview_session(
+        session_id, status=_INTERVIEW_END_STATUS[body.reason]
+    )
+    if row is None:
+        raise not_found("interview session")
+    session = await service.session(session_id)
+    if session is None:
+        raise not_found("interview session")
+    return session
+
+
+@router.delete(
+    "/interviews/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_interview_session(session_id: str, request: Request) -> Response:
+    """Remove a session and its transcript. Deleting one that is already gone
+    is success, not an error — teardown must be repeatable."""
+    await runtime(request).database.delete_interview_session(session_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/voice/receipts/{receipt_id}/undo", response_model=VoiceWriteReceiptV1)

@@ -2281,6 +2281,150 @@ class MeetingProposalDecisionV1(Contract):
     status: Literal["accepted", "rejected"]
 
 
+class InterviewContextV1(Contract):
+    """Everything the setup screen collects, and all the agent may ever know.
+
+    The job description is pasted, untrusted text. It travels to the agent as
+    a dynamic variable whose prompt marks it as source material to quote from,
+    never instructions to follow — the same posture pasted text takes
+    everywhere else in Metis.
+    """
+
+    job_title: str = Field(min_length=1, max_length=200)
+    company_name: str = Field(min_length=1, max_length=200)
+    job_description: str = Field(min_length=1, max_length=30_000)
+    interview_type: Literal["hr_recruiter", "hiring_manager", "technical"]
+
+
+class InterviewTurnInV1(Contract):
+    """One transcript line as the browser heard it, ordered by ordinal."""
+
+    ordinal: int = Field(ge=0, le=9_999)
+    role: Literal["user", "agent"]
+    text: str = Field(min_length=1, max_length=8_000)
+
+
+class InterviewTurnsAppendV1(Contract):
+    turns: list[InterviewTurnInV1] = Field(min_length=1, max_length=200)
+
+
+class InterviewTurnV1(Contract):
+    id: str
+    ordinal: int
+    role: Literal["user", "agent"]
+    text: str
+    created_at: datetime
+
+
+class InterviewTurnsReceiptV1(Contract):
+    """How many turns the session now holds. Re-sends are absorbed, not doubled."""
+
+    stored: int = Field(ge=0)
+
+
+class InterviewImprovementV1(Contract):
+    what_happened: str = Field(min_length=1, max_length=2_000)
+    evidence: str = Field(min_length=1, max_length=2_000)
+    why_it_hurt: str = Field(min_length=1, max_length=2_000)
+    better_approach: str = Field(min_length=1, max_length=2_000)
+
+
+class InterviewEvaluationV1(Contract):
+    """What the agent's blocking tool submits. Deliberately no overall score:
+    the model hands over five criterion scores and Metis does the arithmetic,
+    so the number spoken in the debrief is always the number stored here.
+    """
+
+    specific_evidence: int = Field(ge=1, le=10)
+    role_depth: int = Field(ge=1, le=10)
+    relevance: int = Field(ge=1, le=10)
+    structure: int = Field(ge=1, le=10)
+    communication: int = Field(ge=1, le=10)
+    verdict: str = Field(min_length=1, max_length=500)
+    strongest_answer_quote: str = Field(min_length=1, max_length=2_000)
+    strongest_answer_reason: str = Field(min_length=1, max_length=2_000)
+    improvements: list[InterviewImprovementV1] = Field(min_length=3, max_length=3)
+    drill: str = Field(min_length=1, max_length=2_000)
+    completed_question_count: int = Field(ge=0, le=5)
+    incomplete: bool = False
+
+    @model_validator(mode="after")
+    def _flags_must_agree(self) -> "InterviewEvaluationV1":
+        # A "complete" evaluation of fewer than five answers is the exact
+        # inconsistency that lets an early exit masquerade as a full round.
+        if not self.incomplete and self.completed_question_count != 5:
+            raise ValueError(
+                "a complete interview has five answered questions; "
+                "mark it incomplete or fix completed_question_count"
+            )
+        if self.incomplete and self.completed_question_count >= 5:
+            raise ValueError(
+                "an interview with five answered questions is not incomplete"
+            )
+        return self
+
+
+class InterviewScorecardV1(Contract):
+    """The stored verdict: the submitted evaluation plus what Metis computed.
+
+    overall_score and recommendation are None when fewer than three questions
+    were answered — too little evidence to score, and no number is honest.
+    """
+
+    evaluation: InterviewEvaluationV1
+    overall_score: float | None = Field(default=None, ge=1.0, le=10.0)
+    recommendation: Literal["advance", "borderline", "do_not_advance"] | None = None
+    provisional: bool = False
+    created_at: datetime
+
+
+class InterviewSessionV1(Contract):
+    id: str
+    provider_conversation_id: str = Field(default="", max_length=200)
+    job_title: str
+    company_name: str
+    job_description: str
+    interview_type: Literal["hr_recruiter", "hiring_manager", "technical"]
+    question_limit: int = 5
+    status: Literal["active", "complete", "ended_early", "failed"]
+    turns: list[InterviewTurnV1] = Field(default_factory=list)
+    scorecard: InterviewScorecardV1 | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class InterviewSessionStartV1(Contract):
+    """The one response carrying the short-lived conversation credential.
+
+    A WebRTC conversation token minted server-side and returned once; the
+    ElevenLabs API key never leaves the trusted process. The dynamic
+    variables ride alongside because the SDK sends them at session start —
+    question_limit is fixed here, not accepted from the browser.
+    """
+
+    session: InterviewSessionV1
+    conversation_token: str = Field(default="", max_length=4_000)
+    dynamic_variables: dict[str, str] = Field(default_factory=dict)
+
+
+class InterviewSessionUpdateV1(Contract):
+    """The one field the browser learns after start: ElevenLabs' own id."""
+
+    provider_conversation_id: str = Field(min_length=1, max_length=200)
+
+
+class InterviewEndV1(Contract):
+    reason: Literal["completed", "ended_early", "failed"] = "ended_early"
+
+
+class InterviewAvailabilityV1(Contract):
+    """Whether an interview can start, and every missing piece when it cannot."""
+
+    available: bool = False
+    reason: str = Field(default="", max_length=400)
+    missing: list[str] = Field(default_factory=list, max_length=8)
+
+
 class VoiceUndoV1(Contract):
     """Reverse exactly the record one receipt created.
 
