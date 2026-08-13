@@ -258,8 +258,14 @@ class MeetingService:
         meeting = await self._require(meeting_id)
         if meeting["stage"] == "ready":
             return meeting
+        if meeting["stage"] == "failed":
+            resume = str(meeting.get("failed_stage") or "uploaded")
+            await self.database.advance_meeting(
+                meeting_id, resume, message=f"retrying {resume}"
+            )
+            meeting = await self._require(meeting_id)
         try:
-            if meeting["stage"] in ("uploaded", "isolating", "failed"):
+            if meeting["stage"] in ("uploaded", "isolating"):
                 meeting = await self._isolate(meeting)
             if meeting["stage"] == "transcribing":
                 meeting = await self._transcribe(meeting)

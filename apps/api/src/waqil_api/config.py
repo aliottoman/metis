@@ -190,7 +190,10 @@ class Settings(BaseSettings):
     # The interpreter the ingress runs under. Its own process, never a thread
     # of this one — a compromise of the internet-facing adapter must not land
     # inside the process holding the database and every credential.
-    voice_ingress_command: str = "python3"
+    # Empty means "the interpreter running Metis". Using a bare ``python3``
+    # here is unsafe on macOS: Finder and terminal launches can resolve it to a
+    # different Python where the ingress package is not installed.
+    voice_ingress_command: str = ""
     cloudflared_path: str = "cloudflared"
     voice_tunnel_name: str = "metis-voice"
     voice_tunnel_hostname: str = ""

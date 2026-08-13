@@ -1658,7 +1658,7 @@ export function ChatWorkspace() {
 
   return (
     <div
-      className={`chatWorkspace ${!hasMessages ? "isEmpty" : ""} ${morphReady ? "morphReady" : ""} ${recoverableRuns.length ? "hasBanner" : ""} ${timelineOpen ? "timelineVisible" : ""} ${timelineResizing ? "timelineResizing" : ""}`}
+      className={`chatWorkspace ${!hasMessages ? "isEmpty" : ""} ${voiceOpen ? "voiceMode" : ""} ${morphReady ? "morphReady" : ""} ${recoverableRuns.length ? "hasBanner" : ""} ${timelineOpen ? "timelineVisible" : ""} ${timelineResizing ? "timelineResizing" : ""}`}
       style={{ "--activity-width": `${timelineWidth}px` } as CSSProperties}
     >
       <section className="conversationPane">
@@ -1867,7 +1867,11 @@ export function ChatWorkspace() {
           }}
         >
           {dragActive ? <div className="dropOverlay"><span>＋</span><strong>Drop files or a folder</strong><small>Files become context · a folder can be indexed, opened as a project, or attached</small></div> : null}
-          {!hasMessages ? (
+          {voiceOpen ? (
+            <div className="voiceCanvas">
+              <VoicePanel onHandoff={handleVoiceHandoff} />
+            </div>
+          ) : !hasMessages ? (
             <div className="welcomeState">
               <MetisCompanion mood={companionMood} />
               <span className="eyebrow">Your private thinking partner</span>
@@ -2127,19 +2131,17 @@ export function ChatWorkspace() {
               <button className="errorDismiss" type="button" aria-label="Dismiss" onClick={dictation.dismissError}>×</button>
             </div>
           ) : null}
-          {/* Mounted only while open, so closing voice tears the session down
-              through the hook's own unmount path rather than leaving a tunnel
-              open behind a hidden panel. */}
-          {voiceOpen ? <VoicePanel onHandoff={handleVoiceHandoff} /> : null}
-          <form className="composer" onSubmit={(event) => void submit(event)}>
+          <form className={`composer ${voiceOpen ? "voiceTextComposer" : ""}`} onSubmit={(event) => void submit(event)}>
             {/* The companion perches on the composer's top-right corner —
                 astride the edge of the box you type into, not filed inside
                 it. Bead only: it carries its state in colour and tempo, and
                 a label would cost the first line of every message its width.
                 Keyed by mood so the settle-bob replays on each change. */}
-            <div className="companionPerch" data-mood={companionMood} title={companionLabel} aria-hidden="true" key={companionMood}>
-              <MetisCompanion mood={companionMood} size={38} />
-            </div>
+            {!voiceOpen ? (
+              <div className="companionPerch" data-mood={companionMood} title={companionLabel} aria-hidden="true" key={companionMood}>
+                <MetisCompanion mood={companionMood} size={38} />
+              </div>
+            ) : null}
             <textarea
               ref={textareaRef}
               rows={1}
@@ -2147,7 +2149,9 @@ export function ChatWorkspace() {
               onChange={(event) => onDraftChange(event.target.value)}
               onKeyDown={onComposerKeyDown}
               placeholder={
-                dictation.state === "recording"
+                voiceOpen
+                  ? "Type a message while voice mode is open…"
+                  : dictation.state === "recording"
                   ? "Listening…"
                   : dictation.state === "transcribing"
                     ? "Writing down what you said…"
@@ -2254,22 +2258,27 @@ export function ChatWorkspace() {
                       <path d="M8 2.4a1.7 1.7 0 0 1 1.7 1.7v3.6a1.7 1.7 0 1 1-3.4 0V4.1A1.7 1.7 0 0 1 8 2.4Z" />
                       <path d="M4.2 7.3a3.8 3.8 0 0 0 7.6 0M8 11.1v2.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
                     </svg>
-                    <span>{dictation.state === "recording" ? "Stop" : dictation.state === "transcribing" ? "Writing…" : "Speak"}</span>
+                    <span>{dictation.state === "recording" ? "Stop" : dictation.state === "transcribing" ? "Writing…" : "Dictate"}</span>
                   </button>
                 ) : null}
-                {/* Dictation writes; this talks. The panel opens above the
-                    composer rather than on a page of its own, so a refusal can
-                    drop what you said straight into the draft you are looking at. */}
-                <button
-                  className={`voiceToggle ${voiceOpen ? "selected" : ""}`}
-                  type="button"
-                  onClick={() => setVoiceOpen((open) => !open)}
-                  aria-pressed={voiceOpen}
-                  aria-label={voiceOpen ? "Close voice mode" : "Open voice mode"}
-                  title={voiceOpen ? "Close voice mode" : "Talk to Metis"}
-                >
-                  {voiceOpen ? "Close voice" : "Voice"}
-                </button>
+                <div className="conversationModeSwitch" role="group" aria-label="Conversation mode">
+                  <button
+                    type="button"
+                    className={!voiceOpen ? "selected" : ""}
+                    onClick={() => setVoiceOpen(false)}
+                    aria-pressed={!voiceOpen}
+                  >
+                    <span aria-hidden="true">⌨</span> Chat
+                  </button>
+                  <button
+                    type="button"
+                    className={voiceOpen ? "selected" : ""}
+                    onClick={() => setVoiceOpen(true)}
+                    aria-pressed={voiceOpen}
+                  >
+                    <span className="modeVoiceDot" aria-hidden="true" /> Voice
+                  </button>
+                </div>
                 <input ref={fileInputRef} type="file" multiple hidden accept={CHAT_ATTACHMENT_ACCEPT} onChange={(event) => event.target.files && void addFiles(event.target.files)} />
                 <div className="knowledgeScopeSwitch" role="group" aria-label="Answer sources">
                   <span>Sources</span>

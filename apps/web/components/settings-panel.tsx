@@ -7,11 +7,12 @@ import {
   getHealth,
   getModelPreference,
   getSpeechPreference,
+  getVoiceAvailability,
   setModelPreference,
   setSpeechPreference,
 } from "@/lib/api";
 import { clinePassReady } from "@/lib/model-route";
-import type { HealthSnapshot, ModelPreference, SpeechPreference } from "@/lib/types";
+import type { HealthSnapshot, ModelPreference, SpeechPreference, VoiceAvailability } from "@/lib/types";
 import { MetisCompanion } from "@/components/metis-companion";
 import { SelectMenu } from "@/components/select-menu";
 import {
@@ -36,6 +37,7 @@ export function SettingsPanel() {
   const [speech, setSpeech] = useState<SpeechPreference | null>(null);
   const [savingSpeech, setSavingSpeech] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const [voiceAvailability, setVoiceAvailability] = useState<VoiceAvailability | null>(null);
 
   // The installed local lineup, straight from the runtime — a hardcoded list
   // here went stale the first time the lineup changed, and stayed stale.
@@ -103,6 +105,28 @@ export function SettingsPanel() {
     }
   }
 
+  async function saveVoiceSettings(options: {
+    model?: string;
+    spokenConfirmation?: boolean;
+  }) {
+    if (!speech) return;
+    setSavingSpeech(true);
+    setSpeechError(null);
+    try {
+      setSpeech(
+        await setSpeechPreference(
+          speech.stt_provider,
+          options.spokenConfirmation ?? speech.spoken_confirmation,
+          options.model,
+        ),
+      );
+    } catch (saveError) {
+      setSpeechError(saveError instanceof Error ? saveError.message : "Could not change voice settings.");
+    } finally {
+      setSavingSpeech(false);
+    }
+  }
+
   async function toggleOciTool(tool: "x_search" | "code_interpreter") {
     const selected = ociTools.includes(tool)
       ? ociTools.filter((item) => item !== tool)
@@ -129,6 +153,7 @@ export function SettingsPanel() {
     void refresh();
     void loadPreference();
     void loadSpeech();
+    void getVoiceAvailability().then(setVoiceAvailability).catch(() => setVoiceAvailability(null));
     const timer = window.setInterval(() => void refresh(), 15_000);
     return () => window.clearInterval(timer);
   }, [refresh, loadPreference, loadSpeech]);
@@ -256,6 +281,41 @@ export function SettingsPanel() {
         </div>
         <p className="sectionLede">Dictation is the only thing this choice governs. The transcript arrives as draft text in your composer, and sending it is still your decision.</p>
         {speechError ? <span className="mutedMeta" role="alert">{speechError}</span> : null}
+      </section>
+
+      <section className="settingsSection">
+        <div className="sectionTitle">
+          <div>
+            <h2>Interactive voice</h2>
+            <p>ElevenLabs handles live audio and turn-taking; Metis remains the brain and controls every read and write.</p>
+          </div>
+          <span className="sectionBadge">{voiceAvailability?.available ? "Ready" : "Setup needed"}</span>
+        </div>
+        {!voiceAvailability?.available ? (
+          <ol className="voiceSetupList">
+            {(voiceAvailability?.missing ?? []).map((reason) => <li key={reason}>{reason}</li>)}
+          </ol>
+        ) : null}
+        <div className="cardActions">
+          <SelectMenu
+            className="settingsModelSelect"
+            hideLabel
+            label="Voice reasoning model"
+            value={speech?.voice_model ?? ""}
+            onChange={(model) => void saveVoiceSettings({ model })}
+            disabled={savingSpeech || !speech?.voice_models.length}
+            options={(speech?.voice_models ?? []).map((model) => ({ value: model, label: model }))}
+          />
+          <label className="voiceConfirmationChoice">
+            <input
+              type="checkbox"
+              checked={speech?.spoken_confirmation ?? false}
+              onChange={(event) => void saveVoiceSettings({ spokenConfirmation: event.target.checked })}
+              disabled={savingSpeech || !speech}
+            />
+            <span><strong>Read back before writing</strong><small>Safer, but uses more speech credits.</small></span>
+          </label>
+        </div>
       </section>
 
       <section className="settingsSection">

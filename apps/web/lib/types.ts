@@ -560,6 +560,7 @@ export interface VoiceAvailability {
   /** The URL to paste into the ElevenLabs agent's Custom LLM field. */
   custom_llm_url: string;
   public_model_alias: string;
+  missing: string[];
 }
 
 export interface VoiceCitation {

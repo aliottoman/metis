@@ -2391,6 +2391,9 @@ class VoiceAvailabilityV1(Contract):
     # not answer, and the value is a public hostname, not a secret.
     custom_llm_url: str = Field(default="", max_length=400)
     public_model_alias: str = Field(default="", max_length=120)
+    # All unmet prerequisites, in setup order. ``reason`` remains for older
+    # clients and is the first item in this list.
+    missing: list[str] = Field(default_factory=list, max_length=12)
 
 
 class VoiceTurnRequestV1(Contract):
@@ -2402,6 +2405,9 @@ class VoiceTurnRequestV1(Contract):
     """
 
     provider_conversation_id: str = Field(default="", max_length=120)
+    # The browser puts this into ElevenLabs' custom-LLM extra body. It binds a
+    # provider call to the exact tab that opened it instead of guessing by age.
+    metis_session_id: str = Field(default="", max_length=120)
     transcript: str = Field(min_length=1, max_length=8_000)
     history: list[str] = Field(default_factory=list, max_length=12)
 

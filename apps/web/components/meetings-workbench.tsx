@@ -53,6 +53,33 @@ function clock(seconds: number | null | undefined): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
+function meetingDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "Recently"
+    : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
+
+function fileSize(bytes: number): string {
+  if (bytes < 1024 ** 2) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 ** 2).toFixed(bytes < 10 * 1024 ** 2 ? 1 : 0)} MB`;
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "S";
+}
+
+const PROPOSAL_LABEL: Record<MeetingProposal["kind"], string> = {
+  account_link: "Account match",
+  action: "Action item",
+  decision: "Decision",
+};
+
 export function MeetingsWorkbench() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -163,26 +190,36 @@ export function MeetingsWorkbench() {
   }
 
   const open = detail?.proposals.filter((item) => item.status === "proposed") ?? [];
+  const readyCount = meetings.filter((meeting) => meeting.stage === "ready").length;
+  const totalSeconds = meetings.reduce((sum, meeting) => sum + (meeting.duration_seconds ?? 0), 0);
+  const totalHours = totalSeconds >= 3600
+    ? `${(totalSeconds / 3600).toFixed(totalSeconds >= 36_000 ? 0 : 1)}h`
+    : clock(totalSeconds);
 
   return (
     <div className="workspacePage meetingsPage">
-      <header className="pageHeader">
-        <div>
-          <span className="eyebrow">Recordings</span>
-          <h1>Meetings</h1>
-          <p>
-            Drop a recording in. Metis transcribes it with speakers and word timings,
-            then suggests what it might mean — nothing is filed until you say so.
-          </p>
+      <header className="pageHeader meetingHero">
+        <div className="meetingHeroCopy">
+          <span className="eyebrow">Conversation intelligence</span>
+          <h1>Every meeting,<br /><em>made useful.</em></h1>
+          <p>Metis turns recordings into a navigable transcript, named speakers, and evidence-linked actions. You decide what becomes part of the record.</p>
         </div>
-        <button
-          className="primaryButton"
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-        >
-          {uploading ? "Uploading…" : "Add a recording"}
-        </button>
+        <div className="meetingHeroAside">
+          <div className="meetingHeroOrb" aria-hidden="true"><i /><i /><i /></div>
+          <button
+            className="primaryButton"
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading}
+          >
+            <span aria-hidden="true">＋</span>{uploading ? "Uploading…" : "Add recording"}
+          </button>
+        </div>
+        <div className="meetingHeroStats" aria-label="Meeting library summary">
+          <span><strong>{meetings.length}</strong><small>recordings</small></span>
+          <span><strong>{readyCount}</strong><small>ready to review</small></span>
+          <span><strong>{totalHours}</strong><small>captured</small></span>
+        </div>
       </header>
 
       {error ? (
@@ -201,7 +238,7 @@ export function MeetingsWorkbench() {
         onChange={(event) => void upload(event.target.files)}
       />
 
-      <div className="meetingsLayout">
+      <div className="meetingsLayout meetingStudio">
         <aside
           className={`meetingsList ${dragging ? "isDragging" : ""}`}
           onDragOver={(event) => {
@@ -215,35 +252,64 @@ export function MeetingsWorkbench() {
             void upload(event.dataTransfer.files);
           }}
         >
-          {meetings.length ? (
-            meetings.map((meeting) => (
-              <button
-                key={meeting.id}
-                type="button"
-                className={`meetingRow ${selected === meeting.id ? "selected" : ""}`}
-                onClick={() => setSelected(meeting.id)}
-              >
-                <strong>{meeting.title || meeting.audio_filename}</strong>
-                <span className={`meetingStage is-${meeting.stage}`}>
-                  {STAGE_LABEL[meeting.stage]}
-                  {meeting.duration_seconds ? ` · ${clock(meeting.duration_seconds)}` : ""}
-                </span>
+          <div className="meetingLibraryHead">
+            <div><span className="eyebrow">Library</span><strong>{meetings.length} recording{meetings.length === 1 ? "" : "s"}</strong></div>
+            <button type="button" onClick={() => fileRef.current?.click()} aria-label="Add a recording">＋</button>
+          </div>
+          <div className="meetingLibraryRows">
+            {meetings.length ? (
+              meetings.map((meeting, meetingIndex) => (
+                <button
+                  key={meeting.id}
+                  type="button"
+                  className={`meetingRow ${selected === meeting.id ? "selected" : ""}`}
+                  onClick={() => setSelected(meeting.id)}
+                >
+                  <span className={`meetingRowGlyph tone-${meetingIndex % 4}`} aria-hidden="true">
+                    {[3, 7, 11, 6, 13, 9, 4].map((height, index) => <i key={index} style={{ height }} />)}
+                  </span>
+                  <span className="meetingRowCopy">
+                    <strong>{meeting.title || meeting.audio_filename}</strong>
+                    <small>{meetingDate(meeting.created_at)} · {fileSize(meeting.audio_bytes)}</small>
+                  </span>
+                  <span className={`meetingStage is-${meeting.stage}`}>
+                    {meeting.stage === "ready" ? clock(meeting.duration_seconds) : STAGE_LABEL[meeting.stage]}
+                  </span>
+                </button>
+              ))
+            ) : (
+              <button className="meetingDropEmpty" type="button" onClick={() => fileRef.current?.click()}>
+                <span aria-hidden="true">↥</span>
+                <strong>Drop a recording</strong>
+                <small>Audio or video · Metis handles the rest</small>
               </button>
-            ))
-          ) : (
-            <p className="mutedMeta">Drop a recording here, or use the button above.</p>
-          )}
+            )}
+          </div>
+          {meetings.length ? <p className="meetingDropHint">Drop audio anywhere in this column to add it.</p> : null}
         </aside>
 
         <section className="meetingDetail">
           {!detail ? (
-            <p className="mutedMeta">Select a recording.</p>
+            <div className="meetingDetailEmpty">
+              <span aria-hidden="true">◌</span>
+              <strong>Select a recording</strong>
+              <p>Audio, insights, and the full transcript will appear here.</p>
+            </div>
           ) : (
             <>
               <div className="meetingHead">
-                <h2>{detail.meeting.title || detail.meeting.audio_filename}</h2>
-                <span className={`meetingStage is-${detail.meeting.stage}`}>
-                  {STAGE_LABEL[detail.meeting.stage]}
+                <div className="meetingTitleBlock">
+                  <span className="eyebrow">Now reviewing</span>
+                  <h2>{detail.meeting.title || detail.meeting.audio_filename}</h2>
+                  <p>
+                    {meetingDate(detail.meeting.created_at)}
+                    {detail.meeting.duration_seconds ? ` · ${clock(detail.meeting.duration_seconds)}` : ""}
+                    {detail.meeting.language ? ` · ${detail.meeting.language.toUpperCase()}` : ""}
+                    {` · ${detail.speakers.length} speaker${detail.speakers.length === 1 ? "" : "s"}`}
+                  </p>
+                </div>
+                <span className={`meetingStage meetingStagePill is-${detail.meeting.stage}`}>
+                  <i aria-hidden="true" />{STAGE_LABEL[detail.meeting.stage]}
                 </span>
                 {detail.meeting.stage === "failed" ? (
                   <button
@@ -256,8 +322,6 @@ export function MeetingsWorkbench() {
                 ) : null}
               </div>
 
-              {/* Every stage it passed through, so a slow import is legible
-                  rather than a spinner with nothing behind it. */}
               {detail.meeting.stage !== "ready" ? (
                 <ol className="meetingProgress">
                   {detail.events.map((event, index) => (
@@ -273,108 +337,113 @@ export function MeetingsWorkbench() {
                 <p className="mutedMeta" role="alert">{detail.meeting.error}</p>
               ) : null}
 
-              <audio
-                ref={playerRef}
-                className="meetingPlayer"
-                controls
-                preload="metadata"
-                src={meetingAudioUrl(detail.meeting.id)}
-                onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
-              />
+              <div className="meetingPlayerDock">
+                <span className="meetingPlayGlyph" aria-hidden="true">▶</span>
+                <div className="meetingWave" aria-hidden="true">
+                  {[8, 14, 22, 13, 27, 18, 31, 17, 24, 11, 29, 20, 12, 25, 16, 30, 19, 9, 21, 13, 27, 16, 8].map((height, index) => (
+                    <i key={index} style={{ height }} />
+                  ))}
+                </div>
+                <audio
+                  ref={playerRef}
+                  className="meetingPlayer"
+                  controls
+                  preload="metadata"
+                  src={meetingAudioUrl(detail.meeting.id)}
+                  onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
+                />
+              </div>
 
               {open.length ? (
-                <ul className="meetingProposals">
-                  {open.map((proposal) => (
-                    <li key={proposal.id}>
-                      <span className="meetingProposalKind">{proposal.kind.replace("_", " ")}</span>
-                      <p>
-                        {proposal.payload.account_name ??
-                          proposal.payload.description ??
-                          proposal.payload.summary}
-                      </p>
-                      {proposal.evidence_start !== null ? (
-                        <button className="textButton" type="button" onClick={() => seek(proposal.evidence_start)}>
-                          Hear it ({clock(proposal.evidence_start)})
-                        </button>
-                      ) : null}
-                      <button className="textButton" type="button" onClick={() => void decide(proposal, "accepted")}>Accept</button>
-                      <button className="textButton" type="button" onClick={() => void decide(proposal, "rejected")}>Dismiss</button>
-                    </li>
-                  ))}
-                </ul>
+                <section className="meetingInsights">
+                  <header><div><span className="eyebrow">Metis noticed</span><h3>{open.length} item{open.length === 1 ? "" : "s"} worth reviewing</h3></div><small>Nothing is filed automatically</small></header>
+                  <ul className="meetingProposals">
+                    {open.map((proposal) => (
+                      <li key={proposal.id} className={`is-${proposal.kind}`}>
+                        <span className="meetingProposalIcon" aria-hidden="true">
+                          {proposal.kind === "action" ? "↗" : proposal.kind === "decision" ? "◆" : "◎"}
+                        </span>
+                        <div>
+                          <span className="meetingProposalKind">{PROPOSAL_LABEL[proposal.kind]}</span>
+                          <p>{proposal.payload.account_name ?? proposal.payload.description ?? proposal.payload.summary}</p>
+                          {proposal.evidence_start !== null ? (
+                            <button className="meetingEvidence" type="button" onClick={() => seek(proposal.evidence_start)}>
+                              <span aria-hidden="true">▶</span> Hear the evidence · {clock(proposal.evidence_start)}
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="meetingProposalActions">
+                          <button className="proposalAccept" type="button" onClick={() => void decide(proposal, "accepted")}>Accept</button>
+                          <button className="proposalDismiss" type="button" onClick={() => void decide(proposal, "rejected")} aria-label="Dismiss proposal">×</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ) : null}
 
-              <ol className="meetingTranscript">
-                {detail.turns.map((turn) => (
-                  <li key={turn.id} className={turn.corrected_at ? "isCorrected" : ""}>
-                    <div className="meetingTurnHead">
-                      <input
-                        className="meetingSpeaker"
-                        list="meeting-speaker-names"
-                        defaultValue={speakerNames.get(turn.speaker_id) || turn.speaker_id}
-                        aria-label={`Name for ${turn.speaker_id}`}
-                        onBlur={(event) => {
-                          const value = event.target.value.trim();
-                          if (!selected || !value || value === speakerNames.get(turn.speaker_id)) return;
-                          void nameMeetingSpeaker(selected, turn.speaker_id, value).then(setDetail);
-                        }}
-                      />
-                      <button className="textButton" type="button" onClick={() => seek(turn.start_seconds)}>
-                        {clock(turn.start_seconds)}
-                      </button>
-                    </div>
-                    {editing === turn.id ? (
-                      <textarea
-                        className="meetingEditor"
-                        autoFocus
-                        value={draft}
-                        onChange={(event) => setDraft(event.target.value)}
-                        onBlur={() => void saveCorrection(turn)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" && !event.shiftKey) {
-                            event.preventDefault();
-                            void saveCorrection(turn);
-                          }
-                          if (event.key === "Escape") setEditing(null);
-                        }}
-                      />
-                    ) : (
-                      <p
-                        className="meetingTurnText"
-                        onDoubleClick={() => {
-                          setEditing(turn.id);
-                          setDraft(turn.text);
-                        }}
-                        title="Double-click to correct"
-                      >
-                        {turn.words.length ? (
-                          turn.words.map((word, index) => (
-                            <span
-                              key={`${turn.id}-${index}`}
-                              className={
-                                word.start !== null &&
-                                word.end !== null &&
-                                position >= word.start &&
-                                position <= word.end
-                                  ? "isSpoken"
-                                  : ""
-                              }
-                              onClick={() => seek(word.start)}
+              <section className="meetingTranscriptSection">
+                <header>
+                  <div><span className="eyebrow">Transcript</span><h3>The conversation</h3></div>
+                  <small>Click a word to hear it · double-click text to correct</small>
+                </header>
+                <ol className="meetingTranscript">
+                  {detail.turns.map((turn) => {
+                    const speakerName = speakerNames.get(turn.speaker_id) || turn.speaker_id;
+                    return (
+                      <li key={turn.id} className={`${turn.corrected_at ? "isCorrected " : ""}speakerTone-${turn.ordinal % 4}`}>
+                        <span className="meetingSpeakerAvatar" aria-hidden="true">{initials(speakerName)}</span>
+                        <div className="meetingTurnBody">
+                          <div className="meetingTurnHead">
+                            <input
+                              className="meetingSpeaker"
+                              list="meeting-speaker-names"
+                              defaultValue={speakerName}
+                              aria-label={`Name for ${turn.speaker_id}`}
+                              onBlur={(event) => {
+                                const value = event.target.value.trim();
+                                if (!selected || !value || value === speakerNames.get(turn.speaker_id)) return;
+                                void nameMeetingSpeaker(selected, turn.speaker_id, value).then(setDetail);
+                              }}
+                            />
+                            <button className="meetingTimestamp" type="button" onClick={() => seek(turn.start_seconds)}>
+                              {clock(turn.start_seconds)}
+                            </button>
+                          </div>
+                          {editing === turn.id ? (
+                            <textarea
+                              className="meetingEditor"
+                              autoFocus
+                              value={draft}
+                              onChange={(event) => setDraft(event.target.value)}
+                              onBlur={() => void saveCorrection(turn)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void saveCorrection(turn); }
+                                if (event.key === "Escape") setEditing(null);
+                              }}
+                            />
+                          ) : (
+                            <p
+                              className="meetingTurnText"
+                              onDoubleClick={() => { setEditing(turn.id); setDraft(turn.text); }}
+                              title="Double-click to correct"
                             >
-                              {word.text}{" "}
-                            </span>
-                          ))
-                        ) : (
-                          turn.text
-                        )}
-                      </p>
-                    )}
-                    {turn.corrected_at ? (
-                      <span className="mutedMeta">Corrected · originally “{turn.original_text}”</span>
-                    ) : null}
-                  </li>
-                ))}
-              </ol>
+                              {turn.words.length ? turn.words.map((word, index) => (
+                                <span
+                                  key={`${turn.id}-${index}`}
+                                  className={word.start !== null && word.end !== null && position >= word.start && position <= word.end ? "isSpoken" : ""}
+                                  onClick={() => seek(word.start)}
+                                >{word.text}{" "}</span>
+                              )) : turn.text}
+                            </p>
+                          )}
+                          {turn.corrected_at ? <span className="mutedMeta">Corrected · originally “{turn.original_text}”</span> : null}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
 
               <datalist id="meeting-speaker-names">
                 {detail.suggested_names.map((name) => (

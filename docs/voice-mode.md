@@ -30,7 +30,29 @@ same — shutdown ends every session before the loop goes away.
 
 ## One-time setup
 
-### 1. The ElevenLabs agent
+### The three parts, briefly
+
+- **ElevenLabs Agent:** the live audio layer. It listens, detects turns and
+  interruptions, and speaks Metis's answer. It does not retrieve records or
+  decide what may be written.
+- **Custom LLM:** the Agent's connection to the Metis brain. ElevenLabs sends
+  finalized words to this OpenAI-compatible endpoint; Metis retrieves,
+  reasons, applies policy, and returns only the short text to speak.
+- **Cloudflare Tunnel:** the temporary, outbound bridge that lets ElevenLabs
+  reach the isolated Custom LLM endpoint. It carries finalized transcript and
+  answer text, not microphone audio. It never exposes Metis port 8000 and runs
+  while Voice is briefly pre-warmed or a session has a live browser lease.
+
+Create the tunnel first, because its hostname is required when configuring the
+ElevenLabs Agent. Then create the Agent and paste its id into Metis.
+
+### 1. The named tunnel
+
+Install `cloudflared`, authorize it once, create the named tunnel and route a
+hostname as described below. Set `WAQIL_VOICE_TUNNEL_NAME` and
+`WAQIL_VOICE_TUNNEL_HOSTNAME` before creating the Agent.
+
+### 2. The ElevenLabs agent
 
 Create it in the ElevenLabs console. Metis never creates external resources on
 your behalf; it validates and consumes what you configure.
@@ -51,9 +73,11 @@ effects **off**. Metis is the only component that retrieves anything.
 `GET /api/v1/voice` prints the Custom LLM URL and the alias back to you, so
 you can copy them rather than reconstruct them.
 
-Set `WAQIL_ELEVENLABS_AGENT_ID` to the agent's id.
+Use ElevenLabs → **Agents** → **New agent**. Open the saved agent and copy its
+Agent ID from its details menu or from the `agent_...` value in the page URL.
+Set `WAQIL_ELEVENLABS_AGENT_ID` to that value. The agent must be published.
 
-### 2. The named tunnel
+### 3. Cloudflare commands
 
 ```bash
 cloudflared tunnel login
@@ -77,7 +101,7 @@ WAQIL_VOICE_TUNNEL_AUTHORIZED=true
 
 Until it is set, voice refuses to start and says exactly this.
 
-### 3. Cloudflare Access
+### 4. Cloudflare Access
 
 Protect the Custom LLM route with a service-token policy:
 
@@ -89,10 +113,11 @@ be excluded from Access. ElevenLabs signs it with HMAC rather than presenting
 a service token, and the ingress verifies that signature over the raw body
 before parsing. Add an egress-IP allowlist there too where available.
 
-### 4. Secrets
+### 5. Secrets
 
 `WAQIL_VOICE_SHARED_SECRET` is the bearer the ingress checks. Leave it empty
-and Metis mints one into `.data/voice-secret` (mode 0600) on first use — the
+and Metis mints one into `.data/voice-secret` (mode 0600) during startup, so it
+already exists when you configure the ElevenLabs Custom LLM API key. The
 alternative was a default, and a default here is an open door.
 
 To rotate: set a new value (32+ characters), restart Metis, update the agent's
@@ -107,13 +132,17 @@ payload is not evidence, it is input from the internet.
 
 ```
 Metis API :8000            always running
-  ├─ voice ingress :8788   started on the first session, stopped when the last one ends
+  ├─ voice ingress :8788   pre-warmed on entry to Voice; kept for a live session
   └─ cloudflared           same lifecycle
 ```
 
-Both are child processes of the API and both stop when no live lease remains.
-Two windows can each hold a session; closing one does not take the connector
-out from under the other.
+Both are child processes of the API. Entering Voice prepares them and a
+single-use ElevenLabs conversation token for at most two minutes so Start does
+not have to wait on tunnel and token setup. Pre-warming does not open an audio
+connection or start a billed voice conversation. If Start is not pressed,
+both processes stop after the window expires. Once a call begins, they remain
+while a live lease exists. Two windows can each hold a session; closing one
+does not take the connector out from under the other.
 
 The Mac app inherits this: `open` starts the API, ⌘Q stops it, and shutdown
 ends every voice session before the loop closes.
@@ -142,9 +171,11 @@ a forgotten open tab cannot bill all afternoon.
 
 ## What leaves the machine
 
-**To ElevenLabs:** your microphone audio, and the short spoken rendition of
-each answer. Not the written answer, not its citations, not any record id —
-the tunnel carries speech, and the browser gets everything else over loopback.
+**To ElevenLabs:** your microphone audio, sent directly from the browser over
+WebRTC, and the short spoken rendition of each answer. Not the written answer,
+not its citations, not any record id. The Cloudflare tunnel carries finalized
+transcript and answer text between the ElevenLabs Agent and Metis; the browser
+gets the full written result over loopback.
 
 **To the voice model** (`WAQIL_VOICE_MODEL`, a hosted Ollama model by default):
 the question, the bounded conversation history, and the evidence retrieved to

@@ -285,7 +285,9 @@ async def test_a_failed_stage_keeps_the_blob_and_resumes_rather_than_restarts(
 ) -> None:
     """The requirement the whole schema is shaped around."""
     speech = FakeSpeech(fail_transcription=True)
-    service, database, blobs, accounts = await _service(tmp_path, speech=speech)
+    service, database, blobs, accounts = await _service(
+        tmp_path, speech=speech, meeting_audio_isolation=True
+    )
     try:
         meeting = await _uploaded(service, database, blobs)
         digest = meeting["audio_sha256"]
@@ -307,6 +309,7 @@ async def test_a_failed_stage_keeps_the_blob_and_resumes_rather_than_restarts(
             [p for p in blobs.root.rglob("*") if p.is_file() or p.is_dir()]
         )
         assert speech.transcriptions == 2
+        assert speech.isolations == 1, "retry resumes at transcription"
     finally:
         await database.close()
 

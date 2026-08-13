@@ -1281,6 +1281,15 @@ CREATE INDEX IF NOT EXISTS idx_meeting_events_meeting
     ON meeting_events(meeting_id, id);
 """
 
+SCHEMA_V29 = """
+-- A failure must not erase the checkpoint it failed at. ``stage`` remains
+-- ``failed`` for the UI, while this column tells Retry where to resume.
+ALTER TABLE meetings ADD COLUMN failed_stage TEXT
+    CHECK(failed_stage IS NULL OR failed_stage IN (
+        'uploaded','isolating','transcribing','analyzing'
+    ));
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -1310,6 +1319,7 @@ MIGRATIONS: dict[int, str] = {
     26: SCHEMA_V26,
     27: SCHEMA_V27,
     28: SCHEMA_V28,
+    29: SCHEMA_V29,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -1706,7 +1716,7 @@ class Database:
         def operation() -> None:
             with self._transaction() as conn:
                 conn.execute(
-                    "UPDATE meetings SET stage = ?, error = '', updated_at = ?, "
+                    "UPDATE meetings SET stage = ?, failed_stage = NULL, error = '', updated_at = ?, "
                     "attempts = CASE WHEN ? = 'ready' THEN attempts ELSE attempts END "
                     "WHERE id = ?",
                     (stage, timestamp, stage, meeting_id),
@@ -1725,7 +1735,9 @@ class Database:
         def operation() -> None:
             with self._transaction() as conn:
                 conn.execute(
-                    "UPDATE meetings SET stage = 'failed', error = ?, "
+                    "UPDATE meetings SET failed_stage = CASE "
+                    "WHEN stage = 'failed' THEN failed_stage ELSE stage END, "
+                    "stage = 'failed', error = ?, "
                     "attempts = attempts + 1, updated_at = ? WHERE id = ?",
                     (error, timestamp, meeting_id),
                 )

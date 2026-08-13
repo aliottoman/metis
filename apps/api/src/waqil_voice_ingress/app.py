@@ -81,16 +81,19 @@ class RateLimiter:
         self._seen: dict[str, deque[float]] = {}
 
     def allow(self, key: str, *, now: float) -> bool:
+        # Retire inactive buckets globally, not only the bucket making this
+        # request. Otherwise forged conversation ids accumulate forever.
+        for stale_key, stale_window in list(self._seen.items()):
+            while stale_window and now - stale_window[0] > 60.0:
+                stale_window.popleft()
+            if not stale_window:
+                self._seen.pop(stale_key, None)
         window = self._seen.setdefault(key, deque())
         while window and now - window[0] > 60.0:
             window.popleft()
         if len(window) >= self.per_minute:
             return False
         window.append(now)
-        # Bounded memory: a session that stops calling stops being remembered.
-        if len(self._seen) > 256:
-            for stale in [k for k, v in self._seen.items() if not v]:
-                self._seen.pop(stale, None)
         return True
 
 
@@ -111,6 +114,9 @@ class Seen:
         if len(self._order) > self._limit:
             self._keys.discard(self._order.popleft())
         return True
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._keys
 
 
 def _unauthorized() -> JSONResponse:
@@ -186,6 +192,7 @@ def create_app(config: IngressConfig) -> FastAPI:
             return JSONResponse({"error": "unsupported tool"}, status_code=422)
 
         session = _session_key(request, payload)
+        metis_session = _metis_session(payload)
         if not app.state.limiter.allow(session, now=time.monotonic()):
             return JSONResponse({"error": "too many requests"}, status_code=429)
 
@@ -193,7 +200,9 @@ def create_app(config: IngressConfig) -> FastAPI:
         if not transcript:
             return JSONResponse({"error": "no utterance"}, status_code=422)
 
-        spoken = await _ask_metis(app, config, session, transcript, history)
+        spoken = await _ask_metis(
+            app, config, session, metis_session, transcript, history
+        )
         return StreamingResponse(_sse(spoken, alias), media_type="text/event-stream")
 
     @app.post("/v1/elevenlabs/post-call")
@@ -216,16 +225,15 @@ def create_app(config: IngressConfig) -> FastAPI:
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         conversation = str(data.get("conversation_id") or "").strip()
         event_type = str(payload.get("type") or "post_call").strip()
-        if not app.state.seen.add(f"{conversation}:{event_type}"):
-            # Idempotent: ElevenLabs retries, and a retry must not create a
-            # second ingestion job for the same conversation.
+        seen_key = f"{conversation}:{event_type}"
+        if seen_key in app.state.seen:
             return {"status": "duplicate"}
 
         client: httpx.AsyncClient | None = app.state.client
         if client is None:
             return JSONResponse({"error": "unavailable"}, status_code=503)
         try:
-            await client.post(
+            response = await client.post(
                 "/api/v1/voice/post-call",
                 json={
                     "event_type": event_type,
@@ -236,11 +244,12 @@ def create_app(config: IngressConfig) -> FastAPI:
                 headers={"authorization": f"Bearer {config.shared_secret}"},
             )
         except httpx.HTTPError:
-            # Accepted and dropped rather than failed: the durable work is
-            # :8000's, and a webhook that 500s is a webhook ElevenLabs retries
-            # forever. The signature was valid; the record is recoverable from
-            # the provider if this one is lost.
-            return {"status": "deferred"}
+            # A non-2xx asks ElevenLabs to retry. Acknowledging before the
+            # trusted process has stored the evidence silently loses calls.
+            return JSONResponse({"error": "storage unavailable"}, status_code=503)
+        if response.status_code >= 400:
+            return JSONResponse({"error": "storage unavailable"}, status_code=503)
+        app.state.seen.add(seen_key)
         return {"status": "accepted"}
 
     return app
@@ -305,6 +314,15 @@ def _session_key(request: Request, payload: dict[str, Any]) -> str:
     return user[:120] if user else "anonymous"
 
 
+def _metis_session(payload: dict[str, Any]) -> str:
+    """The tab identity supplied as Custom LLM extra body, never authority."""
+    extra = payload.get("elevenlabs_extra_body")
+    if not isinstance(extra, dict):
+        return ""
+    value = str(extra.get("metis_session_id") or "").strip()
+    return value[:120] if value.startswith("vs_") else ""
+
+
 def _conversation(payload: dict[str, Any]) -> tuple[str, list[str]]:
     """The latest utterance and bounded prior turns — never a system message.
 
@@ -363,6 +381,7 @@ async def _ask_metis(
     app: FastAPI,
     config: IngressConfig,
     session: str,
+    metis_session: str,
     transcript: str,
     history: list[str],
 ) -> str:
@@ -381,6 +400,7 @@ async def _ask_metis(
                 "/api/v1/voice/turn",
                 json={
                     "provider_conversation_id": session,
+                    "metis_session_id": metis_session,
                     "transcript": transcript,
                     "history": history,
                 },

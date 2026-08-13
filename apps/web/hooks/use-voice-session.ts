@@ -57,31 +57,60 @@ export function useVoiceSession(options: {
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [leaseSeconds, setLeaseSeconds] = useState(0);
+  const [liveTranscript, setLiveTranscript] = useState("");
 
   const sessionRef = useRef<string | null>(null);
   const leaseTimerRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
   const streamRef = useRef<EventSource | null>(null);
   const startedAtRef = useRef<number>(0);
+  const connectedOnceRef = useRef(false);
+  const teardownRef = useRef<(nextState?: VoiceState) => void>(() => undefined);
   const onHandoffRef = useRef(options.onHandoff);
   onHandoffRef.current = options.onHandoff;
 
   const conversation = useConversation({
-    onConnect: () => setState("listening"),
-    onDisconnect: () => setState((current) => (current === "failed" ? current : "idle")),
+    onConnect: () => {
+      connectedOnceRef.current = true;
+      setState("listening");
+    },
+    onDisconnect: () => {
+      if (!sessionRef.current) {
+        setState((current) => (current === "failed" ? current : "idle"));
+        return;
+      }
+      setError("The live voice connection ended. Try reconnecting.");
+      teardownRef.current("failed");
+    },
     onError: (message: string) => {
       setError(message || "The voice connection failed.");
-      setState("failed");
+      teardownRef.current("failed");
     },
-    onModeChange: ({ mode }: { mode: "speaking" | "listening" }) =>
+    onModeChange: ({ mode }: { mode: "speaking" | "listening" }) => {
+      if (mode === "speaking") setLiveTranscript("");
       setState((current) =>
         current === "failed" || current === "idle" ? current : mode === "speaking" ? "speaking" : "listening",
-      ),
+      );
+    },
+    onMessage: ({ message, role }: { message: string; role: "user" | "agent" }) => {
+      if (role === "user") {
+        setLiveTranscript(message);
+        setState("thinking");
+      }
+    },
     onStatusChange: ({ status }: { status: string }) => {
-      if (status === "connecting") setState("connecting");
+      if (status === "connecting") {
+        setState(connectedOnceRef.current ? "reconnecting" : "connecting");
+      }
       if (status === "disconnected") setState((current) => (current === "failed" ? current : "idle"));
     },
   });
+  // The SDK hook may return a fresh facade while its connection state changes.
+  // Teardown must always use the latest facade, but it must not itself change
+  // identity when that facade does — otherwise React runs the previous effect
+  // cleanup during connect and immediately ends the session we just opened.
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
 
   /** Everything that must stop, in the order it must stop in. */
   const teardown = useCallback(
@@ -94,19 +123,22 @@ export function useVoiceSession(options: {
       streamRef.current = null;
       const id = sessionRef.current;
       sessionRef.current = null;
+      connectedOnceRef.current = false;
       try {
-        conversation.endSession();
+        conversationRef.current.endSession();
       } catch {
         // Already gone. The server lease is what actually closes the tunnel.
       }
       if (id) void endVoiceSession(id).catch(() => undefined);
       setState(nextState);
       setLeaseSeconds(0);
+      setLiveTranscript("");
     },
-    [conversation],
+    [],
   );
 
   const stop = useCallback(() => teardown("idle"), [teardown]);
+  teardownRef.current = teardown;
 
   const start = useCallback(async () => {
     if (sessionRef.current) return;
@@ -176,15 +208,6 @@ export function useVoiceSession(options: {
     }
   }, [conversation, teardown]);
 
-  /** Cut the agent off mid-sentence. */
-  const interrupt = useCallback(() => {
-    try {
-      conversation.sendUserActivity();
-    } catch {
-      // Nothing to interrupt.
-    }
-  }, [conversation]);
-
   // Unmount, navigation and page hide all end it. Each is a case where the
   // user has plainly stopped talking, and none of them is trusted alone.
   useEffect(() => {
@@ -203,11 +226,25 @@ export function useVoiceSession(options: {
     error,
     elapsed,
     leaseSeconds,
+    liveTranscript,
     isMuted: conversation.isMuted,
     setMuted: conversation.setMuted,
+    getInputVolume: () => {
+      try {
+        return conversationRef.current.getInputVolume();
+      } catch {
+        return 0;
+      }
+    },
+    getOutputVolume: () => {
+      try {
+        return conversationRef.current.getOutputVolume();
+      } catch {
+        return 0;
+      }
+    },
     start,
     stop,
-    interrupt,
     dismissError: () => setError(null),
   };
 }

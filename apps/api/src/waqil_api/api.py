@@ -1810,25 +1810,37 @@ async def voice_availability(request: Request) -> VoiceAvailabilityV1:
     settings = runtime(request).settings
     hostname = settings.voice_tunnel_hostname.strip()
     reason = service.unavailable_reason()
+    missing = service.unavailable_reasons()
     return VoiceAvailabilityV1(
         available=not reason,
         reason=reason,
         custom_llm_url=(f"https://{hostname}/v1/chat/completions" if hostname else ""),
         public_model_alias=settings.voice_public_model_alias,
+        missing=missing,
     )
 
 
 @router.post("/voice/sessions", response_model=VoiceSessionStartV1)
 async def start_voice_session(request: Request) -> VoiceSessionStartV1:
-    """Open a session: start the ingress and connector, mint a signed URL.
+    """Open a session: start the ingress and connector, mint a client token.
 
-    The signed URL is returned exactly once, here. The ElevenLabs API key that
+    The token is returned exactly once, here. The ElevenLabs API key that
     minted it never leaves this process.
     """
     try:
         return await _voice(request).start()
     except VoiceUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@router.post("/voice/prewarm", status_code=204)
+async def prewarm_voice(request: Request) -> Response:
+    """Prepare voice transport before Start, without opening or billing a call."""
+    try:
+        await _voice(request).prewarm()
+    except VoiceUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return Response(status_code=204)
 
 
 @router.post("/voice/sessions/{session_id}/lease", response_model=VoiceSessionV1)
@@ -1899,6 +1911,7 @@ async def voice_turn(body: VoiceTurnRequestV1, request: Request) -> VoiceRenditi
     try:
         return await _voice(request).turn(
             provider_conversation_id=body.provider_conversation_id,
+            metis_session_id=body.metis_session_id,
             transcript=body.transcript,
             history=list(body.history),
         )

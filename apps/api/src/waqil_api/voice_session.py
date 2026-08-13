@@ -25,6 +25,7 @@ import logging
 import os
 import secrets
 import shutil
+import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -37,6 +38,11 @@ from .voice_graph import VoiceGraph, VoiceTurn
 from .voice_intents import classify_refusal
 
 logger = logging.getLogger("waqil.voice.session")
+
+# A conversation token is valid for ten minutes. Keep a shorter two-minute
+# window so opening Voice can hide the remote token/tunnel startup without
+# leaving either process warm after someone simply looked at the screen.
+VOICE_PREWARM_SECONDS = 120
 
 
 class VoiceUnavailable(RuntimeError):
@@ -114,23 +120,27 @@ class VoiceSessionService:
         self._ingress: asyncio.subprocess.Process | None = None
         self._connector: asyncio.subprocess.Process | None = None
         self._secret: str = ""
+        self._process_errors: dict[int, str] = {}
+        self._prepared_token = ""
+        self._prepared_until: datetime | None = None
 
     # -- readiness --------------------------------------------------------
 
-    def unavailable_reason(self) -> str:
-        """Why voice cannot start, in the owner's language. "" means it can."""
+    def unavailable_reasons(self) -> list[str]:
+        """Every unmet prerequisite, in the order a person should fix it."""
+        reasons: list[str] = []
         if not self.settings.voice_enabled:
-            return "Voice mode is switched off in this Metis configuration."
+            return ["Voice mode is switched off in this Metis configuration."]
         speech = getattr(self.model, "elevenlabs", None)
         if speech is None or not speech.available:
-            return "Voice needs WAQIL_ELEVENLABS_API_KEY."
+            reasons.append("Voice needs WAQIL_ELEVENLABS_API_KEY.")
         if not self.settings.elevenlabs_agent_id.strip():
-            return (
+            reasons.append(
                 "Voice needs an ElevenLabs agent. Create one, then set "
                 "WAQIL_ELEVENLABS_AGENT_ID."
             )
         if not self.settings.voice_tunnel_hostname.strip():
-            return (
+            reasons.append(
                 "Voice needs the named tunnel's hostname in "
                 "WAQIL_VOICE_TUNNEL_HOSTNAME."
             )
@@ -139,15 +149,50 @@ class VoiceSessionService:
             # in principle, and explicitly asks for one further go-ahead at the
             # moment one is first started on this managed device. This flag is
             # that go-ahead, and its absence is not a bug to route around.
-            return (
+            reasons.append(
                 "Starting a tunnel on this managed device needs an explicit "
                 "go-ahead: set WAQIL_VOICE_TUNNEL_AUTHORIZED=true."
             )
         if shutil.which(self.settings.cloudflared_path) is None:
-            return f"`{self.settings.cloudflared_path}` is not installed."
-        return ""
+            reasons.append(f"`{self.settings.cloudflared_path}` is not installed.")
+        return reasons
+
+    def unavailable_reason(self) -> str:
+        reasons = self.unavailable_reasons()
+        return reasons[0] if reasons else ""
 
     # -- lifecycle --------------------------------------------------------
+
+    async def prewarm(self) -> None:
+        """Prepare the tunnel and short-lived provider token, but no call.
+
+        This creates no Metis conversation and opens no WebRTC/audio session.
+        It is safe to run when the Voice surface appears, then consume once
+        when the owner actually presses Start.
+        """
+        reason = self.unavailable_reason()
+        if reason:
+            raise VoiceUnavailable(reason)
+        async with self._lock:
+            now = datetime.now(UTC)
+            if self._prepared_valid(now):
+                return
+            self._clear_prepared()
+            try:
+                # Token creation and the local connector are independent until
+                # the first finalized utterance, so pay both waits in parallel.
+                _, token = await asyncio.gather(
+                    self._ensure_processes(), self._conversation_token()
+                )
+            except ModelProviderError as error:
+                await self._release_if_idle()
+                raise VoiceUnavailable(str(error)) from error
+            except Exception:
+                await self._release_if_idle()
+                raise
+            self._prepared_token = token
+            self._prepared_until = now + timedelta(seconds=VOICE_PREWARM_SECONDS)
+            logger.info("voice transport prepared")
 
     async def start(self) -> VoiceSessionStartV1:
         reason = self.unavailable_reason()
@@ -169,7 +214,9 @@ class VoiceSessionService:
             )
             self._sessions[session.id] = session
             try:
-                token = await self._conversation_token()
+                token = self._take_prepared(datetime.now(UTC))
+                if not token:
+                    token = await self._conversation_token()
             except ModelProviderError as error:
                 session.state, session.reason = "failed", str(error)
                 await self._release_if_idle()
@@ -237,8 +284,14 @@ class VoiceSessionService:
         for session_id, session in list(self._sessions.items()):
             if session.ended_at is not None and session.ended_at < cutoff:
                 self._sessions.pop(session_id, None)
+        if self._prepared_until is not None and self._prepared_until <= now:
+            async with self._lock:
+                if self._prepared_until is not None and self._prepared_until <= now:
+                    self._clear_prepared()
+                    await self._release_if_idle()
 
     async def shutdown(self) -> None:
+        self._clear_prepared()
         for session_id in list(self._sessions):
             with contextlib.suppress(Exception):
                 await self.end(session_id, reason="Metis is shutting down")
@@ -251,6 +304,7 @@ class VoiceSessionService:
         self,
         *,
         provider_conversation_id: str,
+        metis_session_id: str = "",
         transcript: str,
         history: list[str] | None = None,
     ) -> VoiceRenditionV1:
@@ -262,7 +316,7 @@ class VoiceSessionService:
         an utterance arriving for a session that does not exist is refused
         rather than answered on a guess.
         """
-        session = self._bind(provider_conversation_id)
+        session = self._bind(provider_conversation_id, metis_session_id)
         session.turns += 1
         turn_id = f"t_{session.turns:04d}_{uuid.uuid4().hex[:8]}"
         run_id = await self._record_question(session, transcript, turn_id)
@@ -347,8 +401,9 @@ class VoiceSessionService:
                         else {}
                     ),
                 )
-            except Exception as error:  # noqa: BLE001 - the webhook is already verified
-                logger.info("voice post-call not stored: %s", str(error)[:200])
+            except Exception as error:  # noqa: BLE001 - caller must retry persistence
+                logger.warning("voice post-call not stored: %s", str(error)[:200])
+                raise
         logger.info(
             "voice post-call received for %s (session %s)",
             conversation or "unknown",
@@ -465,8 +520,20 @@ class VoiceSessionService:
     async def _ensure_processes(self) -> None:
         if self._ingress is None or self._ingress.returncode is not None:
             self._ingress = await self._spawn_ingress()
+            await self._wait_for_ingress()
         if self._connector is None or self._connector.returncode is not None:
             self._connector = await self._spawn_connector()
+            # A bad tunnel name or missing credentials exits immediately. Give
+            # it one scheduler turn and report that at Start, not after WebRTC
+            # has connected to a dead endpoint.
+            await asyncio.sleep(0.15)
+            if self._connector.returncode is not None:
+                detail = await self._process_error(self._connector)
+                await self._stop_processes()
+                raise VoiceUnavailable(
+                    "The Cloudflare tunnel could not start"
+                    + (f": {detail}" if detail else ".")
+                )
 
     async def _spawn_ingress(self) -> asyncio.subprocess.Process:
         environment = {
@@ -480,14 +547,16 @@ class VoiceSessionService:
         logger.info(
             "starting voice ingress on port %s", self.settings.voice_ingress_port
         )
-        return await asyncio.create_subprocess_exec(
-            self.settings.voice_ingress_command,
+        process = await asyncio.create_subprocess_exec(
+            self.settings.voice_ingress_command.strip() or sys.executable,
             "-m",
             "waqil_voice_ingress.main",
             env=environment,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
+        self._watch_stderr(process, "voice ingress")
+        return process
 
     async def _spawn_connector(self) -> asyncio.subprocess.Process:
         """The named tunnel, pointed at the ingress port and nothing else.
@@ -498,7 +567,7 @@ class VoiceSessionService:
         logger.info(
             "starting cloudflared for tunnel %s", self.settings.voice_tunnel_name
         )
-        return await asyncio.create_subprocess_exec(
+        process = await asyncio.create_subprocess_exec(
             self.settings.cloudflared_path,
             "tunnel",
             "run",
@@ -506,8 +575,66 @@ class VoiceSessionService:
             f"http://{self.settings.voice_ingress_host}:{self.settings.voice_ingress_port}",
             self.settings.voice_tunnel_name,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
+        self._watch_stderr(process, "cloudflared")
+        return process
+
+    def _watch_stderr(self, process: asyncio.subprocess.Process, name: str) -> None:
+        """Drain child stderr continuously so a full pipe cannot stall voice."""
+
+        async def drain() -> None:
+            stream = process.stderr
+            if stream is None:
+                return
+            try:
+                while line := await stream.readline():
+                    text = line.decode("utf-8", errors="replace").strip()
+                    if text:
+                        self._process_errors[id(process)] = text[-400:]
+                        logger.info("%s: %s", name, text[:400])
+            except (OSError, RuntimeError):
+                return
+
+        asyncio.create_task(drain(), name=f"{name}-stderr")
+
+    async def _wait_for_ingress(self) -> None:
+        """Do not call a session live until the isolated adapter answers."""
+        import urllib.error
+        import urllib.request
+
+        url = (
+            f"http://{self.settings.voice_ingress_host}:"
+            f"{self.settings.voice_ingress_port}/health"
+        )
+        for _ in range(30):
+            process = self._ingress
+            if process is None or process.returncode is not None:
+                detail = await self._process_error(process)
+                await self._stop_processes()
+                raise VoiceUnavailable(
+                    "The isolated voice service could not start"
+                    + (f": {detail}" if detail else ".")
+                )
+            try:
+                response = await asyncio.to_thread(urllib.request.urlopen, url, timeout=0.25)
+                with response:
+                    if response.status == 200:
+                        return
+            except (OSError, urllib.error.URLError):
+                await asyncio.sleep(0.1)
+        await self._stop_processes()
+        raise VoiceUnavailable("The isolated voice service did not become ready.")
+
+    async def _process_error(
+        self, process: asyncio.subprocess.Process | None
+    ) -> str:
+        if process is None:
+            return ""
+        # Let the drainer consume any final line written immediately before the
+        # process exited, then return only its bounded tail.
+        await asyncio.sleep(0)
+        return self._process_errors.get(id(process), "")
 
     async def _release_if_idle(self) -> None:
         """Stop both processes once no live lease needs them.
@@ -518,7 +645,28 @@ class VoiceSessionService:
         """
         if any(session.live for session in self._sessions.values()):
             return
+        if self._prepared_valid(datetime.now(UTC)):
+            return
         await self._stop_processes()
+
+    def _prepared_valid(self, now: datetime) -> bool:
+        return bool(
+            self._prepared_token
+            and self._prepared_until is not None
+            and self._prepared_until > now
+        )
+
+    def _take_prepared(self, now: datetime) -> str:
+        if not self._prepared_valid(now):
+            self._clear_prepared()
+            return ""
+        token = self._prepared_token
+        self._clear_prepared()
+        return token
+
+    def _clear_prepared(self) -> None:
+        self._prepared_token = ""
+        self._prepared_until = None
 
     async def _stop_processes(self) -> None:
         for name, process in (
@@ -586,8 +734,24 @@ class VoiceSessionService:
             raise VoiceSessionExpired("that voice session is not open")
         return session
 
-    def _bind(self, provider_conversation_id: str) -> _Session:
+    def _bind(
+        self, provider_conversation_id: str, metis_session_id: str = ""
+    ) -> _Session:
         conversation = (provider_conversation_id or "").strip()
+        explicit = (metis_session_id or "").strip()
+        if explicit:
+            session = self._sessions.get(explicit)
+            if session is None or not session.live:
+                raise VoiceSessionExpired("that Metis voice session is not open")
+            if (
+                session.provider_conversation_id
+                and session.provider_conversation_id != conversation
+            ):
+                raise VoiceSessionExpired(
+                    "that provider conversation belongs to another session"
+                )
+            session.provider_conversation_id = conversation
+            return session
         for session in self._sessions.values():
             if session.live and session.provider_conversation_id == conversation:
                 return session

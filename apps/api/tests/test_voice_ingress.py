@@ -211,7 +211,13 @@ def test_the_configured_alias_is_checked_but_never_forwarded_as_a_routing_choice
         # Which model reasons is the owner's stored preference on :8000. The
         # alias is a label this process compares and then drops.
         assert "model" not in forwarded
-        assert set(forwarded) == {"provider_conversation_id", "transcript", "history"}
+        assert set(forwarded) == {
+            "provider_conversation_id",
+            "metis_session_id",
+            "transcript",
+            "history",
+        }
+        assert forwarded["metis_session_id"] == ""
     finally:
         client.__exit__(None, None, None)
 
@@ -495,5 +501,24 @@ def test_without_a_webhook_secret_nothing_is_accepted() -> None:
             == 401
         )
         assert loopback.requests == []
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_a_webhook_is_not_acknowledged_until_loopback_stores_it() -> None:
+    loopback = FakeLoopback(status=500)
+    _, client = _client(loopback)
+    body = json.dumps(
+        {"type": "post_call_transcription", "data": {"conversation_id": "conv_retry"}}
+    ).encode()
+    try:
+        first = client.post(
+            "/v1/elevenlabs/post-call", content=body, headers=_signed(body)
+        )
+        second = client.post(
+            "/v1/elevenlabs/post-call", content=body, headers=_signed(body)
+        )
+        assert first.status_code == 503 and second.status_code == 503
+        assert len(loopback.requests) == 2, "a failed store remains retryable"
     finally:
         client.__exit__(None, None, None)

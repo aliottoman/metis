@@ -3851,6 +3851,14 @@ select { border-radius: var(--m-r-field); }
 .voiceHandoffNote { color: #6b4b86; font-size: 12px; margin-top: 8px; }
 .voiceDisclosure, .voiceUnavailable { gap: 8px; }
 .voiceUnavailable code { background: var(--m-surface); border-radius: 4px; font-size: 11.5px; padding: 1px 5px; }
+.voiceSetupList { color: var(--m-ink-2); display: grid; font-size: 12.5px; gap: 5px; margin: 2px 0; padding-left: 20px; }
+.voiceSetupLink { align-self: flex-start; }
+.voiceLiveTranscript { background: var(--m-surface); border-radius: 9px; padding: 8px 10px; }
+.voiceLiveTranscript span { color: var(--m-ink-3); font-size: 10.5px; letter-spacing: 0.04em; margin-right: 5px; text-transform: uppercase; }
+.voiceConfirmationChoice { align-items: center; color: var(--m-ink-2); display: inline-flex; gap: 8px; }
+.voiceConfirmationChoice span { display: grid; gap: 2px; }
+.voiceConfirmationChoice strong { color: var(--m-ink); font-size: 12.5px; }
+.voiceConfirmationChoice small { font-size: 11px; }
 
 @media (prefers-reduced-motion: reduce) {
   .voiceState i { animation: none !important; }
@@ -3888,6 +3896,216 @@ select { border-radius: var(--m-r-field); }
 }
 .voiceReceipt.is-undone .voiceReceiptKind { color: var(--m-ink-3); }
 .voiceReceipt.is-failed { background: rgba(255, 119, 89, 0.12); border-color: var(--m-coral-soft, #ffad9b); }
+
+/* Voice is a conversation mode, not an accessory panel. The canvas keeps the
+   same lavender room as chat, but replaces the welcome/message layer with one
+   centered instrument. The orb is drawn entirely from the Metis palette and
+   responds to the actual session state rather than playing a generic loop. */
+.chatWorkspace.voiceMode .paperSheet { opacity: 0; }
+.chatWorkspace.voiceMode .messageViewport { padding-bottom: 8px; }
+.chatWorkspace.voiceMode .composerDock { padding-top: 8px; }
+.voiceCanvas {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 100%;
+  padding: 76px 34px 24px;
+  position: relative;
+  z-index: 2;
+}
+.voiceStage {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--m-ink);
+  gap: 14px;
+  margin: 0;
+  max-width: 780px;
+  padding: 0;
+  width: min(100%, 780px);
+}
+.voiceStageHeader {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  min-height: 54px;
+}
+.voiceStageHeader > div:first-child { display: grid; gap: 7px; }
+.voiceStageEyebrow {
+  color: rgba(33, 31, 29, 0.58);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.voiceStage .voiceState { color: rgba(33, 31, 29, 0.82); font-size: 12px; }
+.voiceModelControl {
+  align-items: center;
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+  min-width: 230px;
+  position: relative;
+  z-index: 8;
+}
+.voiceModelControl > span {
+  color: rgba(33, 31, 29, 0.58);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.voiceModelControl > small { color: rgba(33, 31, 29, 0.58); font-size: 10px; position: absolute; right: 0; top: 52px; }
+.voiceModelSelect { min-width: 230px; }
+.voiceModelSelect .selectButton {
+  background: rgba(252, 250, 246, 0.72);
+  border-color: rgba(33, 31, 29, 0.16);
+  backdrop-filter: blur(14px);
+}
+
+.voiceOrbStage {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+  min-height: 260px;
+  position: relative;
+}
+.voiceOrb {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  height: 190px;
+  isolation: isolate;
+  padding: 0;
+  place-items: center;
+  position: relative;
+  width: 190px;
+}
+.voiceOrb:focus-visible { outline: 2px solid var(--m-ink); outline-offset: 12px; }
+.voiceOrbRenderer {
+  border: 1px solid rgba(255,255,255,.72);
+  border-radius: 50%;
+  box-shadow: 0 24px 62px rgba(33,31,29,.2);
+  clip-path: circle(50% at 50% 50%);
+  contain: paint;
+  height: 156px;
+  overflow: hidden;
+  transition: filter .35s var(--m-ease), transform .35s var(--m-ease);
+  width: 156px;
+}
+.voiceOrb:hover .voiceOrbRenderer { transform: scale(1.025); }
+.voiceStage.is-failed .voiceOrbRenderer { filter: grayscale(.55); }
+
+.voiceStageCopy { display: grid; gap: 5px; justify-items: center; max-width: 520px; text-align: center; }
+.voiceStageCopy strong { color: var(--m-ink); font-size: clamp(22px, 3vw, 32px); font-weight: 430; letter-spacing: -.035em; }
+.voiceStageCopy p { color: rgba(33,31,29,.7); font-size: 13px; line-height: 1.55; }
+.voiceStageCopy .voiceElapsed { background: rgba(252,250,246,.55); border-radius: 999px; color: rgba(33,31,29,.65); margin-top: 5px; padding: 3px 9px; }
+.voicePanelActions { justify-content: center; margin: -3px 0 0; }
+.voiceActionButton,
+.voiceStartButton {
+  align-items: center;
+  backdrop-filter: blur(14px);
+  background: rgba(252,250,246,.7);
+  border: 1px solid rgba(33,31,29,.14);
+  border-radius: 999px;
+  color: var(--m-ink);
+  display: inline-flex;
+  font-size: 11.5px;
+  gap: 7px;
+  height: 34px;
+  padding: 0 14px;
+}
+.voiceActionButton:hover { background: rgba(252,250,246,.94); }
+.voiceActionButton.isStop { color: #9c3522; }
+.voiceStartButton { background: var(--m-ink-btn); color: #fbf8f2; height: 38px; padding: 0 18px; }
+.voiceStartButton > span { color: #7be3d8; font-size: 8px; }
+.voiceStagePrompt { color: rgba(33,31,29,.58) !important; font-size: 11.5px !important; text-align: center; }
+.voiceModelError { color: #9c3522 !important; text-align: center; }
+.voiceStage .voiceTurns.hasTurns {
+  backdrop-filter: blur(18px);
+  background: rgba(252,250,246,.72);
+  border: 1px solid rgba(255,255,255,.45);
+  border-radius: 18px;
+  max-height: 250px;
+  overflow-y: auto;
+  padding: 15px 17px;
+}
+.voiceEmptyOrb {
+  background: var(--m-fringe);
+  border: 1px solid rgba(255,255,255,.6);
+  border-radius: 48% 52% 43% 57% / 56% 45% 55% 44%;
+  box-shadow: 0 22px 60px rgba(61,35,78,.25);
+  height: 90px;
+  margin: 34px auto 8px;
+  position: relative;
+  width: 90px;
+}
+.voiceEmptyOrb i { background: rgba(255,255,255,.72); border-radius: 50%; filter: blur(10px); inset: 24px; position: absolute; }
+.voiceDisclosure, .voiceUnavailable { align-items: center; margin: auto; max-width: 600px; text-align: center; }
+.voiceDisclosure .voiceSetupList, .voiceUnavailable .voiceSetupList { text-align: left; }
+.voiceDisclosure .voiceSetupLink, .voiceUnavailable .voiceSetupLink { align-self: center; }
+
+/* The bottom control is a real mode switch. In Voice the ordinary context,
+   attachment and dictation furniture gets out of the way, leaving a compact
+   text fallback directly beneath the orb. */
+.conversationModeSwitch {
+  align-items: center;
+  background: rgba(237,233,225,.84);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+}
+.conversationModeSwitch button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--m-ink-2);
+  display: inline-flex;
+  font-size: 10.5px;
+  gap: 5px;
+  height: 23px;
+  padding: 0 9px;
+}
+.conversationModeSwitch button.selected { background: var(--m-paper-lift); box-shadow: 0 1px 4px rgba(33,31,29,.12); color: var(--m-ink); }
+.modeVoiceDot { background: var(--m-bloom); border-radius: 50%; height: 7px; width: 7px; }
+.voiceMode .voiceTextComposer {
+  backdrop-filter: blur(22px);
+  background: rgba(252,250,246,.82);
+  border-color: rgba(255,255,255,.5);
+  box-shadow: 0 16px 50px rgba(47,28,59,.18), inset 0 1px 0 rgba(255,255,255,.72);
+  max-width: 650px;
+  min-height: 78px;
+}
+.voiceMode .voiceTextComposer textarea { min-height: 24px; padding-bottom: 9px; padding-top: 8px; }
+.voiceMode .voiceTextComposer .composerScope,
+.voiceMode .voiceTextComposer .attachButton,
+.voiceMode .voiceTextComposer .micButton,
+.voiceMode .voiceTextComposer .knowledgeScopeSwitch,
+.voiceMode .voiceTextComposer .composerHint { display: none; }
+.voiceMode .composerDisclaimer { color: rgba(255,255,255,.72); }
+
+@media (max-width: 720px) {
+  .voiceCanvas { padding: 70px 16px 18px; }
+  .voiceStageHeader { align-items: stretch; flex-direction: column; gap: 10px; }
+  .voiceModelControl { justify-items: stretch; min-width: 0; }
+  .voiceModelControl > span { text-align: left; }
+  .voiceModelSelect { min-width: 0; width: 100%; }
+  .voiceOrbStage { min-height: 235px; }
+  .voiceOrb { height: 168px; width: 168px; }
+  .voiceOrbRenderer { height: 136px; width: 136px; }
+  .voiceStageCopy strong { font-size: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voiceOrbRenderer { transition: none !important; }
+}
 
 /* ── 9 · Meetings ────────────────────────────────────────────────────────
    Recordings left, one transcript right, audio underneath. The transcript is
@@ -4014,3 +4232,236 @@ select { border-radius: var(--m-r-field); }
 @media (prefers-reduced-motion: reduce) {
   .meetingsList, .meetingRow { transition: none !important; }
 }
+
+/* Meetings, rebuilt as a listening workbench. The hero keeps the chrome room,
+   the library becomes a proper rail, and the document itself is a continuous
+   paper surface with audio, reviewable intelligence, then transcript. */
+.meetingsPage { padding-bottom: 54px; }
+.meetingHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 282px;
+  overflow: hidden;
+  padding-bottom: 76px;
+  position: relative;
+}
+.meetingHeroCopy { max-width: 660px; }
+.meetingHero h1 { font-size: clamp(38px, 5vw, 66px); line-height: .92; max-width: 720px; }
+.meetingHero h1 em { font-family: Georgia, "Times New Roman", serif; font-weight: 400; letter-spacing: -.055em; }
+.meetingHero p { font-size: 13px; line-height: 1.6; max-width: 550px; }
+.meetingHeroAside { align-items: center; display: flex; flex-direction: column; gap: 13px; justify-content: center; min-width: 170px; }
+.meetingHeroAside .primaryButton { align-items: center; display: inline-flex; gap: 7px; }
+.meetingHeroOrb {
+  animation: meetingOrbFloat 5s ease-in-out infinite;
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255,255,245,.94), transparent 18%),
+    radial-gradient(circle at 67% 68%, #ff7759, transparent 42%),
+    radial-gradient(circle at 24% 70%, #7be3d8, transparent 38%),
+    #8f66ae;
+  border: 1px solid rgba(255,255,255,.72);
+  border-radius: 47% 53% 44% 56% / 55% 45% 55% 45%;
+  box-shadow: inset 9px 8px 18px rgba(255,255,255,.32), 0 20px 48px rgba(56,29,72,.28);
+  height: 92px;
+  overflow: hidden;
+  position: relative;
+  width: 92px;
+}
+.meetingHeroOrb i { background: rgba(255,255,255,.4); border-radius: 50%; filter: blur(7px); position: absolute; }
+.meetingHeroOrb i:nth-child(1) { height: 40px; left: 10px; top: 8px; width: 47px; }
+.meetingHeroOrb i:nth-child(2) { background: rgba(209,142,226,.6); bottom: 7px; height: 45px; right: 4px; width: 49px; }
+.meetingHeroOrb i:nth-child(3) { background: rgba(255,224,138,.55); bottom: 9px; height: 27px; left: 8px; width: 31px; }
+@keyframes meetingOrbFloat { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-7px) rotate(3deg); } }
+.meetingHeroStats {
+  align-items: stretch;
+  backdrop-filter: blur(16px);
+  background: rgba(252,250,246,.52);
+  border: 1px solid rgba(255,255,255,.38);
+  border-radius: 14px;
+  bottom: 16px;
+  display: flex;
+  left: 18px;
+  overflow: hidden;
+  position: absolute;
+}
+.meetingHeroStats > span { display: grid; gap: 0; min-width: 120px; padding: 10px 16px; }
+.meetingHeroStats > span + span { border-left: 1px solid rgba(33,31,29,.12); }
+.meetingHeroStats strong { color: var(--m-ink); font-size: 18px; font-weight: 460; letter-spacing: -.03em; }
+.meetingHeroStats small { color: rgba(33,31,29,.58); font-size: 9.5px; letter-spacing: .035em; text-transform: uppercase; }
+
+.meetingStudio { align-items: start; gap: 18px; grid-template-columns: minmax(270px, 318px) minmax(0, 1fr); margin-top: 18px; }
+.meetingsList {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 16px;
+  gap: 0;
+  max-height: calc(100vh - 190px);
+  min-height: 420px;
+  overflow: hidden;
+  padding: 0;
+  position: sticky;
+  top: 18px;
+}
+.meetingsList.isDragging { background: #f0e8f6; border-style: solid; }
+.meetingLibraryHead { align-items: center; border-bottom: 1px solid var(--m-line); display: flex; justify-content: space-between; padding: 16px; }
+.meetingLibraryHead > div { display: grid; gap: 3px; }
+.meetingLibraryHead strong { font-size: 13px; font-weight: 500; }
+.meetingLibraryHead button {
+  background: var(--m-ink-btn);
+  border: 0;
+  border-radius: 50%;
+  color: #fbf8f2;
+  font-size: 16px;
+  height: 30px;
+  width: 30px;
+}
+.meetingLibraryRows { display: flex; flex: 1; flex-direction: column; gap: 4px; overflow-y: auto; padding: 8px; }
+.meetingLibraryRows:has(.meetingDropEmpty) { max-height: none; }
+.meetingRow {
+  align-items: center;
+  border-color: transparent;
+  border-radius: 11px;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  min-height: 58px;
+  padding: 8px;
+}
+.meetingRow:hover { background: var(--m-surface); }
+.meetingRow.selected { background: #ebe1f2; border-color: #dbc9e7; box-shadow: inset 3px 0 0 #8c5eaa; }
+.meetingRowGlyph { align-items: center; background: #ded2e7; border-radius: 9px; display: flex; gap: 2px; height: 38px; justify-content: center; width: 38px; }
+.meetingRowGlyph i { background: #725389; border-radius: 999px; display: block; opacity: .74; width: 2px; }
+.meetingRowGlyph.tone-1 { background: #f2d9ce; }
+.meetingRowGlyph.tone-1 i { background: #aa563d; }
+.meetingRowGlyph.tone-2 { background: #d4e9e4; }
+.meetingRowGlyph.tone-2 i { background: #397c70; }
+.meetingRowGlyph.tone-3 { background: #efe4bf; }
+.meetingRowGlyph.tone-3 i { background: #96762b; }
+.meetingRowCopy { display: grid; min-width: 0; }
+.meetingRowCopy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meetingRowCopy small { color: var(--m-ink-3); font-size: 10px; }
+.meetingRow .meetingStage { font-family: var(--font-mono); font-size: 9.5px; }
+.meetingDropHint { border-top: 1px solid var(--m-line); color: var(--m-ink-3); font-size: 9.5px; margin: 0; padding: 10px 16px; text-align: center; }
+.meetingDropEmpty {
+  align-items: center;
+  background: var(--m-surface);
+  border: 1px dashed #c9bdcf;
+  border-radius: 13px;
+  color: var(--m-ink);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  margin: 6px;
+  min-height: 280px;
+  padding: 28px;
+}
+.meetingDropEmpty > span { align-items: center; background: var(--m-paper-lift); border-radius: 50%; display: flex; font-size: 22px; height: 58px; justify-content: center; margin-bottom: 14px; width: 58px; }
+.meetingDropEmpty strong { font-size: 14px; }
+.meetingDropEmpty small { color: var(--m-ink-3); font-size: 10.5px; margin-top: 4px; }
+
+.meetingDetail {
+  border-radius: 16px;
+  gap: 20px;
+  padding: 24px 26px 30px;
+}
+.meetingDetailEmpty { align-items: center; display: flex; flex-direction: column; justify-content: center; min-height: 520px; text-align: center; }
+.meetingDetailEmpty > span { color: #9a73b5; font-size: 56px; }
+.meetingDetailEmpty strong { font-size: 18px; font-weight: 450; }
+.meetingDetailEmpty p { color: var(--m-ink-2); font-size: 12px; margin: 4px 0 0; }
+.meetingHead { align-items: flex-start; border-bottom: 1px solid var(--m-line); padding-bottom: 18px; }
+.meetingTitleBlock { flex: 1; min-width: 0; }
+.meetingTitleBlock h2 { font-size: clamp(22px, 3vw, 31px); font-weight: 430; letter-spacing: -.035em; margin-top: 4px; }
+.meetingTitleBlock p { color: var(--m-ink-3); font-size: 10.5px; margin: 5px 0 0; text-transform: uppercase; }
+.meetingStagePill { align-items: center; background: var(--m-surface); border-radius: 999px; display: inline-flex; gap: 6px; padding: 5px 10px; }
+.meetingStagePill i { background: currentColor; border-radius: 50%; height: 5px; width: 5px; }
+
+.meetingPlayerDock {
+  align-items: center;
+  background: var(--m-ink-btn);
+  border-radius: 14px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 32px minmax(90px, .45fr) minmax(240px, 1fr);
+  min-height: 72px;
+  overflow: hidden;
+  padding: 10px 14px;
+}
+.meetingPlayGlyph { align-items: center; background: #fbf8f2; border-radius: 50%; color: var(--m-ink); display: flex; font-size: 9px; height: 30px; justify-content: center; padding-left: 2px; width: 30px; }
+.meetingWave { align-items: center; display: flex; gap: 3px; height: 34px; overflow: hidden; }
+.meetingWave i { background: linear-gradient(to top, #7be3d8, #d18ee2 55%, #ff7759); border-radius: 999px; display: block; flex: 1; max-width: 3px; min-width: 2px; opacity: .78; }
+.meetingPlayer { filter: invert(1) hue-rotate(180deg); height: 34px; opacity: .82; }
+
+.meetingProgress { border: 1px solid var(--m-line); border-radius: 11px; padding: 8px; }
+.meetingProgress li { background: transparent; }
+.meetingInsights { display: grid; gap: 10px; }
+.meetingInsights > header,
+.meetingTranscriptSection > header { align-items: end; display: flex; justify-content: space-between; }
+.meetingInsights h3,
+.meetingTranscriptSection h3 { font-size: 17px; font-weight: 480; margin: 2px 0 0; }
+.meetingInsights header small,
+.meetingTranscriptSection header small { color: var(--m-ink-3); font-size: 10px; }
+.meetingProposals { gap: 8px; }
+.meetingProposals li {
+  align-items: stretch;
+  background: #f2ede6;
+  border: 1px solid var(--m-line);
+  border-radius: 13px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  padding: 12px;
+}
+.meetingProposals li.is-action { background: #eee7f4; border-color: #dfd0e9; }
+.meetingProposals li.is-decision { background: #f3ecd7; border-color: #e7d9aa; }
+.meetingProposalIcon { align-items: center; background: var(--m-paper-lift); border-radius: 9px; display: flex; font-size: 14px; height: 34px; justify-content: center; width: 34px; }
+.meetingProposals li > div:nth-child(2) { display: grid; gap: 3px; }
+.meetingProposals p { font-size: 13px; }
+.meetingEvidence { background: none; border: 0; color: #6b4b86; font-size: 10.5px; justify-self: start; padding: 2px 0; }
+.meetingProposalActions { align-items: center; display: flex; gap: 6px; }
+.proposalAccept { background: var(--m-ink-btn); border: 0; border-radius: 999px; color: #fbf8f2; font-size: 10.5px; height: 28px; padding: 0 12px; }
+.proposalDismiss { background: transparent; border: 1px solid var(--m-line); border-radius: 50%; color: var(--m-ink-3); height: 28px; width: 28px; }
+
+.meetingTranscriptSection { border-top: 1px solid var(--m-line); display: grid; gap: 14px; padding-top: 20px; }
+.meetingTranscript { gap: 4px; max-height: 62vh; padding-right: 7px; }
+.meetingTranscript > li {
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  padding: 12px;
+}
+.meetingTranscript > li:hover { background: var(--m-surface); }
+.meetingTranscript > li.isCorrected { border-left: 2px solid var(--m-lav-edge); padding-left: 10px; }
+.meetingSpeakerAvatar { align-items: center; background: #ded2e7; border-radius: 10px; color: #604477; display: flex; font-size: 10px; font-weight: 600; height: 34px; justify-content: center; width: 34px; }
+.meetingTranscript > li.speakerTone-1 .meetingSpeakerAvatar { background: #f2d9ce; color: #914329; }
+.meetingTranscript > li.speakerTone-2 .meetingSpeakerAvatar { background: #d4e9e4; color: #326c62; }
+.meetingTranscript > li.speakerTone-3 .meetingSpeakerAvatar { background: #efe4bf; color: #82631f; }
+.meetingTurnBody { min-width: 0; }
+.meetingSpeaker { font-size: 12.5px; max-width: 240px; }
+.meetingTimestamp { background: transparent; border: 0; color: var(--m-ink-3); font-family: var(--font-mono); font-size: 9.5px; padding: 0; }
+.meetingTurnText { font-size: 13.5px; line-height: 1.7; margin-top: 6px; }
+
+@media (max-width: 980px) {
+  .meetingStudio { grid-template-columns: 1fr; }
+  .meetingsList { max-height: none; min-height: 0; position: static; }
+  .meetingLibraryRows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 260px; }
+  .meetingDropHint { display: none; }
+}
+@media (max-width: 900px) {
+  .meetingHero { grid-template-columns: 1fr; padding-bottom: 116px; }
+  .meetingHeroAside { align-items: flex-start; flex-direction: row; justify-content: flex-start; min-width: 0; }
+  .meetingHeroOrb { display: none; }
+  .meetingHeroStats { display: grid; grid-template-columns: repeat(3, 1fr); right: 18px; }
+  .meetingHeroStats > span { min-width: 0; padding: 9px 10px; }
+}
+@media (max-width: 680px) {
+  .meetingLibraryRows { grid-template-columns: 1fr; }
+  .meetingDetail { padding: 18px 15px 24px; }
+  .meetingHead { flex-wrap: wrap; }
+  .meetingPlayerDock { grid-template-columns: 30px minmax(0, 1fr); }
+  .meetingWave { display: none; }
+  .meetingProposals li { grid-template-columns: 34px minmax(0, 1fr); }
+  .meetingProposalActions { grid-column: 2; }
+  .meetingInsights > header, .meetingTranscriptSection > header { align-items: flex-start; flex-direction: column; gap: 3px; }
+}
+@media (prefers-reduced-motion: reduce) { .meetingHeroOrb { animation: none !important; } }

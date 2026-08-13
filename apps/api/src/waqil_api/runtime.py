@@ -257,6 +257,10 @@ class AppRuntime:
             model=self.model,
             database=self.database,
         )
+        # Mint the ingress bearer at startup, before the external agent is
+        # configured. This removes the circular setup where ElevenLabs needs a
+        # secret that Metis previously created only after the first call began.
+        self.voice.shared_secret()
         await self.control_plane.reconcile_startup()
         try:
             await self.control_plane.reconcile_coding_cleanup()

@@ -1311,6 +1311,11 @@ export async function getVoiceAvailability(): Promise<VoiceAvailability> {
   return request<VoiceAvailability>(`${API_PREFIX}/voice`);
 }
 
+/** Hide cold tunnel/token startup while the Voice surface is already open. */
+export async function prewarmVoice(): Promise<void> {
+  await request<unknown>(`${API_PREFIX}/voice/prewarm`, { method: "POST" });
+}
+
 /** Open a session. The conversation token comes back exactly once, here. */
 export async function startVoiceSession(): Promise<VoiceSessionStart> {
   return request<VoiceSessionStart>(`${API_PREFIX}/voice/sessions`, { method: "POST" });

@@ -119,11 +119,15 @@ def _service(tmp_path, **overrides) -> tuple[VoiceSessionService, dict]:
         started["connector"].append(process)
         return process
 
+    async def fake_ingress_ready():
+        return None
+
     async def fake_token():
         return "conv-token-short-lived"
 
     service._spawn_ingress = fake_ingress  # type: ignore[assignment]
     service._spawn_connector = fake_connector  # type: ignore[assignment]
+    service._wait_for_ingress = fake_ingress_ready  # type: ignore[assignment]
     service._conversation_token = fake_token  # type: ignore[assignment]
     return service, started
 
@@ -185,6 +189,43 @@ async def test_starting_opens_both_processes_and_returns_the_url_once(
 
 
 @pytest.mark.asyncio
+async def test_prewarm_fetches_once_and_start_consumes_the_prepared_token(
+    tmp_path,
+) -> None:
+    service, started = _service(tmp_path)
+    calls = 0
+
+    async def counted_token():
+        nonlocal calls
+        calls += 1
+        return f"prepared-{calls}"
+
+    service._conversation_token = counted_token  # type: ignore[assignment]
+    await service.prewarm()
+    await service.prewarm()
+
+    assert calls == 1
+    assert len(started["ingress"]) == 1 and len(started["connector"]) == 1
+    opened = await service.start()
+    assert opened.conversation_token == "prepared-1"
+    assert calls == 1
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_an_unused_prewarm_expires_and_releases_both_processes(tmp_path) -> None:
+    service, started = _service(tmp_path)
+    await service.prewarm()
+    service._prepared_until = datetime.now(UTC) - timedelta(seconds=1)
+
+    await service.sweep()
+
+    assert started["ingress"][0].terminated
+    assert started["connector"][0].terminated
+    assert service._prepared_token == ""
+
+
+@pytest.mark.asyncio
 async def test_the_api_key_never_reaches_the_browser(tmp_path) -> None:
     settings = _settings(tmp_path, **{**READY, "elevenlabs_api_key": "sk-canary-0001"})
     app = create_app(settings)
@@ -192,6 +233,7 @@ async def test_the_api_key_never_reaches_the_browser(tmp_path) -> None:
         service = app.state.runtime.voice
         service._spawn_ingress = lambda: _resolved(FakeProcess())  # type: ignore
         service._spawn_connector = lambda: _resolved(FakeProcess())  # type: ignore
+        service._wait_for_ingress = lambda: _resolved(None)  # type: ignore
         service._conversation_token = lambda: _resolved("conv-token")  # type: ignore
         service.model = FakeRouter()
 
@@ -314,6 +356,26 @@ async def test_a_turn_binds_its_provider_conversation_and_carries_identity(
         provider_conversation_id="conv_9", transcript="And after that?"
     )
     assert again.voice_session_id == opened.session.id
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_two_tabs_bind_to_the_explicit_metis_session_not_start_order(
+    tmp_path,
+) -> None:
+    service, _ = _service(tmp_path)
+    first = await service.start()
+    second = await service.start()
+
+    # The second provider call arrives first. Explicit identity keeps it on the
+    # second tab instead of the oldest-unbound-session fallback.
+    rendition = await service.turn(
+        provider_conversation_id="conv_second",
+        metis_session_id=second.session.id,
+        transcript="What's waiting?",
+    )
+    assert rendition.voice_session_id == second.session.id
+    assert not service._sessions[first.session.id].provider_conversation_id
     await service.shutdown()
 
 
