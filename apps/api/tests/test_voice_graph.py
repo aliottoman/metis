@@ -24,6 +24,10 @@ from waqil_api.contracts import (
 )
 from waqil_api.speech_preference import SpeechPreferenceStore
 from waqil_api.voice_graph import (
+    VOICE_DETAIL_OUTPUT_TOKENS,
+    VOICE_EVIDENCE_SNIPPETS,
+    VOICE_HISTORY_TURNS,
+    VOICE_OUTPUT_TOKENS,
     VOICE_PERMISSIONS,
     VOICE_RETRIEVAL,
     VoiceGraph,
@@ -419,6 +423,89 @@ async def test_an_invented_figure_is_withheld_from_both_renditions(tmp_path) -> 
     assert "4,200,000" not in rendition.written
     assert "4,200,000" not in rendition.spoken
     assert "held that" in rendition.spoken
+
+
+# -- brevity -----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_turn_stays_inside_the_brief_budget(tmp_path) -> None:
+    """Brevity is the default, and it is enforced rather than requested.
+
+    A spoken answer is two to four sentences. Everything sent to reach it is
+    paid for on this turn and again on the next one through the history, so
+    the budget is sized for what the ear can hold, not for what the context
+    window would allow.
+    """
+    corpus = CountingCorpus(
+        [
+            KnowledgeSnippetV1(
+                source_label=f"Source {index}",
+                provider="local",
+                rel_path=f"doc-{index}.md",
+                text="x" * 4_000,
+                score=0.5,
+            )
+            for index in range(20)
+        ]
+    )
+    graph, parts = _graph(tmp_path, corpus=corpus)
+    await graph.answer(
+        _turn(
+            "When did the sizing go out?",
+            history=tuple(f"They: {'y' * 2_000}" for _ in range(20)),
+        )
+    )
+    call = parts["model"].calls[0]
+    prompt = call["user_prompt"]
+    assert prompt.count("] Source") <= VOICE_EVIDENCE_SNIPPETS
+    assert len(prompt) < 8_000, "one spoken turn should not cost an essay"
+    assert call["max_output_tokens"] == VOICE_OUTPUT_TOKENS
+    # Only the tail of the history travels, and each line is clipped.
+    assert prompt.count("They: yyy") <= VOICE_HISTORY_TURNS
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Walk me through the Batelco account in detail",
+        "Tell me more about the sizing",
+        "Give me the long version",
+        "Break that down for me",
+    ],
+)
+@pytest.mark.asyncio
+async def test_asking_for_detail_raises_both_ceilings_for_that_turn(
+    tmp_path, said
+) -> None:
+    graph, parts = _graph(tmp_path)
+    await graph.answer(_turn(said))
+    call = parts["model"].calls[0]
+    assert call["max_output_tokens"] == VOICE_DETAIL_OUTPUT_TOKENS
+    assert "asked for detail" in call["system_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_a_long_spoken_answer_is_cut_to_four_sentences_unless_asked(
+    tmp_path,
+) -> None:
+    """Where "brief unless asked" is actually enforced.
+
+    A model told to be brief is often brief. A model held to four sentences
+    always is — and the turn where someone asked for the long version gets it
+    because they asked, not because the model felt expansive.
+    """
+    long_answer = " ".join(f"Sentence number {index}." for index in range(1, 9))
+    model = CountingModel(VoiceAnswerV1(written=long_answer, spoken=long_answer))
+
+    graph, _ = _graph(tmp_path, model=model)
+    brief = await graph.answer(_turn("Where does the sizing stand?"))
+    assert brief.spoken.count(".") == 4
+    assert brief.spoken_fallback is True
+
+    graph, _ = _graph(tmp_path, model=CountingModel(model.answer))
+    detailed = await graph.answer(_turn("Walk me through where the sizing stands"))
+    assert detailed.spoken.count(".") == 8
 
 
 # -- the ceiling -------------------------------------------------------------
