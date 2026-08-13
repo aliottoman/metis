@@ -75,6 +75,7 @@ import { latestPendingElicitation } from "@/lib/elicitations";
 import { latestActionSuggestion } from "@/lib/suggestions";
 import { useRunEvents } from "@/hooks/use-run-events";
 import { useDictation } from "@/hooks/use-dictation";
+import { VoicePanel } from "@/components/voice-panel";
 import { trackConversationRun, updateConversationRun } from "@/lib/run-indicators";
 
 /**
@@ -327,6 +328,17 @@ export function ChatWorkspace() {
       textareaRef.current?.focus();
     }, []),
   );
+
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  // Voice refuses to build, approve, or delete, and hands the request here
+  // instead. The draft is what was actually said, verbatim — a paraphrase
+  // would make the user re-read their own sentence to check it survived.
+  const handleVoiceHandoff = useCallback((handoff: { transcript: string }) => {
+    const said = handoff.transcript.trim();
+    if (!said) return;
+    setDraft((current) => (current.trim() ? `${current.replace(/\s+$/, "")} ${said}` : said));
+    textareaRef.current?.focus();
+  }, []);
 
   const resetConversationState = useCallback(() => {
     workspaceGenerationRef.current += 1;
@@ -2115,6 +2127,10 @@ export function ChatWorkspace() {
               <button className="errorDismiss" type="button" aria-label="Dismiss" onClick={dictation.dismissError}>×</button>
             </div>
           ) : null}
+          {/* Mounted only while open, so closing voice tears the session down
+              through the hook's own unmount path rather than leaving a tunnel
+              open behind a hidden panel. */}
+          {voiceOpen ? <VoicePanel onHandoff={handleVoiceHandoff} /> : null}
           <form className="composer" onSubmit={(event) => void submit(event)}>
             {/* The companion perches on the composer's top-right corner —
                 astride the edge of the box you type into, not filed inside
@@ -2228,7 +2244,9 @@ export function ChatWorkspace() {
                     disabled={sending || dictation.state === "transcribing"}
                     aria-pressed={dictation.state === "recording"}
                     aria-label={dictation.state === "recording" ? "Stop recording" : "Dictate a message"}
-                    title={dictation.state === "recording" ? "Stop and transcribe" : "Dictate with Cohere Transcribe"}
+                    title={dictation.state === "recording"
+                      ? "Stop and transcribe"
+                      : `Dictate with ${dictation.provider === "elevenlabs" ? "ElevenLabs Scribe" : "Cohere Transcribe"}`}
                     style={{ "--mic-level": dictation.level.toFixed(3) } as CSSProperties}
                   >
                     <span className="micRing" aria-hidden="true" />
@@ -2239,6 +2257,19 @@ export function ChatWorkspace() {
                     <span>{dictation.state === "recording" ? "Stop" : dictation.state === "transcribing" ? "Writing…" : "Speak"}</span>
                   </button>
                 ) : null}
+                {/* Dictation writes; this talks. The panel opens above the
+                    composer rather than on a page of its own, so a refusal can
+                    drop what you said straight into the draft you are looking at. */}
+                <button
+                  className={`voiceToggle ${voiceOpen ? "selected" : ""}`}
+                  type="button"
+                  onClick={() => setVoiceOpen((open) => !open)}
+                  aria-pressed={voiceOpen}
+                  aria-label={voiceOpen ? "Close voice mode" : "Open voice mode"}
+                  title={voiceOpen ? "Close voice mode" : "Talk to Metis"}
+                >
+                  {voiceOpen ? "Close voice" : "Voice"}
+                </button>
                 <input ref={fileInputRef} type="file" multiple hidden accept={CHAT_ATTACHMENT_ACCEPT} onChange={(event) => event.target.files && void addFiles(event.target.files)} />
                 <div className="knowledgeScopeSwitch" role="group" aria-label="Answer sources">
                   <span>Sources</span>

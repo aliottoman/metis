@@ -2105,6 +2105,140 @@ class SpeechPreferenceUpdateV1(Contract):
     voice_model: str | None = Field(default=None, max_length=200)
 
 
+# What one voice turn can be. `read` and `clarify` are the answering intents;
+# the refusals are decided before any model is called, and `navigation` is the
+# one thing a client tool may do (open a page — never mutate).
+VoiceIntent = Literal[
+    "read",
+    "clarify",
+    "navigation",
+    "refuse_build",
+    "refuse_protected",
+]
+
+
+class VoiceCitationV1(Contract):
+    """One source behind a spoken answer, in the form a receipt can show."""
+
+    label: str = Field(min_length=1, max_length=200)
+    reference: str = Field(default="", max_length=400)
+    provider: Literal["local", "notion", "web", "customer", "answer"] = "local"
+
+
+class VoiceAnswerV1(Contract):
+    """The only structured reply the voice model is allowed to author.
+
+    Two strings and nothing else. There is no action name, no tool, no record
+    and no permission on this contract, so a model cannot widen what the turn
+    is allowed to do by what it returns — the ceiling is re-evaluated after
+    this comes back, and there is nothing here for it to disagree with.
+    """
+
+    written: str = Field(default="", max_length=20_000)
+    spoken: str = Field(default="", max_length=1_200)
+
+
+class VoiceRenditionV1(Contract):
+    """One voice turn's two outputs, and the provenance of both.
+
+    `written` is the full grounded answer; it travels to the browser over the
+    loopback stream and lands in the conversation. `spoken` is the short
+    rendition, and it is the *only* text that goes back through the speech
+    provider. They are separate fields rather than one truncated string
+    because they answer different questions: what can be read, and what can be
+    heard once, without scrolling back.
+    """
+
+    written: str = Field(default="", max_length=20_000)
+    spoken: str = Field(default="", max_length=1_200)
+    citations: list[VoiceCitationV1] = Field(default_factory=list, max_length=12)
+    intent: VoiceIntent = "read"
+    # The finalized utterance this answered, verbatim. Carried so a refusal can
+    # hand the composer exactly what was said rather than a paraphrase.
+    transcript: str = Field(default="", max_length=8_000)
+    voice_session_id: str = ""
+    turn_id: str = ""
+    run_id: str = ""
+    # Set when the answer was shortened or normalized by the host rather than
+    # written that way, so the surface can be honest about which it is showing.
+    spoken_fallback: bool = False
+
+
+class VoiceSessionV1(Contract):
+    """One open voice session, as the browser sees it.
+
+    Deliberately without the signed conversation URL: that is minted once, at
+    start, and returned once. A status poll that kept handing it back would
+    turn a short-lived credential into an ambient one.
+    """
+
+    id: str
+    conversation_id: str
+    state: Literal["starting", "live", "ending", "ended", "failed"] = "starting"
+    provider_conversation_id: str = ""
+    started_at: datetime
+    lease_expires_at: datetime
+    ended_at: datetime | None = None
+    # Why it ended, in the user's language: "you stopped it", "it timed out".
+    reason: str = ""
+    spoken_confirmation: bool = False
+    voice_model: str = ""
+    # Billable wall-clock so far. Counted by the host from its own lease, not
+    # from anything the browser reports.
+    elapsed_seconds: float = Field(default=0.0, ge=0.0)
+
+
+class VoiceSessionStartV1(Contract):
+    """The one response that carries the short-lived conversation credential.
+
+    A WebRTC conversation token, not a signed WebSocket URL — the two are
+    different endpoints on the provider and the SDK accepts one or the other,
+    never both. It is minted server-side, returned once, and expires on its
+    own; the API key behind it never leaves the trusted process.
+    """
+
+    session: VoiceSessionV1
+    conversation_token: str = Field(default="", max_length=4_000)
+    lease_seconds: int = Field(default=60, ge=10, le=3_600)
+
+
+class VoiceAvailabilityV1(Contract):
+    """Whether voice can start, and the plain-language reason when it cannot."""
+
+    available: bool = False
+    reason: str = Field(default="", max_length=400)
+    # The Custom LLM URL to paste into the ElevenLabs agent, assembled from the
+    # configured tunnel hostname. Shown rather than guessed at: getting this
+    # wrong is the most likely single reason a correctly-built voice mode does
+    # not answer, and the value is a public hostname, not a secret.
+    custom_llm_url: str = Field(default="", max_length=400)
+    public_model_alias: str = Field(default="", max_length=120)
+
+
+class VoiceTurnRequestV1(Contract):
+    """What the isolated ingress forwards: one utterance and its context.
+
+    Notice what is absent. There is no model, no system prompt, no account, no
+    permission and no action name — nothing the far end of a tunnel could set
+    that would change what this turn is allowed to do.
+    """
+
+    provider_conversation_id: str = Field(default="", max_length=120)
+    transcript: str = Field(min_length=1, max_length=8_000)
+    history: list[str] = Field(default_factory=list, max_length=12)
+
+
+class VoicePostCallV1(Contract):
+    """A verified ElevenLabs post-call webhook, as the ingress relays it."""
+
+    event_type: str = Field(default="post_call", max_length=80)
+    provider_conversation_id: str = Field(default="", max_length=120)
+    body_sha256: str = Field(default="", max_length=64)
+    # The provider's own payload, kept as untrusted evidence. Nothing in here
+    # becomes a customer fact, an action, a memory or an account link without
+    # a person accepting it.
+    payload: dict[str, Any] = Field(default_factory=dict)
+
 
 class LocalModelOptionV1(Contract):
     id: str

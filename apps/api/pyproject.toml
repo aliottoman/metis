@@ -53,9 +53,12 @@ cloud = [
 ]
 [project.scripts]
 waqil-api = "waqil_api.main:run"
+# The voice ingress runs as its own process, never inside the API's. See
+# src/waqil_voice_ingress/__init__.py for why the separation is structural.
+waqil-voice-ingress = "waqil_voice_ingress.main:run"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/waqil_api"]
+packages = ["src/waqil_api", "src/waqil_voice_ingress"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

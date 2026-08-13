@@ -554,6 +554,60 @@ export interface SpeechPreference {
   voice_models: string[];
 }
 
+export interface VoiceAvailability {
+  available: boolean;
+  reason: string;
+  /** The URL to paste into the ElevenLabs agent's Custom LLM field. */
+  custom_llm_url: string;
+  public_model_alias: string;
+}
+
+export interface VoiceCitation {
+  label: string;
+  reference: string;
+  provider: "local" | "notion" | "web" | "customer" | "answer";
+}
+
+export type VoiceIntent =
+  | "read"
+  | "clarify"
+  | "navigation"
+  | "refuse_build"
+  | "refuse_protected";
+
+export interface VoiceRendition {
+  written: string;
+  spoken: string;
+  citations: VoiceCitation[];
+  intent: VoiceIntent;
+  transcript: string;
+  voice_session_id: string;
+  turn_id: string;
+  run_id: string;
+  spoken_fallback: boolean;
+}
+
+export interface VoiceSession {
+  id: string;
+  conversation_id: string;
+  state: "starting" | "live" | "ending" | "ended" | "failed";
+  provider_conversation_id: string;
+  started_at: string;
+  lease_expires_at: string;
+  ended_at: string | null;
+  reason: string;
+  spoken_confirmation: boolean;
+  voice_model: string;
+  elapsed_seconds: number;
+}
+
+export interface VoiceSessionStart {
+  session: VoiceSession;
+  /** A WebRTC conversation token, minted server-side and handed over once. */
+  conversation_token: string;
+  lease_seconds: number;
+}
+
 export interface LocalModelOption {
   id: string;
   name: string;

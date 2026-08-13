@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -98,6 +99,12 @@ from .contracts import (
     SkuRateV1,
     SpeechPreferenceUpdateV1,
     SpeechPreferenceV1,
+    VoiceAvailabilityV1,
+    VoicePostCallV1,
+    VoiceRenditionV1,
+    VoiceSessionStartV1,
+    VoiceSessionV1,
+    VoiceTurnRequestV1,
     WinValuationAcceptV1,
     WinValuationV1,
     Decision,
@@ -161,6 +168,11 @@ from .runtime import AppRuntime
 from .spoken_text import brief_to_speech
 from .tool_evidence import build_tool_version_evidence
 from .voice_audio import SpokenAudioCache
+from .voice_session import (
+    VoiceSessionExpired,
+    VoiceSessionService,
+    VoiceUnavailable,
+)
 
 
 router = APIRouter(prefix="/api/v1")
@@ -1756,6 +1768,142 @@ async def run_events(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _voice(request: Request) -> VoiceSessionService:
+    service = runtime(request).voice
+    if service is None:
+        raise HTTPException(status_code=503, detail="voice is not available yet")
+    return service
+
+
+def _voice_ingress_authorized(request: Request) -> bool:
+    """The ingress proving it is the ingress, over loopback.
+
+    These two routes are the only ones a process outside this one calls, and
+    they carry the same bearer the ingress was started with. It is not a user
+    credential and it authorizes nothing beyond "you are the adapter".
+    """
+    header = request.headers.get("authorization") or ""
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return False
+    return secrets.compare_digest(token.strip(), _voice(request).shared_secret())
+
+
+@router.get("/voice", response_model=VoiceAvailabilityV1)
+async def voice_availability(request: Request) -> VoiceAvailabilityV1:
+    """Whether voice can start, and what is missing when it cannot."""
+    service = runtime(request).voice
+    if service is None:
+        return VoiceAvailabilityV1(available=False, reason="voice is not available yet")
+    settings = runtime(request).settings
+    hostname = settings.voice_tunnel_hostname.strip()
+    reason = service.unavailable_reason()
+    return VoiceAvailabilityV1(
+        available=not reason,
+        reason=reason,
+        custom_llm_url=(f"https://{hostname}/v1/chat/completions" if hostname else ""),
+        public_model_alias=settings.voice_public_model_alias,
+    )
+
+
+@router.post("/voice/sessions", response_model=VoiceSessionStartV1)
+async def start_voice_session(request: Request) -> VoiceSessionStartV1:
+    """Open a session: start the ingress and connector, mint a signed URL.
+
+    The signed URL is returned exactly once, here. The ElevenLabs API key that
+    minted it never leaves this process.
+    """
+    try:
+        return await _voice(request).start()
+    except VoiceUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@router.post("/voice/sessions/{session_id}/lease", response_model=VoiceSessionV1)
+async def renew_voice_session(session_id: str, request: Request) -> VoiceSessionV1:
+    try:
+        return await _voice(request).renew(session_id)
+    except VoiceSessionExpired as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/voice/sessions/{session_id}", response_model=VoiceSessionV1)
+async def get_voice_session(session_id: str, request: Request) -> VoiceSessionV1:
+    try:
+        return await _voice(request).status(session_id)
+    except VoiceSessionExpired as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.delete("/voice/sessions/{session_id}", response_model=VoiceSessionV1)
+async def end_voice_session(session_id: str, request: Request) -> VoiceSessionV1:
+    try:
+        return await _voice(request).end(session_id)
+    except VoiceSessionExpired as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/voice/sessions/{session_id}/events")
+async def voice_session_events(session_id: str, request: Request) -> StreamingResponse:
+    """The loopback channel: everything the tunnel deliberately does not carry.
+
+    Written answers, citations, refusal handoffs and state changes come down
+    here, to the browser, over loopback. The Custom LLM response carries only
+    the words to be spoken.
+    """
+    service = _voice(request)
+    try:
+        await service.status(session_id)
+    except VoiceSessionExpired as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    async def body() -> AsyncIterator[bytes]:
+        async for event in service.events(session_id):
+            if await request.is_disconnected():
+                return
+            yield _sse(str(event.get("type") or "voice.event"), None, event)
+
+    return StreamingResponse(
+        body(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/voice/turn", response_model=VoiceRenditionV1)
+async def voice_turn(body: VoiceTurnRequestV1, request: Request) -> VoiceRenditionV1:
+    """One finalized utterance, answered inside the voice ceiling.
+
+    Called by the isolated ingress over loopback and by nothing else. The
+    reply carries the written answer and its citations for the caller's
+    records; the ingress forwards only `spoken`.
+    """
+    if not _voice_ingress_authorized(request):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    try:
+        return await _voice(request).turn(
+            provider_conversation_id=body.provider_conversation_id,
+            transcript=body.transcript,
+            history=list(body.history),
+        )
+    except VoiceSessionExpired as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ModelProviderError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@router.post("/voice/post-call")
+async def voice_post_call(body: VoicePostCallV1, request: Request) -> dict[str, Any]:
+    """A verified provider webhook, recorded as evidence and nothing more."""
+    if not _voice_ingress_authorized(request):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return await _voice(request).post_call(body.model_dump(mode="json"))
 
 
 @router.post("/runs/{run_id}/decisions", response_model=RunV1)
