@@ -640,6 +640,10 @@ export interface InterviewContext {
   company_name: string;
   job_description: string;
   interview_type: InterviewType;
+  /** What this round should probe, in the candidate's own words. Optional. */
+  interview_objective: string;
+  /** Up to six short phrases the interviewer should dig into. */
+  focus_areas: string[];
 }
 
 export interface InterviewAvailability {
@@ -689,6 +693,31 @@ export interface InterviewScorecard {
   created_at: string;
 }
 
+/** How the candidate actually sounded, measured post-call from the recording
+ * via verbatim speech-to-text. Counted in the audio, never estimated — and
+ * never part of the overall score, which was already spoken. */
+export interface InterviewDelivery {
+  candidate_word_count: number;
+  candidate_talk_seconds: number;
+  words_per_minute: number;
+  filler_count: number;
+  filler_rate_per_100_words: number;
+  filler_breakdown: Record<string, number>;
+  hedging_count: number;
+  hedging_breakdown: Record<string, number>;
+  long_pause_count: number;
+  longest_pause_seconds: number;
+  note: string;
+  created_at: string;
+}
+
+export type InterviewDeliveryStage =
+  | ""
+  | "pending"
+  | "ready"
+  | "failed"
+  | "unavailable";
+
 export interface InterviewSession {
   id: string;
   provider_conversation_id: string;
@@ -697,9 +726,13 @@ export interface InterviewSession {
   job_description: string;
   interview_type: InterviewType;
   question_limit: number;
+  interview_objective: string;
+  focus_areas: string[];
   status: "active" | "complete" | "ended_early" | "failed";
   turns: InterviewTurn[];
   scorecard: InterviewScorecard | null;
+  delivery_stage: InterviewDeliveryStage;
+  delivery: InterviewDelivery | null;
   created_at: string;
   updated_at: string;
 }

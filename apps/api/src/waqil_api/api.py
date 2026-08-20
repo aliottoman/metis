@@ -2278,6 +2278,33 @@ async def end_interview_session(
     session = await service.session(session_id)
     if session is None:
         raise not_found("interview session")
+    # The call is over, so its recording can exist now — kick the post-call
+    # delivery analysis in the background. Repeated ends re-schedule at most
+    # one task, and a session that never connected has nothing to analyze.
+    if (
+        session.provider_conversation_id
+        and session.status in ("complete", "ended_early")
+        and session.delivery_stage in ("", "failed")
+    ):
+        service.schedule_delivery(session_id)
+    return session
+
+
+@router.post(
+    "/interviews/sessions/{session_id}/delivery",
+    response_model=InterviewSessionV1,
+)
+async def analyze_interview_delivery(
+    session_id: str, request: Request
+) -> InterviewSessionV1:
+    """Run (or retry) the post-call delivery analysis and wait for it.
+
+    Delivery is derived data measured from the recording — recomputable, so
+    unlike the scorecard this endpoint may be called again after a failure.
+    """
+    session = await _interviews(request).analyze_delivery(session_id)
+    if session is None:
+        raise not_found("interview session")
     return session
 
 

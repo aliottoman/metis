@@ -28,15 +28,17 @@ EXPORT_FILE = REPO_ROOT / "docs" / "interviews-agent-export.json"
 TOOL_NAME = "submit_interview_evaluation"
 
 # The router's fixed opening line. Spoken as the agent's first message rather
-# than by a node, so it is deterministic and costs no model call.
+# than by a node, so it is deterministic and costs no model call. Must match
+# the router prompt's "Say exactly" text in docs/interviews-workflow.json.
 OPENING_LINE = (
-    "We'll run five questions. I won't coach you during the interview. "
-    "I'll evaluate you when it is over."
+    "We'll run five questions. Expect me to press on your answers. "
+    "I won't coach you during the interview. I'll evaluate you when it is over."
 )
 
-# Five answers plus a debrief; the platform's 600-second default cuts off
-# mid-answer. 45 minutes, per docs/interviews-elevenlabs-agent.md.
-MAX_DURATION_SECONDS = 2_700
+# Five answers, up to two follow-up probes each, plus a debrief; the
+# platform's 600-second default cuts off mid-answer. 60 minutes, per
+# docs/interviews-elevenlabs-agent.md.
+MAX_DURATION_SECONDS = 3_600
 
 # The tool blocks while the browser round-trips through the Metis API; that
 # takes a second or two, and 60 leaves room for a slow first evaluation.
@@ -268,7 +270,8 @@ def deploy(client: httpx.Client, agent_id: str, dry_run: bool) -> None:
 
     current = client.get(f"/v1/convai/agents/{agent_id}")
     current.raise_for_status()
-    config = current.json()["conversation_config"]
+    fetched = current.json()
+    config = fetched["conversation_config"]
 
     tool_id = "dry-run" if dry_run else ensure_tool(client)
     agent = config.setdefault("agent", {})
@@ -280,6 +283,11 @@ def deploy(client: httpx.Client, agent_id: str, dry_run: bool) -> None:
     agent_prompt.pop("tools", None)
     config.setdefault("conversation", {})["max_duration_seconds"] = MAX_DURATION_SECONDS
 
+    # Delivery analysis reads the call recording back after the interview;
+    # recording defaults on, but a dashboard toggle would silently starve it.
+    platform = fetched.get("platform_settings") or {}
+    platform.setdefault("privacy", {})["record_voice"] = True
+
     if dry_run:
         print(json.dumps(workflow, indent=2))
         print(f"dry run: {len(workflow['nodes'])} nodes, {len(workflow['edges'])} edges")
@@ -290,7 +298,11 @@ def deploy(client: httpx.Client, agent_id: str, dry_run: bool) -> None:
     # and silently ignored — verified the hard way).
     patched = client.patch(
         f"/v1/convai/agents/{agent_id}",
-        json={"conversation_config": config, "workflow": workflow},
+        json={
+            "conversation_config": config,
+            "workflow": workflow,
+            "platform_settings": platform,
+        },
     )
     if patched.status_code >= 400:
         sys.exit(f"ElevenLabs refused the update: HTTP {patched.status_code}: {patched.text[:2000]}")
@@ -321,6 +333,11 @@ def verify(client: httpx.Client, agent_id: str, spec: dict[str, Any], tool_id: s
         problems.append("the evaluation tool is not attached")
     if config["conversation"]["max_duration_seconds"] != MAX_DURATION_SECONDS:
         problems.append("the duration cap did not land")
+    privacy = (data.get("platform_settings") or {}).get("privacy") or {}
+    if privacy.get("record_voice") is not True:
+        # Without a recording the delivery analysis silently lands
+        # 'unavailable' on every interview — catch that here, not in a month.
+        problems.append("record_voice is not pinned on")
     if problems:
         sys.exit("deployed, but verification failed: " + "; ".join(problems))
 
@@ -332,7 +349,9 @@ def verify(client: httpx.Client, agent_id: str, spec: dict[str, Any], tool_id: s
     print(f"agent: {data.get('name')} ({agent_id})")
     print(f"workflow: {len(nodes)} nodes, {len((data.get('workflow') or {}).get('edges', {}))} edges")
     print(f"export: {EXPORT_FILE.relative_to(REPO_ROOT)}")
-    print("verified: prompt, opening line, blocking tool, workflow, duration cap")
+    print(
+        "verified: prompt, opening line, blocking tool, workflow, duration cap, recording"
+    )
 
 
 def main() -> None:

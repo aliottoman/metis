@@ -17,12 +17,18 @@ import {
   draftToContext,
   elapsedLabel,
   loadInterviewDraft,
+  parseFocusAreas,
   recommendationLabel,
   saveInterviewDraft,
   validateInterviewDraft,
   type InterviewDraft,
 } from "@/lib/interviews";
-import type { InterviewAvailability, InterviewScorecard } from "@/lib/types";
+import type {
+  InterviewAvailability,
+  InterviewDelivery,
+  InterviewDeliveryStage,
+  InterviewScorecard,
+} from "@/lib/types";
 import {
   useInterviewSession,
   type InterviewPhase,
@@ -164,6 +170,8 @@ function InterviewsWorkbenchBody() {
   const jobTitle = interview.session?.job_title ?? draft.job_title;
   const companyName = interview.session?.company_name ?? draft.company_name;
   const interviewType = interview.session?.interview_type ?? draft.interview_type;
+  const focusAreas =
+    interview.session?.focus_areas ?? parseFocusAreas(draft.focus_areas);
 
   return (
     <div className="workspacePage interviewsPage">
@@ -171,7 +179,10 @@ function InterviewsWorkbenchBody() {
         <div>
           <span className="eyebrow">Mock rounds</span>
           <h1>Interviews</h1>
-          <p>Five questions. Direct feedback. No rehearsed praise.</p>
+          <p>
+            Five questions, real follow-ups, and a delivery read from the
+            recording. No rehearsed praise.
+          </p>
         </div>
       </header>
 
@@ -287,6 +298,49 @@ function InterviewsWorkbenchBody() {
             </small>
           ) : null}
 
+          <div className="interviewSteering">
+            <span className="interviewSteeringEyebrow">
+              Make it specific · optional
+            </span>
+            <label className="interviewField interviewObjectiveField">
+              <span>What should this round probe?</span>
+              <textarea
+                value={draft.interview_objective}
+                rows={3}
+                placeholder="e.g. Grill me on why I chose ElevenLabs over building my own voice stack, and press on every architecture trade-off."
+                onChange={(event) => update("interview_objective", event.target.value)}
+                onBlur={() => touch("interview_objective")}
+              />
+              {touched.interview_objective && problems.interview_objective ? (
+                <small className="interviewFieldProblem" role="alert">
+                  {problems.interview_objective}
+                </small>
+              ) : null}
+            </label>
+            <label className="interviewField">
+              <span>Focus areas</span>
+              <input
+                type="text"
+                value={draft.focus_areas}
+                placeholder="architecture trade-offs, why ElevenLabs, scaling — up to six, comma-separated"
+                onChange={(event) => update("focus_areas", event.target.value)}
+                onBlur={() => touch("focus_areas")}
+              />
+              {touched.focus_areas && problems.focus_areas ? (
+                <small className="interviewFieldProblem" role="alert">
+                  {problems.focus_areas}
+                </small>
+              ) : null}
+              {parseFocusAreas(draft.focus_areas).length ? (
+                <span className="interviewFocusChips" aria-hidden="true">
+                  {parseFocusAreas(draft.focus_areas).map((area, index) => (
+                    <i key={`${index}-${area}`}>{area}</i>
+                  ))}
+                </span>
+              ) : null}
+            </label>
+          </div>
+
           <div className="interviewStartRow">
             <button
               className="primaryButton interviewStartButton"
@@ -301,8 +355,9 @@ function InterviewsWorkbenchBody() {
               Begin 5-question interview
             </button>
             <span className="mutedMeta">
-              Five questions, one at a time. Chiron evaluates at the end, not
-              along the way.
+              Five questions, one at a time — with follow-up probes when an
+              answer invites them. Chiron evaluates at the end, not along the
+              way.
             </span>
           </div>
         </section>
@@ -328,6 +383,13 @@ function InterviewsWorkbenchBody() {
                 <strong>
                   {jobTitle} · {companyName}
                 </strong>
+                {focusAreas.length ? (
+                  <span className="interviewLiveFocus" aria-label="Focus areas">
+                    {focusAreas.map((area, index) => (
+                      <i key={`${index}-${area}`}>{area}</i>
+                    ))}
+                  </span>
+                ) : null}
               </div>
               <div className="interviewLiveMeta">
                 <span
@@ -461,6 +523,10 @@ function InterviewsWorkbenchBody() {
         <ScorecardView
           scorecard={interview.scorecard}
           turns={interview.turns}
+          delivery={interview.delivery}
+          deliveryStage={interview.deliveryStage}
+          deliveryBusy={interview.deliveryBusy}
+          onRetryDelivery={() => void interview.retryDelivery()}
           onRetryRound={retryRound}
           onTryAnotherType={tryAnotherType}
           onNewRole={newRole}
@@ -487,6 +553,16 @@ function InterviewsWorkbenchBody() {
               Back to setup
             </button>
           </div>
+          {interview.phase === "ended_early" ? (
+            // The backend still measures delivery for an early end — the
+            // round wasn't scored, but how it sounded is still worth having.
+            <DeliverySection
+              delivery={interview.delivery}
+              stage={interview.deliveryStage}
+              busy={interview.deliveryBusy}
+              onRetry={() => void interview.retryDelivery()}
+            />
+          ) : null}
           {interview.turns.length ? (
             <details className="interviewTranscriptPanel" open>
               <summary>Transcript</summary>
@@ -515,12 +591,20 @@ function TranscriptList({ turns }: { turns: LiveInterviewTurn[] }) {
 function ScorecardView({
   scorecard,
   turns,
+  delivery,
+  deliveryStage,
+  deliveryBusy,
+  onRetryDelivery,
   onRetryRound,
   onTryAnotherType,
   onNewRole,
 }: {
   scorecard: InterviewScorecard;
   turns: LiveInterviewTurn[];
+  delivery: InterviewDelivery | null;
+  deliveryStage: InterviewDeliveryStage;
+  deliveryBusy: boolean;
+  onRetryDelivery: () => void;
   onRetryRound: () => void;
   onTryAnotherType: () => void;
   onNewRole: () => void;
@@ -600,6 +684,13 @@ function ScorecardView({
         <p>{evaluation.drill}</p>
       </div>
 
+      <DeliverySection
+        delivery={delivery}
+        stage={deliveryStage}
+        busy={deliveryBusy}
+        onRetry={onRetryDelivery}
+      />
+
       <div className="interviewNextActions">
         <button className="primaryButton" type="button" onClick={onRetryRound}>
           Retry this round
@@ -619,5 +710,118 @@ function ScorecardView({
         </details>
       ) : null}
     </section>
+  );
+}
+
+/** Chips like "um ×9", loudest habit first. */
+function breakdownChips(breakdown: Record<string, number>): string[] {
+  return Object.entries(breakdown)
+    .sort(([, a], [, b]) => b - a)
+    .map(([token, count]) => `${token} ×${count}`);
+}
+
+function DeliverySection({
+  delivery,
+  stage,
+  busy,
+  onRetry,
+}: {
+  delivery: InterviewDelivery | null;
+  stage: InterviewDeliveryStage;
+  busy: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="interviewScoreBlock interviewDelivery" aria-label="Delivery analysis">
+      <h3>
+        Delivery
+        <span className="interviewDeliveryTag">measured from the recording</span>
+      </h3>
+
+      {stage === "ready" && delivery ? (
+        <>
+          <div className="interviewDeliveryGrid">
+            <div className="interviewDeliveryStat">
+              <strong>{delivery.filler_count}</strong>
+              <span>
+                fillers
+                {delivery.candidate_word_count > 0
+                  ? ` · ${delivery.filler_rate_per_100_words.toFixed(1)} per 100 words`
+                  : ""}
+              </span>
+              {delivery.filler_count > 0 ? (
+                <span className="interviewDeliveryChips">
+                  {breakdownChips(delivery.filler_breakdown).map((chip) => (
+                    <i key={chip}>{chip}</i>
+                  ))}
+                </span>
+              ) : null}
+            </div>
+            <div className="interviewDeliveryStat">
+              <strong>{Math.round(delivery.words_per_minute)}</strong>
+              <span>
+                words a minute · {elapsedLabel(delivery.candidate_talk_seconds)} of
+                talking
+              </span>
+            </div>
+            <div className="interviewDeliveryStat">
+              <strong>{delivery.long_pause_count}</strong>
+              <span>
+                long pauses
+                {delivery.long_pause_count > 0
+                  ? ` · longest ${delivery.longest_pause_seconds.toFixed(1)}s`
+                  : " inside your answers"}
+              </span>
+            </div>
+            <div className="interviewDeliveryStat">
+              <strong>{delivery.hedging_count}</strong>
+              <span>hedges</span>
+              {delivery.hedging_count > 0 ? (
+                <span className="interviewDeliveryChips">
+                  {breakdownChips(delivery.hedging_breakdown).map((chip) => (
+                    <i key={chip}>{chip}</i>
+                  ))}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          {delivery.note ? (
+            <p className="interviewDeliveryNote">{delivery.note}</p>
+          ) : null}
+          <p className="interviewDeliveryFoot">
+            Counted by verbatim speech-to-text over the call audio. These numbers
+            never change the overall score you already heard.
+          </p>
+        </>
+      ) : null}
+
+      {stage === "" || stage === "pending" ? (
+        <p className="interviewDeliveryPending" role="status">
+          Measuring your delivery from the recording — fillers, pace, pauses.
+          This lands a moment after the call ends.
+        </p>
+      ) : null}
+
+      {stage === "unavailable" ? (
+        <p className="interviewDeliveryNote">
+          No recording was available for this round, so there are no delivery
+          metrics. The scorecard above is unaffected.
+        </p>
+      ) : null}
+
+      {stage === "failed" ? (
+        <div className="interviewDeliveryFailed">
+          <p>The delivery analysis didn&apos;t finish.</p>
+          <button
+            className="secondaryButton"
+            type="button"
+            disabled={busy}
+            onClick={onRetry}
+          >
+            {busy ? "Analyzing…" : "Analyze again"}
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }

@@ -1334,6 +1334,27 @@ CREATE INDEX IF NOT EXISTS idx_interview_turns_session
     ON interview_turns(session_id, ordinal);
 """
 
+SCHEMA_V31 = """
+-- Interviews learn what they are for, and how the candidate actually sounded.
+--
+-- The objective and focus areas are setup context: free text the candidate
+-- wrote about what this round should probe, passed to the agent as dynamic
+-- variables. Focus areas are a JSON array of short strings.
+--
+-- The delivery columns hold the post-call verbatim analysis — fillers, pace,
+-- pauses — measured from the call recording. It is derived data: recomputable,
+-- overwritable, and deliberately separate from the scorecard, which is written
+-- once and never revised after the candidate heard it. stage is a tiny state
+-- machine: '' (never started) → pending → ready | failed | unavailable.
+ALTER TABLE interview_sessions ADD COLUMN interview_objective TEXT NOT NULL DEFAULT '';
+ALTER TABLE interview_sessions ADD COLUMN focus_areas TEXT NOT NULL DEFAULT '[]'
+    CHECK(json_valid(focus_areas));
+ALTER TABLE interview_sessions ADD COLUMN delivery_stage TEXT NOT NULL DEFAULT ''
+    CHECK(delivery_stage IN ('','pending','ready','failed','unavailable'));
+ALTER TABLE interview_sessions ADD COLUMN delivery_json TEXT
+    CHECK(delivery_json IS NULL OR json_valid(delivery_json));
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -1365,6 +1386,7 @@ MIGRATIONS: dict[int, str] = {
     28: SCHEMA_V28,
     29: SCHEMA_V29,
     30: SCHEMA_V30,
+    31: SCHEMA_V31,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -2158,6 +2180,8 @@ class Database:
         job_description: str,
         interview_type: str,
         question_limit: int = 5,
+        interview_objective: str = "",
+        focus_areas_json: str = "[]",
     ) -> dict[str, Any]:
         """Record the session before the provider is called, so a failed token
         mint leaves a diagnosable row rather than nothing."""
@@ -2168,9 +2192,9 @@ class Database:
                 conn.execute(
                     """INSERT INTO interview_sessions
                     (id, job_title, company_name, job_description,
-                     interview_type, question_limit, status, created_at,
-                     updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                     interview_type, question_limit, interview_objective,
+                     focus_areas, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
                     (
                         session_id,
                         job_title.strip(),
@@ -2178,6 +2202,8 @@ class Database:
                         job_description.strip(),
                         interview_type,
                         question_limit,
+                        interview_objective.strip(),
+                        focus_areas_json,
                         timestamp,
                         timestamp,
                     ),
@@ -2336,6 +2362,49 @@ class Database:
                         "UPDATE interview_sessions SET status = ?, updated_at = ? "
                         "WHERE id = ?",
                         (status, timestamp, session_id),
+                    )
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM interview_sessions WHERE id = ?",
+                        (session_id,),
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def set_interview_delivery(
+        self,
+        session_id: str,
+        *,
+        stage: str,
+        delivery_json: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Move the delivery analysis through its stages.
+
+        Delivery is derived data — recomputable from the recording — so unlike
+        the scorecard it may be overwritten. The JSON is only touched when a
+        new value is supplied; a stage move alone keeps whatever was measured.
+        """
+        timestamp = _now()
+
+        def operation() -> dict[str, Any] | None:
+            with self._transaction() as conn:
+                session = conn.execute(
+                    "SELECT * FROM interview_sessions WHERE id = ?", (session_id,)
+                ).fetchone()
+                if session is None:
+                    return None
+                if delivery_json is None:
+                    conn.execute(
+                        "UPDATE interview_sessions SET delivery_stage = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (stage, timestamp, session_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE interview_sessions SET delivery_stage = ?, "
+                        "delivery_json = ?, updated_at = ? WHERE id = ?",
+                        (stage, delivery_json, timestamp, session_id),
                     )
                 return dict(
                     conn.execute(

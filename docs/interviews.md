@@ -1,10 +1,14 @@
 # Interviews
 
 A five-question spoken mock interview at `/interviews`. You give it a job
-title, a company, the pasted job description, and which round to run; Chiron —
-a private ElevenLabs agent — asks exactly five questions, one at a time, then
-scores the round honestly. No coaching mid-round, no rehearsed praise, and no
-score the backend didn't calculate.
+title, a company, the pasted job description, which round to run, and —
+optionally — an objective and focus areas for the round; Chiron — a private
+ElevenLabs agent — asks exactly five numbered questions, one at a time,
+pressing each answer with up to two unnumbered follow-up probes before moving
+on, then scores the round honestly. No coaching mid-round, no rehearsed
+praise, and no score the backend didn't calculate. After the call, Metis
+fetches the recording and measures how you actually sounded — fillers, pace,
+pauses, hedging — as a Delivery section on the scorecard.
 
 ## Why this is not voice mode
 
@@ -50,20 +54,27 @@ anything missing.
 
 ## How a session runs
 
-1. The setup form collects role, company, job description, and round. The
-   draft persists in localStorage, so accidental navigation does not eat a
-   pasted JD. Start stays disabled until all four are valid.
+1. The setup form collects role, company, job description, and round — plus
+   an optional objective ("grill me on why ElevenLabs") and up to six focus
+   areas. The draft persists in localStorage, so accidental navigation does
+   not eat a pasted JD. Start stays disabled until the four required fields
+   are valid.
 2. `POST /api/v1/interviews/sessions` persists the session, mints the token,
    and returns the dynamic variables — `job_title`, `company_name`,
    `job_description`, `interview_type`, `question_limit` (always `"5"`,
-   stamped server-side), and `metis_interview_session_id`. The job
-   description is passed as untrusted source material; the agent prompt tells
-   Chiron to ignore any instructions inside it.
+   stamped server-side), `metis_interview_session_id`,
+   `interview_objective`, and `focus_areas` (the last two always supplied,
+   with a stated default when the form left them empty — a referenced but
+   missing variable kills the conversation at start). The job description,
+   objective, and focus areas are passed as untrusted source material; the
+   agent prompt tells Chiron to ignore any instructions inside them and to
+   treat steering as steering, never as a rule change.
 3. The browser starts the WebRTC conversation with those variables. The page
    tracks progress by the spoken "Question one" … "Question five" openings,
    shows a `Question N of 5` counter, an elapsed timer, mute, a typed-reply
-   fallback, and a subdued transcript panel. Every transcript line is
-   appended to the session as it is heard.
+   fallback, and a subdued transcript panel. Follow-up probes are never
+   numbered, so the counter holds still while Chiron presses. Every
+   transcript line is appended to the session as it is heard.
 4. After the fifth answer Chiron says "That's the interview. I'm evaluating
    it now." and calls the blocking `submit_interview_evaluation` tool with
    five criterion scores and the qualitative material — never an overall
@@ -102,13 +113,35 @@ With at least three answered questions the scorecard comes back labeled
 | `PATCH /api/v1/interviews/sessions/{id}` | Attach ElevenLabs' conversation id |
 | `POST /api/v1/interviews/sessions/{id}/turns` | Append transcript turns; re-sent ordinals absorbed |
 | `POST /api/v1/interviews/sessions/{id}/evaluation` | Validate, compute score, store once, return stored |
-| `POST /api/v1/interviews/sessions/{id}/end` | Idempotent close (`completed` / `ended_early` / `failed`) |
+| `POST /api/v1/interviews/sessions/{id}/end` | Idempotent close (`completed` / `ended_early` / `failed`); schedules the delivery analysis |
+| `POST /api/v1/interviews/sessions/{id}/delivery` | Run (or retry) the post-call delivery analysis, synchronously |
 | `DELETE /api/v1/interviews/sessions/{id}` | Remove session + transcript; already-gone is success |
 
-Persistence is `interview_sessions` + `interview_turns` (schema v29). The
-scorecard is one JSON column written exactly once — a retried tool call gets
-the stored verdict back, never a rewrite of a score the candidate already
-heard.
+Persistence is `interview_sessions` + `interview_turns` (schema v30, extended
+in v31 with the objective, focus areas, and delivery columns). The scorecard
+is one JSON column written exactly once — a retried tool call gets the stored
+verdict back, never a rewrite of a score the candidate already heard.
+
+## Delivery analysis
+
+The live transcript is cleaned before the model sees it, so the "um"s are
+gone before anyone could count them. After the call ends, Metis fetches the
+conversation recording from ElevenLabs (`GET
+/v1/convai/conversations/{id}/audio`; recording is on by default and the
+deploy script pins it on), runs Scribe over it with diarization and word
+timestamps — Scribe is verbatim by default, so fillers and false starts
+survive — separates the candidate's voice from Chiron's using the transcript
+the browser already labeled, and counts: fillers (with a per-word breakdown),
+words per minute, long pauses inside the candidate's own answers (a silence
+while Chiron speaks is not a pause), and hedges. The metrics land in
+`delivery_json` with a stage column (`'' → pending → ready | failed |
+unavailable`) and render as a Delivery section on the scorecard.
+
+Delivery is derived data: recomputable, overwritable, and deliberately not
+part of the overall score — the score was spoken in the debrief, and a number
+the candidate already heard does not get revised. A conversation that saved
+no audio lands `unavailable`, never `failed`; the pure counting lives in
+`interview_delivery.py` and is tested without any provider.
 
 ## Where things live
 

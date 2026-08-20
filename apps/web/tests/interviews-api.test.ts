@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  analyzeInterviewDelivery,
   appendInterviewTurns,
   endInterviewSession,
   getInterviewAvailability,
@@ -13,6 +14,7 @@ import {
   announcesEvaluation,
   draftToContext,
   elapsedLabel,
+  parseFocusAreas,
   parseInterviewEvaluation,
   questionNumberFrom,
   recommendationLabel,
@@ -31,6 +33,18 @@ const DRAFT = {
   company_name: "Batelco",
   job_description: "Own the lakehouse. Spark, Airflow, judgment.",
   interview_type: "technical" as const,
+  interview_objective: "",
+  focus_areas: "",
+};
+
+// What draftToContext(DRAFT) produces — the shape the API actually posts.
+const CONTEXT = {
+  job_title: DRAFT.job_title,
+  company_name: DRAFT.company_name,
+  job_description: DRAFT.job_description,
+  interview_type: DRAFT.interview_type,
+  interview_objective: "",
+  focus_areas: [] as string[],
 };
 
 const EVALUATION = {
@@ -94,6 +108,47 @@ test("the interview type is mandatory and restricted to the three rounds", () =>
   }
 });
 
+test("the objective and focus areas are optional, parsed, and bounded", () => {
+  // Optional: an empty pair still starts.
+  const bare = draftToContext({ ...DRAFT });
+  assert.deepEqual(bare?.focus_areas, []);
+  assert.equal(bare?.interview_objective, "");
+  // Commas, semicolons and newlines all separate; whitespace items drop.
+  assert.deepEqual(
+    parseFocusAreas("architecture trade-offs, why ElevenLabs;\n scaling , "),
+    ["architecture trade-offs", "why ElevenLabs", "scaling"],
+  );
+  // A pasted repeat is noise, not emphasis — deduplicated in order, which
+  // also keeps React chip keys unique.
+  assert.deepEqual(parseFocusAreas("scaling, python, scaling"), [
+    "scaling",
+    "python",
+  ]);
+  const steered = draftToContext({
+    ...DRAFT,
+    interview_objective: "  Grill me on why ElevenLabs.  ",
+    focus_areas: "trade-offs, scaling",
+  });
+  assert.equal(steered?.interview_objective, "Grill me on why ElevenLabs.");
+  assert.deepEqual(steered?.focus_areas, ["trade-offs", "scaling"]);
+  // Bounded: seven areas or a 121-char phrase block the start at the field.
+  assert.ok(
+    validateInterviewDraft({
+      ...DRAFT,
+      focus_areas: "a, b, c, d, e, f, g",
+    }).focus_areas,
+  );
+  assert.ok(
+    validateInterviewDraft({ ...DRAFT, focus_areas: "x".repeat(121) }).focus_areas,
+  );
+  assert.ok(
+    validateInterviewDraft({
+      ...DRAFT,
+      interview_objective: "y".repeat(4_001),
+    }).interview_objective,
+  );
+});
+
 // -- api functions ----------------------------------------------------------
 
 test("starting a session posts the context and hands back token and variables", async () => {
@@ -110,9 +165,9 @@ test("starting a session posts the context and hands back token and variables", 
     });
   };
   try {
-    const opened = await startInterviewSession(DRAFT);
+    const opened = await startInterviewSession(CONTEXT);
     assert.ok(requested.endsWith("/api/v1/interviews/sessions"));
-    assert.deepEqual(body, DRAFT);
+    assert.deepEqual(body, CONTEXT);
     assert.equal(opened.conversation_token, "conv-token");
     assert.equal(opened.dynamic_variables.question_limit, "5");
   } finally {
@@ -136,6 +191,7 @@ test("availability, turns, evaluation and end hit their endpoints", async () => 
     await appendInterviewTurns("ivw_9", [{ ordinal: 0, role: "agent", text: "Question one." }]);
     await submitInterviewEvaluation("ivw_9", EVALUATION);
     await endInterviewSession("ivw_9", "ended_early");
+    await analyzeInterviewDelivery("ivw_9");
     assert.ok(calls[0].url.endsWith("/api/v1/interviews/availability"));
     assert.ok(calls[1].url.endsWith("/api/v1/interviews/sessions/ivw_9/turns"));
     assert.deepEqual(calls[1].body, {
@@ -145,6 +201,8 @@ test("availability, turns, evaluation and end hit their endpoints", async () => 
     assert.equal(calls[2].method, "POST");
     assert.ok(calls[3].url.endsWith("/api/v1/interviews/sessions/ivw_9/end"));
     assert.deepEqual(calls[3].body, { reason: "ended_early" });
+    assert.ok(calls[4].url.endsWith("/api/v1/interviews/sessions/ivw_9/delivery"));
+    assert.equal(calls[4].method, "POST");
   } finally {
     globalThis.fetch = originalFetch;
   }

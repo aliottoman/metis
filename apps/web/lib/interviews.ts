@@ -39,6 +39,10 @@ export interface InterviewDraft {
   company_name: string;
   job_description: string;
   interview_type: InterviewType | "";
+  /** Optional: what this round should probe, in the candidate's own words. */
+  interview_objective: string;
+  /** Optional: raw focus-areas text; commas, semicolons or newlines separate. */
+  focus_areas: string;
 }
 
 export const EMPTY_DRAFT: InterviewDraft = {
@@ -46,6 +50,8 @@ export const EMPTY_DRAFT: InterviewDraft = {
   company_name: "",
   job_description: "",
   interview_type: "",
+  interview_objective: "",
+  focus_areas: "",
 };
 
 // Mirrors the backend contract bounds, so a paste that would be refused is
@@ -53,12 +59,30 @@ export const EMPTY_DRAFT: InterviewDraft = {
 const MAX_TITLE = 200;
 const MAX_COMPANY = 200;
 const MAX_DESCRIPTION = 30_000;
+const MAX_OBJECTIVE = 4_000;
+const MAX_FOCUS_AREAS = 6;
+const MAX_FOCUS_AREA_LENGTH = 120;
+
+/** The raw focus-areas text as the list the backend accepts. Deduplicated in
+ * order — a pasted repeat is noise, not emphasis — matching the backend. */
+export function parseFocusAreas(raw: string): string[] {
+  return [
+    ...new Set(
+      raw
+        .split(/[,;\n]/)
+        .map((area) => area.trim())
+        .filter((area) => area.length > 0),
+    ),
+  ];
+}
 
 export interface InterviewDraftProblems {
   job_title?: string;
   company_name?: string;
   job_description?: string;
   interview_type?: string;
+  interview_objective?: string;
+  focus_areas?: string;
 }
 
 /** Field-level problems with the draft; an empty object means it can start. */
@@ -84,6 +108,15 @@ export function validateInterviewDraft(draft: InterviewDraft): InterviewDraftPro
   } else if (!INTERVIEW_TYPES.some((round) => round.value === draft.interview_type)) {
     problems.interview_type = "Pick one of the three rounds.";
   }
+  if (draft.interview_objective.length > MAX_OBJECTIVE) {
+    problems.interview_objective = `Keep the objective under ${MAX_OBJECTIVE.toLocaleString()} characters.`;
+  }
+  const areas = parseFocusAreas(draft.focus_areas);
+  if (areas.length > MAX_FOCUS_AREAS) {
+    problems.focus_areas = `Keep it to ${MAX_FOCUS_AREAS} focus areas — the round only has five questions.`;
+  } else if (areas.some((area) => area.length > MAX_FOCUS_AREA_LENGTH)) {
+    problems.focus_areas = `Each focus area is a short phrase — under ${MAX_FOCUS_AREA_LENGTH} characters.`;
+  }
   return problems;
 }
 
@@ -95,6 +128,8 @@ export function draftToContext(draft: InterviewDraft): InterviewContext | null {
     company_name: draft.company_name.trim(),
     job_description: draft.job_description.trim(),
     interview_type: draft.interview_type as InterviewType,
+    interview_objective: draft.interview_objective.trim(),
+    focus_areas: parseFocusAreas(draft.focus_areas),
   };
 }
 
@@ -116,6 +151,9 @@ export function loadInterviewDraft(): InterviewDraft {
       interview_type: INTERVIEW_TYPES.some((round) => round.value === parsed.interview_type)
         ? (parsed.interview_type as InterviewType)
         : "",
+      interview_objective:
+        typeof parsed.interview_objective === "string" ? parsed.interview_objective : "",
+      focus_areas: typeof parsed.focus_areas === "string" ? parsed.focus_areas : "",
     };
   } catch {
     return { ...EMPTY_DRAFT };

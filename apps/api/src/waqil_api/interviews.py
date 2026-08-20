@@ -12,11 +12,14 @@ its own arithmetic would sometimes speak a different one.
 
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import Any, Literal
 
 from .config import Settings
 from .contracts import (
     InterviewContextV1,
+    InterviewDeliveryV1,
     InterviewEvaluationV1,
     InterviewScorecardV1,
     InterviewSessionStartV1,
@@ -24,6 +27,7 @@ from .contracts import (
     InterviewTurnV1,
     utc_now,
 )
+from .interview_delivery import candidate_speaker, delivery_metrics, spoken_words
 from .model_provider import ModelProviderError
 
 # Every interview is exactly five questions. Fixed here rather than accepted
@@ -52,6 +56,15 @@ SCORE_WEIGHTS: dict[str, int] = {
 # Recommendation thresholds over the rounded overall score.
 ADVANCE_THRESHOLD = 7.5
 BORDERLINE_THRESHOLD = 6.0
+
+# What the agent is told when the setup form left the field empty. Every
+# dynamic variable referenced anywhere in the agent's prompts must be supplied
+# at conversation start or the conversation fails outright — so these fields
+# are always sent, and an absent preference is said in words, not omitted.
+STANDARD_OBJECTIVE = (
+    "No specific objective was set. Run a standard round for this role."
+)
+NO_FOCUS_AREAS = "None specified."
 
 Recommendation = Literal["advance", "borderline", "do_not_advance"]
 
@@ -103,6 +116,13 @@ class InterviewService:
         self.settings = settings
         self.database = database
         self.model = model
+        # Delivery analysis runs post-call as a background task, one per
+        # session. The recording is not always available the instant the call
+        # ends, so the fetch polls; both knobs are attributes so tests can run
+        # the loop without waiting.
+        self._delivery_tasks: dict[str, asyncio.Task[None]] = {}
+        self.delivery_poll_seconds = 4.0
+        self.delivery_poll_attempts = 5
 
     # -- availability ------------------------------------------------------
 
@@ -144,6 +164,8 @@ class InterviewService:
             job_description=context.job_description,
             interview_type=context.interview_type,
             question_limit=QUESTION_LIMIT,
+            interview_objective=context.interview_objective,
+            focus_areas_json=json.dumps(context.focus_areas),
         )
         try:
             token = await self._conversation_token()
@@ -161,6 +183,10 @@ class InterviewService:
                 "interview_type": context.interview_type,
                 "question_limit": str(QUESTION_LIMIT),
                 "metis_interview_session_id": row["id"],
+                "interview_objective": (
+                    context.interview_objective.strip() or STANDARD_OBJECTIVE
+                ),
+                "focus_areas": "; ".join(context.focus_areas) or NO_FOCUS_AREAS,
             },
         )
 
@@ -230,11 +256,210 @@ class InterviewService:
             return None
         return InterviewScorecardV1.model_validate_json(row["scorecard_json"])
 
+    # -- delivery analysis ---------------------------------------------------
+
+    def schedule_delivery(self, session_id: str) -> None:
+        """Kick the post-call analysis without holding the caller."""
+        self._delivery_task(session_id)
+
+    def _delivery_task(self, session_id: str) -> asyncio.Task[None]:
+        """The one running analysis for a session, starting it if needed.
+
+        Single-flight for every entry point: the idempotent end call and the
+        explicit delivery endpoint both land here, so two triggers can never
+        run two paid provider passes over the same recording at once.
+        """
+        existing = self._delivery_tasks.get(session_id)
+        if existing is not None and not existing.done():
+            return existing
+        task = asyncio.create_task(self._run_delivery(session_id))
+        self._delivery_tasks[session_id] = task
+        task.add_done_callback(
+            lambda _finished: self._delivery_tasks.pop(session_id, None)
+        )
+        return task
+
+    async def analyze_delivery(self, session_id: str) -> InterviewSessionV1 | None:
+        """Run (or join) the delivery analysis and return the settled session.
+
+        Joins the in-flight task when one exists rather than starting a
+        duplicate. A still-active session is returned untouched: the call is
+        not over, there is no recording yet, and stamping any stage now would
+        suppress the automatic post-call run.
+        """
+        detail = await self.database.interview_session_detail(session_id)
+        if detail is None:
+            return None
+        if detail["session"]["status"] == "active":
+            return await self.session(session_id)
+        await self._delivery_task(session_id)
+        return await self.session(session_id)
+
+    async def _run_delivery(self, session_id: str) -> None:
+        """Measure how the candidate sounded, from the actual recording.
+
+        Fetches the conversation audio from ElevenLabs, runs verbatim Scribe
+        over it (fillers survive that pass), splits the diarized voices using
+        the transcript the browser already labeled, and stores the counted
+        metrics. Never touches the scorecard: a score the candidate already
+        heard does not get revised by a filler count.
+
+        Never leaves 'pending' behind: every exception — including a
+        cancellation at shutdown — stamps a terminal stage first, because a
+        stage nothing will ever advance is a lie to the page reading it.
+        """
+        try:
+            await self._measure_delivery(session_id)
+        except asyncio.CancelledError:
+            await self._stamp_failed(session_id)
+            raise
+        except Exception:  # noqa: BLE001 - a background job must not raise into the void
+            await self._stamp_failed(session_id)
+
+    async def _stamp_failed(self, session_id: str) -> None:
+        try:
+            await self.database.set_interview_delivery(session_id, stage="failed")
+        except Exception:  # noqa: BLE001 - best effort; the retry endpoint recovers
+            pass
+
+    async def _measure_delivery(self, session_id: str) -> None:
+        detail = await self.database.interview_session_detail(session_id)
+        if detail is None:
+            return
+        conversation_id = str(
+            detail["session"].get("provider_conversation_id") or ""
+        ).strip()
+        speech = getattr(self.model, "elevenlabs", None)
+        if not conversation_id or speech is None or not speech.available:
+            await self.database.set_interview_delivery(
+                session_id, stage="unavailable"
+            )
+            return
+        await self.database.set_interview_delivery(session_id, stage="pending")
+        audio, media_type = await self._conversation_audio(speech, conversation_id)
+        if audio is None:
+            await self.database.set_interview_delivery(
+                session_id, stage="unavailable"
+            )
+            return
+        payload = await speech.transcribe_meeting(
+            audio, _audio_filename(media_type), media_type
+        )
+        words = spoken_words(payload)
+        agent_texts = [
+            turn["text"] for turn in detail["turns"] if turn["role"] == "agent"
+        ]
+        user_texts = [
+            turn["text"] for turn in detail["turns"] if turn["role"] == "user"
+        ]
+        speaker = candidate_speaker(words, agent_texts, user_texts)
+        if speaker is None:
+            await self.database.set_interview_delivery(session_id, stage="failed")
+            return
+        note = ""
+        voices = {str(word.get("speaker_id") or "speaker_0") for word in words}
+        if len(voices) < 2:
+            note = (
+                "Only one voice was separated in the recording; these counts "
+                "may include the interviewer's words."
+            )
+        delivery = InterviewDeliveryV1(
+            **delivery_metrics(words, speaker), note=note, created_at=utc_now()
+        )
+        await self.database.set_interview_delivery(
+            session_id, stage="ready", delivery_json=delivery.model_dump_json()
+        )
+
+    async def _conversation_audio(
+        self, speech: Any, conversation_id: str
+    ) -> tuple[bytes | None, str]:
+        """The call recording, or None when ElevenLabs will never have one.
+
+        The recording is written after the call is finalized, so the lookup
+        polls briefly. Only a conversation *finalized* without audio means
+        recording is disabled — that is 'unavailable'. A conversation still
+        processing when the poll budget runs out is a transient state and
+        raises instead, landing 'failed', which the end route and the page's
+        retry button both recover from; 'unavailable' nothing retries.
+        """
+        client = await speech._client()
+        has_audio = False
+        finalized_without_audio = False
+        for attempt in range(self.delivery_poll_attempts):
+            if attempt:
+                await asyncio.sleep(self.delivery_poll_seconds)
+            try:
+                response = await client.get(
+                    f"/v1/convai/conversations/{conversation_id}"
+                )
+            except Exception as exc:  # noqa: BLE001 - network errors become model errors
+                raise ModelProviderError(
+                    f"Could not reach ElevenLabs: {str(exc)[:200]}"
+                ) from exc
+            if response.status_code == 404:
+                continue
+            if response.status_code >= 400:
+                raise ModelProviderError(
+                    "ElevenLabs refused the conversation lookup: "
+                    f"HTTP {response.status_code}"
+                )
+            try:
+                payload = response.json() or {}
+            except ValueError as exc:
+                raise ModelProviderError(
+                    "ElevenLabs returned a non-JSON reply"
+                ) from exc
+            has_audio = bool(payload.get("has_audio"))
+            if has_audio:
+                break
+            if str(payload.get("status") or "") in {"done", "failed"}:
+                finalized_without_audio = True
+                break
+        if not has_audio:
+            if finalized_without_audio:
+                return None, ""
+            raise ModelProviderError(
+                "the interview recording is not ready yet; try again shortly"
+            )
+        try:
+            response = await client.get(
+                f"/v1/convai/conversations/{conversation_id}/audio"
+            )
+        except Exception as exc:  # noqa: BLE001 - network errors become model errors
+            raise ModelProviderError(
+                f"Could not reach ElevenLabs: {str(exc)[:200]}"
+            ) from exc
+        if response.status_code >= 400:
+            raise ModelProviderError(
+                f"ElevenLabs refused the recording: HTTP {response.status_code}"
+            )
+        media_type = (
+            response.headers.get("content-type") or "audio/mpeg"
+        ).split(";", 1)[0]
+        return response.content, media_type
+
+
+# Names the downloaded recording so Scribe sees a suffix matching its bytes.
+def _audio_filename(media_type: str) -> str:
+    suffix = {
+        "audio/mpeg": "mp3",
+        "audio/mp3": "mp3",
+        "audio/wav": "wav",
+        "audio/x-wav": "wav",
+        "audio/webm": "webm",
+        "video/webm": "webm",
+        "audio/ogg": "ogg",
+        "audio/mp4": "mp4",
+        "video/mp4": "mp4",
+    }.get(media_type.strip().lower(), "mp3")
+    return f"interview.{suffix}"
+
 
 # Maps a database detail dict onto the session contract.
 def _to_contract(detail: dict[str, Any]) -> InterviewSessionV1:
     session = detail["session"]
     scorecard_json = session.get("scorecard_json")
+    delivery_json = session.get("delivery_json")
     return InterviewSessionV1(
         id=session["id"],
         provider_conversation_id=session["provider_conversation_id"],
@@ -243,6 +468,8 @@ def _to_contract(detail: dict[str, Any]) -> InterviewSessionV1:
         job_description=session["job_description"],
         interview_type=session["interview_type"],
         question_limit=session["question_limit"],
+        interview_objective=session.get("interview_objective") or "",
+        focus_areas=json.loads(session.get("focus_areas") or "[]"),
         status=session["status"],
         turns=[
             InterviewTurnV1(
@@ -257,6 +484,12 @@ def _to_contract(detail: dict[str, Any]) -> InterviewSessionV1:
         scorecard=(
             InterviewScorecardV1.model_validate_json(scorecard_json)
             if scorecard_json
+            else None
+        ),
+        delivery_stage=session.get("delivery_stage") or "",
+        delivery=(
+            InterviewDeliveryV1.model_validate_json(delivery_json)
+            if delivery_json
             else None
         ),
         created_at=session["created_at"],

@@ -18,10 +18,17 @@ from fastapi.testclient import TestClient
 
 from waqil_api.config import Settings
 from waqil_api.contracts import InterviewEvaluationV1
+from waqil_api.interview_delivery import (
+    candidate_speaker,
+    delivery_metrics,
+    spoken_words,
+)
 from waqil_api.interviews import (
     MIN_SCORED_QUESTIONS,
+    NO_FOCUS_AREAS,
     QUESTION_LIMIT,
     SCORE_WEIGHTS,
+    STANDARD_OBJECTIVE,
     build_scorecard,
     overall_score,
     recommendation_for,
@@ -268,16 +275,67 @@ def test_start_passes_every_dynamic_variable_and_fixes_the_limit_at_five(tmp_pat
             "interview_type",
             "question_limit",
             "metis_interview_session_id",
+            "interview_objective",
+            "focus_areas",
         }
         assert variables["question_limit"] == str(QUESTION_LIMIT) == "5"
         assert variables["interview_type"] == "technical"
         assert variables["metis_interview_session_id"] == body["session"]["id"]
+        # Every referenced variable must be supplied every time, so an unset
+        # objective travels as words, never as an absent key.
+        assert variables["interview_objective"] == STANDARD_OBJECTIVE
+        assert variables["focus_areas"] == NO_FOCUS_AREAS
         assert body["conversation_token"] == "conv-token-1"
         assert body["session"]["question_limit"] == 5
         assert body["session"]["status"] == "active"
         # The mint asked for the interview agent, not the voice one.
         assert minted.sent["url"] == "/v1/convai/conversation/token"
         assert minted.sent["params"]["agent_id"] == "agent_interview_1"
+
+
+def test_the_objective_and_focus_areas_travel_to_the_agent_and_persist(tmp_path) -> None:
+    app = create_app(_settings(tmp_path, **READY))
+    with TestClient(app) as client:
+        _wire_token(app)
+        response = client.post(
+            "/api/v1/interviews/sessions",
+            json={
+                **CONTEXT,
+                "interview_objective": "Grill me on why ElevenLabs over a custom stack.",
+                "focus_areas": ["architecture trade-offs", "  why ElevenLabs  ", ""],
+            },
+        )
+        assert response.status_code == 201
+        body = response.json()
+        variables = body["dynamic_variables"]
+        assert variables["interview_objective"] == (
+            "Grill me on why ElevenLabs over a custom stack."
+        )
+        # Whitespace items are dropped, the rest join into one spoken string.
+        assert variables["focus_areas"] == "architecture trade-offs; why ElevenLabs"
+        session = body["session"]
+        assert session["interview_objective"] == (
+            "Grill me on why ElevenLabs over a custom stack."
+        )
+        assert session["focus_areas"] == ["architecture trade-offs", "why ElevenLabs"]
+        fetched = client.get(f"/api/v1/interviews/sessions/{session['id']}").json()
+        assert fetched["focus_areas"] == ["architecture trade-offs", "why ElevenLabs"]
+
+
+def test_focus_areas_are_short_phrases_and_few(tmp_path) -> None:
+    app = create_app(_settings(tmp_path, **READY))
+    with TestClient(app) as client:
+        _wire_token(app)
+        too_long = client.post(
+            "/api/v1/interviews/sessions",
+            json={**CONTEXT, "focus_areas": ["x" * 121]},
+        )
+        assert too_long.status_code == 422
+        too_many = client.post(
+            "/api/v1/interviews/sessions",
+            json={**CONTEXT, "focus_areas": [f"area {n}" for n in range(7)]},
+        )
+        assert too_many.status_code == 422
 
 
 def test_the_api_key_never_reaches_the_browser(tmp_path) -> None:
@@ -546,6 +604,289 @@ def test_deleting_a_session_is_idempotent(tmp_path) -> None:
         assert client.delete(f"/api/v1/interviews/sessions/{session_id}").status_code == 204
 
 
+# -- delivery analysis --------------------------------------------------------
+
+
+def _word(text: str, start: float, end: float, speaker: str) -> dict:
+    return {"text": text, "start": start, "end": end, "speaker_id": speaker, "type": "word"}
+
+
+def _scribe_payload() -> dict:
+    # Chiron asks; the candidate answers with two "um"s, one hedge, and one
+    # 2.7-second silence in the middle of their own answer.
+    agent = [
+        _word("Question", 0.0, 0.4, "speaker_0"),
+        _word("one.", 0.5, 0.8, "speaker_0"),
+        _word("Walk", 0.9, 1.1, "speaker_0"),
+        _word("me", 1.2, 1.3, "speaker_0"),
+        _word("through", 1.4, 1.7, "speaker_0"),
+        _word("it.", 1.8, 2.0, "speaker_0"),
+    ]
+    candidate = [
+        _word("Um,", 3.0, 3.2, "speaker_1"),
+        _word("I", 3.3, 3.4, "speaker_1"),
+        _word("think", 3.5, 3.8, "speaker_1"),
+        _word("we", 3.9, 4.0, "speaker_1"),
+        _word("cut", 4.1, 4.3, "speaker_1"),
+        _word("the", 4.4, 4.5, "speaker_1"),
+        _word("nightly", 4.6, 5.0, "speaker_1"),
+        _word("run", 5.1, 5.3, "speaker_1"),
+        _word("um", 8.0, 8.2, "speaker_1"),
+        _word("to", 8.3, 8.4, "speaker_1"),
+        _word("forty", 8.5, 8.8, "speaker_1"),
+        _word("minutes", 8.9, 9.4, "speaker_1"),
+    ]
+    spacing = [{"text": " ", "type": "spacing"}]
+    return {"words": agent + spacing + candidate, "text": "…"}
+
+
+def test_delivery_metrics_count_fillers_hedges_and_real_pauses() -> None:
+    words = spoken_words(_scribe_payload())
+    speaker = candidate_speaker(
+        words,
+        agent_texts=["Question one. Walk me through it."],
+        user_texts=["Um, I think we cut the nightly run to forty minutes."],
+    )
+    assert speaker == "speaker_1"
+    metrics = delivery_metrics(words, speaker)
+    assert metrics["candidate_word_count"] == 12
+    assert metrics["filler_breakdown"] == {"um": 2}
+    assert metrics["filler_count"] == 2
+    assert metrics["hedging_breakdown"] == {"i think": 1}
+    # The 2.7s silence sits inside the candidate's own answer — a pause. The
+    # gap while Chiron asked the question is not one.
+    assert metrics["long_pause_count"] == 1
+    assert metrics["longest_pause_seconds"] == 2.7
+    # Talk time is the two speech runs: 3.0→5.3 and 8.0→9.4 = 3.7 seconds.
+    assert metrics["candidate_talk_seconds"] == 3.7
+    assert metrics["words_per_minute"] == pytest.approx(194.6, abs=0.1)
+    assert metrics["filler_rate_per_100_words"] == pytest.approx(16.7, abs=0.1)
+
+
+def test_a_silence_while_the_interviewer_speaks_is_not_a_pause() -> None:
+    words = [
+        _word("So", 0.0, 0.2, "cand"),
+        _word("yes.", 0.3, 0.5, "cand"),
+        # Chiron talks from 1.0 to 5.5; the candidate resumes at 6.0.
+        _word("And", 1.0, 1.2, "agent"),
+        _word("why?", 5.0, 5.5, "agent"),
+        _word("Because", 6.0, 6.4, "cand"),
+        _word("it", 6.5, 6.6, "cand"),
+        _word("worked.", 6.7, 7.0, "cand"),
+    ]
+    metrics = delivery_metrics(words, "cand")
+    assert metrics["long_pause_count"] == 0
+    assert metrics["longest_pause_seconds"] == 0.0
+
+
+class FakeDeliveryClient:
+    """Serves the conversation lookup, the recording, and records the calls."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def get(self, url: str, **kwargs) -> FakeResponse:
+        self.calls.append(url)
+        if url.endswith("/audio"):
+            response = FakeResponse(payload=None)
+            response.headers = {"content-type": "audio/mpeg"}
+            response.content = b"mp3-bytes"
+            return response
+        if "/v1/convai/conversations/" in url:
+            return FakeResponse(payload={"status": "done", "has_audio": True})
+        return FakeResponse(payload={"token": "conv-token-1"})
+
+
+class FakeDeliverySpeech:
+    available = True
+
+    def __init__(self, client) -> None:
+        self._client_instance = client
+        self.transcribed: dict = {}
+
+    async def _client(self):
+        return self._client_instance
+
+    async def transcribe_meeting(self, audio: bytes, filename: str, media_type: str) -> dict:
+        self.transcribed = {
+            "audio": audio, "filename": filename, "media_type": media_type
+        }
+        return _scribe_payload()
+
+
+def _wire_delivery(app) -> FakeDeliverySpeech:
+    speech = FakeDeliverySpeech(FakeDeliveryClient())
+    app.state.runtime.interviews.model = FakeRouter(speech)
+    app.state.runtime.interviews.delivery_poll_seconds = 0.0
+    return speech
+
+
+def test_delivery_analysis_measures_the_recording_and_stores_the_metrics(tmp_path) -> None:
+    app = create_app(_settings(tmp_path, **READY))
+    with TestClient(app) as client:
+        session_id = _started(client, app)
+        client.post(
+            f"/api/v1/interviews/sessions/{session_id}/turns",
+            json={
+                "turns": [
+                    {"ordinal": 0, "role": "agent", "text": "Question one. Walk me through it."},
+                    {"ordinal": 1, "role": "user", "text": "Um, I think we cut the nightly run to forty minutes."},
+                ]
+            },
+        )
+        client.patch(
+            f"/api/v1/interviews/sessions/{session_id}",
+            json={"provider_conversation_id": "conv_abc123"},
+        )
+        speech = _wire_delivery(app)
+        client.post(
+            f"/api/v1/interviews/sessions/{session_id}/end",
+            json={"reason": "ended_early"},
+        )
+        response = client.post(f"/api/v1/interviews/sessions/{session_id}/delivery")
+        assert response.status_code == 200
+        session = response.json()
+        assert session["delivery_stage"] == "ready"
+        delivery = session["delivery"]
+        assert delivery["filler_count"] == 2
+        assert delivery["filler_breakdown"] == {"um": 2}
+        assert delivery["hedging_count"] == 1
+        assert delivery["long_pause_count"] == 1
+        assert delivery["note"] == ""
+        # The recording went to Scribe as the bytes ElevenLabs returned.
+        assert speech.transcribed["audio"] == b"mp3-bytes"
+        assert speech.transcribed["filename"] == "interview.mp3"
+        # The scorecard was never touched by the analysis.
+        assert session["scorecard"] is None
+
+
+def test_delivery_without_a_conversation_or_recording_is_unavailable_not_failed(tmp_path) -> None:
+    app = create_app(_settings(tmp_path, **READY))
+    with TestClient(app) as client:
+        # No conversation id was ever attached: nothing to fetch, ever.
+        session_id = _started(client, app)
+        _wire_delivery(app)
+        client.post(
+            f"/api/v1/interviews/sessions/{session_id}/end",
+            json={"reason": "ended_early"},
+        )
+        response = client.post(f"/api/v1/interviews/sessions/{session_id}/delivery")
+        assert response.status_code == 200
+        assert response.json()["delivery_stage"] == "unavailable"
+        assert response.json()["delivery"] is None
+
+        # A finalized conversation with recording disabled: also unavailable.
+        second_id = _started(client, app)
+        client.patch(
+            f"/api/v1/interviews/sessions/{second_id}",
+            json={"provider_conversation_id": "conv_noaudio"},
+        )
+        speech = _wire_delivery(app)
+
+        async def no_audio(url: str, **kwargs) -> FakeResponse:
+            return FakeResponse(payload={"status": "done", "has_audio": False})
+
+        speech._client_instance.get = no_audio
+        client.post(
+            f"/api/v1/interviews/sessions/{second_id}/end",
+            json={"reason": "ended_early"},
+        )
+        response = client.post(f"/api/v1/interviews/sessions/{second_id}/delivery")
+        assert response.json()["delivery_stage"] == "unavailable"
+
+
+def test_delivery_waits_for_the_call_to_end(tmp_path) -> None:
+    # A premature poke must not analyze — the call is live, there is no
+    # recording — and must not stamp any stage that would suppress the
+    # automatic post-call run.
+    app = create_app(_settings(tmp_path, **READY))
+    with TestClient(app) as client:
+        session_id = _started(client, app)
+        client.patch(
+            f"/api/v1/interviews/sessions/{session_id}",
+            json={"provider_conversation_id": "conv_abc123"},
+        )
+        speech = _wire_delivery(app)
+        response = client.post(f"/api/v1/interviews/sessions/{session_id}/delivery")
+        assert response.status_code == 200
+        assert response.json()["status"] == "active"
+        assert response.json()["delivery_stage"] == ""
+        assert speech.transcribed == {}
+
+
+def test_a_recording_not_ready_yet_is_failed_and_retryable_never_unavailable(tmp_path) -> None:
+    # 'unavailable' is terminal and nothing retries it, so it is reserved for
+    # a conversation finalized without audio. A recording still processing
+    # when the poll budget runs out lands 'failed' — and a later retry works.
+    app = create_app(_settings(tmp_path, **READY))
+    with TestClient(app) as client:
+        session_id = _started(client, app)
+        client.patch(
+            f"/api/v1/interviews/sessions/{session_id}",
+            json={"provider_conversation_id": "conv_slow"},
+        )
+        speech = _wire_delivery(app)
+        app.state.runtime.interviews.delivery_poll_attempts = 2
+
+        async def still_processing(url: str, **kwargs) -> FakeResponse:
+            return FakeResponse(payload={"status": "processing", "has_audio": False})
+
+        speech._client_instance.get = still_processing
+        client.post(
+            f"/api/v1/interviews/sessions/{session_id}/end",
+            json={"reason": "ended_early"},
+        )
+        response = client.post(f"/api/v1/interviews/sessions/{session_id}/delivery")
+        assert response.json()["delivery_stage"] == "failed"
+
+        # The recording finalizes; the retry measures it.
+        fresh = _wire_delivery(app)
+        app.state.runtime.interviews.delivery_poll_attempts = 2
+        retried = client.post(f"/api/v1/interviews/sessions/{session_id}/delivery")
+        assert retried.json()["delivery_stage"] == "ready"
+        assert fresh.transcribed["audio"] == b"mp3-bytes"
+
+
+def test_the_conversation_id_alphabet_is_pinned(tmp_path) -> None:
+    # The id is spliced into provider URL paths later; an id that could
+    # carry a slash or query never gets stored.
+    app = create_app(_settings(tmp_path, **READY))
+    with TestClient(app) as client:
+        session_id = _started(client, app)
+        for bad in ("conv/../evil", "conv?x=1", "conv abc", "conv#f"):
+            response = client.patch(
+                f"/api/v1/interviews/sessions/{session_id}",
+                json={"provider_conversation_id": bad},
+            )
+            assert response.status_code == 422, bad
+
+
+def test_words_without_timings_count_but_never_invent_pauses() -> None:
+    # Scribe's timings are nullable: an untimed word still counts as a word,
+    # but coercing its null start to 0.0 would open a phantom hours-long
+    # pause. It must stay out of the run/pause accounting entirely.
+    words = [
+        {"text": "Um,", "start": None, "end": None, "speaker_id": "cand", "type": "word"},
+        _word("I", 100.0, 100.1, "cand"),
+        _word("shipped", 100.2, 100.6, "cand"),
+        _word("it.", 100.7, 101.0, "cand"),
+    ]
+    metrics = delivery_metrics(words, "cand")
+    assert metrics["candidate_word_count"] == 4
+    assert metrics["filler_breakdown"] == {"um": 1}
+    assert metrics["long_pause_count"] == 0
+    assert metrics["longest_pause_seconds"] == 0.0
+    assert metrics["candidate_talk_seconds"] == 1.0
+
+
+def test_delivery_for_a_missing_session_is_a_404(tmp_path) -> None:
+    app = create_app(_settings(tmp_path, **READY))
+    with TestClient(app) as client:
+        _wire_delivery(app)
+        response = client.post("/api/v1/interviews/sessions/ivw_missing/delivery")
+        assert response.status_code == 404
+
+
 # -- the workflow specification ---------------------------------------------
 
 
@@ -601,3 +942,26 @@ def test_every_question_node_announces_its_number() -> None:
         if node["kind"] != "question":
             continue
         assert f"Question {words[node['ordinal']]}" in node["prompt"], node["id"]
+
+
+def test_the_spec_supplies_the_objective_and_bounds_the_follow_ups() -> None:
+    spec = _workflow()
+    # Both steering variables are declared, so the API must supply them —
+    # a referenced-but-missing variable kills the conversation at start.
+    assert "interview_objective" in spec["dynamic_variables"]
+    assert "focus_areas" in spec["dynamic_variables"]
+    # Every question node allows probes but caps them at two, and never lets
+    # a probe carry a question number — the counter depends on that.
+    for node in spec["nodes"]:
+        if node["kind"] != "question":
+            continue
+        assert "unnumbered follow-up probes" in node["prompt"], node["id"]
+        assert "at most two" in node["prompt"] or "two short" in node["prompt"], node["id"]
+    # Advance edges wait for the probes, so a probe can never be answered by
+    # the next node's question.
+    for edge in spec["edges"]:
+        if edge["from"] == "router" or edge["to"] == "end":
+            continue
+        if "want to stop" in edge["condition"]:
+            continue
+        assert "follow-up probes" in edge["condition"], (edge["from"], edge["to"])

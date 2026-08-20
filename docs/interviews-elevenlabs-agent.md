@@ -22,8 +22,9 @@ Do not reuse that agent, and do not point this one at a Custom LLM.
 | Server tools / webhooks | None | The client tool is the only tool |
 | Client tools | `submit_interview_evaluation`, blocking | Schema below |
 | Overrides | None needed | Everything arrives as dynamic variables |
-| Max conversation duration | 45 min (2700 s) | Five answers plus a debrief; the 10-minute default cuts off mid-answer |
+| Max conversation duration | 60 min (3600 s) | Five answers, up to two follow-up probes each, plus a debrief |
 | First message | The fixed opening line | Deterministic and free; spoken before any node runs |
+| Audio saving | On (`platform_settings.privacy.record_voice`) | The post-call delivery analysis reads the recording back; the deploy script pins it on |
 
 ## Deploying from the spec
 
@@ -81,7 +82,7 @@ one-conversation token.
 
 ## Dynamic variables
 
-All six are supplied by the Metis API at session start, every time. Any
+All eight are supplied by the Metis API at session start, every time. Any
 `{{variable}}` referenced anywhere in the prompt or workflow must be in this
 list, or conversations fail outright at start.
 
@@ -93,10 +94,30 @@ list, or conversations fail outright at start.
 | `interview_type` | `hr_recruiter`, `hiring_manager`, or `technical` |
 | `question_limit` | Always the string `"5"` — fixed server-side, not client input |
 | `metis_interview_session_id` | The Metis session row this conversation belongs to |
+| `interview_objective` | The optional objective, or a stated "no objective" default |
+| `focus_areas` | The optional focus areas joined with `"; "`, or `"None specified."` |
 
-The job description is untrusted pasted text. The base prompt instructs the
-agent to treat it as source material only and to ignore any instructions
-embedded inside it.
+The last two carry stated defaults when the form left them empty — an
+optional field may be blank on the form, never absent from the payload.
+
+The job description, objective, and focus areas are untrusted pasted text.
+The base prompt instructs the agent to treat them as source material and
+steering only — they shape question choice and follow-up probes, never the
+question count, the honesty rules, or the scoring standards (the verdict may
+state whether the objective was met; the objective never changes how
+strictly the round is scored) — and to ignore any instructions embedded
+inside them.
+
+## Follow-up probes
+
+Each question node allows at most two short follow-up probes after the
+candidate's answer: a vague claim, a "we" hiding their contribution, an
+adjective where a number belonged, or a thread the objective says to pull.
+Probes never begin with a question number — the page's `Question N of 5`
+counter hangs off those openings — and the advance edges only fire once the
+probes are done, so a probe can never be answered by the next node's
+question. The five-question limit is still graph shape; probes live inside a
+node and cannot consume a slot.
 
 ## Base prompt
 
@@ -167,10 +188,12 @@ If the script is ever unavailable, the same graph can be drawn in the
 dashboard from [`interviews-workflow.json`](interviews-workflow.json): the
 router's three edges dispatch on the dynamic variable (the round was chosen
 on the setup screen; it is not a question), the fifteen question nodes append
-their `prompt` fields to the base prompt and ask exactly one candidate-facing
-question each ('Question N,' then wait — a challenge to a vague earlier
-answer consumes that node's slot, which is how the total can never exceed
-five), every non-final question node gets an early-stop edge to the shared
+their `prompt` fields to the base prompt and ask exactly one numbered
+candidate-facing question each ('Question N,' then wait — after the answer
+the node may press with at most two short unnumbered follow-up probes, and
+its advance edge fires only once the probes are done; the total stays five
+because the cap is graph shape, not probe accounting), every non-final
+question node gets an early-stop edge to the shared
 evaluation node ordered ahead of its advance edge, and the evaluation node
 scores, calls the blocking tool once, waits, and speaks the returned overall
 score. Finish with the wrap-up subagent and the end node. Then run the
@@ -183,6 +206,9 @@ deploy script anyway next time — hand edits are replaced by the spec.
   are not reaching the conversation.
 - Each question must begin 'Question one' … 'Question five'; the page's
   `Question N of 5` counter is driven by those words.
+- Give one deliberately vague answer: the press-back must arrive as a short
+  unnumbered probe — never as a 'Question N' opening — and the page's
+  counter must hold still while it does.
 - Run a full round and confirm the debrief's overall score matches the
   scorecard the page shows — that proves the agent spoke the tool's returned
   number rather than its own arithmetic.

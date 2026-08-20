@@ -2294,6 +2294,22 @@ class InterviewContextV1(Contract):
     company_name: str = Field(min_length=1, max_length=200)
     job_description: str = Field(min_length=1, max_length=30_000)
     interview_type: Literal["hr_recruiter", "hiring_manager", "technical"]
+    # What this round should probe, in the candidate's own words. Optional:
+    # an empty objective means a standard round. Both travel to the agent as
+    # dynamic variables with the same untrusted-source-material posture as
+    # the job description.
+    interview_objective: str = Field(default="", max_length=4_000)
+    focus_areas: list[str] = Field(default_factory=list, max_length=6)
+
+    @field_validator("focus_areas")
+    @classmethod
+    def _focus_areas_are_short_phrases(cls, areas: list[str]) -> list[str]:
+        # Deduplicated in order: a pasted repeat is noise, not emphasis.
+        cleaned = list(dict.fromkeys(area.strip() for area in areas if area.strip()))
+        for area in cleaned:
+            if len(area) > 120:
+                raise ValueError("a focus area is a short phrase, 120 chars at most")
+        return cleaned
 
 
 class InterviewTurnInV1(Contract):
@@ -2378,6 +2394,30 @@ class InterviewScorecardV1(Contract):
     created_at: datetime
 
 
+class InterviewDeliveryV1(Contract):
+    """How the candidate actually sounded, measured — never estimated.
+
+    Computed after the call from the recording via verbatim speech-to-text:
+    fillers and false starts survive that pass, so every number here was
+    counted in the audio. Deliberately separate from the scorecard and never
+    part of the overall score — the score was spoken during the debrief, and
+    a number someone already heard does not get revised.
+    """
+
+    candidate_word_count: int = Field(ge=0)
+    candidate_talk_seconds: float = Field(ge=0)
+    words_per_minute: float = Field(ge=0)
+    filler_count: int = Field(ge=0)
+    filler_rate_per_100_words: float = Field(ge=0)
+    filler_breakdown: dict[str, int] = Field(default_factory=dict)
+    hedging_count: int = Field(ge=0)
+    hedging_breakdown: dict[str, int] = Field(default_factory=dict)
+    long_pause_count: int = Field(ge=0)
+    longest_pause_seconds: float = Field(ge=0)
+    note: str = Field(default="", max_length=500)
+    created_at: datetime
+
+
 class InterviewSessionV1(Contract):
     id: str
     provider_conversation_id: str = Field(default="", max_length=200)
@@ -2386,9 +2426,13 @@ class InterviewSessionV1(Contract):
     job_description: str
     interview_type: Literal["hr_recruiter", "hiring_manager", "technical"]
     question_limit: int = 5
+    interview_objective: str = ""
+    focus_areas: list[str] = Field(default_factory=list)
     status: Literal["active", "complete", "ended_early", "failed"]
     turns: list[InterviewTurnV1] = Field(default_factory=list)
     scorecard: InterviewScorecardV1 | None = None
+    delivery_stage: Literal["", "pending", "ready", "failed", "unavailable"] = ""
+    delivery: InterviewDeliveryV1 | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -2408,9 +2452,15 @@ class InterviewSessionStartV1(Contract):
 
 
 class InterviewSessionUpdateV1(Contract):
-    """The one field the browser learns after start: ElevenLabs' own id."""
+    """The one field the browser learns after start: ElevenLabs' own id.
 
-    provider_conversation_id: str = Field(min_length=1, max_length=200)
+    The id is later spliced into provider URL paths, so its alphabet is
+    pinned here — an id that could carry a slash or query never gets stored.
+    """
+
+    provider_conversation_id: str = Field(
+        min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_-]+$"
+    )
 
 
 class InterviewEndV1(Contract):

@@ -1433,6 +1433,18 @@ export async function endInterviewSession(
   );
 }
 
+/** Run (or retry) the post-call delivery analysis and wait for the result.
+ * Delivery is derived data measured from the recording, so unlike the
+ * scorecard this may be called again after a failure. */
+export async function analyzeInterviewDelivery(
+  sessionId: string,
+): Promise<InterviewSession> {
+  return request<InterviewSession>(
+    `${API_PREFIX}/interviews/sessions/${encodeURIComponent(sessionId)}/delivery`,
+    { method: "POST" },
+  );
+}
+
 /** Remove a session and its transcript. Already gone is success. */
 export async function deleteInterviewSession(sessionId: string): Promise<void> {
   return request<void>(

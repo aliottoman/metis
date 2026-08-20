@@ -4,9 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useConversation } from "@elevenlabs/react";
 
 import {
+  analyzeInterviewDelivery,
   appendInterviewTurns,
   attachInterviewConversation,
   endInterviewSession,
+  getInterviewSession,
   startInterviewSession,
   submitInterviewEvaluation,
 } from "@/lib/api";
@@ -16,7 +18,13 @@ import {
   parseInterviewEvaluation,
   questionNumberFrom,
 } from "@/lib/interviews";
-import type { InterviewContext, InterviewScorecard, InterviewSession } from "@/lib/types";
+import type {
+  InterviewContext,
+  InterviewDelivery,
+  InterviewDeliveryStage,
+  InterviewScorecard,
+  InterviewSession,
+} from "@/lib/types";
 
 /**
  * One five-question interview, from the browser's side.
@@ -67,9 +75,16 @@ export function useInterviewSession(options: { context: InterviewContext | null 
   const [questionNumber, setQuestionNumber] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [delivery, setDelivery] = useState<InterviewDelivery | null>(null);
+  const [deliveryStage, setDeliveryStage] = useState<InterviewDeliveryStage>("");
+  const [deliveryBusy, setDeliveryBusy] = useState(false);
 
   const phaseRef = useRef<InterviewPhase>("setup");
   const sessionRef = useRef<string | null>(null);
+  // Bumped whenever delivery state is cleared for a new round, so a slow
+  // in-flight analysis can never write a previous session's numbers into
+  // the next one.
+  const deliveryEpochRef = useRef(0);
   const scorecardRef = useRef<InterviewScorecard | null>(null);
   const endRequestedRef = useRef(false);
   const ordinalRef = useRef(0);
@@ -230,6 +245,9 @@ export function useInterviewSession(options: { context: InterviewContext | null 
     setTurns([]);
     setScorecard(null);
     scorecardRef.current = null;
+    setDelivery(null);
+    setDeliveryStage("");
+    deliveryEpochRef.current += 1;
     endRequestedRef.current = false;
     lastTypedRef.current = null;
     ordinalRef.current = 0;
@@ -299,6 +317,68 @@ export function useInterviewSession(options: { context: InterviewContext | null 
     [record],
   );
 
+  // The recording is analyzed in the background once the session ends — the
+  // audio only exists after the call. Poll the session until the delivery
+  // metrics settle, then stop; a page left open does not poll forever.
+  useEffect(() => {
+    if (phase !== "complete" && phase !== "ended_early") return;
+    const id = session?.id;
+    if (!id) return;
+    if (deliveryStage === "ready" || deliveryStage === "unavailable" || deliveryStage === "failed") {
+      return;
+    }
+    let cancelled = false;
+    let attempts = 0;
+    const poll = window.setInterval(() => {
+      attempts += 1;
+      if (attempts > 60) {
+        // The backend went quiet — an unscheduled analysis or a lost end
+        // call. Settle to 'failed' locally (never on the server) so the page
+        // offers the retry button instead of claiming to measure forever.
+        window.clearInterval(poll);
+        setDeliveryStage((current) =>
+          current === "" || current === "pending" ? "failed" : current,
+        );
+        return;
+      }
+      void getInterviewSession(id)
+        .then((fetched) => {
+          if (cancelled) return;
+          setDeliveryStage(fetched.delivery_stage);
+          setDelivery(fetched.delivery);
+        })
+        .catch(() => {
+          // A missed poll is not an error surface; the next tick retries.
+        });
+    }, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [phase, session?.id, deliveryStage]);
+
+  /** Re-run the post-call analysis after a failure. Delivery is derived data,
+   * so unlike the scorecard it is safe to compute again. */
+  const retryDelivery = useCallback(async () => {
+    const id = session?.id;
+    if (!id || deliveryBusy) return;
+    const epoch = deliveryEpochRef.current;
+    setDeliveryBusy(true);
+    try {
+      const fetched = await analyzeInterviewDelivery(id);
+      // A new round may have started while the analysis ran; its delivery
+      // state is not ours to touch.
+      if (deliveryEpochRef.current !== epoch) return;
+      setDeliveryStage(fetched.delivery_stage);
+      setDelivery(fetched.delivery);
+    } catch {
+      if (deliveryEpochRef.current !== epoch) return;
+      setError("The delivery analysis could not run. Try it again in a moment.");
+    } finally {
+      setDeliveryBusy(false);
+    }
+  }, [session?.id, deliveryBusy]);
+
   /** Back to the form — after a scorecard, a failure, or an early end. */
   const reset = useCallback(() => {
     if (sessionRef.current) teardown("ended_early");
@@ -309,6 +389,9 @@ export function useInterviewSession(options: { context: InterviewContext | null 
     setQuestionNumber(0);
     setElapsed(0);
     setError(null);
+    setDelivery(null);
+    setDeliveryStage("");
+    deliveryEpochRef.current += 1;
     movePhase(contextRef.current ? "ready" : "setup");
   }, [movePhase, teardown]);
 
@@ -335,6 +418,10 @@ export function useInterviewSession(options: { context: InterviewContext | null 
     questionLimit: INTERVIEW_QUESTION_LIMIT,
     elapsed,
     error,
+    delivery,
+    deliveryStage,
+    deliveryBusy,
+    retryDelivery,
     live: LIVE_PHASES.has(phase),
     isMuted: conversation.isMuted,
     setMuted: conversation.setMuted,
