@@ -457,6 +457,29 @@ def test_the_provider_conversation_id_attaches_once_reported(tmp_path) -> None:
         assert response.json()["provider_conversation_id"] == "conv_abc123"
 
 
+def test_a_late_provider_id_still_triggers_post_call_delivery(tmp_path) -> None:
+    app = create_app(_settings(tmp_path, **READY))
+    with TestClient(app) as client:
+        session_id = _started(client, app)
+        service = app.state.runtime.interviews
+        scheduled: list[str] = []
+        service.schedule_delivery = scheduled.append
+
+        ended = client.post(
+            f"/api/v1/interviews/sessions/{session_id}/end",
+            json={"reason": "ended_early"},
+        )
+        assert ended.status_code == 200
+        assert scheduled == []
+
+        attached = client.patch(
+            f"/api/v1/interviews/sessions/{session_id}",
+            json={"provider_conversation_id": "conv_late"},
+        )
+        assert attached.status_code == 200
+        assert scheduled == [session_id]
+
+
 # -- the evaluation ----------------------------------------------------------
 
 

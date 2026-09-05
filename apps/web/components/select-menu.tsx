@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 /**
  * A styled, keyboard-accessible replacement for a native `<select>`.
@@ -48,6 +56,12 @@ const SEARCHABLE_THRESHOLD = 12;
 /** Keep in step with `.selectList { max-height }` in globals.css. */
 const MAX_POPUP_HEIGHT = 292;
 const TYPEAHEAD_RESET_MS = 700;
+/**
+ * Keep in step with the longest `.selectMenu.isClosing .selectPopup` exit.
+ * The timeout is a fallback for reduced motion and browsers that do not emit
+ * a transition/animation end event.
+ */
+export const SELECT_MENU_EXIT_MS = 160;
 
 export function SelectMenu({
   label,
@@ -62,6 +76,7 @@ export function SelectMenu({
 }: SelectMenuProps) {
   const id = useId();
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
   const [dropUp, setDropUp] = useState(false);
@@ -70,6 +85,7 @@ export function SelectMenu({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typeahead = useRef({ buffer: "", at: 0 });
 
   const showSearch = searchable ?? options.length > SEARCHABLE_THRESHOLD;
@@ -114,15 +130,30 @@ export function SelectMenu({
     [visible],
   );
 
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  const finishClose = useCallback(() => {
+    clearCloseTimer();
+    setClosing(false);
+    setQuery("");
+    setActiveIndex(-1);
+    setDropUp(false);
+  }, [clearCloseTimer]);
+
   const close = useCallback(
     (returnFocus = true) => {
+      clearCloseTimer();
       setOpen(false);
-      setQuery("");
-      setActiveIndex(-1);
-      setDropUp(false);
+      setClosing(true);
+      closeTimerRef.current = setTimeout(finishClose, SELECT_MENU_EXIT_MS);
       if (returnFocus) buttonRef.current?.focus();
     },
-    [],
+    [clearCloseTimer, finishClose],
   );
 
   const commit = useCallback(
@@ -136,10 +167,14 @@ export function SelectMenu({
 
   const openMenu = useCallback(() => {
     if (disabled) return;
+    clearCloseTimer();
+    setClosing(false);
     setOpen(true);
     const current = visible.findIndex((option) => option.value === value);
     setActiveIndex(current >= 0 ? current : (selectableIndexes[0] ?? -1));
-  }, [disabled, selectableIndexes, value, visible]);
+  }, [clearCloseTimer, disabled, selectableIndexes, value, visible]);
+
+  useEffect(() => clearCloseTimer, [clearCloseTimer]);
 
   useEffect(() => {
     if (!open) return;
@@ -155,7 +190,7 @@ export function SelectMenu({
   // a couple of truncated rows, so the menu flips above the trigger when there
   // is more room there. Re-measured on scroll and resize because either can
   // change the answer while the menu is still open.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     const measure = () => {
       const trigger = buttonRef.current?.getBoundingClientRect();
@@ -260,6 +295,7 @@ export function SelectMenu({
   }
 
   let flatIndex = -1;
+  const menuState = open ? "open" : closing ? "closing" : "closed";
 
   return (
     <div className={`selectField ${className}`.trim()}>
@@ -267,7 +303,9 @@ export function SelectMenu({
         {label}
       </span>
       <div
-        className={`selectMenu ${open ? "isOpen" : ""} ${dropUp ? "dropUp" : ""}`}
+        className={`selectMenu ${open ? "isOpen" : ""} ${closing ? "isClosing" : ""} ${dropUp ? "dropUp" : ""}`}
+        data-state={menuState}
+        data-placement={dropUp ? "top" : "bottom"}
         ref={wrapperRef}
       >
         <button
@@ -297,8 +335,22 @@ export function SelectMenu({
           </svg>
         </button>
 
-        {open ? (
-          <div className="selectPopup">
+        {open || closing ? (
+          <div
+            className={`selectPopup ${open ? "isOpen" : "isClosing"}`}
+            data-state={menuState}
+            aria-hidden={closing || undefined}
+            inert={closing ? true : undefined}
+            onAnimationEnd={(event) => {
+              if (
+                closing
+                && event.target === event.currentTarget
+                && ["mMenuFold", "mMenuFoldUp"].includes(event.animationName)
+              ) {
+                finishClose();
+              }
+            }}
+          >
             {showSearch ? (
               <div className="selectSearch">
                 <input

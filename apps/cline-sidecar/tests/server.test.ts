@@ -42,7 +42,7 @@ test("NDJSON transport rejects malformed and oversized frames without executing 
 
 test(
   "CLI flushes its shutdown response and exits despite a referenced timer",
-  { timeout: 5000 },
+  { timeout: 12_000 },
   async () => {
     const dataDirectory = await mkdtemp(join(tmpdir(), "metis-cli-shutdown-"));
     const entrypoint = fileURLToPath(new URL("../src/index.js", import.meta.url));
@@ -84,7 +84,11 @@ test(
       const boundedExit = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
           reject(new Error(`sidecar did not exit after shutdown: ${stderr}`));
-        }, 2000);
+        // The CLI imports ClineCore before it can read stdin, and concurrent
+        // test workers can make that startup take several seconds. Eight
+        // seconds is still far below the deliberately leaked 60-second timer,
+        // so this continues to prove explicit shutdown without being flaky.
+        }, 8000);
       });
       const [code, signal] = await Promise.race([exited, boundedExit]);
 

@@ -6,7 +6,6 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent a
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { MetisCompanion } from "@/components/metis-companion";
-import { MetisWordmark } from "@/components/metis-mark";
 import { deleteConversation, getRunRecord, listConversations } from "@/lib/api";
 import { freshToken } from "@/lib/token";
 import {
@@ -38,7 +37,11 @@ type NavIconName =
   | "answers"
   | "settings";
 
-const navigation: Array<{ href: string; label: string; icon: NavIconName }> = [
+const navigation: Array<{
+  href: string;
+  label: string;
+  icon: NavIconName;
+}> = [
   // Today is the front door: one ranked queue of everything waiting, so work
   // stops hiding behind eight equal destinations.
   { href: "/today", label: "Today", icon: "today" },
@@ -55,9 +58,33 @@ const navigation: Array<{ href: string; label: string; icon: NavIconName }> = [
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
-const DEFAULT_SIDEBAR_WIDTH = 254;
-const MIN_SIDEBAR_WIDTH = 220;
-const MAX_SIDEBAR_WIDTH = 390;
+type SidebarSectionId = "focus" | "conversations" | "library" | "capture" | "build" | "system";
+
+const sidebarSections: Array<{
+  id: SidebarSectionId;
+  label: string;
+  eyebrow: string;
+  description: string;
+  icon: NavIconName;
+  hrefs: string[];
+}> = [
+  { id: "focus", label: "Focus", eyebrow: "Workspace", description: "What needs you now", icon: "today", hrefs: ["/today"] },
+  { id: "conversations", label: "Chat", eyebrow: "Conversations", description: "Think, make, and decide", icon: "chat", hrefs: ["/"] },
+  { id: "library", label: "Library", eyebrow: "Intelligence", description: "Your connected context", icon: "knowledge", hrefs: ["/customers", "/assets", "/knowledge", "/answers", "/memory", "/sizing"] },
+  { id: "capture", label: "Capture", eyebrow: "Research", description: "Turn conversations into signal", icon: "meetings", hrefs: ["/meetings", "/interviews"] },
+  { id: "build", label: "Build", eyebrow: "Capabilities", description: "Create reusable workflows", icon: "tools", hrefs: ["/tools"] },
+  { id: "system", label: "Settings", eyebrow: "Metis", description: "Preferences and governance", icon: "settings", hrefs: ["/settings"] },
+];
+
+function sectionForPathname(pathname: string): SidebarSectionId {
+  return sidebarSections.find((section) =>
+    section.hrefs.some((href) => href === "/" ? pathname === "/" : pathname.startsWith(href)),
+  )?.id ?? "conversations";
+}
+
+const DEFAULT_SIDEBAR_WIDTH = 272;
+const MIN_SIDEBAR_WIDTH = 248;
+const MAX_SIDEBAR_WIDTH = 304;
 const COMPACT_HISTORY_LIMIT = 12;
 
 function clampSidebarWidth(value: number): number {
@@ -130,6 +157,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [query, setQuery] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [activeSidebarSection, setActiveSidebarSection] = useState<SidebarSectionId>(() => sectionForPathname(pathname));
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [resizing, setResizing] = useState(false);
   const [animate, setAnimate] = useState(false);
@@ -137,10 +165,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [deletingConversation, setDeletingConversation] = useState<string | null>(null);
   const [runIndicators, setRunIndicators] = useState<Record<string, ConversationRunIndicator>>({});
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [mobileLayout, setMobileLayout] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const mobileMenuRef = useRef<HTMLButtonElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const sidebarPanelRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  const drawerFocusRef = useRef<HTMLElement | null>(null);
   const resizingRef = useRef(false);
   const resizeOriginRef = useRef({ pointerX: 0, width: DEFAULT_SIDEBAR_WIDTH });
   const sidebarWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
+  const desktopPanelCollapsed = collapsed && !mobileLayout;
 
   useEffect(() => {
     // Apply the persisted collapse state on mount WITHOUT a transition (a
@@ -161,6 +196,81 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
     return () => cancelAnimationFrame(id);
   }, []);
+
+  useEffect(() => {
+    // A full rail plus detail panel leaves the workspace unusably narrow well
+    // before phone width. Use the drawer until there is room for both.
+    const query = window.matchMedia("(max-width: 1100px)");
+    const sync = () => setMobileLayout(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  // CSS hides the detail panel on a collapsed desktop rail. Mirror that state
+  // semantically so clipped controls cannot remain in the keyboard or screen-
+  // reader order. Mobile always keeps the panel available inside its drawer.
+  useEffect(() => {
+    const panel = sidebarPanelRef.current;
+    if (!panel) return;
+    panel.inert = desktopPanelCollapsed;
+    return () => {
+      panel.inert = false;
+    };
+  }, [desktopPanelCollapsed]);
+
+  // The off-canvas navigation is a real modal surface on small screens. Keep
+  // closed links out of the tab order, trap focus while it is open, then put
+  // focus back on the button that opened it.
+  useEffect(() => {
+    const sidebar = sidebarRef.current;
+    const main = mainRef.current;
+    if (!sidebar || !main) return;
+    sidebar.inert = mobileLayout && !drawerOpen;
+    main.inert = mobileLayout && drawerOpen;
+    if (!mobileLayout || !drawerOpen) return;
+
+    drawerFocusRef.current = document.activeElement as HTMLElement | null;
+    const focusable = () => [
+      mobileMenuRef.current,
+      ...Array.from(
+        sidebar.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ),
+    ].filter((item): item is HTMLElement => Boolean(item));
+    window.requestAnimationFrame(() => focusable()[1]?.focus());
+
+    const trap = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDrawerOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trap);
+    return () => {
+      document.removeEventListener("keydown", trap);
+      drawerFocusRef.current?.focus();
+      drawerFocusRef.current = null;
+    };
+  }, [drawerOpen, mobileLayout]);
+
+  useEffect(() => {
+    setActiveSidebarSection(sectionForPathname(pathname));
+  }, [pathname]);
 
   useEffect(() => {
     const sync = () => setRunIndicators(readRunIndicators());
@@ -211,13 +321,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [activeConversation, pathname]);
 
   const toggleCollapsed = () => {
+    if (mobileLayout) {
+      setDrawerOpen(false);
+      return;
+    }
     resizingRef.current = false;
     setResizing(false);
-    setCollapsed((current) => {
-      const next = !current;
-      window.localStorage.setItem("metis.sidebarCollapsed", next ? "1" : "0");
-      return next;
-    });
+    const next = !collapsed;
+    setCollapsed(next);
+    window.localStorage.setItem("metis.sidebarCollapsed", next ? "1" : "0");
+    if (next && sidebarPanelRef.current?.contains(document.activeElement)) {
+      window.requestAnimationFrame(() => {
+        sidebarRef.current
+          ?.querySelector<HTMLButtonElement>(
+            `[data-sidebar-section="${activeSidebarSection}"]`,
+          )
+          ?.focus();
+      });
+    }
+  };
+
+  const openSidebarSection = (section: SidebarSectionId) => {
+    if (mobileLayout) {
+      setActiveSidebarSection(section);
+      return;
+    }
+    if (activeSidebarSection === section && !collapsed) {
+      toggleCollapsed();
+      return;
+    }
+    setActiveSidebarSection(section);
+    setCollapsed(false);
+    window.localStorage.setItem("metis.sidebarCollapsed", "0");
   };
 
   const setAndRememberSidebarWidth = (width: number) => {
@@ -293,8 +428,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       // listener would otherwise steal the focus out from under it.
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setCollapsed(false);
-        window.localStorage.setItem("metis.sidebarCollapsed", "0");
+        setActiveSidebarSection("conversations");
+        if (!mobileLayout) {
+          setCollapsed(false);
+          window.localStorage.setItem("metis.sidebarCollapsed", "0");
+        }
         setDrawerOpen(true);
         window.setTimeout(() => searchRef.current?.focus(), 0);
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
@@ -308,7 +446,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [router]);
+  }, [mobileLayout, router]);
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -339,6 +477,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     [runIndicators],
   );
 
+  const currentSidebarSection = sectionForPathname(pathname);
+  const currentDestination = navigation.find((item) =>
+    item.href === "/" ? pathname === "/" : pathname.startsWith(item.href),
+  );
+  const activeSection = sidebarSections.find((section) => section.id === activeSidebarSection) ?? sidebarSections[1];
+  const sectionNavigation = navigation.filter((item) => activeSection.hrefs.includes(item.href));
+
   const removeConversation = async (conversation: ConversationSummary) => {
     if (deletingConversation || !window.confirm(`Delete “${conversation.title}”? This permanently removes this chat and its messages.`)) return;
     setDeletingConversation(conversation.id);
@@ -355,7 +500,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className={`appShell ${collapsed ? "isCollapsed" : ""} ${animate ? "animate" : ""} ${resizing ? "isResizing" : ""}`}>
+    <div
+      className={`appShell ${collapsed ? "isCollapsed" : ""} ${animate ? "animate" : ""} ${resizing ? "isResizing" : ""}`}
+      data-sidebar-state={desktopPanelCollapsed ? "collapsed" : "expanded"}
+      data-sidebar-layout={mobileLayout ? "drawer" : "desktop"}
+      data-drawer-state={drawerOpen ? "open" : "closed"}
+      data-current-section={currentSidebarSection}
+    >
       <div className="ambient" aria-hidden="true">
         <span className="bloom bloom-green" />
         <span className="bloom bloom-coral" />
@@ -370,15 +521,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
         <defs>
           <filter id="metisWarp" x="-35%" y="-35%" width="170%" height="170%" colorInterpolationFilters="sRGB">
-            <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves={2} seed={9} result="n">
-              <animate attributeName="baseFrequency" dur="26s" values="0.015;0.028;0.015" repeatCount="indefinite" />
-            </feTurbulence>
+            <feTurbulence type="fractalNoise" baseFrequency="0.019" numOctaves={2} seed={9} result="n" />
             <feDisplacementMap in="SourceGraphic" in2="n" scale={30} xChannelSelector="R" yChannelSelector="G" />
           </filter>
         </defs>
       </svg>
 
       <button
+        ref={mobileMenuRef}
         className="mobileMenuButton"
         type="button"
         aria-label={drawerOpen ? "Close navigation" : "Open navigation"}
@@ -391,128 +541,236 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </button>
 
       {drawerOpen ? (
-        <button className="drawerScrim" aria-label="Close navigation" onClick={() => setDrawerOpen(false)} />
+        <button className="drawerScrim" tabIndex={-1} aria-label="Close navigation" onClick={() => setDrawerOpen(false)} />
       ) : null}
 
       <aside
+        ref={sidebarRef}
         id="metis-main-navigation"
-        className={`sidebar ${drawerOpen ? "sidebarOpen" : ""}`}
+        className={`sidebar sidebarShell ${drawerOpen ? "sidebarOpen" : ""}`}
         aria-label="Main navigation"
+        aria-hidden={mobileLayout && !drawerOpen ? true : undefined}
+        role={mobileLayout ? "dialog" : undefined}
+        aria-modal={mobileLayout && drawerOpen ? true : undefined}
+        data-sidebar-state={desktopPanelCollapsed ? "collapsed" : "expanded"}
+        data-active-section={activeSidebarSection}
+        data-current-section={currentSidebarSection}
+        data-current-destination={currentDestination?.href ?? ""}
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
-        <div className="brandRow">
-          <Link href="/" className="brand" aria-label="Metis home">
+        <div className="sidebarRail sidebarShellRail" data-sidebar-rail>
+          <Link href="/" className="railBrand" aria-label="Metis home" title="Metis">
             <span className="brandMark" aria-hidden="true">
-              <MetisCompanion size={32} energy="expressive" />
-            </span>
-            <span>
-              <strong><MetisWordmark /></strong>
-              <small>Private intelligence</small>
+              <MetisCompanion size={34} energy="expressive" />
             </span>
           </Link>
-          <span className={`connectionDot ${apiConnected ? "connected" : "disconnected"}`} title={apiConnected ? "Local API connected" : "Local API unavailable"} />
+
           <button
+            className="railCompose"
             type="button"
-            className="collapseToggle"
-            onClick={toggleCollapsed}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-pressed={collapsed}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => router.push(`/?new=${freshToken()}`)}
+            aria-label="New conversation"
+            title="New conversation · ⌘N"
           >
-            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-              <path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M10 4v12M4 10h12" />
             </svg>
           </button>
-        </div>
 
-        <button className="newChatButton" type="button" onClick={() => router.push(`/?new=${freshToken()}`)} title="New conversation">
-          <span aria-hidden="true">＋</span>
-          <span className="navLabel">New conversation</span>
-          <kbd>⌘ N</kbd>
-        </button>
+          <nav className="railNav" aria-label="Workspace sections">
+            {sidebarSections.filter((section) => section.id !== "system").map((section) => {
+              const panelActive = activeSidebarSection === section.id;
+              const routeActive = currentSidebarSection === section.id;
+              const routeLabel = routeActive && currentDestination
+                ? currentDestination.label
+                : section.label;
+              const tooltip = routeActive && routeLabel !== section.label
+                ? `${section.label} · Current: ${routeLabel}`
+                : section.label;
+              const tooltipId = `sidebar-${section.id}-tooltip`;
+              return (
+                <button
+                  key={section.id}
+                  type="button"
+                  className={`railSectionButton ${panelActive ? "active isPanelActive" : ""} ${routeActive ? "isRouteActive" : ""}`}
+                  data-sidebar-section={section.id}
+                  data-panel-active={panelActive ? "true" : "false"}
+                  data-route-active={routeActive ? "true" : "false"}
+                  data-current-label={routeActive ? routeLabel : undefined}
+                  onClick={() => openSidebarSection(section.id)}
+                  aria-label={`${mobileLayout ? "Show" : panelActive && !desktopPanelCollapsed ? "Collapse" : "Open"} ${section.label} panel${routeActive ? `, current page ${routeLabel}` : ""}`}
+                  aria-controls="metis-sidebar-panel"
+                  aria-expanded={panelActive && !desktopPanelCollapsed}
+                  aria-current={routeActive ? "location" : undefined}
+                  aria-describedby={desktopPanelCollapsed ? tooltipId : undefined}
+                  title={tooltip}
+                >
+                  <span className="railActivePill" aria-hidden="true" />
+                  <span className="navGlyph" aria-hidden="true"><NavIcon name={section.icon} /></span>
+                  {section.id === "conversations" && unreadRunCount ? <span className="railBadge" aria-hidden="true">{unreadRunCount}</span> : null}
+                  <span id={tooltipId} className="railTooltip" role="tooltip">{tooltip}</span>
+                </button>
+              );
+            })}
+          </nav>
 
-        <nav className="primaryNav" aria-label="Workspace">
-          {navigation.map((item) => {
-            const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-            return (
-              <Link key={item.href} href={item.href} className={active ? "active" : ""} title={item.label}>
-                <span className="navGlyph" aria-hidden="true"><NavIcon name={item.icon} /></span>
-                <span className="navLabel">{item.label}</span>
-                <span className={`navSignal ${item.href === "/" && unreadRunCount ? "hasUnread" : ""}`} aria-hidden="true">
-                  {item.href === "/" && unreadRunCount ? unreadRunCount : null}
-                </span>
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="sidebarDivider" />
-
-        <div className="historyHeader">
-          <span>Conversations</span>
-          <span>{conversations.length}</span>
-        </div>
-        <label className="sidebarSearch">
-          <span aria-hidden="true">⌕</span>
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search"
-            aria-label="Search conversations"
-          />
-          {query ? <button className="searchClear" type="button" aria-label="Clear search" onClick={() => { setQuery(""); searchRef.current?.focus(); }}>×</button> : null}
-          <kbd><span>⌘</span><span>K</span></kbd>
-        </label>
-
-        <div className="conversationHistory">
-          {Object.entries(grouped).map(([label, items]) => (
-            <section key={label}>
-              <h2>{label}</h2>
-              {items.map((conversation) => (
-                <div key={conversation.id} className={`conversationHistoryItem run-${runIndicators[conversation.id]?.state ?? "idle"} ${runIndicators[conversation.id]?.unread ? "hasUnread" : ""}`}>
-                  <Link href={`/?conversation=${encodeURIComponent(conversation.id)}`} onClick={() => acknowledgeConversationRun(conversation.id)} className={pathname === "/" && activeConversation === conversation.id ? "active" : ""} title={conversation.title}>
-                    <span>{conversation.title}</span>
-                    {runIndicators[conversation.id] && (
-                      runIndicators[conversation.id].state !== "done" || runIndicators[conversation.id].unread
-                    ) ? (
-                      <small className="conversationRunState">
-                        <i aria-hidden="true" />
-                        {runIndicators[conversation.id].state === "working" ? "Working"
-                          : runIndicators[conversation.id].state === "attention" ? "Needs you"
-                            : runIndicators[conversation.id].state === "failed" ? "Interrupted"
-                              : runIndicators[conversation.id].state === "cancelled" ? "Stopped"
-                                : runIndicators[conversation.id].unread ? "Done" : ""}
-                      </small>
-                    ) : null}
-                  </Link>
-                  <button type="button" className="conversationDeleteButton" aria-label={`Delete ${conversation.title}`} title="Delete conversation" disabled={deletingConversation === conversation.id} onClick={() => void removeConversation(conversation)}>×</button>
-                </div>
-              ))}
-            </section>
-          ))}
-          {!query.trim() && filtered.length > COMPACT_HISTORY_LIMIT ? (
+          <div className="railFooter">
+            <span
+              className={`railConnection ${apiConnected ? "connected" : "disconnected"}`}
+              role="status"
+              aria-label={apiConnected ? "Metis is connected" : "Metis is offline"}
+              title={apiConnected ? "Metis is connected" : "Metis is offline"}
+            />
             <button
-              className="historyExpandButton"
               type="button"
-              aria-expanded={historyExpanded}
-              onClick={() => setHistoryExpanded((value) => !value)}
+              className={`railSectionButton ${activeSidebarSection === "system" ? "active isPanelActive" : ""} ${currentSidebarSection === "system" ? "isRouteActive" : ""}`}
+              data-sidebar-section="system"
+              data-panel-active={activeSidebarSection === "system" ? "true" : "false"}
+              data-route-active={currentSidebarSection === "system" ? "true" : "false"}
+              data-current-label={currentSidebarSection === "system" ? "Settings" : undefined}
+              onClick={() => openSidebarSection("system")}
+              aria-label={`${mobileLayout ? "Show" : activeSidebarSection === "system" && !desktopPanelCollapsed ? "Collapse" : "Open"} Settings panel${currentSidebarSection === "system" ? ", current page" : ""}`}
+              aria-controls="metis-sidebar-panel"
+              aria-expanded={activeSidebarSection === "system" && !desktopPanelCollapsed}
+              aria-current={currentSidebarSection === "system" ? "location" : undefined}
+              aria-describedby={desktopPanelCollapsed ? "sidebar-system-tooltip" : undefined}
+              title="Settings"
             >
-              <span>{historyExpanded ? "Show recent only" : `View all ${filtered.length} conversations`}</span>
-              <b aria-hidden="true">{historyExpanded ? "↑" : "↓"}</b>
+              <span className="railActivePill" aria-hidden="true" />
+              <span className="navGlyph" aria-hidden="true"><NavIcon name="settings" /></span>
+              <span id="sidebar-system-tooltip" className="railTooltip" role="tooltip">Settings</span>
             </button>
-          ) : null}
-          {!filtered.length ? (
-            <p className="historyEmpty">{query ? "No matching conversations" : "Your local conversations will appear here."}</p>
-          ) : null}
+          </div>
         </div>
 
-        <div className="privacyBadge">
-          <span className="privacyPulse" />
-          <span>
-            <strong>Governed workspace</strong>
-            <small>Local memory · explicit cloud choice</small>
-          </span>
+        <div
+          ref={sidebarPanelRef}
+          id="metis-sidebar-panel"
+          className="sidebarPanel sidebarShellPanel"
+          role="region"
+          aria-labelledby="metis-sidebar-panel-title"
+          aria-hidden={desktopPanelCollapsed ? true : undefined}
+          data-panel-state={desktopPanelCollapsed ? "collapsed" : "expanded"}
+          data-panel-section={activeSidebarSection}
+        >
+          <header className="sidebarPanelHeader">
+            <div className="sidebarPanelHeading">
+              <span className="sidebarPanelEyebrow">{activeSection.eyebrow}</span>
+              <strong id="metis-sidebar-panel-title">{activeSection.label}</strong>
+              <small className="sidebarPanelDescription">{activeSection.description}</small>
+            </div>
+            <button
+              type="button"
+              className="collapseToggle"
+              onClick={toggleCollapsed}
+              aria-label={mobileLayout ? "Close navigation" : "Collapse sidebar panel"}
+              aria-controls="metis-sidebar-panel"
+              aria-expanded={!desktopPanelCollapsed}
+              title={mobileLayout ? "Close navigation" : "Collapse panel"}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </header>
+
+          {activeSidebarSection === "conversations" ? (
+            <>
+              <button className="newChatButton" type="button" onClick={() => router.push(`/?new=${freshToken()}`)} title="New conversation">
+                <span aria-hidden="true">＋</span>
+                <span className="navLabel">New conversation</span>
+                <kbd>⌘ N</kbd>
+              </button>
+
+              <label className="sidebarSearch">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search conversations"
+                  aria-label="Search conversations"
+                />
+                {query ? <button className="searchClear" type="button" aria-label="Clear search" onClick={() => { setQuery(""); searchRef.current?.focus(); }}>×</button> : null}
+                <kbd><span>⌘</span><span>K</span></kbd>
+              </label>
+
+              <div className="historyHeader">
+                <span>Recent</span>
+                <span>{conversations.length}</span>
+              </div>
+              <div className="conversationHistory">
+                {Object.entries(grouped).map(([label, items]) => (
+                  <section key={label}>
+                    <h2>{label}</h2>
+                    {items.map((conversation) => (
+                      <div key={conversation.id} className={`conversationHistoryItem run-${runIndicators[conversation.id]?.state ?? "idle"} ${runIndicators[conversation.id]?.unread ? "hasUnread" : ""}`}>
+                        <Link href={`/?conversation=${encodeURIComponent(conversation.id)}`} onClick={() => acknowledgeConversationRun(conversation.id)} className={pathname === "/" && activeConversation === conversation.id ? "active" : ""} aria-current={pathname === "/" && activeConversation === conversation.id ? "page" : undefined} title={conversation.title}>
+                          <span>{conversation.title}</span>
+                          {runIndicators[conversation.id] && (
+                            runIndicators[conversation.id].state !== "done" || runIndicators[conversation.id].unread
+                          ) ? (
+                            <small className="conversationRunState">
+                              <i aria-hidden="true" />
+                              {runIndicators[conversation.id].state === "working" ? "Working"
+                                : runIndicators[conversation.id].state === "attention" ? "Needs you"
+                                  : runIndicators[conversation.id].state === "failed" ? "Interrupted"
+                                    : runIndicators[conversation.id].state === "cancelled" ? "Stopped"
+                                      : runIndicators[conversation.id].unread ? "Done" : ""}
+                            </small>
+                          ) : null}
+                        </Link>
+                        <button type="button" className="conversationDeleteButton" aria-label={`Delete ${conversation.title}`} title="Delete conversation" disabled={deletingConversation === conversation.id} onClick={() => void removeConversation(conversation)}>×</button>
+                      </div>
+                    ))}
+                  </section>
+                ))}
+                {!query.trim() && filtered.length > COMPACT_HISTORY_LIMIT ? (
+                  <button
+                    className="historyExpandButton"
+                    type="button"
+                    aria-expanded={historyExpanded}
+                    onClick={() => setHistoryExpanded((value) => !value)}
+                  >
+                    <span>{historyExpanded ? "Show recent only" : `View all ${filtered.length} conversations`}</span>
+                    <b aria-hidden="true">{historyExpanded ? "↑" : "↓"}</b>
+                  </button>
+                ) : null}
+                {!filtered.length ? (
+                  <p className="historyEmpty">{query ? "No matching conversations" : "Your local conversations will appear here."}</p>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <nav className="primaryNav sectionNav" aria-label={activeSection.label}>
+              {sectionNavigation.map((item) => {
+                const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={active ? "active isCurrentDestination" : ""}
+                    data-sidebar-destination={item.href}
+                    data-route-active={active ? "true" : "false"}
+                    aria-current={active ? "page" : undefined}
+                    title={item.label}
+                  >
+                    <span className="navGlyph" aria-hidden="true"><NavIcon name={item.icon} /></span>
+                    <span className="navLabel">{item.label}</span>
+                    <svg className="navChevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" /></svg>
+                  </Link>
+                );
+              })}
+            </nav>
+          )}
+
+          <div className="privacyBadge">
+            <span className="privacyPulse" />
+            <span>
+              <strong>Private by default</strong>
+              <small>Local memory · governed actions</small>
+            </span>
+          </div>
         </div>
 
         <div
@@ -523,7 +781,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           aria-valuemin={MIN_SIDEBAR_WIDTH}
           aria-valuemax={MAX_SIDEBAR_WIDTH}
           aria-valuenow={sidebarWidth}
-          tabIndex={collapsed ? -1 : 0}
+          aria-hidden={mobileLayout || desktopPanelCollapsed ? true : undefined}
+          tabIndex={!mobileLayout && !desktopPanelCollapsed ? 0 : -1}
           onDoubleClick={() => setAndRememberSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
           onKeyDown={handleResizeKeyDown}
           onPointerDown={handleResizeStart}
@@ -535,7 +794,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ><span /></div>
       </aside>
 
-      <main className="appMain">{children}</main>
+      <main ref={mainRef} className="appMain">{children}</main>
     </div>
   );
 }

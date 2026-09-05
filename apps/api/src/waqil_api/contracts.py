@@ -2244,10 +2244,12 @@ class MeetingV1(Contract):
     duration_seconds: float | None = None
     language: str = ""
     transcript: str = ""
+    summary: str = ""
     provider_request_id: str = ""
     stage: Literal[
         "uploaded", "isolating", "transcribing", "analyzing", "ready", "failed"
     ] = "uploaded"
+    failed_stage: Literal["uploaded", "isolating", "transcribing", "analyzing"] | None = None
     error: str = ""
     attempts: int = Field(default=0, ge=0)
     account_id: str | None = None
@@ -2255,6 +2257,12 @@ class MeetingV1(Contract):
     link_score: float | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class MeetingSummaryV1(Contract):
+    """Bounded, evidence-only orientation written from a transcript."""
+
+    summary: str = Field(default="", max_length=900)
 
 
 class MeetingDetailV1(Contract):
@@ -2266,6 +2274,20 @@ class MeetingDetailV1(Contract):
     # People on the linked account, offered as speaker names. Suggestions only:
     # naming a speaker is a person's judgment about a voice they recognize.
     suggested_names: list[str] = Field(default_factory=list, max_length=40)
+
+
+class MeetingUpdateV1(Contract):
+    """Small human edits to the recording's library metadata."""
+
+    title: str = Field(min_length=1, max_length=200)
+
+    @field_validator("title")
+    @classmethod
+    def title_has_words(cls, value: str) -> str:
+        title = value.strip()
+        if not title:
+            raise ValueError("title needs words")
+        return title
 
 
 class MeetingSpeakerUpdateV1(Contract):
@@ -2522,6 +2544,22 @@ class VoiceRenditionV1(Contract):
     spoken: str = Field(default="", max_length=1_200)
     citations: list[VoiceCitationV1] = Field(default_factory=list, max_length=12)
     intent: VoiceIntent = "read"
+    # Present only for the one non-mutating client action voice may request.
+    navigation_path: Literal[
+        "",
+        "/",
+        "/today",
+        "/meetings",
+        "/interviews",
+        "/customers",
+        "/assets",
+        "/knowledge",
+        "/answers",
+        "/memory",
+        "/sizing",
+        "/tools",
+        "/settings",
+    ] = ""
     # Present only on a committed append, and the reason the surface can show a
     # card with an Undo on it the moment the words stop.
     write: VoiceWriteReceiptV1 | None = None
@@ -2558,6 +2596,11 @@ class VoiceSessionV1(Contract):
     # Billable wall-clock so far. Counted by the host from its own lease, not
     # from anything the browser reports.
     elapsed_seconds: float = Field(default=0.0, ge=0.0)
+    # Separate from the crash lease: a healthy but abandoned tab must not keep
+    # a paid audio session alive. The browser renders this as a countdown and
+    # the host independently enforces the same deadline.
+    idle_timeout_seconds: int = Field(default=120, ge=30, le=3_600)
+    idle_seconds_remaining: float = Field(default=120.0, ge=0.0, le=3_600)
 
 
 class VoiceSessionStartV1(Contract):
@@ -2572,6 +2615,12 @@ class VoiceSessionStartV1(Contract):
     session: VoiceSessionV1
     conversation_token: str = Field(default="", max_length=4_000)
     lease_seconds: int = Field(default=60, ge=10, le=3_600)
+
+
+class VoiceSessionBindV1(Contract):
+    """The provider conversation the browser SDK opened for this lease."""
+
+    provider_conversation_id: str = Field(min_length=1, max_length=120)
 
 
 class VoiceAvailabilityV1(Contract):
@@ -2599,8 +2648,8 @@ class VoiceTurnRequestV1(Contract):
     """
 
     provider_conversation_id: str = Field(default="", max_length=120)
-    # The browser puts this into ElevenLabs' custom-LLM extra body. It binds a
-    # provider call to the exact tab that opened it instead of guessing by age.
+    # Retained for older ingress clients. Current browsers bind the provider
+    # conversation directly to their loopback lease before the first turn.
     metis_session_id: str = Field(default="", max_length=120)
     transcript: str = Field(min_length=1, max_length=8_000)
     history: list[str] = Field(default_factory=list, max_length=12)

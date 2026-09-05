@@ -17,6 +17,7 @@ from waqil_api.config import Settings
 from waqil_api.project_capability_eval import (
     TimelineEvent,
     release_gate_passes,
+    score_evaluation,
     summarize_coding_usage,
     summarize_run,
 )
@@ -314,7 +315,7 @@ def test_binary_qualification_cannot_average_away_one_failed_gate() -> None:
         "passed": True,
         "score": 100,
         "gates": {
-            "exact_planned_scope": True,
+            "exact_requested_scope": True,
             "required_files_written": True,
             "clean_post_write_verification": True,
             "repair_continuity": True,
@@ -339,7 +340,7 @@ def test_binary_qualification_cannot_average_away_one_failed_gate() -> None:
         acceptance,
         approved=True,
     )
-    assert hidden_scope["failed_gates"] == ["exact_planned_scope"]
+    assert hidden_scope["failed_gates"] == ["exact_requested_scope"]
     report = {
         "score": {"total": 100},
         "approved": True,
@@ -448,6 +449,68 @@ def test_cline_round_changed_paths_are_exact_write_and_repair_evidence() -> None
     assert summary["writes"]["path_evidence"] == "complete"
     assert summary["model_steps"] == 1
     assert summary["verification"]["after_last_successful_write"] is True
+
+
+def test_direct_contract_drives_scoring_approval_and_binary_qualification() -> None:
+    scenario = UI_REVAMP_SCENARIO
+    required = scenario.required_files
+    summary = summarize_run(
+        run={"id": "run_direct", "status": "awaiting_approval"},
+        events=[
+            TimelineEvent(
+                type="project.direct_contract",
+                payload={
+                    "contract_version": 1,
+                    "mode": "direct_contract",
+                    "writable_roots": ["."],
+                    "protected_files": list(scenario.protected_files),
+                    "unresolved": [],
+                    "approval_required": True,
+                    "check_budget": 8,
+                },
+            ),
+            TimelineEvent(
+                type="project.coding_round",
+                payload={
+                    "session_id": "coding_direct",
+                    "sidecar_session_id": "sidecar_direct",
+                    "model": "cline-pass/kimi-k3",
+                    "state": "idle",
+                    "changed_paths": list(required),
+                },
+            ),
+            TimelineEvent(
+                type="project.staged_verified",
+                payload={"errors": 0, "warnings": 0, "ran": 7},
+            ),
+        ],
+        duration_seconds=1,
+        approval={"id": "approval_1", "blocked_reason": ""},
+        required_files=required,
+    )
+    summary["preapproval_overlay"] = {
+        "valid": True,
+        "scope_mode": "direct_contract",
+        "contract_observed": True,
+        "exact_requested_scope": True,
+    }
+    acceptance = {
+        "available": True,
+        "passed": True,
+        "checks_total": 1,
+        "checks_passed": 1,
+    }
+
+    qualification = qualify_scenario(scenario, [summary], acceptance, approved=True)
+    score = score_evaluation([summary], acceptance, max_steps=48)
+
+    assert summary["plan"]["present"] is False
+    assert summary["scope_contract"]["mode"] == "direct_contract"
+    assert summary["scope_contract"]["required_file_coverage"] == 1.0
+    assert qualification["passed"] is True
+    assert qualification["gates"]["exact_requested_scope"] is True
+    assert score["categories"]["planning"] == 20.0
+    assert score["signals"]["write_completion"] == 1.0
 
 
 def test_seeded_restart_usage_counts_inherited_tokens_once_and_child_request() -> None:

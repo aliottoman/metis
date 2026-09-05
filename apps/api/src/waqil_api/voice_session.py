@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import logging
 import os
 import secrets
@@ -43,6 +45,33 @@ logger = logging.getLogger("waqil.voice.session")
 # window so opening Voice can hide the remote token/tunnel startup without
 # leaving either process warm after someone simply looked at the screen.
 VOICE_PREWARM_SECONDS = 120
+# A live audio session should not remain billable simply because its browser is
+# still healthy enough to renew a lease. Two quiet minutes is long enough to
+# think or read a response, while still making an abandoned tab inexpensive.
+VOICE_IDLE_TIMEOUT_SECONDS = 120
+VOICE_TURN_CACHE_LIMIT = 64
+
+
+def _turn_fingerprint(
+    provider_conversation_id: str, transcript: str, history: tuple[str, ...]
+) -> str:
+    """Stable identity for one Custom LLM request, including its position.
+
+    The utterance alone is not an idempotency key: "yes" said after a later
+    assistant turn is a new request. Provider conversation history supplies
+    that position and is identical when ElevenLabs retries the same payload.
+    """
+    canonical = json.dumps(
+        {
+            "provider_conversation_id": provider_conversation_id.strip(),
+            "transcript": transcript.strip(),
+            "history": list(history),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class VoiceUnavailable(RuntimeError):
@@ -54,15 +83,29 @@ class VoiceSessionExpired(RuntimeError):
 
 
 @dataclass
+class _TurnAttempt:
+    """One provider request, retained so a transport retry is the same turn."""
+
+    turn_id: str
+    run_id: str | None = None
+    rendition: VoiceRenditionV1 | None = None
+
+
+@dataclass
 class _Session:
     id: str
     conversation_id: str
     started_at: datetime
     lease_expires_at: datetime
+    last_activity_at: datetime
     voice_model: str
     spoken_confirmation: bool
     provider_conversation_id: str = ""
     state: str = "starting"
+    # Set as soon as an End request arrives. The active turn is allowed to
+    # finish under ``turn_lock`` before the session becomes ended, while any
+    # turn queued behind it is refused rather than slipping in ahead of close.
+    closing: bool = field(default=False, repr=False)
     ended_at: datetime | None = None
     reason: str = ""
     account_id: str | None = None
@@ -70,6 +113,12 @@ class _Session:
     # What was said, bounded. Held in memory for the length of the session and
     # nowhere else: durable history is the conversation's own messages.
     history: list[str] = field(default_factory=list)
+    # ElevenLabs may retry a Custom LLM request after losing the response. A
+    # per-session lock makes the lookup-and-run atomic, and the fingerprint
+    # includes the provider's preceding history so somebody genuinely saying
+    # the same thing twice still creates two turns.
+    turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    turn_attempts: dict[str, _TurnAttempt] = field(default_factory=dict, repr=False)
     # The live channel to the browser. Durability is not this queue's job —
     # written answers land in the conversation, receipts land in their own
     # records, and a reconnecting browser re-reads both.
@@ -81,6 +130,12 @@ class _Session:
 
     def elapsed(self, now: datetime) -> float:
         return ((self.ended_at or now) - self.started_at).total_seconds()
+
+    def idle_remaining(self, now: datetime) -> float:
+        return max(
+            0.0,
+            VOICE_IDLE_TIMEOUT_SECONDS - (now - self.last_activity_at).total_seconds(),
+        )
 
     def public(self, now: datetime) -> VoiceSessionV1:
         return VoiceSessionV1(
@@ -95,6 +150,8 @@ class _Session:
             spoken_confirmation=self.spoken_confirmation,
             voice_model=self.voice_model,
             elapsed_seconds=round(self.elapsed(now), 1),
+            idle_timeout_seconds=VOICE_IDLE_TIMEOUT_SECONDS,
+            idle_seconds_remaining=round(self.idle_remaining(now), 1),
         )
 
 
@@ -209,6 +266,7 @@ class VoiceSessionService:
                 started_at=now,
                 lease_expires_at=now
                 + timedelta(seconds=self.settings.voice_lease_seconds),
+                last_activity_at=now,
                 voice_model=preference.voice_model,
                 spoken_confirmation=preference.spoken_confirmation,
             )
@@ -234,6 +292,10 @@ class VoiceSessionService:
         now = datetime.now(UTC)
         if session.elapsed(now) > self.settings.voice_session_max_seconds:
             return await self.end(session_id, reason="it reached its time limit")
+        if session.idle_remaining(now) <= 0:
+            return await self.end(
+                session_id, reason="there was no voice activity for two minutes"
+            )
         session.lease_expires_at = now + timedelta(
             seconds=self.settings.voice_lease_seconds
         )
@@ -245,22 +307,30 @@ class VoiceSessionService:
         session = self._sessions.get(session_id)
         if session is None:
             raise VoiceSessionExpired("that voice session is not open")
-        now = datetime.now(UTC)
         if session.live:
-            session.state, session.ended_at, session.reason = "ended", now, reason
-            # A read-back waiting for a yes does not outlive the conversation
-            # it was asked in.
-            self.graph.forget(session.id)
-            await self._publish(session, {"type": "voice.ended", "reason": reason})
-            for listener in session.listeners:
-                # None is the stream's own end-of-stream marker.
-                listener.put_nowait(None)
-            logger.info(
-                "voice session %s closed after %.1fs (%s)",
-                session.id,
-                session.elapsed(now),
-                reason,
-            )
+            session.closing = True
+        # End and turns share the same per-session fence. An answer already in
+        # progress completes before End returns; once closing is set, queued or
+        # later turns are refused. This also ensures no customer append can land
+        # after the session has reported itself ended.
+        async with session.turn_lock:
+            now = datetime.now(UTC)
+            if session.live:
+                session.state, session.ended_at, session.reason = "ended", now, reason
+                # A read-back waiting for a yes does not outlive the conversation
+                # it was asked in.
+                self.graph.forget(session.id)
+                await self._publish(session, {"type": "voice.ended", "reason": reason})
+                for listener in session.listeners:
+                    # None is the stream's own end-of-stream marker.
+                    listener.put_nowait(None)
+                logger.info(
+                    "voice session %s closed after %.1fs (%s)",
+                    session.id,
+                    session.elapsed(now),
+                    reason,
+                )
+            session.closing = False
         async with self._lock:
             await self._release_if_idle()
         return session.public(now)
@@ -268,16 +338,62 @@ class VoiceSessionService:
     async def status(self, session_id: str) -> VoiceSessionV1:
         return self._require(session_id).public(datetime.now(UTC))
 
+    async def bind(
+        self, session_id: str, provider_conversation_id: str
+    ) -> VoiceSessionV1:
+        """Attach the browser SDK's conversation to exactly one live lease.
+
+        This is intentionally a loopback call from the browser after WebRTC
+        connects. It avoids enabling provider-controlled Custom LLM body
+        overrides merely to carry a Metis session id through the tunnel.
+        """
+        conversation = (provider_conversation_id or "").strip()
+        if not conversation:
+            raise VoiceSessionExpired("the provider conversation id is missing")
+        async with self._lock:
+            session = self._require(session_id)
+            if not session.live or session.closing:
+                raise VoiceSessionExpired("that Metis voice session is not open")
+            if (
+                session.provider_conversation_id
+                and session.provider_conversation_id != conversation
+            ):
+                raise VoiceSessionExpired(
+                    "that Metis voice session is already bound to another conversation"
+                )
+            owner = next(
+                (
+                    candidate
+                    for candidate in self._sessions.values()
+                    if candidate.id != session.id
+                    and candidate.live
+                    and candidate.provider_conversation_id == conversation
+                ),
+                None,
+            )
+            if owner is not None:
+                raise VoiceSessionExpired(
+                    "that provider conversation belongs to another session"
+                )
+            session.provider_conversation_id = conversation
+            return session.public(datetime.now(UTC))
+
     async def sweep(self) -> None:
         """Expire leases nobody renewed. The backstop for a crashed browser."""
         now = datetime.now(UTC)
         stale = [
-            session.id
+            (
+                session.id,
+                "there was no voice activity for two minutes"
+                if session.idle_remaining(now) <= 0
+                else "the connection went quiet",
+            )
             for session in self._sessions.values()
-            if session.live and session.lease_expires_at <= now
+            if session.live
+            and (session.lease_expires_at <= now or session.idle_remaining(now) <= 0)
         ]
-        for session_id in stale:
-            await self.end(session_id, reason="the connection went quiet")
+        for session_id, reason in stale:
+            await self.end(session_id, reason=reason)
         # Ended sessions are kept briefly so a late status poll gets an answer
         # rather than a 404, then dropped.
         cutoff = now - timedelta(minutes=10)
@@ -317,47 +433,80 @@ class VoiceSessionService:
         rather than answered on a guess.
         """
         session = self._bind(provider_conversation_id, metis_session_id)
-        session.turns += 1
-        turn_id = f"t_{session.turns:04d}_{uuid.uuid4().hex[:8]}"
-        run_id = await self._record_question(session, transcript, turn_id)
 
-        rendition = await self.graph.answer(
-            VoiceTurn(
-                transcript=transcript,
-                voice_session_id=session.id,
-                turn_id=turn_id,
-                run_id=run_id,
-                account_id=session.account_id,
-                history=tuple(history or session.history),
+        # The lock is deliberately per session rather than global: retries for
+        # this conversation serialize, while two independent tabs can still
+        # answer concurrently.
+        async with session.turn_lock:
+            if session.closing or not session.live:
+                raise VoiceSessionExpired("that voice session is not open")
+            request_history = (
+                tuple(history) if history is not None else tuple(session.history)
             )
-        )
-        session.history.append(f"They: {transcript}")
-        session.history.append(f"You: {rendition.spoken}")
-        del session.history[:-12]
+            fingerprint = _turn_fingerprint(
+                provider_conversation_id, transcript, request_history
+            )
+            session.last_activity_at = datetime.now(UTC)
+            attempt = session.turn_attempts.get(fingerprint)
+            if attempt is not None and attempt.rendition is not None:
+                return attempt.rendition
 
-        await self._record_answer(session, rendition)
-        await self._publish(
-            session,
-            {"type": "voice.turn", "rendition": rendition.model_dump(mode="json")},
-        )
-        if rendition.intent in ("refuse_build", "refuse_protected"):
-            refusal = classify_refusal(transcript)
+            if attempt is None:
+                session.turns += 1
+                attempt = _TurnAttempt(
+                    turn_id=f"t_{session.turns:04d}_{fingerprint[:8]}"
+                )
+                session.turn_attempts[fingerprint] = attempt
+                while len(session.turn_attempts) > VOICE_TURN_CACHE_LIMIT:
+                    session.turn_attempts.pop(next(iter(session.turn_attempts)))
+
+            if attempt.run_id is None:
+                attempt.run_id = await self._record_question(
+                    session, transcript, attempt.turn_id
+                )
+
+            rendition = await self.graph.answer(
+                VoiceTurn(
+                    transcript=transcript,
+                    voice_session_id=session.id,
+                    turn_id=attempt.turn_id,
+                    run_id=attempt.run_id,
+                    account_id=session.account_id,
+                    history=tuple(history or session.history),
+                )
+            )
+            # Cache before the non-critical twin-write and live publication.
+            # A retry after the provider received the answer must never run the
+            # model or commit the user's request again.
+            attempt.rendition = rendition
+            session.history.append(f"They: {transcript}")
+            session.history.append(f"You: {rendition.spoken}")
+            del session.history[:-12]
+            session.last_activity_at = datetime.now(UTC)
+
+            await self._record_answer(session, rendition)
             await self._publish(
                 session,
-                {
-                    "type": "voice.build_deferred"
-                    if rendition.intent == "refuse_build"
-                    else "voice.refused",
-                    # The verbatim utterance, so the composer is prefilled with
-                    # what was actually said rather than a paraphrase of it.
-                    "transcript": transcript,
-                    "hand_off": bool(refusal and refusal.hand_off),
-                    "voice_session_id": session.id,
-                    "turn_id": turn_id,
-                    "run_id": run_id,
-                },
+                {"type": "voice.turn", "rendition": rendition.model_dump(mode="json")},
             )
-        return rendition
+            if rendition.intent in ("refuse_build", "refuse_protected"):
+                refusal = classify_refusal(transcript)
+                await self._publish(
+                    session,
+                    {
+                        "type": "voice.build_deferred"
+                        if rendition.intent == "refuse_build"
+                        else "voice.refused",
+                        # The verbatim utterance, so the composer is prefilled with
+                        # what was actually said rather than a paraphrase of it.
+                        "transcript": transcript,
+                        "hand_off": bool(refusal and refusal.hand_off),
+                        "voice_session_id": session.id,
+                        "turn_id": attempt.turn_id,
+                        "run_id": attempt.run_id,
+                    },
+                )
+            return rendition
 
     async def post_call(self, payload: dict[str, Any]) -> dict[str, Any]:
         """A verified provider webhook, stored as evidence and nothing more.
@@ -617,7 +766,9 @@ class VoiceSessionService:
                     + (f": {detail}" if detail else ".")
                 )
             try:
-                response = await asyncio.to_thread(urllib.request.urlopen, url, timeout=0.25)
+                response = await asyncio.to_thread(
+                    urllib.request.urlopen, url, timeout=0.25
+                )
                 with response:
                     if response.status == 200:
                         return
@@ -626,9 +777,7 @@ class VoiceSessionService:
         await self._stop_processes()
         raise VoiceUnavailable("The isolated voice service did not become ready.")
 
-    async def _process_error(
-        self, process: asyncio.subprocess.Process | None
-    ) -> str:
+    async def _process_error(self, process: asyncio.subprocess.Process | None) -> str:
         if process is None:
             return ""
         # Let the drainer consume any final line written immediately before the

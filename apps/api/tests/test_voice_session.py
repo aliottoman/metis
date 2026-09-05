@@ -8,6 +8,7 @@ tunnel. What closes it is a lease nobody renewed.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -245,6 +246,22 @@ async def test_the_api_key_never_reaches_the_browser(tmp_path) -> None:
         assert service.shared_secret() not in response.text
 
 
+@pytest.mark.asyncio
+async def test_provider_conversation_binds_to_exactly_one_live_lease(tmp_path) -> None:
+    service, _ = _service(tmp_path)
+    first = await service.start()
+    second = await service.start()
+
+    bound = await service.bind(second.session.id, "conv_exact")
+
+    assert bound.provider_conversation_id == "conv_exact"
+    assert service._sessions[first.session.id].provider_conversation_id == ""
+    with pytest.raises(VoiceSessionExpired, match="another session"):
+        await service.bind(first.session.id, "conv_exact")
+    with pytest.raises(VoiceSessionExpired, match="another conversation"):
+        await service.bind(second.session.id, "conv_different")
+
+
 def _resolved(value):
     async def resolve():
         return value
@@ -289,6 +306,24 @@ async def test_renewing_keeps_the_session_and_the_processes(tmp_path) -> None:
     assert service._sessions[opened.session.id].state == "live"
     assert not started["connector"][0].terminated
     await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_but_inactive_tab_still_releases_voice(tmp_path) -> None:
+    service, started = _service(tmp_path)
+    opened = await service.start()
+    assert opened.session.idle_timeout_seconds == 120
+    assert opened.session.idle_seconds_remaining > 119
+
+    session = service._sessions[opened.session.id]
+    session.last_activity_at = datetime.now(UTC) - timedelta(seconds=121)
+    ended = await service.renew(opened.session.id)
+
+    assert ended.state == "ended"
+    assert "no voice activity" in ended.reason
+    assert ended.idle_seconds_remaining == 0
+    assert started["connector"][0].terminated
+    assert started["ingress"][0].terminated
 
 
 @pytest.mark.asyncio
@@ -376,6 +411,151 @@ async def test_two_tabs_bind_to_the_explicit_metis_session_not_start_order(
     )
     assert rendition.voice_session_id == second.session.id
     assert not service._sessions[first.session.id].provider_conversation_id
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_custom_llm_retries_run_and_publish_only_once(
+    tmp_path,
+) -> None:
+    service, _ = _service(tmp_path)
+
+    class SlowGraph(FakeGraph):
+        async def answer(self, turn):
+            await asyncio.sleep(0.01)
+            return await super().answer(turn)
+
+    graph = SlowGraph()
+    service.graph = graph  # type: ignore[assignment]
+    opened = await service.start()
+    events: asyncio.Queue = asyncio.Queue()
+    service._sessions[opened.session.id].listeners.append(events)
+    request = dict(
+        provider_conversation_id="conv_retry",
+        metis_session_id=opened.session.id,
+        transcript="What needs my attention?",
+        history=["They: Good morning", "You: Good morning."],
+    )
+
+    first, retry = await asyncio.gather(
+        service.turn(**request),
+        service.turn(**request),
+    )
+
+    assert first.turn_id == retry.turn_id
+    assert len(graph.turns) == 1
+    assert service._sessions[opened.session.id].turns == 1
+    assert events.qsize() == 1
+    assert (await events.get())["rendition"]["turn_id"] == first.turn_id
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_end_fences_an_in_flight_turn_before_reporting_ended(tmp_path) -> None:
+    service, _ = _service(tmp_path)
+
+    class BlockingGraph(FakeGraph):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def answer(self, turn):
+            self.started.set()
+            await self.release.wait()
+            return await super().answer(turn)
+
+    graph = BlockingGraph()
+    service.graph = graph  # type: ignore[assignment]
+    opened = await service.start()
+    turn = asyncio.create_task(
+        service.turn(
+            provider_conversation_id="conv_ending",
+            metis_session_id=opened.session.id,
+            transcript="Add that customer note.",
+        )
+    )
+    await graph.started.wait()
+
+    ending = asyncio.create_task(service.end(opened.session.id))
+    await asyncio.sleep(0)
+    assert service._sessions[opened.session.id].closing
+    assert not ending.done(), "End must not race past a turn that can still write"
+
+    graph.release.set()
+    await turn
+    ended = await ending
+
+    assert ended.state == "ended"
+    assert not service._sessions[opened.session.id].closing
+    with pytest.raises(VoiceSessionExpired, match="not open"):
+        await service.turn(
+            provider_conversation_id="conv_ending",
+            metis_session_id=opened.session.id,
+            transcript="One more thing.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_same_words_after_changed_history_are_a_new_turn(tmp_path) -> None:
+    service, _ = _service(tmp_path)
+    opened = await service.start()
+    transcript = "Could you repeat that?"
+
+    first = await service.turn(
+        provider_conversation_id="conv_repeat",
+        metis_session_id=opened.session.id,
+        transcript=transcript,
+        history=[],
+    )
+    second = await service.turn(
+        provider_conversation_id="conv_repeat",
+        metis_session_id=opened.session.id,
+        transcript=transcript,
+        history=[
+            f"They: {transcript}",
+            "You: Three things are waiting.",
+        ],
+    )
+
+    assert first.turn_id != second.turn_id
+    assert len(service.graph.turns) == 2
+    assert service._sessions[opened.session.id].turns == 2
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_turn_retry_keeps_the_same_stable_turn_id(tmp_path) -> None:
+    service, _ = _service(tmp_path)
+
+    class FailsOnceGraph(FakeGraph):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seen_ids: list[str] = []
+
+        async def answer(self, turn):
+            self.seen_ids.append(turn.turn_id)
+            if len(self.seen_ids) == 1:
+                raise RuntimeError("provider response was lost")
+            return await super().answer(turn)
+
+    graph = FailsOnceGraph()
+    service.graph = graph  # type: ignore[assignment]
+    opened = await service.start()
+    request = dict(
+        provider_conversation_id="conv_lost",
+        metis_session_id=opened.session.id,
+        transcript="Read that again",
+        history=["They: What is waiting?", "You: Three things are waiting."],
+    )
+
+    with pytest.raises(RuntimeError, match="response was lost"):
+        await service.turn(**request)
+    recovered = await service.turn(**request)
+
+    assert recovered.turn_id
+    assert graph.seen_ids == [recovered.turn_id, recovered.turn_id]
+    assert service._sessions[opened.session.id].turns == 1
     await service.shutdown()
 
 

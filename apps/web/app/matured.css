@@ -2962,7 +2962,8 @@ select { border-radius: var(--m-r-field); }
   border-color: #aa90bf;
   box-shadow: 0 0 0 3px rgba(194, 156, 224, 0.2);
 }
-.selectMenu.isOpen .selectTrigger {
+.selectMenu.isOpen .selectTrigger,
+.selectMenu.isClosing .selectTrigger {
   position: relative;
   z-index: 42;
   border-color: var(--m-menu-line);
@@ -2971,7 +2972,8 @@ select { border-radius: var(--m-r-field); }
   background: var(--m-menu-surface);
   box-shadow: 0 -8px 24px -20px rgba(53, 31, 64, 0.5);
 }
-.selectMenu.dropUp.isOpen .selectTrigger {
+.selectMenu.dropUp.isOpen .selectTrigger,
+.selectMenu.dropUp.isClosing .selectTrigger {
   border-top-color: transparent;
   border-bottom-color: var(--m-menu-line);
   border-radius: 0 0 15px 15px;
@@ -2996,8 +2998,13 @@ select { border-radius: var(--m-r-field); }
   backdrop-filter: blur(24px) saturate(135%);
   box-shadow: var(--m-menu-shadow);
   transform-origin: top left;
-  animation: mMenuUnfold 230ms var(--m-menu-ease);
+  animation: none;
   z-index: 41;
+}
+.selectPopup.isOpen { animation: mMenuUnfold 180ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.selectPopup.isClosing {
+  animation: mMenuFold 160ms cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
 }
 .selectMenu.dropUp .selectPopup {
   top: auto;
@@ -3006,8 +3013,9 @@ select { border-radius: var(--m-r-field); }
   border-bottom: 0;
   border-radius: 18px 18px 0 0;
   transform-origin: bottom left;
-  animation-name: mMenuUnfoldUp;
 }
+.selectMenu.dropUp .selectPopup.isOpen { animation-name: mMenuUnfoldUp; }
+.selectMenu.dropUp .selectPopup.isClosing { animation-name: mMenuFoldUp; }
 @keyframes mMenuUnfold {
   from { opacity: 0; clip-path: inset(0 0 94% 0 round 0 0 18px 18px); transform: scaleX(0.94) translateY(-4px); }
   to { opacity: 1; clip-path: inset(0 0 0 0 round 0 0 18px 18px); transform: scaleX(1) translateY(0); }
@@ -3015,6 +3023,14 @@ select { border-radius: var(--m-r-field); }
 @keyframes mMenuUnfoldUp {
   from { opacity: 0; clip-path: inset(94% 0 0 0 round 18px 18px 0 0); transform: scaleX(0.94) translateY(4px); }
   to { opacity: 1; clip-path: inset(0 0 0 0 round 18px 18px 0 0); transform: scaleX(1) translateY(0); }
+}
+@keyframes mMenuFold {
+  from { opacity: 1; clip-path: inset(0 0 0 0 round 0 0 18px 18px); transform: scaleX(1) translateY(0); }
+  to { opacity: 0; clip-path: inset(0 0 94% 0 round 0 0 18px 18px); transform: scaleX(0.97) translateY(-3px); }
+}
+@keyframes mMenuFoldUp {
+  from { opacity: 1; clip-path: inset(0 0 0 0 round 18px 18px 0 0); transform: scaleX(1) translateY(0); }
+  to { opacity: 0; clip-path: inset(94% 0 0 0 round 18px 18px 0 0); transform: scaleX(0.97) translateY(3px); }
 }
 .selectSearch {
   border-bottom-color: var(--m-line);

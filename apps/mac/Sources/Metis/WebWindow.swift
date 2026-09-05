@@ -41,6 +41,13 @@ final class WebWindowController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
+        // Match the web shell beneath the transparent title bar, including
+        // the first frame before WKWebView has painted its document.
+        window.backgroundColor = NSColor(
+            calibratedRed: 27.0 / 255.0,
+            green: 23.0 / 255.0,
+            blue: 32.0 / 255.0,
+            alpha: 1.0)
         window.minSize = NSSize(width: 900, height: 600)
         window.contentView = webView
         window.center()

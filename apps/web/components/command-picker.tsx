@@ -232,6 +232,11 @@ export function CommandPicker({
   }
 
   let flatIndex = -1;
+  const activeOption = visible[activeIndex];
+  const activeOptionId =
+    activeIndex >= 0 && activeOption && !activeOption.disabled
+      ? `${id}-option-${activeIndex}`
+      : undefined;
 
   return (
     <div className="commandPicker" ref={wrapperRef} onKeyDown={onKeyDown}>
@@ -239,11 +244,16 @@ export function CommandPicker({
         <span aria-hidden="true">⌕</span>
         <input
           ref={inputRef}
+          role="combobox"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={placeholder}
-          aria-label={placeholder}
+          aria-label={label}
           aria-controls={`${id}-list`}
+          aria-expanded="true"
+          aria-haspopup="listbox"
+          aria-autocomplete="list"
+          aria-activedescendant={activeOptionId}
           spellCheck={false}
           autoComplete="off"
         />
@@ -263,6 +273,7 @@ export function CommandPicker({
               return (
                 <div
                   key={option.id}
+                  id={`${id}-option-${index}`}
                   data-index={index}
                   role="option"
                   aria-selected={selected}

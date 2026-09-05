@@ -604,6 +604,7 @@ export interface VoiceRendition {
   spoken: string;
   citations: VoiceCitation[];
   intent: VoiceIntent;
+  navigation_path?: string;
   transcript: string;
   voice_session_id: string;
   turn_id: string;
@@ -624,6 +625,8 @@ export interface VoiceSession {
   spoken_confirmation: boolean;
   voice_model: string;
   elapsed_seconds: number;
+  idle_timeout_seconds: number;
+  idle_seconds_remaining: number;
 }
 
 export interface VoiceSessionStart {
@@ -806,7 +809,9 @@ export interface Meeting {
   duration_seconds: number | null;
   language: string;
   transcript: string;
+  summary: string;
   stage: MeetingStage;
+  failed_stage: Exclude<MeetingStage, "ready" | "failed"> | null;
   error: string;
   attempts: number;
   account_id: string | null;

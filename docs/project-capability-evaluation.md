@@ -27,15 +27,26 @@ Preview either complete seed/write/probe contract without calling a model:
 
 New-scenario live reports retain the existing diagnostic 100-point score and
 add a fail-closed `qualification` object. Its score is binary—100 only when the
-plan has the exact requested write scope, every required path has attributed
-writes, post-write verification is clean, every repair continuation is proven,
-the disposable changeset is approved, and its required sandbox probe passes;
-otherwise it is 0 with the failed gates named. `--fail-below` requires this
-binary qualification as well as the existing release gates.
+run's durable scope contract resolves to the exact requested write scope, every
+required path has attributed writes, post-write verification is clean, every
+repair continuation is proven, the disposable changeset is approved, and its
+required sandbox probe passes; otherwise it is 0 with the failed gates named.
+`--fail-below` requires this binary qualification as well as the existing
+release gates.
 
-The default model split and its infrastructure backups stay inside ClinePass:
+The production `cline_direct` path intentionally makes no planner-model call.
+Its `project.direct_contract` freezes writable roots, task/project protections,
+source hashes, check budgets, and approval requirements before inference. The
+evaluator keeps `plan.present=false` honest, then uses the independently
+observed mirror diff as the exact requested scope. Planner/slice compatibility
+runs continue to use their file manifest. Both paths now flow through one
+`scope_contract` report shape and the same overlay, verification, approval,
+qualification, and release gates.
 
-- orchestrator: `cline-pass/qwen3.7-plus`
+When the planner/slice compatibility path is explicitly selected, its default
+model split and infrastructure backups stay inside ClinePass:
+
+- orchestrator: `cline-pass/qwen3.7-plus` (not called by `cline_direct`)
 - planner fallback: `cline-pass/glm-5.2`
 - coder: `cline-pass/deepseek-v4-pro`
 - deterministic host and sandbox checks own verification; the project build
@@ -74,7 +85,7 @@ deduplicated role chains and per-turn output bound:
 the configured `Settings.max_output_tokens`, so existing Meridian commands keep
 their prior semantics.
 
-Select the inner coding harness independently from the provider/model route:
+Select the production coding harness independently from the provider/model route:
 
 ```sh
 .venv/bin/python scripts/project_capability_eval.py \
@@ -83,10 +94,36 @@ Select the inner coding harness independently from the provider/model route:
 ```
 
 `clinecore` is the production engine and uses the local supervised Cline SDK
-sidecar. It does not move planning, verification, approval, or project
-materialization to a cloud service. The report records observed slice sessions,
-model switches, terminal round states, and token/request usage. Existing
-`legacy` reports remain valid historical comparison artifacts.
+sidecar. With the default `cline_direct` build path it owns the bounded coding
+conversation under the frozen direct contract; it does not move verification,
+approval, or project materialization to a cloud service. The report records
+observed sessions, model switches, terminal round states, and token/request
+usage. Existing `legacy` reports remain valid historical comparison artifacts.
+
+## Cursor shadow benchmark
+
+Cursor is available only as an evaluation adapter in `apps/cursor-shadow`; it
+is not a `WAQIL_PROJECT_CODING_ENGINE` value and cannot write to or approve a
+real Metis project. The pinned official `@cursor/sdk` runner requires Node
+22.13+, an explicit `--live`, `CURSOR_API_KEY`, and a Metis-created disposable
+workspace marker. It makes one SDK `send`, enables the Cursor local sandbox,
+loads no ambient Cursor settings or MCP servers, removes web and subagent
+tools, disables agent retries, and cancels after five minutes or 80,000
+observed tokens. Its final diff must contain every requested file, no extra
+file, and no protected file before it is even eligible for the same Metis
+sandbox acceptance checks.
+
+Inspect the complete free contract without a model request:
+
+```sh
+node apps/cursor-shadow/dist/src/index.js --describe
+```
+
+A live Cursor comparison remains deliberately separate from the ClinePass
+qualification command. Run it only after its result can change the harness
+decision, against the same seeded `ui-revamp` fixture and exact required and
+protected path lists. Cursor reports its SDK tokens and billed usage where the
+backend exposes them. No Cursor credential means no live comparison request.
 
 `--max-coding-iterations` is the ClineCore SDK's inner tool-loop cap for one
 coding session. It is bounded to 1–200 and is deliberately separate from
@@ -132,11 +169,11 @@ Every run uses a new temporary project and data directory. A turn is bounded by
 the outer `--max-steps`, the ClineCore-only inner `--max-coding-iterations`, and
 `--timeout` (30 minutes by default), while any one model call is capped at five
 minutes and then advances the visible role ladder.
-During the build, Metis treats the planner's file order as dependency order and
-checks a bounded number of contiguous prefixes before another layer can build
-on them. A failed prefix keeps one exact finding queue and file frontier until
-the same slice re-verifies clean; the final complete changeset still runs the
-full acceptance scenarios.
+On the planner/slice compatibility path, Metis treats the planner's file order
+as dependency order and checks bounded contiguous prefixes. The default direct
+path instead lets the supervised coding session inspect and change the project
+under its frozen contract, then Metis imports the independent diff and runs the
+same final verification and acceptance scenarios.
 
 Repair follow-ups are bounded by `--repair-turns` (0–3). A clean changeset is
 approved only in that disposable project. “Clean” includes the scenario's
@@ -146,8 +183,10 @@ existing sandbox materializer. The materializer copies the source project to a
 temporary networkless workspace, layers those pending bytes over the copy, and
 adds the host probe there. It never imports generated code on the host and does
 not write the source project during this pre-approval check. The evaluator also
-requires the exact requested plan, every required staged path, no unapproved
-scope, no protected path in the overlay, and unchanged protected source hashes.
+requires the exact requested scope—planner manifest for the compatibility path
+or observed final diff for the direct path—every required staged path, no
+unapproved scope, no protected path in the overlay, and unchanged protected
+source hashes.
 
 If product verification passes but this hidden qualification probe fails, one
 configured repair turn may consume the sandbox's bounded exact findings. This
@@ -176,8 +215,8 @@ The report retains raw signals and a transparent 100-point score:
 
 | Category | Points | Signal |
 | --- | ---: | --- |
-| Planning | 20 | Build/whole-app classification, required-file coverage, scenarios |
-| Execution | 25 | Unique planned paths successfully written, refused-write rate, step bound |
+| Planning/scope | 20 | Durable admission contract, required-file coverage, approval/check bounds |
+| Execution | 25 | Unique authorized paths successfully written, refused-write rate, step bound |
 | Verification | 20 | Verification ran and the final changeset has no blocker |
 | Repair convergence | 15 | Reduction in blocking findings across follow-ups |
 | Acceptance | 20 | Required chained page, upload, review, approval, Q&A, and SQLite audit probe |

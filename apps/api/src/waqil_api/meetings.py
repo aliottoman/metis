@@ -21,12 +21,14 @@ guess is how a customer record stops being worth reading.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
 from typing import Any
 
 from .config import Settings
+from .contracts import MeetingSummaryV1
 from .model_provider import ModelProviderError
 from .voice_accounts import AUTO_LINK_MARGIN, AUTO_LINK_SCORE, resolve_account
 
@@ -233,12 +235,18 @@ class MeetingService:
         *,
         model: Any = None,
         customers: Any = None,
+        preference: Any = None,
     ) -> None:
         self.settings = settings
         self.database = database
         self.blobs = blobs
         self.model = model
         self.customers = customers
+        self.preference = preference
+        # Multiple clicks, startup reconciliation, and an already-running
+        # upload can all name the same recording. Only one paid pipeline may
+        # advance a meeting at a time; later callers re-read the settled row.
+        self._ingest_locks: dict[str, asyncio.Lock] = {}
 
     # -- ingestion --------------------------------------------------------
 
@@ -249,6 +257,11 @@ class MeetingService:
         return speech
 
     async def ingest(self, meeting_id: str) -> dict[str, Any]:
+        lock = self._ingest_locks.setdefault(meeting_id, asyncio.Lock())
+        async with lock:
+            return await self._ingest(meeting_id)
+
+    async def _ingest(self, meeting_id: str) -> dict[str, Any]:
         """Run the job from wherever it currently is, and stop at the first failure.
 
         Deliberately resumable rather than restartable. `stage` is read from the
@@ -351,9 +364,18 @@ class MeetingService:
         """Everything a meeting suggests, as proposals and never as records."""
         meeting_id = meeting["id"]
         turns = await self._turns(meeting_id)
+        if not str(meeting.get("summary") or "").strip():
+            await self.database.set_meeting_summary(
+                meeting_id, await self._summarize(meeting, turns)
+            )
         proposals = propose_actions(turns) + propose_decisions(turns)
         link = await self._propose_link(meeting, turns)
         if link is not None:
+            # A decisive auto-link is already a settled fact on the meeting.
+            # Keeping its matching card open asks the user to approve something
+            # that has already happened, so store that proposal as accepted.
+            if link.get("auto"):
+                link["status"] = "accepted"
             proposals.append(link)
         await self.database.store_meeting_proposals(meeting_id, proposals)
         # Auto-linking is the one thing here that can act without a click, and
@@ -368,6 +390,67 @@ class MeetingService:
             meeting_id, "ready", message=f"{len(proposals)} proposals"
         )
         return await self._require(meeting_id)
+
+    async def _summarize(
+        self, meeting: dict[str, Any], turns: list[SpeakerTurn]
+    ) -> str:
+        """A short grounded readout, with an extractive fallback.
+
+        Prose is useful orientation, not evidence. If the selected model is
+        unavailable, the fallback joins verbatim substantive turns so a
+        recording still opens with something honest and useful.
+        """
+        if not turns:
+            return ""
+        transcript = "\n".join(
+            f"[{turn.ordinal}] {turn.speaker_id}: {turn.text}" for turn in turns
+        )[:30_000]
+        structured = getattr(self.model, "_structured", None)
+        if callable(structured):
+            aliases: dict[str, str] = {}
+            if self.preference is not None:
+                try:
+                    aliases = self.preference.resolve_aliases()
+                except Exception:  # noqa: BLE001 - fall back to provider defaults
+                    aliases = {}
+            try:
+                result: MeetingSummaryV1 = await structured(
+                    MeetingSummaryV1,
+                    system_prompt=(
+                        "Write a compact meeting readout using only the supplied "
+                        "transcript. Use two or three plain sentences: what the "
+                        "conversation was about, where it landed, and the most "
+                        "important unresolved next step if one was explicitly "
+                        "spoken. Never invent a name, deadline, decision, or "
+                        "outcome. Do not use bullets or preambles."
+                    ),
+                    user_prompt=(
+                        f"Meeting title: {meeting.get('title') or meeting.get('audio_filename')}\n\n"
+                        f"Transcript:\n{transcript}"
+                    ),
+                    role="planner",
+                    model_aliases=aliases,
+                    max_output_tokens=320,
+                )
+                if result.summary.strip():
+                    return result.summary.strip()[:900]
+            except Exception as error:  # noqa: BLE001 - prose is never load-bearing
+                logger.info(
+                    "meeting %s summary fell back: %s",
+                    meeting["id"],
+                    str(error)[:200],
+                )
+
+        selected = [turns[0]]
+        for turn in turns[1:]:
+            lowered = turn.text.lower()
+            if any(hint in lowered for hint in _ACTION_HINTS + _DECISION_HINTS):
+                selected.append(turn)
+            if len(selected) == 3:
+                break
+        if len(selected) == 1 and len(turns) > 1:
+            selected.append(turns[-1])
+        return " ".join(turn.text for turn in selected)[:900]
 
     async def _propose_link(
         self, meeting: dict[str, Any], turns: list[SpeakerTurn]

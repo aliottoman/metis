@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getSpeechPreference, setSpeechPreference } from "../lib/api.ts";
+import {
+  bindVoiceSession,
+  getSpeechPreference,
+  setSpeechPreference,
+} from "../lib/api.ts";
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -60,6 +64,29 @@ test("omits the voice model unless one was named", async () => {
       stt_provider: "cohere",
       spoken_confirmation: true,
       voice_model: "",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("binds a provider conversation to the exact local voice lease", async () => {
+  const originalFetch = globalThis.fetch;
+  let requested = "";
+  let method = "";
+  let body = "";
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    requested = String(input);
+    method = String(init?.method);
+    body = String(init?.body);
+    return jsonResponse({ id: "vs_1", provider_conversation_id: "conv_1" });
+  };
+  try {
+    await bindVoiceSession("vs/1", "conv_1");
+    assert.ok(requested.endsWith("/api/v1/voice/sessions/vs%2F1"));
+    assert.equal(method, "PATCH");
+    assert.deepEqual(JSON.parse(body), {
+      provider_conversation_id: "conv_1",
     });
   } finally {
     globalThis.fetch = originalFetch;

@@ -1,0 +1,1307 @@
+/*
+ * Metis UI revision — spatial navigation, restrained glass, and quiet motion.
+ * This layer intentionally owns app chrome. Content-specific visuals remain in
+ * globals.css and matured.css; navigation and floating controls resolve here.
+ */
+
+:root {
+  --ui-rail: #1e1e20;
+  --ui-rail-soft: #2a292d;
+  --ui-glass: rgba(249, 248, 245, 0.72);
+  --ui-glass-strong: rgba(252, 251, 248, 0.9);
+  --ui-glass-line: rgba(255, 255, 255, 0.72);
+  --ui-line: rgba(45, 41, 36, 0.1);
+  --ui-ink: #22211f;
+  --ui-muted: #77736d;
+  --ui-accent: #b893d5;
+  --ui-accent-soft: rgba(184, 147, 213, 0.16);
+  --ui-positive: #5da37d;
+  --ui-field: #19151f;
+  --ui-field-2: #292130;
+  --ui-field-3: #211a27;
+  --ui-spring: cubic-bezier(0.2, 0.82, 0.24, 1);
+  --ui-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ui-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ui-motion-fast: 140ms;
+  --ui-motion-base: 220ms;
+  --ui-motion-slow: 340ms;
+  --ui-radius: 24px;
+  --ui-control-radius: 11px;
+  --ui-control-height: 38px;
+  --ui-surface: rgba(255, 255, 255, 0.62);
+  --ui-surface-hover: rgba(255, 255, 255, 0.88);
+  --ui-focus: rgba(157, 112, 189, 0.34);
+}
+
+body {
+  background: #e8e6e1;
+}
+
+button,
+a,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+input,
+textarea,
+.selectOption {
+  transition:
+    background-color var(--ui-motion-fast) var(--ui-ease-standard),
+    border-color var(--ui-motion-fast) var(--ui-ease-standard),
+    color var(--ui-motion-fast) var(--ui-ease-standard),
+    opacity var(--ui-motion-fast) var(--ui-ease-standard);
+}
+
+button,
+.selectOption {
+  transition:
+    background-color var(--ui-motion-fast) var(--ui-ease-standard),
+    border-color var(--ui-motion-fast) var(--ui-ease-standard),
+    color var(--ui-motion-fast) var(--ui-ease-standard),
+    opacity var(--ui-motion-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-motion-base) var(--ui-ease-out),
+    transform var(--ui-motion-base) var(--ui-ease-out);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+  transition-duration: 80ms;
+}
+
+.appShell {
+  background:
+    radial-gradient(70% 95% at 0% 0%, rgba(198, 173, 219, 0.16), transparent 54%),
+    radial-gradient(65% 90% at 100% 100%, rgba(238, 179, 155, 0.12), transparent 58%),
+    #e8e6e1;
+  gap: 8px;
+  padding: 10px;
+}
+
+.appMain {
+  background: #f6f5f2;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: var(--ui-radius);
+  box-shadow:
+    0 1px 1px rgba(37, 32, 27, 0.04),
+    0 18px 50px rgba(49, 42, 36, 0.1);
+  overflow: hidden;
+}
+
+.appMain::before {
+  opacity: 0.16;
+}
+
+.sidebar {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(198, 151, 226, 0.13), transparent 29%),
+    radial-gradient(circle at 100% 100%, rgba(255, 128, 104, 0.055), transparent 31%),
+    linear-gradient(165deg, #1b1720 0%, #241d2a 58%, #18151c 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 18px 44px rgba(33, 24, 38, 0.17);
+  display: grid;
+  flex: 0 0 var(--sidebar-width, 272px);
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 0;
+  height: 100%;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 0;
+}
+
+.sidebar::before {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.2) 0.5px, transparent 0.5px);
+  background-size: 8px 8px;
+  border-radius: inherit;
+  inset: 0;
+  mask-image: linear-gradient(125deg, #000, transparent 68%);
+  opacity: 0.12;
+  z-index: -1;
+}
+
+.sidebar::after {
+  display: none;
+}
+
+.sidebarRail {
+  align-items: center;
+  background: rgba(9, 7, 12, 0.12);
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 10px;
+  position: relative;
+  z-index: 3;
+}
+
+.railBrand {
+  align-items: center;
+  display: flex;
+  height: 44px;
+  justify-content: center;
+  margin-bottom: 8px;
+  width: 44px;
+}
+
+.railBrand .brandMark {
+  filter: drop-shadow(0 7px 13px rgba(0, 0, 0, 0.25));
+  height: 34px;
+  transform: none;
+  width: 34px;
+}
+
+.railBrand:hover .brandMark {
+  transform: translateY(-1px) rotate(-2deg) scale(1.04);
+}
+
+.railCompose,
+.railNav button,
+.railFooter button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 13px;
+  color: rgba(255, 255, 255, 0.56);
+  display: flex;
+  height: 44px;
+  justify-content: center;
+  padding: 0;
+  position: relative;
+  width: 44px;
+}
+
+.railCompose {
+  background: #fffaf3;
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 7px 18px rgba(0, 0, 0, 0.24);
+  color: #1e1e20;
+  margin-bottom: 12px;
+}
+
+.railCompose:hover {
+  background: #fff;
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 9px 24px rgba(0, 0, 0, 0.3),
+    0 0 0 3px rgba(201, 166, 227, 0.15);
+  transform: translateY(-1px);
+}
+
+.railCompose svg {
+  fill: none;
+  height: 18px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.65;
+  width: 18px;
+}
+
+.railNav {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.railNav button:hover,
+.railFooter button:hover {
+  background: rgba(255, 255, 255, 0.075);
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.railNav button.active,
+.railFooter button.active {
+  background: rgba(255, 255, 255, 0.105);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+/* The luminous marker follows the page that is actually open. Opening a
+   different contextual panel gets a quieter outline, so browsing navigation
+   never pretends that a route change already happened. */
+.railNav .railSectionButton.isPanelActive:not(.isRouteActive),
+.railFooter .railSectionButton.isPanelActive:not(.isRouteActive) {
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(212, 181, 232, 0.13);
+  color: rgba(255, 250, 243, 0.82);
+}
+
+.railNav .railSectionButton.isRouteActive,
+.railFooter .railSectionButton.isRouteActive {
+  background: rgba(255, 255, 255, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.065);
+  color: #fff;
+}
+
+.railNav .navGlyph,
+.railFooter .navGlyph {
+  display: grid;
+  height: 20px;
+  place-items: center;
+  width: 20px;
+}
+
+.railNav .navGlyph svg,
+.railFooter .navGlyph svg {
+  height: 19px;
+  width: 19px;
+}
+
+.railActivePill {
+  background: transparent;
+  border-radius: 999px;
+  height: 18px;
+  left: -7px;
+  position: absolute;
+  transition:
+    background var(--ui-motion-fast) var(--ui-ease-standard),
+    box-shadow var(--ui-motion-base) var(--ui-ease-out),
+    opacity var(--ui-motion-fast) var(--ui-ease-standard);
+  width: 3px;
+}
+
+.railNav .railSectionButton.isRouteActive .railActivePill,
+.railFooter .railSectionButton.isRouteActive .railActivePill {
+  background: #d4b5e8;
+  box-shadow: 0 0 12px rgba(212, 181, 232, 0.68);
+  height: 18px;
+}
+
+.railNav .railSectionButton:not(.isRouteActive) .railActivePill,
+.railFooter .railSectionButton:not(.isRouteActive) .railActivePill {
+  background: transparent;
+  box-shadow: none;
+  height: 18px;
+}
+
+.railBadge {
+  align-items: center;
+  background: #e1c0f3;
+  border: 2px solid #242326;
+  border-radius: 999px;
+  color: #201e22;
+  display: flex;
+  font-size: 8px;
+  font-weight: 750;
+  height: 16px;
+  justify-content: center;
+  min-width: 16px;
+  padding: 0 3px;
+  position: absolute;
+  right: 2px;
+  top: 2px;
+}
+
+.railTooltip {
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  background: rgba(255, 252, 247, 0.96);
+  border: 1px solid rgba(41, 33, 48, 0.11);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(31, 22, 36, 0.18);
+  color: var(--ui-field);
+  font-size: 11.5px;
+  font-weight: 560;
+  left: calc(100% + 12px);
+  opacity: 0;
+  padding: 6px 9px;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-4px) scale(0.97);
+  transition: opacity var(--ui-motion-fast) var(--ui-ease-standard), transform var(--ui-motion-base) var(--ui-ease-out);
+  white-space: nowrap;
+  z-index: 20;
+}
+
+.railNav button:hover .railTooltip,
+.railFooter button:hover .railTooltip,
+.railNav button:focus-visible .railTooltip,
+.railFooter button:focus-visible .railTooltip {
+  opacity: 1;
+  transform: none;
+}
+
+.railFooter {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.railConnection {
+  background: #8a8a8e;
+  border: 2px solid #242326;
+  border-radius: 50%;
+  height: 9px;
+  margin-bottom: 2px;
+  width: 9px;
+}
+
+.railConnection.connected {
+  background: #70c394;
+  box-shadow: 0 0 0 4px rgba(112, 195, 148, 0.1), 0 0 9px rgba(112, 195, 148, 0.42);
+}
+
+.railConnection.disconnected {
+  background: #d77a68;
+}
+
+.sidebarPanel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.016));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  opacity: 1;
+  overflow: hidden;
+  padding: 15px 13px 9px 14px;
+  transform: translateX(0);
+  transition:
+    opacity 170ms ease,
+    transform 260ms var(--ui-spring),
+    visibility 0ms linear;
+  visibility: visible;
+}
+
+.sidebarPanelHeader {
+  align-items: flex-start;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  min-height: 70px;
+  padding: 3px 2px 9px 3px;
+}
+
+.sidebarPanelHeader > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sidebarPanelHeader span {
+  color: rgba(255, 250, 243, 0.43);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  margin: 2px 0 7px;
+  text-transform: uppercase;
+}
+
+.sidebarPanelHeader strong {
+  color: #fffaf3;
+  font-family: var(--font-display, -apple-system, sans-serif);
+  font-size: 19.5px;
+  font-weight: 590;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+
+.sidebarPanelHeader small {
+  color: rgba(255, 250, 243, 0.57);
+  font-size: 10.5px;
+  margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarPanelHeader .collapseToggle {
+  background: rgba(255, 255, 255, 0.065);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  color: rgba(255, 250, 243, 0.67);
+  flex: 0 0 auto;
+  height: 34px;
+  margin-left: 8px;
+  width: 34px;
+}
+
+.sidebarPanelHeader .collapseToggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #fffaf3;
+  transform: translateX(-1px);
+}
+
+.sidebarPanel .newChatButton {
+  background: #fffaf3;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 13px;
+  box-shadow: 0 8px 20px rgba(29, 27, 25, 0.12);
+  color: var(--ui-field);
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  min-height: 40px;
+  padding: 0 10px 0 13px;
+}
+
+.sidebarPanel .newChatButton:hover:not(:disabled) {
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(10, 7, 13, 0.24), 0 0 0 3px rgba(184, 147, 213, 0.12);
+  transform: translateY(-1px);
+}
+
+.sidebarPanel .newChatButton kbd {
+  background: rgba(31, 24, 35, 0.07);
+  border: 1px solid rgba(31, 24, 35, 0.07);
+  border-radius: 7px;
+  color: rgba(31, 24, 35, 0.56);
+  padding: 3px 6px;
+}
+
+.sidebarPanel .newChatButton::after {
+  background: linear-gradient(105deg, transparent 28%, rgba(255, 255, 255, 0.15), transparent 72%);
+}
+
+.sidebarPanel .sidebarSearch {
+  background: rgba(255, 255, 255, 0.065);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  flex: 0 0 auto;
+  margin: 10px 0 9px;
+  min-height: 38px;
+}
+
+.sidebarPanel .sidebarSearch:focus-within {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(212, 181, 232, 0.46);
+  box-shadow: 0 0 0 3px rgba(184, 147, 213, 0.1), inset 0 1px 0 rgba(255,255,255,.09);
+}
+
+.sidebarPanel .sidebarSearch input {
+  color: #fffaf3;
+  font-size: 11.5px;
+}
+
+.sidebarPanel .sidebarSearch input::placeholder { color: rgba(255, 250, 243, 0.42); }
+
+.sidebarPanel .sidebarSearch kbd {
+  color: rgba(255, 250, 243, 0.4);
+  opacity: 0.86;
+}
+
+.sidebarPanel .historyHeader {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  padding: 2px 5px 7px;
+}
+
+.sidebarPanel .historyHeader > span:first-child,
+.sidebarPanel .conversationHistory h2 {
+  color: rgba(255, 250, 243, 0.43);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.sidebarPanel .historyHeader > span:last-child {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  color: rgba(255, 250, 243, 0.52);
+  font-size: 9px;
+  min-width: 23px;
+  padding: 2px 6px;
+  text-align: center;
+}
+
+.sidebarPanel .conversationHistory {
+  flex: 1;
+  min-height: 0;
+  padding-right: 2px;
+}
+
+.sidebarPanel .conversationHistory section {
+  margin-bottom: 13px;
+}
+
+.sidebarPanel .conversationHistory h2 {
+  margin: 0 0 4px;
+  padding: 0 6px;
+}
+
+.sidebarPanel .conversationHistory a {
+  border-radius: 10px;
+  color: rgba(255, 250, 243, 0.63);
+  font-size: 11.5px;
+  min-height: 32px;
+  padding: 6px 25px 6px 9px;
+}
+
+.sidebarPanel .conversationHistory a:hover {
+  background: rgba(255, 255, 255, 0.075);
+  color: #fffaf3;
+}
+
+.sidebarPanel .conversationHistory a.active,
+.sidebarPanel .conversationHistoryItem.hasUnread > a {
+  background: rgba(255, 255, 255, 0.11);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.065),
+    0 7px 18px rgba(8, 6, 10, 0.12);
+  color: #fffaf3;
+}
+
+.sidebarPanel .conversationHistory a.active::before {
+  background: var(--ui-accent);
+  border-radius: 999px;
+  content: "";
+  height: 14px;
+  left: 2px;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+}
+
+.sidebarPanel .sectionNav {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebarPanel .sectionNav a,
+.sidebarPanel .sectionNav a.active {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  color: rgba(255, 250, 243, 0.64);
+  display: grid;
+  font-size: 12px;
+  font-weight: 480;
+  grid-template-columns: 34px minmax(0, 1fr) 16px;
+  min-height: 44px;
+  padding: 5px 10px 5px 7px;
+}
+
+.sidebarPanel .sectionNav a:hover {
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(255, 255, 255, 0.06);
+  color: #fffaf3;
+  transform: translateX(2px);
+}
+
+.sidebarPanel .sectionNav a.active {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.075);
+  box-shadow: 0 9px 24px rgba(8, 6, 10, 0.13);
+  color: #fffaf3;
+  font-weight: 580;
+}
+
+.sidebarPanel .sectionNav a::before,
+.sidebarPanel .sectionNav a::after {
+  display: none;
+}
+
+.sidebarPanel .sectionNav .navGlyph {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.065);
+  border-radius: 9px;
+  color: rgba(255, 250, 243, 0.56);
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.sidebarPanel .sectionNav a.active .navGlyph {
+  background: rgba(212, 181, 232, 0.16);
+  color: #dfc3ef;
+}
+
+.sidebarPanel .sectionNav .navGlyph svg {
+  height: 17px;
+  width: 17px;
+}
+
+.navChevron {
+  fill: none;
+  height: 14px;
+  opacity: 0.4;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+  transition: opacity 160ms ease, transform 220ms var(--ui-spring);
+  width: 14px;
+}
+
+.sectionNav a:hover .navChevron,
+.sectionNav a.active .navChevron {
+  opacity: 0.75;
+  transform: translateX(2px);
+}
+
+.sidebarPanel .privacyBadge {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 0;
+  box-shadow: none;
+  flex: 0 0 auto;
+  gap: 9px;
+  margin: auto 0 0;
+  min-height: 48px;
+  padding: 10px 5px 4px;
+}
+
+.sidebarPanel .privacyPulse {
+  background: var(--ui-positive);
+  box-shadow: 0 0 0 4px rgba(93, 163, 125, 0.1);
+  height: 7px;
+  width: 7px;
+}
+
+.sidebarPanel .privacyBadge strong {
+  color: rgba(255, 250, 243, 0.72);
+  font-size: 9.5px;
+  font-weight: 580;
+}
+
+.sidebarPanel .privacyBadge small {
+  color: rgba(255, 250, 243, 0.4);
+  font-size: 8.5px;
+}
+
+.sidebarResizeHandle {
+  right: -8px;
+}
+
+.sidebarResizeHandle span {
+  background: rgba(212, 181, 232, 0.36);
+  height: 36px;
+  width: 2px;
+}
+
+.sidebarResizeHandle:hover span,
+.sidebarResizeHandle:focus-visible span,
+.isResizing .sidebarResizeHandle span {
+  background: #9d70bd;
+  box-shadow: 0 0 0 4px rgba(184, 147, 213, 0.12);
+}
+
+@media (min-width: 1101px) {
+  .appShell.animate .sidebar {
+    transition:
+      flex-basis var(--ui-motion-slow) var(--ui-ease-out),
+      box-shadow var(--ui-motion-base) var(--ui-ease-standard),
+      border-color var(--ui-motion-base) var(--ui-ease-standard);
+  }
+
+  .appShell.isCollapsed .sidebar {
+    flex-basis: 64px;
+    grid-template-columns: 64px 0;
+    /* Older collapsed-rail rules still added 11px of horizontal padding.
+       That shifted the 64px rail outside its own 64px container, while the
+       zero-width panel continued to lay out and paint decorative effects over
+       the conversation. A collapsed sidebar is now a real, clipped rail. */
+    overflow: hidden;
+    padding: 0;
+    width: 64px;
+  }
+
+  .appShell.isCollapsed .sidebarRail { border-right: 0; border-radius: 21px; }
+
+  .appShell.isCollapsed .sidebarRail { padding-inline: 10px; }
+
+  .appShell.isCollapsed .railNav button,
+  .appShell.isCollapsed .railFooter button {
+    flex-direction: row;
+    gap: 0;
+    height: 44px;
+    width: 44px;
+  }
+
+  .appShell.isCollapsed .railActivePill { left: -7px; }
+
+  .appShell.isCollapsed .sidebarPanel {
+    display: none;
+    inline-size: 0;
+    opacity: 0;
+    padding: 0;
+    pointer-events: none;
+    transform: translateX(-10px) scale(0.98);
+    visibility: hidden;
+  }
+
+  .appShell.isCollapsed .sidebarResizeHandle {
+    display: none;
+  }
+
+  .appShell:not(.isCollapsed) .railTooltip { display: none; }
+}
+
+/* Floating controls form one coherent glass family. */
+.chatHeader,
+.modelControlPanel,
+.selectMenuPopover,
+.commandPicker,
+.composerContextMenu,
+.todayBatchBar {
+  -webkit-backdrop-filter: saturate(165%) blur(24px);
+  backdrop-filter: saturate(165%) blur(24px);
+}
+
+.modelControlTrigger,
+.timelineToggle,
+.workspacePage .secondaryButton,
+.todayRailChip,
+.todayArrow {
+  background: rgba(255, 255, 255, 0.54);
+  border-color: rgba(51, 46, 40, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 5px 15px rgba(45, 39, 34, 0.04);
+}
+
+.modelControlTrigger:hover,
+.timelineToggle:hover:not(:disabled),
+.workspacePage .secondaryButton:hover:not(:disabled),
+.todayRailChip:hover,
+.todayArrow:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.84);
+  border-color: rgba(51, 46, 40, 0.14);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 8px 20px rgba(45, 39, 34, 0.075);
+}
+
+.workspacePage {
+  background:
+    radial-gradient(80% 70% at 0% 0%, rgba(199, 169, 221, 0.07), transparent 55%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.42), transparent 42%);
+}
+
+/* Meetings and Interviews established the product's strongest visual idea:
+   a dark editorial field with soft plum, coral, and mint light. Other
+   workspaces now begin in that same world without duplicating their exact
+   layouts. */
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader {
+  align-items: end;
+  background:
+    radial-gradient(circle at 86% 8%, rgba(255, 128, 104, 0.17), transparent 25%),
+    radial-gradient(circle at 61% 110%, rgba(119, 222, 210, 0.1), transparent 27%),
+    linear-gradient(128deg, var(--ui-field) 0%, var(--ui-field-2) 58%, var(--ui-field-3) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 25px;
+  box-shadow: 0 24px 64px rgba(38, 27, 44, 0.15);
+  color: #fffaf3;
+  min-height: 168px;
+  overflow: hidden;
+  padding: clamp(27px, 3.4vw, 42px);
+  position: relative;
+}
+
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader::after {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.2) 0.5px, transparent 0.5px);
+  background-size: 8px 8px;
+  content: "";
+  inset: 0 0 0 56%;
+  mask-image: linear-gradient(90deg, transparent, #000);
+  opacity: 0.16;
+  pointer-events: none;
+  position: absolute;
+}
+
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader::before { display: none; }
+
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader > * {
+  position: relative;
+  z-index: 1;
+}
+
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .eyebrow {
+  color: rgba(255, 250, 243, 0.56);
+}
+
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader h1 {
+  color: #fffaf3;
+  font-size: clamp(42px, 5vw, 67px);
+  font-weight: 470;
+  letter-spacing: -0.055em;
+  line-height: 0.96;
+}
+
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader p {
+  color: rgba(255, 250, 243, 0.67);
+  font-size: 13.5px;
+  line-height: 1.6;
+  max-width: 66ch;
+}
+
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .secondaryButton,
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .ghostButton {
+  background: #fffaf3;
+  border-color: rgba(255, 255, 255, 0.75);
+  color: var(--ui-field);
+  min-height: 44px;
+}
+
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .secondaryButton:hover:not(:disabled),
+.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .ghostButton:hover:not(:disabled) {
+  background: #fff;
+  border-color: #fff;
+  box-shadow: 0 12px 28px rgba(7, 5, 9, 0.22);
+  transform: translateY(-2px);
+}
+
+/* Customers uses a dedicated workbench wrapper instead of .workspacePage,
+   but its entrance should still feel like the same product world. */
+.customerWorkbenchHeader {
+  align-items: end;
+  background:
+    radial-gradient(circle at 86% 8%, rgba(255, 128, 104, 0.17), transparent 25%),
+    radial-gradient(circle at 61% 110%, rgba(119, 222, 210, 0.1), transparent 27%),
+    linear-gradient(128deg, var(--ui-field) 0%, var(--ui-field-2) 58%, var(--ui-field-3) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 25px;
+  box-shadow: 0 24px 64px rgba(38, 27, 44, 0.15);
+  color: #fffaf3;
+  min-height: 168px;
+  overflow: hidden;
+  padding: clamp(27px, 3.4vw, 42px);
+  position: relative;
+}
+
+.customerWorkbenchHeader::before { display: none; }
+
+.customerWorkbenchHeader::after {
+  background: radial-gradient(rgba(255, 255, 255, 0.2) 0.5px, transparent 0.5px);
+  background-size: 8px 8px;
+  inset: 0 0 0 56%;
+  mask-image: linear-gradient(90deg, transparent, #000);
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+.appMain .customerWorkbenchHeader h1 {
+  color: #fffaf3;
+  font-size: clamp(42px, 5vw, 67px);
+  font-weight: 470;
+  letter-spacing: -0.055em;
+  line-height: 0.96;
+}
+
+.customerWorkbenchHeader .eyebrow { color: rgba(255, 250, 243, 0.56); }
+
+.customerWorkbenchHeader p {
+  color: rgba(255, 250, 243, 0.67);
+  font-size: 13.5px;
+  line-height: 1.6;
+  max-width: 62ch;
+}
+
+.customerWorkbenchHeader .secondaryButton,
+.customerWorkbenchHeader .ghostButton {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05);
+  color: #fffaf3;
+  min-height: 44px;
+}
+
+.customerWorkbenchHeader .secondaryButton:hover:not(:disabled),
+.customerWorkbenchHeader .ghostButton:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.23);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08), 0 12px 28px rgba(7, 5, 9, 0.16);
+  color: #fff;
+  transform: translateY(-2px);
+}
+
+.customerWorkbenchHeader .primaryButton {
+  background: #fffaf3;
+  border-color: rgba(255, 255, 255, 0.75);
+  color: var(--ui-field);
+  min-height: 44px;
+}
+
+.customerWorkbenchHeader .primaryButton:hover:not(:disabled) {
+  background: #fff;
+  border-color: #fff;
+  box-shadow: 0 12px 28px rgba(7, 5, 9, 0.22);
+  color: var(--ui-field);
+  transform: translateY(-2px);
+}
+
+/* Chat is one continuous canvas. Metis colour now lives in the atmosphere and
+   companion instead of a separate purple header slab, giving the workspace
+   the quiet, seamless feel of a native coding conversation. */
+.chatWorkspace.isEmpty .conversationPane,
+.chatWorkspace:not(.isEmpty) .conversationPane {
+  background:
+    radial-gradient(76% 58% at 42% 8%, rgba(196, 163, 218, 0.14), transparent 70%),
+    radial-gradient(44% 45% at 100% 94%, rgba(255, 128, 104, 0.06), transparent 72%),
+    #f7f4f3;
+}
+
+.chatWorkspace .atmos {
+  opacity: 0.16;
+}
+
+.chatWorkspace .atmos::after,
+.chatWorkspace:not(.isEmpty) .atmos::after {
+  background:
+    radial-gradient(48% 42% at 44% 30%, rgba(196, 163, 218, 0.28), transparent 78%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent 58%);
+}
+
+.chatWorkspace .paperSheet {
+  background: rgba(250, 248, 245, 0.9);
+}
+
+.chatWorkspace .chatHeader {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: transparent;
+  border-bottom: 0;
+  box-shadow: none;
+  color: var(--ui-ink);
+}
+
+.chatWorkspace .chatHeader::before { display: none; }
+
+.chatWorkspace .localStatus,
+.chatWorkspace .timelineToggle,
+.chatWorkspace .modelControlTrigger {
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(45, 41, 36, 0.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 5px 15px rgba(45, 39, 34, 0.04);
+  color: var(--ui-ink);
+}
+
+.chatWorkspace .localStatus:hover,
+.chatWorkspace .timelineToggle:hover:not(:disabled),
+.chatWorkspace .modelControlTrigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(45, 41, 36, 0.14);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 8px 20px rgba(45, 39, 34, 0.06);
+  color: var(--ui-ink);
+}
+
+.chatWorkspace .chatTitle strong,
+.chatWorkspace .modelControlTrigger > b {
+  color: var(--ui-ink);
+}
+
+.chatWorkspace .localStatus i {
+  background: var(--ui-positive);
+}
+
+.chatWorkspace.isEmpty .welcomeState > .eyebrow {
+  color: #716a74;
+}
+
+.chatWorkspace.isEmpty .welcomeState h1,
+.chatWorkspace.isEmpty .heroWordmark {
+  background: none;
+  color: #252228;
+  text-shadow: 0 16px 42px rgba(92, 67, 109, 0.1);
+  -webkit-text-fill-color: #252228;
+}
+
+.chatWorkspace.isEmpty .welcomeState > p {
+  color: #625d59;
+  text-shadow: none;
+}
+
+.chatWorkspace.isEmpty .composerHint,
+.chatWorkspace.isEmpty .composerDisclaimer {
+  color: #77716c;
+}
+
+.todaySlide,
+.workbenchPanel,
+.settingsCard,
+.memoryCard,
+.knowledgeCard,
+.assetCard {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.58),
+    0 12px 30px rgba(49, 42, 36, 0.055);
+}
+
+.mobileMenuButton {
+  -webkit-backdrop-filter: saturate(160%) blur(18px);
+  backdrop-filter: saturate(160%) blur(18px);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(37, 32, 27, 0.12);
+}
+
+@media (max-width: 1100px) {
+  .appShell {
+    display: block;
+    padding: 0;
+  }
+
+  .appMain {
+    border: 0;
+    border-radius: 0;
+    height: 100%;
+  }
+
+  .sidebar,
+  .appShell.isCollapsed .sidebar {
+    border-radius: 24px;
+    box-shadow: 0 24px 70px rgba(25, 22, 20, 0.28);
+    flex-basis: auto;
+    grid-template-columns: 64px minmax(0, 1fr);
+    height: calc(100% - 20px);
+    left: 10px;
+    padding: 0;
+    position: fixed;
+    top: 10px;
+    transition: transform var(--ui-motion-base) var(--ui-ease-out);
+    transform: translateX(calc(-100% - 16px));
+    width: min(320px, calc(100vw - 20px));
+    z-index: 50;
+  }
+
+  .sidebar.sidebarOpen,
+  .appShell.isCollapsed .sidebar.sidebarOpen {
+    transform: translateX(0);
+  }
+
+  .appShell.isCollapsed .sidebarPanel {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+    visibility: visible;
+  }
+
+  .sidebarRail,
+  .appShell.isCollapsed .sidebarRail {
+    border-radius: 0;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    padding-inline: 10px;
+  }
+
+  .drawerScrim {
+    -webkit-backdrop-filter: blur(7px);
+    backdrop-filter: blur(7px);
+    background: rgba(25, 23, 25, 0.34);
+    animation: uiScrimIn 160ms var(--ui-ease-standard) both;
+    border: 0;
+    display: block;
+    inset: 0;
+    position: fixed;
+    z-index: 40;
+  }
+
+  .mobileMenuButton {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    height: 44px;
+    justify-content: center;
+    position: fixed;
+    left: 14px;
+    padding: 0 13px;
+    top: 14px;
+    transition:
+      left var(--ui-motion-base) var(--ui-ease-out),
+      background var(--ui-motion-fast) var(--ui-ease-standard),
+      box-shadow var(--ui-motion-base) var(--ui-ease-out);
+    width: 44px;
+    z-index: 55;
+  }
+
+  .mobileMenuButton span {
+    background: var(--ui-ink);
+    display: block;
+    height: 1px;
+    width: 16px;
+  }
+
+  .chatHeader {
+    padding-left: 68px;
+  }
+
+  .appShell:has(.sidebarOpen) .mobileMenuButton {
+    left: min(280px, calc(100vw - 58px));
+  }
+
+  .todayGridPage {
+    padding-top: 68px;
+  }
+
+  .workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader {
+    align-items: stretch;
+    min-height: 0;
+    padding: 27px 22px;
+  }
+
+  .workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader h1 {
+    font-size: clamp(40px, 10vw, 56px);
+  }
+
+  .customerWorkbenchHeader {
+    align-items: stretch;
+    min-height: 0;
+    padding: 27px 22px;
+  }
+
+  .appMain .customerWorkbenchHeader h1 {
+    font-size: clamp(40px, 10vw, 56px);
+  }
+}
+
+@keyframes uiScrimIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (max-height: 660px) and (min-width: 1101px) {
+  .railNav { gap: 1px; }
+  .railCompose { margin-bottom: 8px; }
+}
+
+/* One interaction grammar for everyday controls. Specialty surfaces may
+   change color, but size, corners, focus and disabled behavior stay familiar. */
+.appMain :where(.primaryButton, .secondaryButton, .dangerButton, .textButton) {
+  border-radius: var(--ui-control-radius);
+  min-height: var(--ui-control-height);
+}
+
+.appMain :where(.iconButton) {
+  border-radius: var(--ui-control-radius);
+}
+
+.appMain :where(
+  .primaryButton,
+  .secondaryButton,
+  .dangerButton,
+  .textButton,
+  .iconButton,
+  input,
+  textarea,
+  select,
+  [role="button"]
+):focus-visible {
+  outline: 3px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.appMain :where(button, input, textarea, select):disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Data should read the same in chat and in workspaces: quiet header tint,
+   hairline rows and a single rounded scroll container. */
+.messageTableWrap,
+.dacTableScroll {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-line);
+  border-radius: 14px;
+  overflow-x: auto;
+}
+
+.messageContent table,
+.dacTable {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.messageContent th,
+.dacTable thead th {
+  background: rgba(184, 147, 213, 0.09);
+  color: var(--ui-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.messageContent td,
+.messageContent th,
+.dacTable td,
+.dacTable th {
+  border-bottom: 1px solid var(--ui-line);
+}
+
+.messageContent tbody tr:last-child > *,
+.dacTable tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+/* The native shell paints a dark, draggable title strip beneath the real
+   macOS controls. Content begins below it, so traffic lights never overlap
+   navigation and the title bar never flashes white. */
+html.metisNativeWindow,
+html.metisNativeWindow body {
+  background: #1b1720;
+}
+
+.metisNativeWindow .appShell {
+  background:
+    linear-gradient(180deg, #1b1720 0 38px, transparent 38px),
+    radial-gradient(70% 95% at 0% 0%, rgba(198, 173, 219, 0.16), transparent 54%),
+    radial-gradient(65% 90% at 100% 100%, rgba(238, 179, 155, 0.12), transparent 58%),
+    #e8e6e1;
+  padding-top: 38px;
+}
+
+.metisNativeWindow .sidebar {
+  padding-top: 0;
+}
+
+@media (max-width: 1100px) {
+  .metisNativeWindow .sidebar,
+  .metisNativeWindow .appShell.isCollapsed .sidebar {
+    height: calc(100% - 58px);
+    top: 48px;
+  }
+
+  .metisNativeWindow .mobileMenuButton {
+    top: 52px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebarPanel,
+  .railActivePill,
+  .railTooltip,
+  .selectPopup,
+  .modelControlPanel,
+  .commandPicker,
+  .composerContextMenu,
+  .drawerScrim,
+  button,
+  a {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

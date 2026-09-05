@@ -1,20 +1,20 @@
 # ClineCore coding engine
 
 Metis uses ClineCore for its inner project edit loop while keeping the rest of
-the product boundary unchanged. New builds run as small verifier-gated vertical
-slices; the former loop remains only for local checkpoints frozen before the
-migration.
+the product boundary unchanged. New builds use the `cline_direct` path: one
+bounded coding conversation admitted under a frozen contract, followed by an
+independent diff and verifier gate. The planner/slice path remains frozen behind
+`WAQIL_PROJECT_BUILD_PATH=planner_slices` for compatibility and experiments.
 
 ## What runs where
 
-Metis still owns request/specification handling, the dependency-ordered file
-plan, model routing, repository map, exact allowed paths, verification,
-approval, and final writes to the user's project. For each planned vertical
-slice it creates or rebases a private disposable mirror and supervises a local
-Node child over stdin/stdout. The child embeds the exactly pinned `@cline/sdk`
-`0.0.72` and owns that slice's causal read/edit/repair conversation. A clean
-host verification closes the session; the next slice starts fresh against the
-already verified overlay.
+Metis still owns request/specification handling, model routing, repository map,
+the durable write/protection contract, verification, approval, and final writes
+to the user's project. It creates or rebases a private disposable mirror and
+supervises a local Node child over stdin/stdout. The child embeds the exactly
+pinned `@cline/sdk` `0.0.72` and owns the causal read/edit/repair conversation.
+The default path does not spend a planner request or fabricate a file manifest;
+the exact changed paths come from Metis's independent mirror diff.
 
 There is no Cline orchestration service in this path. The coordinator, session
 database, SDK, tool loop, transcript data, event replay, and workspace all run
@@ -34,8 +34,9 @@ card can materialize it.
   MCP, skills, plugins, questions, subagents, and teams are denied. Unknown SDK
   tools fail closed rather than inheriting Cline's permissive defaults.
 - Metis computes the mirror diff itself. Deletion, rename, links, disk drift,
-  protected paths, and changes outside the host plan are rejected before bytes
-  enter the ordinary staged overlay.
+  protected paths, framework/control paths, and disallowed content are rejected
+  before bytes enter the ordinary staged overlay. Evaluation fixtures then
+  require that diff to equal their exact requested deliverables.
 - The model cannot approve its own output or claim verification. Clean host and
   sandbox checks plus the user's existing batch approval remain mandatory.
 - For staged Python changes, the sandbox discovers repository pytest files and
@@ -51,11 +52,12 @@ card can materialize it.
 
 ## Model routing
 
-The outer planner and the Cline coding model remain separate roles. The current
-ClinePass ladder is Qwen3.7 Plus for planning, GLM 5.2 as planner fallback,
-DeepSeek V4 Pro for the broad implementation, then Kimi K3 and Kimi K2.7 Code
-for bounded repair/model-switch recovery. These are routing defaults, not a
-claim that every project will pass.
+The default direct path calls only the Cline coding role. Its current ClinePass
+ladder starts with DeepSeek V4 Pro for broad implementation, then Kimi K3 and
+Kimi K2.7 Code for bounded repair/model-switch recovery. Qwen3.7 Plus and GLM
+5.2 remain the planner ladder only when the compatibility planner/slice path is
+explicitly selected. These are routing defaults, not a claim that every
+project will pass.
 
 For the temporary Ollama Cloud subscription, use a proven tool-capable planner
 and coder from the local provider catalogue—for example GLM 5.2 plus DeepSeek

@@ -229,6 +229,8 @@ def validate_pending_overlay(
     required_files: Iterable[str],
     protected_files: Iterable[str],
     planned_files: Iterable[str],
+    scope_mode: str = "planner_manifest",
+    contract_observed: bool = True,
     host_scaffold_paths: Iterable[str] = (),
     allow_host_scaffold: bool = False,
     baseline_protected_hashes: Mapping[str, str] | None = None,
@@ -236,10 +238,13 @@ def validate_pending_overlay(
 ) -> dict[str, Any]:
     """Fail-closed pre-approval scope and source-integrity evidence.
 
-    The model must have staged every requested deliverable, must not have
-    touched a protected file, and must have taken the exact host-requested plan.
-    Host scaffolding is accepted only for a scenario that explicitly permits it
-    and only for paths independently observed in ``project.scaffold_staged``.
+    The model must have staged every requested deliverable and must not have
+    touched a protected file. Planner/slice runs additionally prove an exact
+    manifest. Direct runs instead prove that they were admitted under the
+    durable direct contract and that the independently observed final overlay
+    is the exact requested scope. Host scaffolding is accepted only for a
+    scenario that explicitly permits it and only for paths independently
+    observed in ``project.scaffold_staged``.
     """
 
     required = {_canonical_evaluation_path(path) for path in required_files}
@@ -260,6 +265,9 @@ def validate_pending_overlay(
             "out_of_scope_paths": [],
             "protected_paths_touched": [],
             "exact_planned_scope": planned == required,
+            "exact_requested_scope": False,
+            "scope_mode": scope_mode,
+            "contract_observed": contract_observed,
             "source_protected_hashes_intact": False,
         }
 
@@ -268,6 +276,9 @@ def validate_pending_overlay(
     allowed = required | (scaffold if allow_host_scaffold else set())
     out_of_scope = sorted(overlay_paths - allowed)
     exact_plan = planned == required
+    exact_requested_scope = not missing and not out_of_scope and not protected_touched
+    if scope_mode not in {"planner_manifest", "direct_contract"}:
+        reasons.append(f"unknown scope contract mode: {scope_mode}")
     source_intact = (
         baseline_protected_hashes is None
         or current_protected_hashes is not None
@@ -275,8 +286,10 @@ def validate_pending_overlay(
     )
     if not staged:
         reasons.append("pending changeset is empty")
-    if not exact_plan:
+    if scope_mode == "planner_manifest" and not exact_plan:
         reasons.append("planner scope does not exactly match the required files")
+    if scope_mode == "direct_contract" and not contract_observed:
+        reasons.append("durable direct-build contract was not observed")
     if missing:
         reasons.append("pending changeset omits required files: " + ", ".join(missing))
     if out_of_scope:
@@ -298,6 +311,9 @@ def validate_pending_overlay(
         "out_of_scope_paths": out_of_scope,
         "protected_paths_touched": protected_touched,
         "exact_planned_scope": exact_plan,
+        "exact_requested_scope": exact_requested_scope,
+        "scope_mode": scope_mode,
+        "contract_observed": contract_observed,
         "source_protected_hashes_intact": source_intact,
     }
 
@@ -1052,6 +1068,9 @@ def summarize_run(
 
     trace = list(events)
     plans = [item.payload for item in trace if item.type == "project.build_planned"]
+    direct_contracts = [
+        item.payload for item in trace if item.type == "project.direct_contract"
+    ]
     revisions = [item.payload for item in trace if item.type == "project.plan_revised"]
     plan = dict(plans[-1]) if plans else {}
     if revisions and revisions[-1].get("files") is not None:
@@ -1272,6 +1291,39 @@ def summarize_run(
     required = set(required_files)
     planned = set(planned_files)
     successful_planned_paths = sorted(planned & set(successful_paths))
+    direct_contract = dict(direct_contracts[-1]) if direct_contracts else {}
+    direct_writable_roots = [
+        str(path) for path in direct_contract.get("writable_roots") or []
+    ]
+    direct_protected_files = {
+        str(path) for path in direct_contract.get("protected_files") or []
+    }
+    direct_unresolved = [str(path) for path in direct_contract.get("unresolved") or []]
+
+    def direct_path_is_writable(path: str) -> bool:
+        candidate = PurePosixPath(path)
+        for raw_root in direct_writable_roots:
+            root = PurePosixPath(raw_root)
+            if raw_root == "." or candidate == root or root in candidate.parents:
+                return path not in direct_protected_files
+        return False
+
+    direct_required_coverage = (
+        round(
+            len({path for path in required if direct_path_is_writable(path)})
+            / len(required),
+            4,
+        )
+        if required
+        else 1.0
+    )
+    scope_mode = (
+        "planner_manifest"
+        if plans
+        else "direct_contract"
+        if direct_contracts
+        else "unobserved"
+    )
     if not successful_writes:
         path_evidence = "complete"
     elif len(successful_path_events) == len(successful_writes):
@@ -1300,6 +1352,42 @@ def summarize_run(
             "revisions": len(revisions),
             "required_file_coverage": round(len(required & planned) / len(required), 4),
             "missing_required_files": sorted(required - planned),
+        },
+        # One durable admission/scope shape for both build paths. The planner
+        # manifest remains honest above; a direct run is not made to look as if
+        # it called a planner. Evaluation, approval and qualification consume
+        # this contract instead.
+        "scope_contract": {
+            "present": bool(plans or direct_contracts),
+            "mode": scope_mode,
+            "source_event": (
+                "project.build_planned"
+                if plans
+                else "project.direct_contract"
+                if direct_contracts
+                else ""
+            ),
+            "admitted": bool(plans) or bool(direct_contracts and not direct_unresolved),
+            "requested_files": list(required_files),
+            "authorized_files": (
+                planned_files
+                if plans
+                else list(required_files)
+                if direct_contracts
+                else []
+            ),
+            "required_file_coverage": (
+                round(len(required & planned) / len(required), 4)
+                if plans and required
+                else direct_required_coverage
+                if direct_contracts
+                else 0.0
+            ),
+            "writable_roots": direct_writable_roots,
+            "protected_files": sorted(direct_protected_files),
+            "unresolved": direct_unresolved,
+            "approval_required": bool(direct_contract.get("approval_required", True)),
+            "check_budget": int(direct_contract.get("check_budget") or 0),
         },
         "tool_calls": len(tool_results),
         "model_steps": len(model_steps) + len(coding_rounds),
@@ -1379,6 +1467,19 @@ def _ratio(numerator: float, denominator: float) -> float:
     return max(0.0, min(1.0, numerator / denominator if denominator else 0.0))
 
 
+def authorized_scope_paths(attempt: Mapping[str, Any]) -> list[str]:
+    """Return the exact evaluator scope without inventing a planner manifest."""
+
+    plan = attempt.get("plan") or {}
+    planned = [str(path) for path in plan.get("files") or [] if str(path)]
+    if planned:
+        return planned
+    contract = attempt.get("scope_contract") or {}
+    if str(contract.get("mode") or "") != "direct_contract":
+        return []
+    return [str(path) for path in contract.get("authorized_files") or [] if str(path)]
+
+
 def repair_attempt_evidence(
     attempt: Mapping[str, Any], *, planned_paths: Iterable[str]
 ) -> tuple[bool, bool, bool]:
@@ -1442,10 +1543,11 @@ def score_evaluation(
     # ``blocking=0`` summary that falsely erases the prior run's blockers.
     scoreable_attempts = [first]
     repair_attempts = attempts[1:]
+    authorized_paths = authorized_scope_paths(first)
     repair_evidence = [
         repair_attempt_evidence(
             attempt,
-            planned_paths=(first.get("plan") or {}).get("files") or [],
+            planned_paths=authorized_paths,
         )
         for attempt in repair_attempts
     ]
@@ -1465,23 +1567,47 @@ def score_evaluation(
         all(item) for item in repair_evidence
     )
     plan = first.get("plan") or {}
-    planning_ratio = (
-        0.25 * float(bool(plan.get("present")))
-        + 0.15 * float(plan.get("intent") == "build")
-        + 0.10 * float(plan.get("scope") == "whole_app")
-        + 0.35 * float(plan.get("required_file_coverage") or 0.0)
-        + 0.15 * _ratio(len(plan.get("scenarios") or []), 5)
-    )
+    scope_contract = first.get("scope_contract") or {}
+    if str(scope_contract.get("mode") or "") == "direct_contract":
+        planning_ratio = (
+            0.25 * float(bool(scope_contract.get("present")))
+            + 0.15 * float(bool(scope_contract.get("admitted")))
+            + 0.10
+            * float(
+                "."
+                in {str(path) for path in scope_contract.get("writable_roots") or []}
+            )
+            + 0.35 * float(scope_contract.get("required_file_coverage") or 0.0)
+            + 0.15
+            * float(
+                bool(scope_contract.get("approval_required"))
+                and int(scope_contract.get("check_budget") or 0) > 0
+            )
+        )
+    else:
+        planning_ratio = (
+            0.25 * float(bool(plan.get("present")))
+            + 0.15 * float(plan.get("intent") == "build")
+            + 0.10 * float(plan.get("scope") == "whole_app")
+            + 0.35 * float(plan.get("required_file_coverage") or 0.0)
+            + 0.15 * _ratio(len(plan.get("scenarios") or []), 5)
+        )
 
     writes = first.get("writes") or {}
-    planned_count = max(1, len(plan.get("files") or []))
+    planned_count = max(1, len(authorized_paths))
     path_evidence = str(writes.get("path_evidence") or "unavailable")
     # A path-less success is evidence that *something* was written, never that
     # another planned file was completed. Older events remain readable, but
     # cannot turn repeated edits to one unknown target into full manifest
     # coverage. Partial traces receive credit only for the unique planned paths
     # they actually identify.
-    completion_count = float(writes.get("planned_successful") or 0)
+    if str(scope_contract.get("mode") or "") == "direct_contract":
+        written_paths = {
+            str(path) for path in writes.get("unique_successful_paths") or []
+        }
+        completion_count = float(len(set(authorized_paths) & written_paths))
+    else:
+        completion_count = float(writes.get("planned_successful") or 0)
     write_completion = _ratio(completion_count, planned_count)
     attempted = int(writes.get("attempted") or 0)
     efficiency = (
@@ -1595,6 +1721,9 @@ def score_evaluation(
             "repair_chain_verified": repair_chain_verified,
             "required_acceptance_passed": bool(
                 acceptance.get("available") and acceptance.get("passed")
+            ),
+            "scope_contract_mode": str(
+                scope_contract.get("mode") or "planner_manifest"
             ),
         },
     }

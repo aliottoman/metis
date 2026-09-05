@@ -31,7 +31,7 @@ import type {
  *
  * Deliberately simpler than voice mode's hook: the agent runs on ElevenLabs'
  * hosted model, so there is no lease to renew and no loopback stream to hold
- * open. What this hook owns instead is the product state machine — nine
+ * open. What this hook owns instead is the product state machine — ten
  * explicit phases, never inferred from the SDK's connection status alone —
  * and the one channel back into Metis: the blocking
  * `submit_interview_evaluation` client tool, whose round trip through the API
@@ -49,6 +49,7 @@ export type InterviewPhase =
   | "listening"
   | "agent_speaking"
   | "evaluating"
+  | "debriefing"
   | "complete"
   | "failed"
   | "ended_early";
@@ -65,7 +66,11 @@ const LIVE_PHASES: ReadonlySet<InterviewPhase> = new Set([
   "listening",
   "agent_speaking",
   "evaluating",
+  "debriefing",
 ]);
+
+/** Give the hosted agent time to confirm and score, then make retry available. */
+const FINISH_REQUEST_TIMEOUT_MS = 60_000;
 
 export function useInterviewSession(options: { context: InterviewContext | null }) {
   const [phase, setPhaseState] = useState<InterviewPhase>("setup");
@@ -78,6 +83,11 @@ export function useInterviewSession(options: { context: InterviewContext | null 
   const [delivery, setDelivery] = useState<InterviewDelivery | null>(null);
   const [deliveryStage, setDeliveryStage] = useState<InterviewDeliveryStage>("");
   const [deliveryBusy, setDeliveryBusy] = useState(false);
+  const [latestQuestion, setLatestQuestion] = useState("");
+  const [candidateAnswerCount, setCandidateAnswerCount] = useState(0);
+  const [finishRequested, setFinishRequested] = useState(false);
+  const [outputVolume, setOutputVolumeState] = useState(1);
+  const [audioPaused, setAudioPausedState] = useState(false);
 
   const phaseRef = useRef<InterviewPhase>("setup");
   const sessionRef = useRef<string | null>(null);
@@ -94,10 +104,44 @@ export function useInterviewSession(options: { context: InterviewContext | null 
   const contextRef = useRef(options.context);
   contextRef.current = options.context;
   const teardownRef = useRef<(next: InterviewPhase) => void>(() => undefined);
+  const outputVolumeRef = useRef(1);
+  const audioPausedRef = useRef(false);
+  const mutedBeforePauseRef = useRef(false);
+  const activeQuestionNumberRef = useRef<number | null>(null);
+  const answeredQuestionNumbersRef = useRef<Set<number>>(new Set());
+  const finishRequestedRef = useRef(false);
+  const finishRequestTimerRef = useRef<number | null>(null);
+  const generationRef = useRef(0);
+  const startPendingRef = useRef(false);
+  const mountedRef = useRef(true);
 
   const movePhase = useCallback((next: InterviewPhase) => {
     phaseRef.current = next;
     setPhaseState(next);
+  }, []);
+
+  const clearFinishRequest = useCallback(() => {
+    if (finishRequestTimerRef.current !== null) {
+      window.clearTimeout(finishRequestTimerRef.current);
+      finishRequestTimerRef.current = null;
+    }
+    finishRequestedRef.current = false;
+    setFinishRequested(false);
+  }, []);
+
+  /** Count one answer per numbered question, never raw transcript messages. */
+  const markCurrentQuestionAnswered = useCallback(() => {
+    const question = activeQuestionNumberRef.current;
+    if (
+      question === null ||
+      question < 1 ||
+      question > INTERVIEW_QUESTION_LIMIT ||
+      answeredQuestionNumbersRef.current.has(question)
+    ) {
+      return;
+    }
+    answeredQuestionNumbersRef.current.add(question);
+    setCandidateAnswerCount(answeredQuestionNumbersRef.current.size);
   }, []);
 
   // Before a session exists, the phase simply mirrors whether the form is
@@ -119,6 +163,7 @@ export function useInterviewSession(options: { context: InterviewContext | null 
   }, []);
 
   const conversation = useConversation({
+    volume: audioPaused ? 0 : outputVolume,
     onConnect: ({ conversationId }: { conversationId: string }) => {
       const id = sessionRef.current;
       if (!id) return;
@@ -150,6 +195,11 @@ export function useInterviewSession(options: { context: InterviewContext | null 
         setError(message || "The evaluation could not be saved.");
         return;
       }
+      if (scorecardRef.current) {
+        setError(message || "The spoken debrief ended early. Your scorecard is ready.");
+        teardownRef.current("complete");
+        return;
+      }
       setError(message || "The interview connection failed.");
       if (sessionRef.current) teardownRef.current("failed");
     },
@@ -168,14 +218,21 @@ export function useInterviewSession(options: { context: InterviewContext | null 
           return;
         }
         record("user", message);
+        markCurrentQuestionAnswered();
         return;
       }
       record("agent", message);
       const announced = questionNumberFrom(message);
       if (announced !== null) {
+        activeQuestionNumberRef.current = announced;
         setQuestionNumber((current) => Math.max(current, announced));
+        setLatestQuestion(message);
       }
-      if (announcesEvaluation(message) && LIVE_PHASES.has(phaseRef.current)) {
+      if (
+        announcesEvaluation(message) &&
+        !scorecardRef.current &&
+        LIVE_PHASES.has(phaseRef.current)
+      ) {
         movePhase("evaluating");
       }
     },
@@ -186,17 +243,77 @@ export function useInterviewSession(options: { context: InterviewContext | null 
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
 
+  /** Set the speaker level without losing the chosen level while paused. */
+  const setOutputVolume = useCallback((volume: number) => {
+    const next = Math.min(1, Math.max(0, volume));
+    outputVolumeRef.current = next;
+    setOutputVolumeState(next);
+    if (audioPausedRef.current) return;
+    try {
+      conversationRef.current.setVolume({ volume: next });
+    } catch {
+      // The preference is kept and passed into the next connection.
+    }
+  }, []);
+
+  /**
+   * A local audio pause: keep the interview room alive, but silence its
+   * output and stop sending microphone audio until the candidate resumes.
+   */
+  const toggleAudioPaused = useCallback(() => {
+    const next = !audioPausedRef.current;
+    audioPausedRef.current = next;
+    setAudioPausedState(next);
+    try {
+      if (next) {
+        mutedBeforePauseRef.current = conversationRef.current.isMuted;
+        conversationRef.current.setMuted(true);
+        conversationRef.current.setVolume({ volume: 0 });
+      } else {
+        conversationRef.current.setMuted(mutedBeforePauseRef.current);
+        conversationRef.current.setVolume({ volume: outputVolumeRef.current });
+      }
+    } catch {
+      // A disconnect racing the control is harmless; teardown settles it.
+    }
+  }, []);
+
+  /** Preserve the user's mute preference when it changes outside a pause. */
+  const setMuted = useCallback((muted: boolean) => {
+    if (audioPausedRef.current) {
+      mutedBeforePauseRef.current = muted;
+      return;
+    }
+    conversationRef.current.setMuted(muted);
+  }, []);
+
   /** Everything that must stop, and the server told once, idempotently. */
   const teardown = useCallback(
     (next: InterviewPhase) => {
+      generationRef.current += 1;
+      startPendingRef.current = false;
       if (tickRef.current !== null) window.clearInterval(tickRef.current);
       tickRef.current = null;
       const id = sessionRef.current;
       sessionRef.current = null;
+      clearFinishRequest();
+      const restoreAudioAfterEnd = audioPausedRef.current;
       try {
         conversationRef.current.endSession();
       } catch {
         // Already gone; the session row settles through the end call below.
+      }
+      if (restoreAudioAfterEnd) {
+        audioPausedRef.current = false;
+        setAudioPausedState(false);
+        try {
+          // Restore preferences only after the live room has been torn down,
+          // so neither the microphone nor speaker can blip on the way out.
+          conversationRef.current.setMuted(mutedBeforePauseRef.current);
+          conversationRef.current.setVolume({ volume: outputVolumeRef.current });
+        } catch {
+          // The provider may already have released its media devices.
+        }
       }
       if (id) {
         const reason = scorecardRef.current
@@ -208,7 +325,7 @@ export function useInterviewSession(options: { context: InterviewContext | null 
       }
       movePhase(next);
     },
-    [movePhase],
+    [clearFinishRequest, movePhase],
   );
   teardownRef.current = teardown;
 
@@ -224,23 +341,32 @@ export function useInterviewSession(options: { context: InterviewContext | null 
       const stored = await submitInterviewEvaluation(id, evaluation);
       scorecardRef.current = stored;
       setScorecard(stored);
+      clearFinishRequest();
       setError(null);
-      movePhase("complete");
+      // The tool result is the data Chiron uses for its spoken verdict. Keep
+      // the room visible until the agent hangs up, or the user explicitly
+      // chooses to leave the spoken debrief and view the scorecard now.
+      movePhase("debriefing");
       return JSON.stringify({
         overall_score: stored.overall_score,
         recommendation: stored.recommendation,
         provisional: stored.provisional,
       });
     },
-    [movePhase],
+    [clearFinishRequest, movePhase],
   );
   const handleEvaluationRef = useRef(handleEvaluation);
   handleEvaluationRef.current = handleEvaluation;
 
   const start = useCallback(async () => {
-    if (sessionRef.current) return;
+    if (sessionRef.current || startPendingRef.current) return;
     const context = contextRef.current;
     if (!context) return;
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    startPendingRef.current = true;
+    const isCurrent = () =>
+      mountedRef.current && generationRef.current === generation;
     setError(null);
     setTurns([]);
     setScorecard(null);
@@ -251,7 +377,12 @@ export function useInterviewSession(options: { context: InterviewContext | null 
     endRequestedRef.current = false;
     lastTypedRef.current = null;
     ordinalRef.current = 0;
+    activeQuestionNumberRef.current = null;
+    answeredQuestionNumbersRef.current = new Set();
+    setCandidateAnswerCount(0);
     setQuestionNumber(0);
+    setLatestQuestion("");
+    clearFinishRequest();
     setElapsed(0);
     movePhase("connecting");
 
@@ -261,16 +392,23 @@ export function useInterviewSession(options: { context: InterviewContext | null 
     try {
       const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
       probe.getTracks().forEach((track) => track.stop());
+      if (!isCurrent()) return;
     } catch {
+      if (!isCurrent()) return;
       setError(
         "Microphone access was denied. Allow the microphone for this site in the browser's address bar, then try again.",
       );
+      startPendingRef.current = false;
       movePhase("failed");
       return;
     }
 
     try {
       const opened = await startInterviewSession(context);
+      if (!isCurrent()) {
+        void endInterviewSession(opened.session.id, "ended_early").catch(() => undefined);
+        return;
+      }
       sessionRef.current = opened.session.id;
       setSession(opened.session);
       startedAtRef.current = Date.now();
@@ -278,7 +416,7 @@ export function useInterviewSession(options: { context: InterviewContext | null 
         () => setElapsed((Date.now() - startedAtRef.current) / 1000),
         1_000,
       );
-      conversationRef.current.startSession({
+      await conversationRef.current.startSession({
         conversationToken: opened.conversation_token,
         connectionType: "webrtc",
         dynamicVariables: opened.dynamic_variables,
@@ -287,18 +425,35 @@ export function useInterviewSession(options: { context: InterviewContext | null 
             handleEvaluationRef.current(parameters),
         },
       });
+      if (!isCurrent() || sessionRef.current !== opened.session.id) {
+        try {
+          conversationRef.current.endSession();
+        } catch {
+          // Teardown already won the race.
+        }
+        void endInterviewSession(opened.session.id, "ended_early").catch(() => undefined);
+      }
     } catch (startError) {
+      if (!isCurrent()) return;
       setError(
         startError instanceof Error ? startError.message : "The interview could not start.",
       );
       teardown("failed");
+    } finally {
+      if (generationRef.current === generation) startPendingRef.current = false;
     }
-  }, [movePhase, teardown]);
+  }, [clearFinishRequest, movePhase, teardown]);
 
   /** The explicit stop, after the workbench has confirmed it once. */
   const endEarly = useCallback(() => {
     endRequestedRef.current = true;
     teardown(scorecardRef.current ? "complete" : "ended_early");
+  }, [teardown]);
+
+  /** Leave a completed spoken debrief and reveal the stored scorecard. */
+  const viewResults = useCallback(() => {
+    if (!scorecardRef.current) return;
+    teardown("complete");
   }, [teardown]);
 
   /** The typed fallback. Recorded here; a platform echo is deduplicated. */
@@ -310,12 +465,53 @@ export function useInterviewSession(options: { context: InterviewContext | null 
       record("user", trimmed);
       try {
         conversationRef.current.sendUserMessage(trimmed);
+        markCurrentQuestionAnswered();
       } catch {
         setError("That message could not be sent. Say it instead.");
       }
     },
-    [record],
+    [markCurrentQuestionAnswered, record],
   );
+  const canFinishAndScore =
+    candidateAnswerCount >= 3 && scorecard === null && !finishRequested;
+
+  /**
+   * Ask Chiron to take its early-stop edge. The hosted workflow owns the
+   * confirmation and evaluation; the browser never fabricates a score.
+   */
+  const requestFinishAndScore = useCallback(() => {
+    if (!sessionRef.current || !canFinishAndScore) return;
+    const message =
+      "I want to stop the interview now and have you evaluate what I completed. Please confirm that with me once, then finish and score the round.";
+    lastTypedRef.current = message;
+    record("user", message);
+    setError(null);
+    clearFinishRequest();
+    finishRequestedRef.current = true;
+    setFinishRequested(true);
+    try {
+      conversationRef.current.sendUserMessage(message);
+      finishRequestTimerRef.current = window.setTimeout(() => {
+        finishRequestTimerRef.current = null;
+        if (
+          !finishRequestedRef.current ||
+          !sessionRef.current ||
+          scorecardRef.current ||
+          !LIVE_PHASES.has(phaseRef.current)
+        ) {
+          return;
+        }
+        finishRequestedRef.current = false;
+        setFinishRequested(false);
+        setError(
+          "Chiron did not return a score. Open End interview to request scoring again, or keep going.",
+        );
+      }, FINISH_REQUEST_TIMEOUT_MS);
+    } catch {
+      clearFinishRequest();
+      setError("The finish request could not be sent. Tell Chiron you want to stop instead.");
+    }
+  }, [canFinishAndScore, clearFinishRequest, record]);
 
   // The recording is analyzed in the background once the session ends — the
   // audio only exists after the call. Poll the session until the delivery
@@ -386,26 +582,45 @@ export function useInterviewSession(options: { context: InterviewContext | null 
     setScorecard(null);
     scorecardRef.current = null;
     setTurns([]);
+    activeQuestionNumberRef.current = null;
+    answeredQuestionNumbersRef.current = new Set();
+    setCandidateAnswerCount(0);
     setQuestionNumber(0);
+    setLatestQuestion("");
+    clearFinishRequest();
     setElapsed(0);
     setError(null);
     setDelivery(null);
     setDeliveryStage("");
     deliveryEpochRef.current += 1;
     movePhase(contextRef.current ? "ready" : "setup");
-  }, [movePhase, teardown]);
+  }, [clearFinishRequest, movePhase, teardown]);
 
   // Unmount, navigation and page hide all end a live session. None of them
   // is trusted alone, and the server absorbs the overlap.
   useEffect(() => {
+    mountedRef.current = true;
     const leave = () => {
-      if (!sessionRef.current) return;
+      if (!sessionRef.current && !startPendingRef.current) return;
       teardownRef.current(scorecardRef.current ? "complete" : "ended_early");
     };
+    const visibilityChanged = () => {
+      if (
+        document.visibilityState !== "hidden"
+        || (!sessionRef.current && !startPendingRef.current)
+      ) {
+        return;
+      }
+      setError("The interview ended when this tab moved to the background.");
+      leave();
+    };
     window.addEventListener("pagehide", leave);
+    document.addEventListener("visibilitychange", visibilityChanged);
     return () => {
       window.removeEventListener("pagehide", leave);
+      document.removeEventListener("visibilitychange", visibilityChanged);
       leave();
+      mountedRef.current = false;
     };
   }, []);
 
@@ -422,9 +637,18 @@ export function useInterviewSession(options: { context: InterviewContext | null 
     deliveryStage,
     deliveryBusy,
     retryDelivery,
+    latestQuestion,
+    candidateAnswerCount,
+    canFinishAndScore,
+    finishRequested,
     live: LIVE_PHASES.has(phase),
     isMuted: conversation.isMuted,
-    setMuted: conversation.setMuted,
+    isSpeaking: conversation.isSpeaking,
+    setMuted,
+    outputVolume,
+    setOutputVolume,
+    audioPaused,
+    toggleAudioPaused,
     getInputVolume: () => {
       try {
         return conversationRef.current.getInputVolume();
@@ -441,6 +665,8 @@ export function useInterviewSession(options: { context: InterviewContext | null 
     },
     start,
     endEarly,
+    requestFinishAndScore,
+    viewResults,
     sendText,
     reset,
     dismissError: () => setError(null),

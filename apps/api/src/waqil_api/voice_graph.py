@@ -93,6 +93,37 @@ VOICE_WRITE_PERMISSIONS = VOICE_PERMISSIONS | {PolicyPermission.CUSTOMER_APPEND}
 # declared risk visibly.
 VOICE_RISK = RiskLevel.R2
 
+_NAVIGATION_REQUEST = re.compile(
+    r"^\s*(?:please\s+)?(?:open|go\s+to|take\s+me\s+to|switch\s+to|show\s+me)\s+(?:the\s+)?(.+?)\s*[.!?]*$",
+    re.IGNORECASE,
+)
+_NAVIGATION_TARGETS: tuple[tuple[tuple[str, ...], str, str], ...] = (
+    (("today", "daily brief", "attention"), "/today", "Today"),
+    (("meeting", "meetings", "recordings"), "/meetings", "Meetings"),
+    (("interview", "interviews", "mock interview"), "/interviews", "Interviews"),
+    (("customer", "customers", "accounts"), "/customers", "Customers"),
+    (("asset", "assets"), "/assets", "Assets"),
+    (("knowledge", "sources"), "/knowledge", "Knowledge"),
+    (("answer", "answers"), "/answers", "Answers"),
+    (("memory", "memories"), "/memory", "Memory"),
+    (("sizing", "dac"), "/sizing", "Sizing"),
+    (("tool workshop", "tools"), "/tools", "Tool Workshop"),
+    (("setting", "settings"), "/settings", "Settings"),
+    (("chat", "conversation"), "/", "Chat"),
+)
+
+
+def detect_navigation(transcript: str) -> tuple[str, str] | None:
+    """Map an explicit open-page command onto the fixed app navigation."""
+    matched = _NAVIGATION_REQUEST.match(transcript)
+    if matched is None:
+        return None
+    target = matched.group(1).casefold()
+    for aliases, path, label in _NAVIGATION_TARGETS:
+        if any(alias in target for alias in aliases):
+            return path, label
+    return None
+
 VOICE_WRITE_SYSTEM_PROMPT = """You are shaping one record the user just asked to file.
 
 You are NOT deciding whether to file it, what kind it is, or which account it
@@ -332,6 +363,18 @@ class VoiceGraph:
         pending = self._pending.pop(turn.voice_session_id, None)
         if pending is not None and pending.fresh() and _is_yes(turn.transcript):
             return await self._commit_confirmed(turn, pending)
+
+        navigation = detect_navigation(turn.transcript)
+        if navigation is not None:
+            path, label = navigation
+            spoken = f"Opening {label}."
+            return self._rendition(
+                turn,
+                written=spoken,
+                spoken=spoken,
+                intent="navigation",
+                navigation_path=path,
+            )
 
         # The write path is entered only from an explicit imperative in *this*
         # utterance. An earlier turn asking for a note, a retrieved document
@@ -739,6 +782,7 @@ class VoiceGraph:
         spoken: str,
         intent: str,
         citations: list[VoiceCitationV1] | None = None,
+        navigation_path: str = "",
         spoken_fallback: bool = False,
         write: Any = None,
     ) -> VoiceRenditionV1:
@@ -747,6 +791,7 @@ class VoiceGraph:
             spoken=spoken,
             citations=citations or [],
             intent=intent,  # type: ignore[arg-type]
+            navigation_path=navigation_path,
             transcript=turn.transcript,
             voice_session_id=turn.voice_session_id,
             turn_id=turn.turn_id,

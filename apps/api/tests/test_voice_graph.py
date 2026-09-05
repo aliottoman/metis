@@ -288,6 +288,21 @@ async def test_activating_a_tool_is_refused_by_the_shared_build_classifier(
 
 
 @pytest.mark.asyncio
+async def test_an_explicit_page_request_navigates_without_retrieval_or_a_model(
+    tmp_path,
+) -> None:
+    graph, parts = _graph(tmp_path)
+    rendition = await graph.answer(_turn("Please open the meetings page"))
+
+    assert rendition.intent == "navigation"
+    assert rendition.navigation_path == "/meetings"
+    assert rendition.spoken == "Opening Meetings."
+    assert parts["model"].calls == []
+    assert parts["corpus"].calls == 0
+    assert parts["customers"].account_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_an_ordinary_question_retrieves_and_answers_with_two_renditions(
     tmp_path,
 ) -> None:

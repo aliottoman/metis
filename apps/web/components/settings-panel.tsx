@@ -269,53 +269,74 @@ export function SettingsPanel() {
         <p className="sectionLede">Metis tools remain available through the governed planner. Model calls made while a tool executes follow the same provider as the run, under each tool&apos;s per-run call budget and pinned prompts. Cloud service-side memory remains off.</p>
       </section>
 
-      <section className="settingsSection">
-        <div className="sectionTitle"><div><h2>Speech</h2><p>Which service hears the composer&apos;s microphone. The clip is sent, transcribed, and dropped — it is never stored on either side.</p></div><span className="sectionBadge">{transcriberBadge}</span></div>
-        <div className="providerChoiceGrid">
-          <button type="button" className={`providerChoice ${transcriber === "cohere" ? "selected" : ""}`} onClick={() => void chooseTranscriber("cohere")} disabled={savingSpeech || !speech?.cohere_available}>
-            <span>Cohere</span><strong>Transcribe</strong><small>{speech?.cohere_available ? "Browser recordings are converted to WAV on this device before they are sent." : "Add WAQIL_COHERE_API_KEY to enable."}</small>
-          </button>
-          <button type="button" className={`providerChoice ${transcriber === "elevenlabs" ? "selected" : ""}`} onClick={() => void chooseTranscriber("elevenlabs")} disabled={savingSpeech || !speech?.elevenlabs_available}>
-            <span>ElevenLabs</span><strong>Scribe</strong><small>{speech?.elevenlabs_available ? "Takes the browser's own recording, so nothing is re-encoded on the way out." : "Add WAQIL_ELEVENLABS_API_KEY to enable."}</small>
-          </button>
-        </div>
-        <p className="sectionLede">Dictation is the only thing this choice governs. The transcript arrives as draft text in your composer, and sending it is still your decision.</p>
-        {speechError ? <span className="mutedMeta" role="alert">{speechError}</span> : null}
-      </section>
-
-      <section className="settingsSection">
-        <div className="sectionTitle">
+      <section className="settingsSection audioSettingsStudio">
+        <div className="audioSettingsHero">
+          <span className="audioSettingsMark" aria-hidden="true"><i /><i /><i /><i /></span>
           <div>
-            <h2>Interactive voice</h2>
-            <p>ElevenLabs handles live audio and turn-taking; Metis remains the brain and controls every read and write.</p>
+            <span className="eyebrow">Voice &amp; audio</span>
+            <h2>One control room for every spoken surface</h2>
+            <p>Choose who transcribes dictation, what reasons during a live conversation, and how carefully Metis confirms a spoken write.</p>
           </div>
-          <span className="sectionBadge">{voiceAvailability?.available ? "Ready" : "Setup needed"}</span>
+          <div className="audioSettingsBadges">
+            <span>{transcriberBadge}</span>
+            <span className={voiceAvailability?.available ? "isReady" : "isSetup"}>{voiceAvailability?.available ? "Live voice ready" : "Live setup needed"}</span>
+          </div>
         </div>
-        {!voiceAvailability?.available ? (
-          <ol className="voiceSetupList">
-            {(voiceAvailability?.missing ?? []).map((reason) => <li key={reason}>{reason}</li>)}
-          </ol>
-        ) : null}
-        <div className="cardActions">
-          <SelectMenu
-            className="settingsModelSelect"
-            hideLabel
-            label="Voice reasoning model"
-            value={speech?.voice_model ?? ""}
-            onChange={(model) => void saveVoiceSettings({ model })}
-            disabled={savingSpeech || !speech?.voice_models.length}
-            options={(speech?.voice_models ?? []).map((model) => ({ value: model, label: model }))}
-          />
-          <label className="voiceConfirmationChoice">
-            <input
-              type="checkbox"
-              checked={speech?.spoken_confirmation ?? false}
-              onChange={(event) => void saveVoiceSettings({ spokenConfirmation: event.target.checked })}
-              disabled={savingSpeech || !speech}
-            />
-            <span><strong>Read back before writing</strong><small>Safer, but uses more speech credits.</small></span>
-          </label>
+
+        <div className="audioSettingsGrid">
+          <article className="audioSettingsCard">
+            <header><span>01</span><div><h3>Composer dictation</h3><p>The transcript stays a draft until you choose Send.</p></div></header>
+            <div className="providerChoiceGrid audioProviderChoices">
+              <button type="button" aria-pressed={transcriber === "cohere"} className={`providerChoice ${transcriber === "cohere" ? "selected" : ""}`} onClick={() => void chooseTranscriber("cohere")} disabled={savingSpeech || !speech?.cohere_available}>
+                <span>Cohere</span><strong>Transcribe</strong><small>{speech?.cohere_available ? "Audio is converted to WAV locally before upload." : "Add WAQIL_COHERE_API_KEY to enable."}</small>
+              </button>
+              <button type="button" aria-pressed={transcriber === "elevenlabs"} className={`providerChoice ${transcriber === "elevenlabs" ? "selected" : ""}`} onClick={() => void chooseTranscriber("elevenlabs")} disabled={savingSpeech || !speech?.elevenlabs_available}>
+                <span>ElevenLabs</span><strong>Scribe</strong><small>{speech?.elevenlabs_available ? "Uses the browser recording without re-encoding it." : "Add WAQIL_ELEVENLABS_API_KEY to enable."}</small>
+              </button>
+            </div>
+            <p className="audioSettingsFoot">Metis does not retain the dictation clip after transcription. Provider handling follows the provider account and policy you configured.</p>
+          </article>
+
+          <article className="audioSettingsCard isLiveVoice">
+            <header><span>02</span><div><h3>Interactive voice</h3><p>ElevenLabs handles the live audio room; Metis controls retrieval and writes.</p></div></header>
+            {!voiceAvailability?.available ? (
+              <ol className="voiceSetupList">
+                {(voiceAvailability?.missing ?? []).map((reason) => <li key={reason}>{reason}</li>)}
+              </ol>
+            ) : null}
+            <label className="audioSettingsSelect">
+              <span>Reasoning model</span>
+              <SelectMenu
+                className="settingsModelSelect"
+                hideLabel
+                label="Voice reasoning model"
+                value={speech?.voice_model ?? ""}
+                onChange={(model) => void saveVoiceSettings({ model })}
+                disabled={savingSpeech || !speech?.voice_models.length}
+                options={(speech?.voice_models ?? []).map((model) => ({ value: model, label: model }))}
+              />
+            </label>
+            <label className="voiceConfirmationChoice audioConfirmationChoice">
+              <input
+                type="checkbox"
+                checked={speech?.spoken_confirmation ?? false}
+                onChange={(event) => void saveVoiceSettings({ spokenConfirmation: event.target.checked })}
+                disabled={savingSpeech || !speech}
+              />
+              <span><strong>Read back before writing</strong><small>Metis asks for a spoken confirmation before it adds the record.</small></span>
+            </label>
+          </article>
+
+          <aside className="audioGuardrailCard">
+            <span className="eyebrow">Built-in guardrails</span>
+            <ul>
+              <li><i aria-hidden="true">✓</i><span><strong>Two-minute quiet timeout</strong><small>Forgotten sessions end automatically.</small></span></li>
+              <li><i aria-hidden="true">✓</i><span><strong>Background-tab shutdown</strong><small>Leaving the tab closes live audio immediately.</small></span></li>
+              <li><i aria-hidden="true">✓</i><span><strong>Visible, undoable writes</strong><small>Every spoken addition gets an on-screen receipt.</small></span></li>
+            </ul>
+          </aside>
         </div>
+        {speechError ? <span className="mutedMeta" role="alert">{speechError}</span> : null}
       </section>
 
       <section className="settingsSection">

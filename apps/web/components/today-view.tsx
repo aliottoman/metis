@@ -7,6 +7,7 @@
 // inside the card only when there are many, so the page itself never grows.
 
 import Link from "next/link";
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -82,6 +83,17 @@ function cx(...parts: Array<string | false | null | undefined>): string {
 
 /** Where the Listen button is in its own little life cycle. */
 type ListenState = "idle" | "loading" | "playing" | "paused";
+
+const BRIEF_SPEEDS = [1, 1.25, 1.5, 2] as const;
+
+/** A player clock that stays useful for clips longer than an hour. */
+function playerClock(seconds: number): string {
+  const whole = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const minutes = Math.floor(whole / 60);
+  const hours = Math.floor(minutes / 60);
+  const tail = `${String(minutes % 60).padStart(hours ? 2 : 1, "0")}:${String(whole % 60).padStart(2, "0")}`;
+  return hours ? `${hours}:${tail}` : tail;
+}
 
 /** What a single deck card is about. */
 interface Slide {
@@ -162,6 +174,7 @@ function AttentionCard({
 export function TodayView() {
   const [feed, setFeed] = useState<AttentionFeed | null>(null);
   const [loading, setLoading] = useState(true);
+  const [briefRefreshing, setBriefRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -169,7 +182,17 @@ export function TodayView() {
   const [brief, setBrief] = useState<MorningBrief | null>(null);
   const [listen, setListen] = useState<ListenState>("idle");
   const [listenError, setListenError] = useState<string | null>(null);
+  const [briefPosition, setBriefPosition] = useState(0);
+  const [briefDuration, setBriefDuration] = useState(0);
+  const [briefSpeed, setBriefSpeed] = useState(1);
+  const [briefVolume, setBriefVolume] = useState(0.9);
+  const [briefPreferencesReady, setBriefPreferencesReady] = useState(false);
+  const [activePileId, setActivePileId] = useState<string | null>(null);
   const playerRef = useRef<HTMLAudioElement | null>(null);
+  // The epoch prevents stale UI work and the controller stops the actual
+  // request when Stop is pressed or this view is left.
+  const listenRequestRef = useRef(0);
+  const listenAbortRef = useRef<AbortController | null>(null);
   // The rendered clip, held for the session. Fetched once; replaying it after
   // that is a local decision rather than a second request, and the server has
   // already cached the rendering behind it either way.
@@ -177,10 +200,44 @@ export function TodayView() {
 
   useEffect(
     () => () => {
+      listenRequestRef.current += 1;
+      listenAbortRef.current?.abort();
+      listenAbortRef.current = null;
+      const player = playerRef.current;
+      if (player) {
+        player.pause();
+        player.removeAttribute("src");
+        player.load();
+      }
       if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
+      clipUrlRef.current = null;
     },
     [],
   );
+
+  useEffect(() => {
+    const speedValue = window.localStorage.getItem("metis.brief.speed");
+    const volumeValue = window.localStorage.getItem("metis.brief.volume");
+    const storedSpeed = speedValue === null ? Number.NaN : Number(speedValue);
+    const storedVolume = volumeValue === null ? Number.NaN : Number(volumeValue);
+    if (speedValue !== null && BRIEF_SPEEDS.includes(storedSpeed as (typeof BRIEF_SPEEDS)[number])) {
+      setBriefSpeed(storedSpeed);
+    }
+    if (volumeValue !== null && Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 1) {
+      setBriefVolume(storedVolume);
+    }
+    setBriefPreferencesReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!briefPreferencesReady) return;
+    const player = playerRef.current;
+    if (!player) return;
+    player.playbackRate = briefSpeed;
+    player.volume = briefVolume;
+    window.localStorage.setItem("metis.brief.speed", String(briefSpeed));
+    window.localStorage.setItem("metis.brief.volume", String(briefVolume));
+  }, [briefSpeed, briefVolume, briefPreferencesReady]);
 
   /** Play, pause, resume, or replay — whichever the button currently means. */
   async function toggleListen() {
@@ -196,25 +253,82 @@ export function TodayView() {
       void player.play().catch(() => setListenError("That recording could not be played."));
       return;
     }
+    const requestId = ++listenRequestRef.current;
+    listenAbortRef.current?.abort();
+    const controller = new AbortController();
+    listenAbortRef.current = controller;
     setListen("loading");
     setListenError(null);
     try {
-      const clip = await getMorningBriefAudio();
+      const clip = await getMorningBriefAudio(24, controller.signal);
+      if (requestId !== listenRequestRef.current) return;
       clipUrlRef.current = URL.createObjectURL(clip);
       player.src = clipUrlRef.current;
+      player.playbackRate = briefSpeed;
+      player.volume = briefVolume;
       await player.play();
     } catch (playError) {
+      if (requestId !== listenRequestRef.current) return;
+      if (playError instanceof DOMException && playError.name === "AbortError") return;
       setListen("idle");
       setListenError(
         playError instanceof Error ? playError.message : "The brief could not be read aloud.",
       );
+    } finally {
+      if (listenAbortRef.current === controller) listenAbortRef.current = null;
     }
   }
 
+  /** Stop means stop: silence now, reset the playhead, and cancel preparation. */
+  function stopBrief() {
+    listenRequestRef.current += 1;
+    listenAbortRef.current?.abort();
+    listenAbortRef.current = null;
+    const player = playerRef.current;
+    if (player) {
+      player.pause();
+      player.currentTime = 0;
+    }
+    setBriefPosition(0);
+    setListen("idle");
+    setListenError(null);
+  }
+
+  function moveBrief(by: number) {
+    const player = playerRef.current;
+    if (!player) return;
+    player.currentTime = Math.max(0, Math.min(player.duration || 0, player.currentTime + by));
+    setBriefPosition(player.currentTime);
+  }
+
+  function seekBrief(value: number) {
+    const player = playerRef.current;
+    if (!player) return;
+    player.currentTime = value;
+    setBriefPosition(value);
+  }
+
   // Load the queue.
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (regenerateBrief = false) => {
     setLoading(true);
+    if (regenerateBrief) setBriefRefreshing(true);
     setError(null);
+    if (regenerateBrief) {
+      listenRequestRef.current += 1;
+      listenAbortRef.current?.abort();
+      listenAbortRef.current = null;
+      playerRef.current?.pause();
+      playerRef.current?.removeAttribute("src");
+      playerRef.current?.load();
+      if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
+      clipUrlRef.current = null;
+      setBriefPosition(0);
+      setBriefDuration(0);
+      setListen("idle");
+    }
+    const briefRequest = getMorningBrief(24, regenerateBrief)
+      .then(setBrief)
+      .catch(() => undefined);
     try {
       setFeed(await getAttention(3));
     } catch (loadError) {
@@ -222,13 +336,14 @@ export function TodayView() {
     } finally {
       setLoading(false);
     }
+    await briefRequest;
+    if (regenerateBrief) setBriefRefreshing(false);
   }, []);
 
   useEffect(() => {
-    void refresh();
-    // The brief is a second, slower read: the deck must render immediately even
-    // when a model is cold or unreachable.
-    void getMorningBrief().then(setBrief).catch(() => setBrief(null));
+    // The brief begins in parallel, while the decision queue stays the first
+    // thing the page waits for.
+    void refresh(false);
   }, [refresh]);
 
   // Snooze one item for a week.
@@ -357,12 +472,46 @@ export function TodayView() {
   const railCounts = new Map<string, number>();
   slides.forEach((slide) => railCounts.set(slide.id, slide.count));
 
+  const slideIds = slides.map((slide) => slide.id).join("|");
+  useEffect(() => {
+    const ids = slideIds ? slideIds.split("|") : [];
+    if (!ids.length) {
+      setActivePileId(null);
+      return;
+    }
+    setActivePileId((current) => current && ids.includes(current) ? current : ids[0]!);
+    const root = document.querySelector<HTMLElement>(".appMain");
+    const elements = ids
+      .map((id) => document.getElementById(`pile-${id}`))
+      .filter((element): element is HTMLElement => Boolean(element));
+    if (!elements.length || typeof IntersectionObserver === "undefined") return;
+    const visible = new Map<string, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const id = (entry.target as HTMLElement).id.replace(/^pile-/, "");
+          if (entry.isIntersecting) visible.set(id, entry.intersectionRatio);
+          else visible.delete(id);
+        }
+        const next = [...visible.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        if (next) setActivePileId(next);
+      },
+      { root, rootMargin: "-18% 0px -52%", threshold: [0.05, 0.25, 0.5, 0.75] },
+    );
+    elements.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [slideIds]);
+
   // Jump to a pile from the rail. Every pile is on screen at once now, so this
   // just brings the named card into view instead of rolling a one-at-a-time deck.
   const scrollToPile = useCallback((id: string) => {
+    setActivePileId(id);
     document
       .getElementById(`pile-${id}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      ?.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "nearest",
+      });
   }, []);
 
   const handlers: CardHandlers = {
@@ -381,47 +530,117 @@ export function TodayView() {
 
   return (
     <div className="workspacePage todayPage todayGridPage">
-      <header className="todayTopbar">
-        <div className="todayTopbarCopy">
-          <span className="eyebrow">{todayLabel()}</span>
-          <h1>{loading && !feed ? "Checking what's waiting" : headline}</h1>
-        </div>
-        <div className="todayTopbarActions">
-          {/* Playback, not conversation: this reads the brief already on
-              screen and opens nothing you can talk back to. */}
+      <section className="todayStudioHero" aria-labelledby="today-heading">
+        <header className="todayTopbar">
+          <div className="todayTopbarCopy">
+            <span className="eyebrow">{todayLabel()}</span>
+            <h1 id="today-heading">{loading && !feed ? "Checking what's waiting" : headline}</h1>
+          </div>
+          <div className="todayTopbarActions">
+            <button className="secondaryButton todayRefresh" type="button" onClick={() => void refresh(true)} disabled={loading || briefRefreshing}>
+              {loading || briefRefreshing ? "Refreshing…" : "Refresh brief"}
+            </button>
+          </div>
+        </header>
+
+        <section className={`dailyBriefPlayer is-${listen}`} aria-label="Daily brief player">
+          <div className="dailyBriefIdentity">
+            <span className="dailyBriefMark" aria-hidden="true"><i /><i /><i /></span>
+            <div>
+              <span className="eyebrow">Daily brief · ElevenLabs</span>
+              <strong>{brief?.narrative || brief?.recommendation || "Your priority scan, read aloud when you want it."}</strong>
+              {brief?.narrative && brief.recommendation ? (
+                <span className="dailyBriefRecommendation">First move · {brief.recommendation}</span>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="dailyBriefTransport">
           <button
-            className="secondaryButton todayListen"
+            className="dailyBriefPlay"
             type="button"
             onClick={() => void toggleListen()}
             disabled={listen === "loading"}
-            aria-label={listen === "playing" ? "Pause the brief" : "Listen to the brief"}
+            aria-label={listen === "playing" ? "Pause daily brief" : "Play daily brief"}
           >
-            {listen === "loading"
-              ? "Preparing…"
-              : listen === "playing"
-                ? "Pause"
-                : listen === "paused"
-                  ? "Resume"
-                  : clipUrlRef.current
-                    ? "Replay"
-                    : "Listen"}
+            <span aria-hidden="true">{listen === "loading" ? "…" : listen === "playing" ? "Ⅱ" : "▶"}</span>
           </button>
-          <button className="secondaryButton todayRefresh" type="button" onClick={() => void refresh()} disabled={loading}>
-            {loading ? "Checking…" : "Refresh"}
+          <button className="dailyBriefSkip is-back" type="button" onClick={() => moveBrief(-15)} disabled={!clipUrlRef.current} aria-label="Go back 15 seconds">−15</button>
+          <div className="dailyBriefTimeline">
+            <input
+              type="range"
+              min={0}
+              max={Math.max(briefDuration, 1)}
+              step={0.1}
+              value={Math.min(briefPosition, Math.max(briefDuration, 1))}
+              onChange={(event) => seekBrief(Number(event.target.value))}
+              disabled={!briefDuration}
+              aria-label="Daily brief position"
+              style={{ "--brief-progress": `${briefDuration ? (briefPosition / briefDuration) * 100 : 0}%` } as CSSProperties}
+            />
+            <span>{playerClock(briefPosition)} <i>/</i> {briefDuration ? playerClock(briefDuration) : "—:—"}</span>
+          </div>
+          <button className="dailyBriefSkip is-forward" type="button" onClick={() => moveBrief(15)} disabled={!clipUrlRef.current} aria-label="Go forward 15 seconds">+15</button>
+          <button
+            className="dailyBriefSpeed"
+            type="button"
+            onClick={() => {
+              const index = BRIEF_SPEEDS.indexOf(briefSpeed as (typeof BRIEF_SPEEDS)[number]);
+              setBriefSpeed(BRIEF_SPEEDS[(index + 1) % BRIEF_SPEEDS.length]);
+            }}
+            aria-label={`Playback speed ${briefSpeed} times. Change speed`}
+          >
+            {briefSpeed}×
           </button>
-        </div>
-        <audio
-          ref={playerRef}
-          hidden
-          onPlay={() => setListen("playing")}
-          onPause={() => setListen((state) => (state === "playing" ? "paused" : state))}
-          onEnded={() => setListen("idle")}
-          onError={() => {
-            setListen("idle");
-            setListenError("That recording could not be played.");
-          }}
-        />
-      </header>
+          <label className="dailyBriefVolume" title="Brief volume">
+            <span aria-hidden="true">◖</span>
+            <input type="range" min={0} max={1} step={0.05} value={briefVolume} onChange={(event) => setBriefVolume(Number(event.target.value))} aria-label="Daily brief volume" />
+          </label>
+          <button
+            className="dailyBriefStop"
+            type="button"
+            onClick={stopBrief}
+            disabled={listen === "idle" && briefPosition === 0}
+          >
+            <span aria-hidden="true">■</span> Stop
+          </button>
+          </div>
+
+          <audio
+            ref={playerRef}
+            hidden
+            onLoadedMetadata={(event) => setBriefDuration(event.currentTarget.duration || 0)}
+            onDurationChange={(event) => setBriefDuration(event.currentTarget.duration || 0)}
+            onTimeUpdate={(event) => setBriefPosition(event.currentTarget.currentTime)}
+            onPlay={() => setListen("playing")}
+            onPause={() => setListen((state) => (state === "playing" ? "paused" : state))}
+            onEnded={(event) => { event.currentTarget.currentTime = 0; setListen("idle"); setBriefPosition(0); }}
+            onError={() => {
+              setListen("idle");
+              setListenError("That recording could not be played.");
+            }}
+          />
+        </section>
+
+        {slides.length ? (
+          <nav className="todayRail" aria-label="Piles">
+            {slides.map((slide) => (
+              <button
+                key={slide.id}
+                type="button"
+                className={cx("todayRailChip", activePileId === slide.id && "isActive")}
+                data-kind={slide.kind}
+                data-variant={slide.variant}
+                aria-current={activePileId === slide.id ? "location" : undefined}
+                onClick={() => scrollToPile(slide.id)}
+              >
+                <span className="todayRailCount">{railCounts.get(slide.id)}</span>
+                <span className="todayRailLabel">{slide.label}</span>
+              </button>
+            ))}
+          </nav>
+        ) : null}
+      </section>
 
       {listenError ? (
         <div className="composerError todayError" role="alert">
@@ -448,23 +667,6 @@ export function TodayView() {
 
       {slides.length ? (
         <>
-          {/* The rail: the whole day at a glance; each chip jumps to its pile. */}
-          <nav className="todayRail" aria-label="Piles">
-            {slides.map((slide) => (
-              <button
-                key={slide.id}
-                type="button"
-                className="todayRailChip"
-                data-kind={slide.kind}
-                data-variant={slide.variant}
-                onClick={() => scrollToPile(slide.id)}
-              >
-                <span className="todayRailCount">{railCounts.get(slide.id)}</span>
-                <span className="todayRailLabel">{slide.label}</span>
-              </button>
-            ))}
-          </nav>
-
           {/* Every pile at once — a dense grid, Start here featured across the top. */}
           <div className="todayGridWrap">
             <div className="todayGrid">

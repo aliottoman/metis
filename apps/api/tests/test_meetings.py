@@ -10,6 +10,7 @@ commitments from a guess is how a customer record stops being worth reading.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -196,6 +197,39 @@ async def _uploaded(service, database, blobs, *, title: str = "Batelco sync") ->
     )
 
 
+def test_meeting_title_can_be_renamed_without_touching_the_evidence_file(
+    client,
+) -> None:
+    created = client.post(
+        "/api/v1/meetings",
+        files={"file": ("original-evidence.wav", b"RIFF" + b"audio" * 400, "audio/wav")},
+        params={"title": "Original title"},
+    )
+    assert created.status_code == 201
+    meeting_id = created.json()["id"]
+
+    renamed = client.patch(
+        f"/api/v1/meetings/{meeting_id}", json={"title": "  Customer discovery  "}
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "Customer discovery"
+    assert renamed.json()["audio_filename"] == "original-evidence.wav"
+
+    assert client.patch(
+        f"/api/v1/meetings/{meeting_id}", json={"title": " " * 8}
+    ).status_code == 422
+    assert client.patch(
+        f"/api/v1/meetings/{meeting_id}", json={"title": "x" * 201}
+    ).status_code == 422
+    assert client.patch(
+        "/api/v1/meetings/meeting_missing", json={"title": "A real title"}
+    ).status_code == 404
+
+    assert client.delete(f"/api/v1/meetings/{meeting_id}").status_code == 204
+    assert client.get(f"/api/v1/meetings/{meeting_id}").status_code == 404
+    assert client.delete(f"/api/v1/meetings/{meeting_id}").status_code == 404
+
+
 # -- turning a provider payload into turns ----------------------------------
 
 
@@ -268,6 +302,8 @@ async def test_a_recording_becomes_a_transcript_with_stages_recorded(
         assert result["provider_request_id"] == "req_123"
         assert result["language"] == "en"
         assert result["duration_seconds"] == 3.4
+        assert "Hello Batelco" in result["summary"]
+        assert "send the sizing" in result["summary"]
 
         detail = await database.meeting_detail(meeting["id"])
         assert len(detail["turns"]) == 2
@@ -443,6 +479,9 @@ async def test_a_clear_account_auto_links_and_an_unclear_one_only_proposes(
         # Named essentially exactly, with nothing close behind it.
         assert result["account_id"] == accounts[0].id
         assert result["link_score"] >= 0.90
+        detail = await database.meeting_detail(meeting["id"])
+        links = [p for p in detail["proposals"] if p["kind"] == "account_link"]
+        assert links and links[0]["status"] == "accepted"
     finally:
         await database.close()
 
@@ -458,6 +497,70 @@ async def test_a_clear_account_auto_links_and_an_unclear_one_only_proposes(
         detail = await database.meeting_detail(meeting["id"])
         links = [p for p in detail["proposals"] if p["kind"] == "account_link"]
         assert links and links[0]["status"] == "proposed"
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
+async def test_accepting_a_linked_meeting_action_creates_one_traceable_action(
+    tmp_path,
+) -> None:
+    service, database, blobs, accounts = await _service(
+        tmp_path, account_names=["Batelco"]
+    )
+    try:
+        meeting = await _uploaded(service, database, blobs)
+        await service.ingest(meeting["id"])
+        detail = await database.meeting_detail(meeting["id"])
+        proposal = next(p for p in detail["proposals"] if p["kind"] == "action")
+
+        decided = await database.decide_meeting_proposal(
+            meeting["id"], proposal["id"], "accepted"
+        )
+        assert decided is not None
+        payload = json.loads(decided["payload_json"])
+        assert payload["destination"] == "customer_action"
+
+        customer = await database.customer_account_data(accounts[0].id)
+        assert customer is not None
+        assert len(customer["actions"]) == 1
+        action = customer["actions"][0]
+        assert action["id"] == payload["record_id"]
+        assert "send the sizing" in action["description"]
+        evidence = json.loads(action["evidence_json"])
+        assert evidence["meeting_id"] == meeting["id"]
+        assert evidence["proposal_id"] == proposal["id"]
+
+        # The guarded status makes a repeated click idempotent.
+        assert (
+            await database.decide_meeting_proposal(
+                meeting["id"], proposal["id"], "accepted"
+            )
+            is None
+        )
+        customer = await database.customer_account_data(accounts[0].id)
+        assert len(customer["actions"]) == 1
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
+async def test_an_action_cannot_be_kept_until_the_meeting_is_linked(tmp_path) -> None:
+    service, database, blobs, accounts = await _service(tmp_path, account_names=[])
+    try:
+        meeting = await _uploaded(service, database, blobs)
+        await service.ingest(meeting["id"])
+        detail = await database.meeting_detail(meeting["id"])
+        proposal = next(p for p in detail["proposals"] if p["kind"] == "action")
+
+        with pytest.raises(ValueError, match="link this meeting"):
+            await database.decide_meeting_proposal(
+                meeting["id"], proposal["id"], "accepted"
+            )
+
+        detail = await database.meeting_detail(meeting["id"])
+        preserved = next(p for p in detail["proposals"] if p["id"] == proposal["id"])
+        assert preserved["status"] == "proposed"
     finally:
         await database.close()
 

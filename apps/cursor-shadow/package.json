@@ -1,0 +1,26 @@
+{
+  "name": "@metis/cursor-shadow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A sandboxed, cost-bounded Cursor SDK shadow benchmark for Metis.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "metis-cursor-shadow": "./dist/src/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "describe": "node dist/src/index.js --describe",
+    "test": "pnpm run build && node --test dist/tests/*.test.js"
+  },
+  "dependencies": {
+    "@cursor/sdk": "1.0.30"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.6",
+    "typescript": "6.0.2"
+  }
+}

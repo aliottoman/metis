@@ -318,7 +318,10 @@ export function CustomerWorkbench() {
     if (!targetId || !detail) return;
     const node = document.getElementById(targetId);
     if (!node) return;
-    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    node.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "center",
+    });
     node.classList.add("isDeepLinked");
     const timer = window.setTimeout(() => node.classList.remove("isDeepLinked"), 2400);
     return () => window.clearTimeout(timer);

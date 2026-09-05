@@ -96,6 +96,7 @@ graph LR
 | `apps/api` | FastAPI service, versioned contracts, LangGraph orchestration, SQLite stores, model broker, policy gates, tool registry |
 | `apps/web` | Next.js client with streamed run events, approvals, artifacts, tool versions, memory proposals, and model health |
 | `apps/cline-sidecar` | Local Node child embedding `@cline/sdk`: a fail-closed, workspace-scoped, stdio-only bridge for ClineCore coding sessions |
+| `apps/cursor-shadow` | Evaluation-only, sandboxed Cursor SDK adapter for bounded harness comparisons; never a production engine |
 | `apps/mac` | Native macOS window (SwiftPM, no Xcode): starts the servers on open, stops them and releases the model on quit |
 | `apps/api/src/waqil_api/scaffold` | The `appkit` runtime Metis vendors into the applications it builds |
 | `skills` | Immutable AgentSkills-compatible capability bundles |
@@ -122,7 +123,7 @@ make build
 make sandbox-image
 ```
 
-`make setup` bootstraps the pinned `uv` release into `.venv`, performs a frozen sync from `apps/api/uv.lock`, and installs the pnpm workspace (`apps/web` and `apps/cline-sidecar`) from the frozen lockfile. It fails rather than silently rewriting either lock. `make build` compiles the Cline sidecar and the web app; the sidecar will not start without its compiled `dist/` output, and `WAQIL_PROJECT_CODING_ENGINE=clinecore` (the default) reports project coding as unavailable, with the rest of Metis staying usable, until it has.
+`make setup` bootstraps the pinned `uv` release into `.venv`, performs a frozen sync from `apps/api/uv.lock`, and installs the pnpm workspace (`apps/web`, `apps/cline-sidecar`, and the non-production `apps/cursor-shadow` evaluator) from the frozen lockfile. It fails rather than silently rewriting either lock. `make build` compiles the Cline sidecar and the web app; the sidecar will not start without its compiled `dist/` output, and `WAQIL_PROJECT_CODING_ENGINE=clinecore` (the default) reports project coding as unavailable, with the rest of Metis staying usable, until it has.
 
 Start the API and web app in separate terminals:
 

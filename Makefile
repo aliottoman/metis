@@ -58,6 +58,7 @@ uninstall-agent:
 test:
 	$(MAKE) verify-lock
 	pnpm --dir apps/cline-sidecar test
+	pnpm --dir apps/cursor-shadow test
 	.venv/bin/pytest apps/api/tests tests
 	.venv/bin/pytest skills/reference-architecture-generator/tests
 	pnpm --dir apps/web test

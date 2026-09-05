@@ -113,12 +113,14 @@ from .contracts import (
     MeetingSpeakerUpdateV1,
     MeetingTurnCorrectionV1,
     MeetingTurnV1,
+    MeetingUpdateV1,
     MeetingV1,
     SpeechPreferenceUpdateV1,
     SpeechPreferenceV1,
     VoiceAvailabilityV1,
     VoicePostCallV1,
     VoiceRenditionV1,
+    VoiceSessionBindV1,
     VoiceSessionStartV1,
     VoiceSessionV1,
     VoiceTurnRequestV1,
@@ -1862,6 +1864,19 @@ async def renew_voice_session(session_id: str, request: Request) -> VoiceSession
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+@router.patch("/voice/sessions/{session_id}", response_model=VoiceSessionV1)
+async def bind_voice_session(
+    session_id: str, body: VoiceSessionBindV1, request: Request
+) -> VoiceSessionV1:
+    """Bind the SDK's provider conversation to the lease that opened it."""
+    try:
+        return await _voice(request).bind(
+            session_id, body.provider_conversation_id
+        )
+    except VoiceSessionExpired as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 @router.get("/voice/sessions/{session_id}", response_model=VoiceSessionV1)
 async def get_voice_session(session_id: str, request: Request) -> VoiceSessionV1:
     try:
@@ -2039,6 +2054,25 @@ async def get_meeting(meeting_id: str, request: Request) -> MeetingDetailV1:
     return _meeting_detail(payload, suggested)
 
 
+@router.patch("/meetings/{meeting_id}", response_model=MeetingV1)
+async def update_meeting(
+    meeting_id: str, body: MeetingUpdateV1, request: Request
+) -> MeetingV1:
+    """Rename a meeting without rewriting its original evidence filename."""
+    meeting = await runtime(request).database.rename_meeting(meeting_id, body.title)
+    if meeting is None:
+        raise not_found("meeting")
+    return MeetingV1.model_validate(meeting)
+
+
+@router.delete("/meetings/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_meeting(meeting_id: str, request: Request) -> Response:
+    """Remove one library record. Shared content-addressed evidence is retained."""
+    if not await runtime(request).database.delete_meeting(meeting_id):
+        raise not_found("meeting")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/meetings/{meeting_id}/audio")
 async def meeting_audio(meeting_id: str, request: Request) -> FileResponse:
     """The original recording, for the player. Never the isolated derivative."""
@@ -2065,6 +2099,10 @@ async def retry_meeting(
     meeting = await app.database.get_meeting(meeting_id)
     if meeting is None:
         raise not_found("meeting")
+    if meeting["stage"] in {"uploaded", "isolating", "transcribing", "analyzing", "ready"}:
+        # Already moving (or done). Returning the live row makes repeated
+        # clicks idempotent and the service lock absorbs any in-flight caller.
+        return MeetingV1.model_validate(meeting)
     if meeting["attempts"] >= MAX_ATTEMPTS:
         raise HTTPException(
             status_code=409,
@@ -2073,8 +2111,13 @@ async def retry_meeting(
                 "retrying again is unlikely to help"
             ),
         )
+    resume = str(meeting.get("failed_stage") or "uploaded")
+    await app.database.advance_meeting(
+        meeting_id, resume, message=f"retrying {resume}"
+    )
     background.add_task(_ingest_meeting, app, meeting_id)
-    return MeetingV1.model_validate(meeting)
+    resumed = await app.database.get_meeting(meeting_id)
+    return MeetingV1.model_validate(resumed or meeting)
 
 
 @router.put(
@@ -2124,15 +2167,17 @@ async def decide_meeting_proposal(
 ) -> MeetingProposalV1:
     """Accept or reject one proposal.
 
-    Accepting a customer link records it on the meeting. Accepting an action
-    does *not* silently create a customer action — it marks the proposal
-    accepted, and the customer workbench is where a commitment becomes a
-    commitment. A transcript is a machine's best guess at what a room said.
+    Accepting a customer link records it on the meeting. A kept action becomes
+    a customer action with meeting evidence, but only after the meeting is
+    linked to a customer. The decision and action are committed together.
     """
     app = runtime(request)
-    decided = await app.database.decide_meeting_proposal(
-        meeting_id, proposal_id, body.status
-    )
+    try:
+        decided = await app.database.decide_meeting_proposal(
+            meeting_id, proposal_id, body.status
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     if decided is None:
         raise HTTPException(
             status_code=409, detail="that proposal has already been decided"
@@ -2223,6 +2268,15 @@ async def update_interview_session(
     session = await service.session(session_id)
     if session is None:
         raise not_found("interview session")
+    # The SDK's conversation-id callback and page teardown can cross in
+    # flight. If End arrived first, attaching the provider id must become the
+    # trigger the earlier End could not be.
+    if (
+        session.provider_conversation_id
+        and session.status in ("complete", "ended_early")
+        and session.delivery_stage in ("", "failed")
+    ):
+        service.schedule_delivery(session_id)
     return session
 
 

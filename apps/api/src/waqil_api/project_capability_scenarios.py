@@ -26,6 +26,7 @@ from .project_capability_eval import (
     REQUIRED_FILES,
     SCENARIO_NAME,
     acceptance_staged_overlay,
+    authorized_scope_paths,
     initialize_meridian_project,
     repair_attempt_evidence,
 )
@@ -752,7 +753,7 @@ SCENARIOS: dict[str, CapabilityScenario] = {
 }
 
 QUALIFICATION_GATE_NAMES = (
-    "exact_planned_scope",
+    "exact_requested_scope",
     "required_files_written",
     "clean_post_write_verification",
     "repair_continuity",
@@ -780,6 +781,9 @@ def qualify_scenario(
     first = attempts[0] if attempts else {}
     final = attempts[-1] if attempts else {}
     planned = set((first.get("plan") or {}).get("files") or [])
+    scope_contract = first.get("scope_contract") or {}
+    scope_mode = str(scope_contract.get("mode") or "planner_manifest")
+    authorized = set(authorized_scope_paths(first)) or planned
     required = set(scenario.required_files)
     successful = {
         str(path)
@@ -789,7 +793,7 @@ def qualify_scenario(
     verification = final.get("verification") or {}
     approval = final.get("approval") or {}
     repair_evidence = [
-        repair_attempt_evidence(attempt, planned_paths=planned)
+        repair_attempt_evidence(attempt, planned_paths=authorized)
         for attempt in attempts[1:]
     ]
     host_scaffold_paths = {
@@ -797,12 +801,31 @@ def qualify_scenario(
         for attempt in attempts
         for path in ((attempt.get("writes") or {}).get("host_scaffold_paths") or [])
     }
-    gates = {
-        "exact_planned_scope": bool(
+    preapproval_overlay = final.get("preapproval_overlay") or {}
+    if scope_mode == "direct_contract":
+        exact_requested_scope = bool(
+            attempts
+            and scope_contract.get("present")
+            and scope_contract.get("admitted")
+            and authorized == required
+            and set(scenario.protected_files)
+            <= {str(path) for path in scope_contract.get("protected_files") or []}
+            and required.isdisjoint(
+                {str(path) for path in scope_contract.get("protected_files") or []}
+            )
+            and preapproval_overlay.get("scope_mode") == "direct_contract"
+            and preapproval_overlay.get("contract_observed") is True
+            and preapproval_overlay.get("exact_requested_scope") is True
+            and (scenario.allow_host_scaffold or not host_scaffold_paths)
+        )
+    else:
+        exact_requested_scope = bool(
             attempts
             and planned == required
             and (scenario.allow_host_scaffold or not host_scaffold_paths)
-        ),
+        )
+    gates = {
+        "exact_requested_scope": exact_requested_scope,
         "required_files_written": required <= successful,
         "clean_post_write_verification": bool(
             int(verification.get("attempts") or 0) > 0

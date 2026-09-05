@@ -63,9 +63,7 @@ def _bounded_integer(minimum: int, maximum: int):
     def parse(value: str) -> int:
         parsed = int(value)
         if not minimum <= parsed <= maximum:
-            raise argparse.ArgumentTypeError(
-                f"must be between {minimum} and {maximum}"
-            )
+            raise argparse.ArgumentTypeError(f"must be between {minimum} and {maximum}")
         return parsed
 
     return parse
@@ -85,7 +83,9 @@ def _log(message: str) -> None:
 def _request(client: TestClient, method: str, path: str, **kwargs: Any) -> Any:
     response = client.request(method, path, **kwargs)
     if response.status_code >= 300:
-        raise RuntimeError(f"{method} {path} returned {response.status_code}: {response.text[:800]}")
+        raise RuntimeError(
+            f"{method} {path} returned {response.status_code}: {response.text[:800]}"
+        )
     if response.status_code == 204:
         return None
     return response.json()
@@ -152,7 +152,9 @@ async def _read_pending_project_overlay(
     staged: dict[str, dict[str, Any]] = {}
     for raw_path, raw_entry in raw_staged.items():
         if not isinstance(raw_path, str) or not isinstance(raw_entry, Mapping):
-            raise RuntimeError("pending project checkpoint has a malformed staged entry")
+            raise RuntimeError(
+                "pending project checkpoint has a malformed staged entry"
+            )
         content = raw_entry.get("content")
         if not isinstance(content, str):
             raise RuntimeError(
@@ -279,7 +281,9 @@ def _role_chains(
     return {role: [entry] for role in ("planner", "coder", "quality")}
 
 
-def _models(arguments: argparse.Namespace, settings: Settings) -> tuple[str | None, str | None]:
+def _models(
+    arguments: argparse.Namespace, settings: Settings
+) -> tuple[str | None, str | None]:
     planner_fallbacks = list(getattr(arguments, "planner_fallback_models", []) or [])
     coder_fallbacks = list(getattr(arguments, "coder_fallback_models", []) or [])
     if (planner_fallbacks or coder_fallbacks) and arguments.provider != "local":
@@ -332,11 +336,7 @@ def _effective_max_coding_iterations(
     if arguments.coding_engine != "clinecore":
         return None
     requested = getattr(arguments, "max_coding_iterations", None)
-    return (
-        requested
-        if requested is not None
-        else settings.cline_sidecar_max_iterations
-    )
+    return requested if requested is not None else settings.cline_sidecar_max_iterations
 
 
 def _seed_project(
@@ -408,9 +408,7 @@ def _describe(arguments: argparse.Namespace, settings: Settings) -> dict[str, An
         "turn_timeout_seconds": arguments.timeout,
         "model_call_timeout_seconds": arguments.model_call_timeout,
         "max_steps_per_turn": arguments.max_steps,
-        "max_coding_iterations": _effective_max_coding_iterations(
-            arguments, settings
-        ),
+        "max_coding_iterations": _effective_max_coding_iterations(arguments, settings),
         "required_files": list(scenario.required_files),
         "protected_files": list(scenario.protected_files),
         "seed_files": sorted(scenario.seed_files),
@@ -477,9 +475,7 @@ def run_live(arguments: argparse.Namespace, repo_root: Path) -> dict[str, Any]:
     project = project_parent / scenario.slug
     data_dir = workspace / "data"
     scenario.initialize(project)
-    baseline_protected_hashes = project_file_hashes(
-        project, scenario.protected_files
-    )
+    baseline_protected_hashes = project_file_hashes(project, scenario.protected_files)
     data_dir.mkdir()
     # The asset scanner only treats a child directory as a project when it has
     # a visible file to index; housekeeping dotfiles are intentionally ignored.
@@ -619,17 +615,14 @@ def run_live(arguments: argparse.Namespace, repo_root: Path) -> dict[str, Any]:
                     acceptance = {
                         **acceptance,
                         "reason": (
-                            "repair continuation unavailable: "
-                            f"{continuation['reason']}"
+                            f"repair continuation unavailable: {continuation['reason']}"
                         ),
                     }
                     _log(f"  {acceptance['reason']}")
                     break
 
                 clean_approval = bool(
-                    approval
-                    and not approval.get("blocked_reason")
-                    and blockers == 0
+                    approval and not approval.get("blocked_reason") and blockers == 0
                 )
                 if clean_approval:
                     if not arguments.approve:
@@ -638,10 +631,15 @@ def run_live(arguments: argparse.Namespace, repo_root: Path) -> dict[str, Any]:
                     planned_files = list(
                         ((attempts[0].get("plan") or {}).get("files") or [])
                     )
+                    scope_contract = attempts[0].get("scope_contract") or {}
+                    scope_mode = str(scope_contract.get("mode") or "planner_manifest")
+                    authorized_files = list(
+                        scope_contract.get("authorized_files") or planned_files
+                    )
                     if continuation is not None:
                         repair_evidence = repair_attempt_evidence(
                             summary,
-                            planned_paths=planned_files,
+                            planned_paths=authorized_files,
                         )
                         summary["repair_execution_evidence"] = {
                             "continuation": repair_evidence[0],
@@ -670,9 +668,7 @@ def run_live(arguments: argparse.Namespace, repo_root: Path) -> dict[str, Any]:
                         str(path)
                         for attempt in attempts
                         for path in (
-                            (attempt.get("writes") or {}).get(
-                                "host_scaffold_paths"
-                            )
+                            (attempt.get("writes") or {}).get("host_scaffold_paths")
                             or []
                         )
                     }
@@ -681,6 +677,8 @@ def run_live(arguments: argparse.Namespace, repo_root: Path) -> dict[str, Any]:
                         required_files=scenario.required_files,
                         protected_files=scenario.protected_files,
                         planned_files=planned_files,
+                        scope_mode=scope_mode,
+                        contract_observed=bool(scope_contract.get("present")),
                         host_scaffold_paths=host_scaffold_paths,
                         allow_host_scaffold=scenario.allow_host_scaffold,
                         baseline_protected_hashes=baseline_protected_hashes,

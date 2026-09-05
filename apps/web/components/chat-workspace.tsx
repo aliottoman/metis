@@ -330,6 +330,14 @@ export function ChatWorkspace() {
   );
 
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const closeVoice = useCallback(() => setVoiceOpen(false), []);
+  const openVoice = useCallback(() => {
+    // Dictation and a live ElevenLabs room must never compete for the same
+    // microphone. Discard any clip or in-flight transcription before the
+    // voice surface can request audio.
+    dictation.cancel();
+    setVoiceOpen(true);
+  }, [dictation.cancel]);
   // Voice refuses to build, approve, or delete, and hands the request here
   // instead. The draft is what was actually said, verbatim — a paraphrase
   // would make the user re-read their own sentence to check it survived.
@@ -834,7 +842,11 @@ export function ChatWorkspace() {
   const BOTTOM_THRESHOLD = 96;
 
   const jumpToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
-    messageEndRef.current?.scrollIntoView({ behavior, block: "end" });
+    const motionSafeBehavior = behavior === "smooth"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : behavior;
+    messageEndRef.current?.scrollIntoView({ behavior: motionSafeBehavior, block: "end" });
     setAtBottom(true);
   }, []);
 
@@ -861,7 +873,8 @@ export function ChatWorkspace() {
     if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
     scrollFrameRef.current = requestAnimationFrame(() => {
       const streaming = messages.some((message) => message.streaming);
-      messageEndRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth", block: "end" });
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      messageEndRef.current?.scrollIntoView({ behavior: streaming || reducedMotion ? "auto" : "smooth", block: "end" });
       scrollFrameRef.current = null;
     });
     return () => {
@@ -1869,7 +1882,7 @@ export function ChatWorkspace() {
           {dragActive ? <div className="dropOverlay"><span>＋</span><strong>Drop files or a folder</strong><small>Files become context · a folder can be indexed, opened as a project, or attached</small></div> : null}
           {voiceOpen ? (
             <div className="voiceCanvas">
-              <VoicePanel onHandoff={handleVoiceHandoff} />
+              <VoicePanel onHandoff={handleVoiceHandoff} onExitToChat={closeVoice} />
             </div>
           ) : !hasMessages ? (
             <div className="welcomeState">
@@ -2240,14 +2253,14 @@ export function ChatWorkspace() {
                 {/* Dictation. The ring is a live level meter, analysed in the
                     page and never sent anywhere — it is there so you can see
                     it is hearing you before committing to a sentence. */}
-                {dictation.state !== "unsupported" ? (
+                {!voiceOpen && dictation.state !== "unsupported" ? (
                   <button
                     className={`micButton state-${dictation.state}`}
                     type="button"
                     onClick={dictation.toggle}
                     disabled={sending || dictation.state === "transcribing"}
                     aria-pressed={dictation.state === "recording"}
-                    aria-label={dictation.state === "recording" ? "Stop recording" : "Dictate a message"}
+                    aria-label={dictation.state === "recording" ? "Stop and transcribe recording" : "Dictate a message"}
                     title={dictation.state === "recording"
                       ? "Stop and transcribe"
                       : `Dictate with ${dictation.provider === "elevenlabs" ? "ElevenLabs Scribe" : "Cohere Transcribe"}`}
@@ -2258,14 +2271,19 @@ export function ChatWorkspace() {
                       <path d="M8 2.4a1.7 1.7 0 0 1 1.7 1.7v3.6a1.7 1.7 0 1 1-3.4 0V4.1A1.7 1.7 0 0 1 8 2.4Z" />
                       <path d="M4.2 7.3a3.8 3.8 0 0 0 7.6 0M8 11.1v2.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
                     </svg>
-                    <span>{dictation.state === "recording" ? "Stop" : dictation.state === "transcribing" ? "Writing…" : "Dictate"}</span>
+                    <span>{dictation.state === "recording" ? "Transcribe" : dictation.state === "transcribing" ? "Writing…" : "Dictate"}</span>
+                  </button>
+                ) : null}
+                {!voiceOpen && (dictation.state === "recording" || dictation.state === "transcribing") ? (
+                  <button className="dictationCancel" type="button" onClick={dictation.cancel}>
+                    Discard
                   </button>
                 ) : null}
                 <div className="conversationModeSwitch" role="group" aria-label="Conversation mode">
                   <button
                     type="button"
                     className={!voiceOpen ? "selected" : ""}
-                    onClick={() => setVoiceOpen(false)}
+                    onClick={closeVoice}
                     aria-pressed={!voiceOpen}
                   >
                     <span aria-hidden="true">⌨</span> Chat
@@ -2273,7 +2291,7 @@ export function ChatWorkspace() {
                   <button
                     type="button"
                     className={voiceOpen ? "selected" : ""}
-                    onClick={() => setVoiceOpen(true)}
+                    onClick={openVoice}
                     aria-pressed={voiceOpen}
                   >
                     <span className="modeVoiceDot" aria-hidden="true" /> Voice

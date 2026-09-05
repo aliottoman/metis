@@ -7,6 +7,8 @@ import "./globals.css";
 // Loaded after globals so it wins on equal specificity. Remove this one
 // import to drop the whole treatment.
 import "./matured.css";
+import "./ui-revision.css";
+import "./elevenlabs-studio.css";
 
 export const metadata: Metadata = {
   applicationName: PRODUCT_NAME,

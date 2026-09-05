@@ -917,6 +917,47 @@ def test_pending_overlay_guard_requires_exact_scope_and_protected_integrity(
     assert unsafe["source_protected_hashes_intact"] is False
 
 
+def test_pending_overlay_guard_uses_the_observed_diff_for_a_direct_contract(
+    tmp_path: Path,
+) -> None:
+    required = ("app/static/index.html", "README.md")
+    protected = ("app/api.py",)
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/api.py").write_text("protected\n", encoding="utf-8")
+    baseline = project_file_hashes(tmp_path, protected)
+    staged = {
+        "app/static/index.html": {"content": "<main>new UI</main>\n"},
+        "README.md": {"content": "new docs\n"},
+    }
+
+    clean = validate_pending_overlay(
+        staged,
+        required_files=required,
+        protected_files=protected,
+        planned_files=(),
+        scope_mode="direct_contract",
+        contract_observed=True,
+        baseline_protected_hashes=baseline,
+        current_protected_hashes=project_file_hashes(tmp_path, protected),
+    )
+
+    assert clean["valid"] is True
+    assert clean["exact_planned_scope"] is False
+    assert clean["exact_requested_scope"] is True
+    assert clean["scope_mode"] == "direct_contract"
+
+    missing_contract = validate_pending_overlay(
+        staged,
+        required_files=required,
+        protected_files=protected,
+        planned_files=(),
+        scope_mode="direct_contract",
+        contract_observed=False,
+    )
+    assert missing_contract["valid"] is False
+    assert "direct-build contract was not observed" in missing_contract["reason"]
+
+
 def test_acceptance_overlay_and_repair_prompt_are_exact_bounded_and_non_mutating() -> (
     None
 ):

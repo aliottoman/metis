@@ -242,6 +242,7 @@ class AppRuntime:
             self.blobs,
             model=self.model,
             customers=self.customers,
+            preference=self.model_preference,
         )
         self.voice = VoiceSessionService(
             self.settings,
@@ -278,6 +279,21 @@ class AppRuntime:
         self.spawn(self._refresh_notion(), name="notion-refresh")
         self.spawn(self._retry_coding_cleanup(), name="coding-artifact-cleanup")
         self.spawn(self._sweep_voice_leases(), name="voice-lease-sweep")
+        self.spawn(self._resume_meeting_ingestion(), name="meeting-ingestion-recovery")
+
+    async def _resume_meeting_ingestion(self) -> None:
+        """Continue recordings interrupted by a process restart.
+
+        The stage is committed before each paid step, so replaying `ingest`
+        resumes precisely there. The service's per-meeting lock also absorbs a
+        simultaneous Retry or a still-finishing upload task.
+        """
+        if self.meetings is None:
+            return
+        working = {"uploaded", "isolating", "transcribing", "analyzing"}
+        for meeting in await self.database.list_meetings(limit=200):
+            if meeting.get("stage") in working:
+                await self.meetings.ingest(str(meeting["id"]))
 
     async def _probe_coding_engine(self) -> None:
         """Validate the local child before it receives any project authority."""

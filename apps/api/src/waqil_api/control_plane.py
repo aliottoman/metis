@@ -4484,13 +4484,17 @@ class ControlPlane:
             state["conversation_id"],
             "project.direct_contract",
             {
+                "contract_version": 1,
+                "mode": "direct_contract",
                 "writable_roots": list(contract.writable_roots),
                 "protected_files": list(contract.protected_files),
                 "task_protected": list(contract.task_protected),
                 "project_protected": list(contract.project_protected),
                 "unresolved": list(resolution.unmatched + resolution.ambiguous),
                 "max_iterations": contract.max_iterations,
+                "max_rounds": contract.max_rounds,
                 "check_budget": contract.check_budget,
+                "approval_required": contract.approval_required,
             },
         )
         if resolution.needs_user:

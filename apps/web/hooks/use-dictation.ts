@@ -38,6 +38,10 @@ export function useDictation(onText: (text: string) => void) {
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const frameRef = useRef<number | null>(null);
+  const discardRef = useRef(false);
+  const transcriptionAbortRef = useRef<AbortController | null>(null);
+  const operationRef = useRef(0);
+  const mountedRef = useRef(true);
   const onTextRef = useRef(onText);
   onTextRef.current = onText;
 
@@ -69,10 +73,21 @@ export function useDictation(onText: (text: string) => void) {
     streamRef.current = null;
     void audioContextRef.current?.close().catch(() => undefined);
     audioContextRef.current = null;
-    setLevel(0);
+    if (mountedRef.current) setLevel(0);
   }, []);
 
-  useEffect(() => teardown, [teardown]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      operationRef.current += 1;
+      discardRef.current = true;
+      transcriptionAbortRef.current?.abort();
+      transcriptionAbortRef.current = null;
+      if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+      teardown();
+    };
+  }, [teardown]);
 
   const stop = useCallback(() => {
     recorderRef.current?.state === "recording" && recorderRef.current.stop();
@@ -80,6 +95,8 @@ export function useDictation(onText: (text: string) => void) {
 
   const start = useCallback(async () => {
     if (state === "recording" || state === "transcribing" || state === "unsupported") return;
+    const operation = ++operationRef.current;
+    discardRef.current = false;
     setError(null);
     let stream: MediaStream;
     try {
@@ -87,6 +104,10 @@ export function useDictation(onText: (text: string) => void) {
     } catch {
       // Denial and absence are the same to us, and both are the user's to fix.
       setError("Microphone access was declined. Allow it in your browser settings to dictate.");
+      return;
+    }
+    if (!mountedRef.current || operationRef.current !== operation) {
+      stream.getTracks().forEach((track) => track.stop());
       return;
     }
     streamRef.current = stream;
@@ -128,6 +149,15 @@ export function useDictation(onText: (text: string) => void) {
       const type = recorder.mimeType || "audio/webm";
       const clip = new Blob(chunksRef.current, { type });
       chunksRef.current = [];
+      recorderRef.current = null;
+      if (
+        discardRef.current
+        || !mountedRef.current
+        || operationRef.current !== operation
+      ) {
+        if (mountedRef.current) setState("idle");
+        return;
+      }
       if (clip.size < 1024) {
         // A tap rather than a hold. Nothing was said, so nothing is sent.
         setState("idle");
@@ -135,25 +165,64 @@ export function useDictation(onText: (text: string) => void) {
       }
       setState("transcribing");
       const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
-      void transcribeAudio(clip, `dictation.${extension}`)
-        .then((text) => text.trim() && onTextRef.current(text.trim()))
+      const controller = new AbortController();
+      transcriptionAbortRef.current = controller;
+      void transcribeAudio(clip, `dictation.${extension}`, controller.signal)
+        .then((text) => {
+          if (
+            mountedRef.current
+            && operationRef.current === operation
+            && text.trim()
+          ) {
+            onTextRef.current(text.trim());
+          }
+        })
         .catch((transcribeError: unknown) => {
+          if (transcribeError instanceof DOMException && transcribeError.name === "AbortError") return;
+          if (!mountedRef.current || operationRef.current !== operation) return;
           setError(
             transcribeError instanceof Error
               ? transcribeError.message
               : "That recording could not be transcribed.",
           );
         })
-        .finally(() => setState("idle"));
+        .finally(() => {
+          if (transcriptionAbortRef.current === controller) {
+            transcriptionAbortRef.current = null;
+          }
+          if (mountedRef.current && operationRef.current === operation) setState("idle");
+        });
     };
     recorder.start();
     setState("recording");
   }, [state, teardown]);
+
+  const cancel = useCallback(() => {
+    operationRef.current += 1;
+    discardRef.current = true;
+    transcriptionAbortRef.current?.abort();
+    transcriptionAbortRef.current = null;
+    chunksRef.current = [];
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    // `MediaRecorder.stop()` dispatches `onstop` asynchronously. Release the
+    // actual microphone tracks now so a caller can safely hand audio ownership
+    // to live Voice immediately after cancel returns.
+    teardown();
+    if (mountedRef.current) setState("idle");
+  }, [teardown]);
 
   const toggle = useCallback(() => {
     if (state === "recording") stop();
     else void start();
   }, [start, state, stop]);
 
-  return { state, level, error, provider, toggle, dismissError: () => setError(null) };
+  return {
+    state,
+    level,
+    error,
+    provider,
+    toggle,
+    cancel,
+    dismissError: () => setError(null),
+  };
 }

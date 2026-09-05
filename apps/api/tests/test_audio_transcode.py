@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import math
+import shutil
 import struct
 import subprocess
 import wave
@@ -46,12 +47,30 @@ def _as_m4a(wav: bytes, tmp_path: Path) -> bytes:
     source = tmp_path / "in.wav"
     target = tmp_path / "out.m4a"
     source.write_bytes(wav)
-    subprocess.run(
-        ["/usr/bin/afconvert", "-f", "m4af", "-d", "aac", str(source), str(target)],
-        check=True,
-        capture_output=True,
-    )
-    return target.read_bytes()
+    commands = [
+        ["/usr/bin/afconvert", "-f", "m4af", "-d", "aac", str(source), str(target)]
+    ]
+    if ffmpeg := shutil.which("ffmpeg"):
+        commands.append(
+            [
+                ffmpeg,
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-c:a",
+                "aac",
+                str(target),
+            ]
+        )
+    for command in commands:
+        completed = subprocess.run(command, check=False, capture_output=True)
+        if completed.returncode == 0 and target.is_file() and target.stat().st_size:
+            return target.read_bytes()
+    pytest.skip("this machine has no working real AAC encoder for the fixture")
 
 
 def test_the_decision_matches_coheres_accepted_list() -> None:

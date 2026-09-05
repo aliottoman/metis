@@ -294,15 +294,24 @@ export async function rewindConversation(
 }
 
 /**
- * One dictated clip turned into composer text, via Cohere Transcribe.
+ * One dictated clip turned into composer text, via the configured provider.
  *
- * Nothing is stored on either side: this is not an upload, and what comes
- * back is a draft the user still edits before sending.
+ * This is not added to the user's records; what comes back is a draft the
+ * user still edits before sending. An AbortSignal lets Discard stop the
+ * browser request while transcription is in flight.
  */
-export async function transcribeAudio(audio: Blob, filename = "dictation.webm"): Promise<string> {
+export async function transcribeAudio(
+  audio: Blob,
+  filename = "dictation.webm",
+  signal?: AbortSignal,
+): Promise<string> {
   const body = new FormData();
   body.append("file", audio, filename);
-  const response = await request<unknown>(`${API_PREFIX}/transcribe`, { method: "POST", body });
+  const response = await request<unknown>(`${API_PREFIX}/transcribe`, {
+    method: "POST",
+    body,
+    signal,
+  });
   const payload = unwrap(response) as { text?: unknown };
   return typeof payload.text === "string" ? payload.text : "";
 }
@@ -1335,6 +1344,20 @@ export async function renewVoiceSession(sessionId: string): Promise<VoiceSession
   );
 }
 
+/** Attach the ElevenLabs conversation to the exact loopback lease that opened it. */
+export async function bindVoiceSession(
+  sessionId: string,
+  providerConversationId: string,
+): Promise<VoiceSession> {
+  return request<VoiceSession>(
+    `${API_PREFIX}/voice/sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ provider_conversation_id: providerConversationId }),
+    },
+  );
+}
+
 export async function endVoiceSession(sessionId: string): Promise<VoiceSession> {
   return request<VoiceSession>(
     `${API_PREFIX}/voice/sessions/${encodeURIComponent(sessionId)}`,
@@ -1467,6 +1490,20 @@ export async function listMeetings(): Promise<Meeting[]> {
 
 export async function getMeeting(meetingId: string): Promise<MeetingDetail> {
   return request<MeetingDetail>(`${API_PREFIX}/meetings/${encodeURIComponent(meetingId)}`);
+}
+
+/** Rename the durable meeting record without touching its source filename. */
+export async function renameMeeting(meetingId: string, title: string): Promise<Meeting> {
+  return request<Meeting>(`${API_PREFIX}/meetings/${encodeURIComponent(meetingId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function deleteMeeting(meetingId: string): Promise<void> {
+  return request<void>(`${API_PREFIX}/meetings/${encodeURIComponent(meetingId)}`, {
+    method: "DELETE",
+  });
 }
 
 /** Resume the job from the stage that failed — never from the upload. */
@@ -2230,8 +2267,13 @@ export async function batchAttention(
 }
 
 /** The day's brief. Facts are counted server-side; only the prose is written. */
-export async function getMorningBrief(hours = 24): Promise<MorningBrief> {
-  return request<MorningBrief>(`${API_PREFIX}/attention/brief?hours=${hours}`);
+export async function getMorningBrief(
+  hours = 24,
+  refresh = false,
+): Promise<MorningBrief> {
+  return request<MorningBrief>(
+    `${API_PREFIX}/attention/brief?hours=${hours}${refresh ? "&refresh=true" : ""}`,
+  );
 }
 
 /** The same brief, read aloud.
@@ -2240,10 +2282,14 @@ export async function getMorningBrief(hours = 24): Promise<MorningBrief> {
  * rest of the session: replaying it is then a local decision, not a second
  * request. `request` is not reused because it parses JSON, and the error path
  * still has to — a failure here is a JSON detail, a success is an MP3. */
-export async function getMorningBriefAudio(hours = 24): Promise<Blob> {
+export async function getMorningBriefAudio(
+  hours = 24,
+  signal?: AbortSignal,
+): Promise<Blob> {
   const response = await fetch(apiUrl(`${API_PREFIX}/attention/brief/audio?hours=${hours}`), {
     headers: { accept: "audio/*" },
     cache: "no-store",
+    signal,
   });
   if (!response.ok) {
     const detail = await readError(response);

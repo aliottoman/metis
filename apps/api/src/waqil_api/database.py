@@ -1355,6 +1355,13 @@ ALTER TABLE interview_sessions ADD COLUMN delivery_json TEXT
     CHECK(delivery_json IS NULL OR json_valid(delivery_json));
 """
 
+SCHEMA_V32 = """
+-- The meeting readout is derived prose over the verbatim transcript. It is
+-- stored beside (never instead of) the evidence, so the library opens with a
+-- useful orientation while every claim remains checkable against its turns.
+ALTER TABLE meetings ADD COLUMN summary TEXT NOT NULL DEFAULT '';
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -1387,6 +1394,7 @@ MIGRATIONS: dict[int, str] = {
     29: SCHEMA_V29,
     30: SCHEMA_V30,
     31: SCHEMA_V31,
+    32: SCHEMA_V32,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -1846,7 +1854,7 @@ class Database:
         def operation() -> None:
             with self._transaction() as conn:
                 conn.execute(
-                    "UPDATE meetings SET transcript = ?, language = ?, "
+                    "UPDATE meetings SET transcript = ?, summary = '', language = ?, "
                     "provider_request_id = ?, duration_seconds = ?, updated_at = ? "
                     "WHERE id = ?",
                     (
@@ -1888,6 +1896,17 @@ class Database:
 
         await self._call(operation)
 
+    async def set_meeting_summary(self, meeting_id: str, summary: str) -> None:
+        """Store derived orientation without ever touching transcript evidence."""
+        def operation() -> None:
+            with self._transaction() as conn:
+                conn.execute(
+                    "UPDATE meetings SET summary = ?, updated_at = ? WHERE id = ?",
+                    (summary.strip()[:900], _now(), meeting_id),
+                )
+
+        await self._call(operation)
+
     async def store_meeting_proposals(
         self, meeting_id: str, proposals: list[dict[str, Any]]
     ) -> None:
@@ -1917,6 +1936,9 @@ class Database:
                     payload = _json(proposal.get("payload") or {})
                     if str(proposal["kind"]) + payload in decided:
                         continue
+                    proposal_status = str(proposal.get("status") or "proposed")
+                    if proposal_status not in ("proposed", "accepted", "rejected"):
+                        proposal_status = "proposed"
                     turn_id = None
                     if proposal.get("turn_ordinal") is not None:
                         row = conn.execute(
@@ -1930,17 +1952,19 @@ class Database:
                         (id, meeting_id, kind, payload_json, status, score,
                          evidence_turn_id, evidence_start, evidence_end,
                          created_at, decided_at)
-                        VALUES (?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, NULL)""",
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             _id("mprop"),
                             meeting_id,
                             str(proposal["kind"]),
                             payload,
+                            proposal_status,
                             proposal.get("score"),
                             turn_id,
                             proposal.get("start"),
                             proposal.get("end"),
                             timestamp,
+                            timestamp if proposal_status != "proposed" else None,
                         ),
                     )
 
@@ -1967,10 +1991,70 @@ class Database:
 
         def operation() -> dict[str, Any] | None:
             with self._transaction() as conn:
-                cursor = conn.execute(
-                    "UPDATE meeting_proposals SET status = ?, decided_at = ? "
+                row = conn.execute(
+                    "SELECT * FROM meeting_proposals "
                     "WHERE id = ? AND meeting_id = ? AND status = 'proposed'",
-                    (status, _now(), proposal_id, meeting_id),
+                    (proposal_id, meeting_id),
+                ).fetchone()
+                if row is None:
+                    return None
+
+                proposal = dict(row)
+                payload = json.loads(proposal.get("payload_json") or "{}")
+                timestamp = _now()
+
+                # A kept meeting action must become a real, traceable customer
+                # action in the same transaction as the decision. Otherwise the
+                # proposal vanishes from Review without creating useful work.
+                if status == "accepted" and proposal["kind"] == "action":
+                    meeting = conn.execute(
+                        "SELECT account_id FROM meetings WHERE id = ?", (meeting_id,)
+                    ).fetchone()
+                    account_id = meeting["account_id"] if meeting else None
+                    if not account_id:
+                        raise ValueError(
+                            "link this meeting to a customer before keeping its actions"
+                        )
+                    description = str(payload.get("description") or "").strip()
+                    if not description:
+                        raise ValueError("that action has no description")
+                    action_id = _id("cact")
+                    evidence = {
+                        "source": "meeting",
+                        "meeting_id": meeting_id,
+                        "proposal_id": proposal_id,
+                        "turn_id": proposal.get("turn_id"),
+                        "start": proposal.get("start"),
+                        "end": proposal.get("end"),
+                    }
+                    conn.execute(
+                        """INSERT INTO customer_actions
+                        (id, account_id, interaction_id, description, owner, due_at,
+                         status, evidence_json, created_at, updated_at)
+                        VALUES (?, ?, NULL, ?, ?, ?, 'open', ?, ?, ?)""",
+                        (
+                            action_id,
+                            account_id,
+                            description,
+                            str(payload.get("owner") or ""),
+                            payload.get("due_at"),
+                            _json(evidence),
+                            timestamp,
+                            timestamp,
+                        ),
+                    )
+                    conn.execute(
+                        "UPDATE customer_accounts SET updated_at = ? WHERE id = ?",
+                        (timestamp, account_id),
+                    )
+                    payload.update(
+                        {"record_id": action_id, "destination": "customer_action"}
+                    )
+
+                cursor = conn.execute(
+                    "UPDATE meeting_proposals SET status = ?, payload_json = ?, decided_at = ? "
+                    "WHERE id = ? AND meeting_id = ? AND status = 'proposed'",
+                    (status, _json(payload), timestamp, proposal_id, meeting_id),
                 )
                 if cursor.rowcount == 0:
                     return None
@@ -2077,6 +2161,28 @@ class Database:
 
         return await self._call(operation)
 
+    async def rename_meeting(
+        self, meeting_id: str, title: str
+    ) -> dict[str, Any] | None:
+        """Rename the library record while preserving the evidence filename."""
+        timestamp = _now()
+
+        def operation() -> dict[str, Any] | None:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    "UPDATE meetings SET title = ?, updated_at = ? WHERE id = ?",
+                    (title.strip()[:200], timestamp, meeting_id),
+                )
+                if cursor.rowcount == 0:
+                    return None
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM meetings WHERE id = ?", (meeting_id,)
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
     async def list_meetings(self, limit: int = 50) -> list[dict[str, Any]]:
         def operation() -> list[dict[str, Any]]:
             with self._lock:
@@ -2105,6 +2211,15 @@ class Database:
                     .fetchall()
                 )
             return [dict(row) for row in rows]
+
+        return await self._call(operation)
+
+    async def delete_meeting(self, meeting_id: str) -> bool:
+        """Remove the library record; shared content-addressed audio stays safe."""
+        def operation() -> bool:
+            with self._transaction() as conn:
+                cursor = conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
+                return cursor.rowcount > 0
 
         return await self._call(operation)
 

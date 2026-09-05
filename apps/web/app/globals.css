@@ -5601,6 +5601,7 @@ to { background-position: -120% 0; }
 .assetDrawer,
 .assetDrawerClose {
     scroll-behavior: auto;
+    transition-delay: 0ms !important;
     transition-duration: 0.01ms !important;
   }
 .assetCard > button:hover,

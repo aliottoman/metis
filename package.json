@@ -10,6 +10,8 @@
     "build:web": "pnpm --dir apps/web build",
     "lint:web": "pnpm --dir apps/web lint",
     "test:web": "pnpm --dir apps/web test",
-    "test:cline-sidecar": "pnpm --dir apps/cline-sidecar test"
+    "test:cline-sidecar": "pnpm --dir apps/cline-sidecar test",
+    "build:cursor-shadow": "pnpm --dir apps/cursor-shadow build",
+    "test:cursor-shadow": "pnpm --dir apps/cursor-shadow test"
   }
 }

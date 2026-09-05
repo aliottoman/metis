@@ -1,5 +1,6 @@
 packages:
   - apps/cline-sidecar
+  - apps/cursor-shadow
   - apps/web
 
 confirmModulesPurge: false

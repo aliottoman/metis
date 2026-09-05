@@ -41,6 +41,8 @@ PROJECT_FILES = (
     "pnpm-workspace.yaml",
     "apps/cline-sidecar/package.json",
     "apps/cline-sidecar/tsconfig.json",
+    "apps/cursor-shadow/package.json",
+    "apps/cursor-shadow/tsconfig.json",
     "apps/web/package.json",
 )
 FRONTEND_PROJECT_FILES = (
@@ -49,10 +51,13 @@ FRONTEND_PROJECT_FILES = (
     "pnpm-workspace.yaml",
     "apps/cline-sidecar/package.json",
     "apps/cline-sidecar/tsconfig.json",
+    "apps/cursor-shadow/package.json",
+    "apps/cursor-shadow/tsconfig.json",
     "apps/web/package.json",
 )
 SIDECAR_PACKAGE_FILE = "apps/cline-sidecar/package.json"
 SIDECAR_ENTRYPOINT_PREFIX = "apps/cline-sidecar/"
+CURSOR_SHADOW_ENTRYPOINT = "apps/cursor-shadow/dist/src/index.js"
 SANDBOX_PREREQUISITE_FILES = (
     "infra/sandbox/Containerfile",
     "infra/sandbox/containerignore",
@@ -192,7 +197,9 @@ def _version(executable: Path, *arguments: str, cwd: Path) -> str:
     return output[0].strip()
 
 
-def _copy_project_metadata(project_root: Path, staging: Path) -> dict[str, dict[str, Any]]:
+def _copy_project_metadata(
+    project_root: Path, staging: Path
+) -> dict[str, dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     for relative_name in PROJECT_FILES:
         source = project_root / relative_name
@@ -212,7 +219,10 @@ def _sidecar_contract_from_package(package: Any) -> dict[str, Any]:
 
     if not isinstance(package, dict):
         raise BundleError("Cline sidecar package manifest is not a JSON object")
-    if package.get("name") != "@metis/cline-sidecar" or package.get("private") is not True:
+    if (
+        package.get("name") != "@metis/cline-sidecar"
+        or package.get("private") is not True
+    ):
         raise BundleError("Cline sidecar package identity/private flag is invalid")
     dependencies = package.get("dependencies")
     dev_dependencies = package.get("devDependencies")
@@ -230,7 +240,9 @@ def _sidecar_contract_from_package(package: Any) -> dict[str, Any]:
     typescript_version = dev_dependencies.get("typescript")
     exact_version = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
     if not isinstance(sdk_version, str) or exact_version.fullmatch(sdk_version) is None:
-        raise BundleError("@cline/sdk must use one exact version without a range or tag")
+        raise BundleError(
+            "@cline/sdk must use one exact version without a range or tag"
+        )
     if (
         not isinstance(typescript_version, str)
         or exact_version.fullmatch(typescript_version) is None
@@ -245,7 +257,9 @@ def _sidecar_contract_from_package(package: Any) -> dict[str, Any]:
         isinstance(value, str) and value.strip()
         for value in (build_script, test_script, entrypoint, node_engine)
     ):
-        raise BundleError("Cline sidecar build, test, binary, or Node contract is missing")
+        raise BundleError(
+            "Cline sidecar build, test, binary, or Node contract is missing"
+        )
     if re.fullmatch(r">=22(?:\.[0-9]+\.[0-9]+)?", str(node_engine)) is None:
         raise BundleError("Cline sidecar must require Node 22 or newer")
     normalized_entrypoint = str(entrypoint).removeprefix("./")
@@ -256,7 +270,9 @@ def _sidecar_contract_from_package(package: Any) -> dict[str, Any]:
     ):
         raise BundleError("Cline sidecar binary must point to a compiled dist file")
     if not isinstance(files, list) or "dist" not in files:
-        raise BundleError("Cline sidecar package does not publish its compiled dist tree")
+        raise BundleError(
+            "Cline sidecar package does not publish its compiled dist tree"
+        )
 
     return {
         "schema_version": 1,
@@ -280,7 +296,9 @@ def _sidecar_contract(project_root: Path) -> dict[str, Any]:
     try:
         package = json.loads(package_path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise BundleError("Cline sidecar package manifest is not valid UTF-8 JSON") from exc
+        raise BundleError(
+            "Cline sidecar package manifest is not valid UTF-8 JSON"
+        ) from exc
     return _sidecar_contract_from_package(package)
 
 
@@ -335,7 +353,9 @@ def _copy_sidecar_build_sources(source_root: Path, destination_root: Path) -> No
             )
         for source in sorted(source_directory.rglob("*.ts")):
             if source.is_symlink() or not source.is_file():
-                raise BundleError(f"Cline sidecar source is unavailable or unsafe: {source}")
+                raise BundleError(
+                    f"Cline sidecar source is unavailable or unsafe: {source}"
+                )
             relative = source.relative_to(source_root)
             _copy_regular(source, destination_root / relative)
             copied += 1
@@ -343,13 +363,52 @@ def _copy_sidecar_build_sources(source_root: Path, destination_root: Path) -> No
         raise BundleError("Cline sidecar source checkout is incomplete")
 
 
+def _copy_cursor_shadow_build_sources(
+    source_root: Path, destination_root: Path
+) -> None:
+    """Copy the reviewed Cursor shadow adapter inputs for offline compilation."""
+
+    copied = 0
+    for directory_name in ("src", "tests"):
+        source_directory = source_root / "apps" / "cursor-shadow" / directory_name
+        if source_directory.is_symlink() or not source_directory.is_dir():
+            raise BundleError(
+                "Cursor shadow source directory is unavailable or unsafe: "
+                f"{directory_name}"
+            )
+        for source in sorted(source_directory.rglob("*.ts")):
+            if source.is_symlink() or not source.is_file():
+                raise BundleError(
+                    f"Cursor shadow source is unavailable or unsafe: {source}"
+                )
+            relative = source.relative_to(source_root)
+            _copy_regular(source, destination_root / relative)
+            copied += 1
+    if copied < 2:
+        raise BundleError("Cursor shadow source checkout is incomplete")
+
+
 def _require_compiled_sidecar(checkout: Path, contract: dict[str, Any]) -> None:
     entrypoint_name = contract.get("compiled_entrypoint")
     if not isinstance(entrypoint_name, str):
         raise BundleError("Cline sidecar compiled entrypoint contract is invalid")
     entrypoint = checkout / entrypoint_name
-    if entrypoint.is_symlink() or not entrypoint.is_file() or entrypoint.stat().st_size == 0:
+    if (
+        entrypoint.is_symlink()
+        or not entrypoint.is_file()
+        or entrypoint.stat().st_size == 0
+    ):
         raise BundleError("Cline sidecar build did not produce its declared entrypoint")
+
+
+def _require_compiled_cursor_shadow(checkout: Path) -> None:
+    entrypoint = checkout / CURSOR_SHADOW_ENTRYPOINT
+    if (
+        entrypoint.is_symlink()
+        or not entrypoint.is_file()
+        or entrypoint.stat().st_size == 0
+    ):
+        raise BundleError("Cursor shadow build did not produce its declared entrypoint")
 
 
 def _remove_pnpm_project_links(store: Path) -> None:
@@ -392,6 +451,7 @@ def _populate_frontend_store(
     checkout = temporary_root / "frontend-offline-check"
     _copy_frontend_checkout(project_root, checkout)
     _copy_sidecar_build_sources(project_root, checkout)
+    _copy_cursor_shadow_build_sources(project_root, checkout)
     environment = os.environ.copy()
     environment.update(
         {
@@ -423,6 +483,17 @@ def _populate_frontend_store(
         env=environment,
     )
     _require_compiled_sidecar(checkout, sidecar_contract)
+    _run(
+        [
+            str(pnpm_binary),
+            "--dir",
+            str(checkout / "apps" / "cursor-shadow"),
+            "build",
+        ],
+        cwd=checkout,
+        env=environment,
+    )
+    _require_compiled_cursor_shadow(checkout)
     _remove_pnpm_project_links(store)
     store_files = [path for path in store.rglob("*") if path.is_file()]
     if len(store_files) < 2:
@@ -594,7 +665,10 @@ def _write_archive(staging: Path, output: Path) -> None:
                 if is_link:
                     archive.writestr(info, os.readlink(source).encode("utf-8"))
                 else:
-                    with source.open("rb") as source_handle, archive.open(info, "w") as target:
+                    with (
+                        source.open("rb") as source_handle,
+                        archive.open(info, "w") as target,
+                    ):
                         shutil.copyfileobj(source_handle, target, length=1024 * 1024)
         partial.replace(output)
     finally:
@@ -725,9 +799,7 @@ def _member_kind_and_mode(info: zipfile.ZipInfo) -> tuple[str, int]:
     return kind, mode
 
 
-def _validate_archived_link(
-    name: str, target: str, member_names: set[str]
-) -> None:
+def _validate_archived_link(name: str, target: str, member_names: set[str]) -> None:
     if not target or posixpath.isabs(target) or "\\" in target:
         raise BundleError(f"unsafe archived symlink: {name} -> {target!r}")
     resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), target))
@@ -748,7 +820,10 @@ def _read_manifest(archive: zipfile.ZipFile) -> dict[str, Any]:
         raise BundleError(f"bundle has no {MANIFEST_NAME}") from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise BundleError("bundle manifest is not valid UTF-8 JSON") from exc
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != BUNDLE_SCHEMA_VERSION:
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema_version") != BUNDLE_SCHEMA_VERSION
+    ):
         raise BundleError("unsupported offline bundle schema")
     if manifest.get("bundle_kind") != "metis-platform-specific-offline-environment":
         raise BundleError("offline bundle kind is invalid")
@@ -763,7 +838,9 @@ def _verify_sidecar_contract(
     member = f"project/{SIDECAR_PACKAGE_FILE}"
     records = manifest.get("members", {})
     if member not in records:
-        raise BundleError("offline bundle is missing the Cline sidecar package manifest")
+        raise BundleError(
+            "offline bundle is missing the Cline sidecar package manifest"
+        )
     try:
         package = json.loads(archive.read(member))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -773,7 +850,9 @@ def _verify_sidecar_contract(
     expected = _sidecar_contract_from_package(package)
     recorded = manifest.get("coding_sidecar")
     if recorded != expected:
-        raise BundleError("Cline sidecar build contract does not match its package manifest")
+        raise BundleError(
+            "Cline sidecar build contract does not match its package manifest"
+        )
 
 
 def _verify_project_files(manifest: dict[str, Any], project_root: Path) -> None:
@@ -793,10 +872,14 @@ def _verify_project_files(manifest: dict[str, Any], project_root: Path) -> None:
             or archived_record.get("sha256") != record.get("sha256")
             or archived_record.get("size") != record.get("size")
         ):
-            raise BundleError(f"project-file member record is inconsistent: {relative_name}")
+            raise BundleError(
+                f"project-file member record is inconsistent: {relative_name}"
+            )
         source = project_root / relative_name
         if source.is_symlink() or not source.is_file():
-            raise BundleError(f"checkout is missing recorded project file: {relative_name}")
+            raise BundleError(
+                f"checkout is missing recorded project file: {relative_name}"
+            )
         if _sha256(source) != record.get("sha256"):
             raise BundleError(
                 f"checkout does not match the offline bundle: {relative_name}"
@@ -858,9 +941,8 @@ def verify_bundle(
             raise BundleError("offline bundle has no populated pnpm store")
         if "tooling/uv" not in records or "podman/prerequisites.json" not in records:
             raise BundleError("offline bundle is missing required tooling metadata")
-        if (
-            records["tooling/uv"].get("type") != "file"
-            or not (int(records["tooling/uv"].get("mode", 0)) & stat.S_IXUSR)
+        if records["tooling/uv"].get("type") != "file" or not (
+            int(records["tooling/uv"].get("mode", 0)) & stat.S_IXUSR
         ):
             raise BundleError("bundled uv executable is not a regular executable")
         _verify_sidecar_contract(archive, manifest)
@@ -869,9 +951,7 @@ def verify_bundle(
         if not isinstance(sandbox, dict):
             raise BundleError("offline bundle has no sandbox record")
         try:
-            prerequisite_payload = json.loads(
-                archive.read("podman/prerequisites.json")
-            )
+            prerequisite_payload = json.loads(archive.read("podman/prerequisites.json"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise BundleError("sandbox prerequisites are not valid UTF-8 JSON") from exc
         if prerequisite_payload != sandbox:
@@ -888,7 +968,9 @@ def verify_bundle(
             ):
                 raise BundleError("sandbox image is not digest-pinned")
         elif archive_member is not None:
-            raise BundleError("prerequisite-only bundle declares an unexpected image archive")
+            raise BundleError(
+                "prerequisite-only bundle declares an unexpected image archive"
+            )
         if require_image and not bundled:
             raise BundleError("offline bundle does not contain the sandbox OCI image")
 
@@ -909,7 +991,9 @@ def extract_bundle(
     )
     destination = destination.resolve()
     if destination.exists():
-        raise BundleError(f"refusing to overwrite extraction destination: {destination}")
+        raise BundleError(
+            f"refusing to overwrite extraction destination: {destination}"
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.partial-{os.getpid()}")
     if temporary.exists():
@@ -967,13 +1051,17 @@ def _compatibility_check(manifest: dict[str, Any], project_root: Path) -> None:
         raise BundleError("pnpm version does not match the bundle creator")
 
 
-def smoke_install(path: Path, project_root: Path, *, require_image: bool) -> dict[str, Any]:
+def smoke_install(
+    path: Path, project_root: Path, *, require_image: bool
+) -> dict[str, Any]:
     project_root = project_root.resolve()
     manifest = verify_bundle(
         path, project_root=project_root, require_image=require_image
     )
     _compatibility_check(manifest, project_root)
-    with tempfile.TemporaryDirectory(prefix="metis-offline-install-check-") as temporary_name:
+    with tempfile.TemporaryDirectory(
+        prefix="metis-offline-install-check-"
+    ) as temporary_name:
         temporary = Path(temporary_name)
         extracted = temporary / "bundle"
         extract_bundle(
@@ -1010,6 +1098,7 @@ def smoke_install(path: Path, project_root: Path, *, require_image: bool) -> dic
         frontend_checkout = temporary / "frontend-checkout"
         _copy_frontend_checkout(extracted / "project", frontend_checkout)
         _copy_sidecar_build_sources(project_root, frontend_checkout)
+        _copy_cursor_shadow_build_sources(project_root, frontend_checkout)
         pnpm = _resolve_executable("pnpm")
         frontend_environment = os.environ.copy()
         frontend_environment.update(
@@ -1045,6 +1134,17 @@ def smoke_install(path: Path, project_root: Path, *, require_image: bool) -> dic
         if not isinstance(sidecar, dict):
             raise BundleError("offline bundle has no Cline sidecar build contract")
         _require_compiled_sidecar(frontend_checkout, sidecar)
+        _run(
+            [
+                str(pnpm),
+                "--dir",
+                str(frontend_checkout / "apps" / "cursor-shadow"),
+                "build",
+            ],
+            cwd=frontend_checkout,
+            env=frontend_environment,
+        )
+        _require_compiled_cursor_shadow(frontend_checkout)
     return manifest
 
 
@@ -1055,9 +1155,7 @@ def _summary(path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
         "path": str(path.resolve()),
         "members": len(manifest["members"]),
         "cline_sdk": sidecar["sdk_version"],
-        "cline_sidecar_offline_compile_verified": sidecar[
-            "offline_compile_verified"
-        ],
+        "cline_sidecar_offline_compile_verified": sidecar["offline_compile_verified"],
         "sandbox_image_bundled": sandbox["bundled"],
         "sandbox_image": sandbox.get("resolved_image") or sandbox["requested_image"],
         "compatibility": manifest["compatibility"],
@@ -1068,29 +1166,43 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    create_parser = subparsers.add_parser("create", help="create a verified offline bundle")
+    create_parser = subparsers.add_parser(
+        "create", help="create a verified offline bundle"
+    )
     create_parser.add_argument("--output", type=Path, required=True)
-    create_parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[1])
+    create_parser.add_argument(
+        "--project-root", type=Path, default=Path(__file__).resolve().parents[1]
+    )
     create_parser.add_argument("--uv-bin", default=".venv/bin/uv")
     create_parser.add_argument("--pnpm-bin", default="pnpm")
-    create_parser.add_argument("--image", default=os.environ.get("WAQIL_REFERENCE_RUNNER_IMAGE", DEFAULT_IMAGE))
+    create_parser.add_argument(
+        "--image", default=os.environ.get("WAQIL_REFERENCE_RUNNER_IMAGE", DEFAULT_IMAGE)
+    )
     create_parser.add_argument(
         "--without-image",
         action="store_true",
         help="record exact sandbox prerequisites but do not include an OCI image archive",
     )
 
-    verify_parser = subparsers.add_parser("verify", help="verify hashes, locks, and compatibility metadata")
+    verify_parser = subparsers.add_parser(
+        "verify", help="verify hashes, locks, and compatibility metadata"
+    )
     verify_parser.add_argument("path", type=Path)
-    verify_parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[1])
+    verify_parser.add_argument(
+        "--project-root", type=Path, default=Path(__file__).resolve().parents[1]
+    )
     verify_parser.add_argument("--no-project-check", action="store_true")
     verify_parser.add_argument("--require-image", action="store_true")
     verify_parser.add_argument("--smoke-install", action="store_true")
 
-    extract_parser = subparsers.add_parser("extract", help="verify and safely extract a bundle")
+    extract_parser = subparsers.add_parser(
+        "extract", help="verify and safely extract a bundle"
+    )
     extract_parser.add_argument("path", type=Path)
     extract_parser.add_argument("--destination", type=Path, required=True)
-    extract_parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parents[1])
+    extract_parser.add_argument(
+        "--project-root", type=Path, default=Path(__file__).resolve().parents[1]
+    )
     extract_parser.add_argument("--no-project-check", action="store_true")
     extract_parser.add_argument("--require-image", action="store_true")
 
@@ -1107,7 +1219,9 @@ def main() -> int:
             )
             path = arguments.output
         elif arguments.command == "verify":
-            project_root = None if arguments.no_project_check else arguments.project_root
+            project_root = (
+                None if arguments.no_project_check else arguments.project_root
+            )
             if arguments.smoke_install:
                 if project_root is None:
                     raise BundleError("--smoke-install requires checkout verification")
@@ -1122,7 +1236,9 @@ def main() -> int:
                 )
             path = arguments.path
         else:
-            project_root = None if arguments.no_project_check else arguments.project_root
+            project_root = (
+                None if arguments.no_project_check else arguments.project_root
+            )
             manifest = extract_bundle(
                 arguments.path,
                 arguments.destination,
