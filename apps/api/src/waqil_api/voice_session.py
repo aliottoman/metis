@@ -36,7 +36,7 @@ from typing import Any, AsyncIterator
 from .config import Settings
 from .contracts import VoiceRenditionV1, VoiceSessionStartV1, VoiceSessionV1
 from .model_provider import ModelProviderError
-from .voice_graph import VoiceGraph, VoiceTurn
+from .voice_graph import OnSpoken, VoiceGraph, VoiceTurn
 from .voice_intents import classify_refusal
 
 logger = logging.getLogger("waqil.voice.session")
@@ -423,6 +423,7 @@ class VoiceSessionService:
         metis_session_id: str = "",
         transcript: str,
         history: list[str] | None = None,
+        on_spoken: OnSpoken | None = None,
     ) -> VoiceRenditionV1:
         """The ingress asking the trusted process a question.
 
@@ -431,6 +432,9 @@ class VoiceSessionService:
         single-user application, so this is a queue of at most a few tabs, and
         an utterance arriving for a session that does not exist is refused
         rather than answered on a guess.
+
+        `on_spoken` hears each sentence the moment it may be said, ahead of
+        the rendition this returns once the turn is complete.
         """
         session = self._bind(provider_conversation_id, metis_session_id)
 
@@ -449,6 +453,10 @@ class VoiceSessionService:
             session.last_activity_at = datetime.now(UTC)
             attempt = session.turn_attempts.get(fingerprint)
             if attempt is not None and attempt.rendition is not None:
+                # A retry still has to be heard: the provider lost the reply,
+                # so the cached words are said again without a second turn.
+                if on_spoken is not None:
+                    await on_spoken(attempt.rendition.spoken)
                 return attempt.rendition
 
             if attempt is None:
@@ -473,7 +481,8 @@ class VoiceSessionService:
                     run_id=attempt.run_id,
                     account_id=session.account_id,
                     history=tuple(history or session.history),
-                )
+                ),
+                on_spoken=on_spoken,
             )
             # Cache before the non-critical twin-write and live publication.
             # A retry after the provider received the answer must never run the
@@ -507,6 +516,39 @@ class VoiceSessionService:
                     },
                 )
             return rendition
+
+    async def turn_stream(self, **turn_arguments: Any) -> AsyncIterator[dict[str, Any]]:
+        """The turn as the ingress consumes it: one frame per spoken sentence.
+
+        Frames are `{"type": "spoken", "text": ...}` as each sentence clears
+        the gate, then `{"type": "done"}`; a failure becomes one
+        `{"type": "error", "detail": ...}` frame. The turn runs as its own
+        task so a slow model never blocks the frames already decided.
+        """
+        frames: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+        async def say(sentence: str) -> None:
+            await frames.put({"type": "spoken", "text": sentence})
+
+        async def run() -> None:
+            try:
+                await self.turn(**turn_arguments, on_spoken=say)
+                await frames.put({"type": "done"})
+            except VoiceSessionExpired as error:
+                await frames.put({"type": "error", "detail": str(error)})
+            except Exception as error:  # noqa: BLE001 - the caller hears one frame
+                logger.warning("voice turn failed: %s", str(error)[:200])
+                await frames.put({"type": "error", "detail": "the turn failed"})
+            finally:
+                await frames.put(None)
+
+        task = asyncio.create_task(run())
+        try:
+            while (frame := await frames.get()) is not None:
+                yield frame
+        finally:
+            if not task.done():
+                task.cancel()
 
     async def post_call(self, payload: dict[str, Any]) -> dict[str, Any]:
         """A verified provider webhook, stored as evidence and nothing more.

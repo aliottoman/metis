@@ -1457,3 +1457,74 @@ export interface AnswerEntity {
   entity: string;
   atoms: number;
 }
+
+// -- the agent factory ------------------------------------------------------
+
+export type AgentKnowledgeKind = "url" | "text";
+
+export interface AgentKnowledge {
+  kind: AgentKnowledgeKind;
+  name: string;
+  url: string;
+  text: string;
+}
+
+/** One simulated conversation and what counts as passing it. */
+export interface AgentTest {
+  name: string;
+  scenario: string;
+  success_conditions: string[];
+  max_turns: number;
+}
+
+/** The whole agent as reviewed on the page — exactly what deploys. */
+export interface AgentSpec {
+  name: string;
+  first_message: string;
+  system_prompt: string;
+  voice_id: string;
+  language: string;
+  /** Empty means the platform's default model. */
+  llm: string;
+  knowledge: AgentKnowledge[];
+  tests: AgentTest[];
+  demo_headline: string;
+  demo_prompts: string[];
+}
+
+export interface AgentTestResult {
+  name: string;
+  status: "pending" | "passed" | "failed";
+  rationale: string;
+}
+
+export type AgentStatus = "draft" | "deployed" | "failed";
+export type AgentTestsStage = "" | "running" | "ready" | "failed";
+
+export interface VoiceAgent {
+  id: string;
+  company: string;
+  brief: string;
+  source_urls: string[];
+  status: AgentStatus;
+  spec: AgentSpec;
+  elevenlabs_agent_id: string;
+  tests_stage: AgentTestsStage;
+  tests: AgentTestResult[];
+  deployed_at: string | null;
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentBrief {
+  company: string;
+  brief: string;
+  source_urls: string[];
+  notes: string;
+}
+
+export interface AgentFactoryAvailability {
+  available: boolean;
+  missing: string[];
+}

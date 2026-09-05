@@ -20,8 +20,9 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
+from .agent_factory import AgentFactoryError, AgentFactoryService, render_demo_page
 from .asset_library import AssetLibraryError
 from .asset_recipe import RecipeError, gather_recipe_context, write_recipe
 from .audio_transcode import TranscodeError, needs_transcoding, to_wav
@@ -34,6 +35,11 @@ from .attachment_text import (
 )
 from .blob_store import BlobTooLargeError
 from .contracts import (
+    AgentBriefV1,
+    AgentDeployV1,
+    AgentFactoryAvailabilityV1,
+    AgentSpecV1,
+    VoiceAgentV1,
     ApprovalDecisionV1,
     AssetEnvUpdateV1,
     AssetLogsV1,
@@ -119,7 +125,6 @@ from .contracts import (
     SpeechPreferenceV1,
     VoiceAvailabilityV1,
     VoicePostCallV1,
-    VoiceRenditionV1,
     VoiceSessionBindV1,
     VoiceSessionStartV1,
     VoiceSessionV1,
@@ -1924,27 +1929,30 @@ async def voice_session_events(session_id: str, request: Request) -> StreamingRe
     )
 
 
-@router.post("/voice/turn", response_model=VoiceRenditionV1)
-async def voice_turn(body: VoiceTurnRequestV1, request: Request) -> VoiceRenditionV1:
+@router.post("/voice/turn")
+async def voice_turn(body: VoiceTurnRequestV1, request: Request) -> StreamingResponse:
     """One finalized utterance, answered inside the voice ceiling.
 
     Called by the isolated ingress over loopback and by nothing else. The
-    reply carries the written answer and its citations for the caller's
-    records; the ingress forwards only `spoken`.
+    reply is newline-delimited JSON: one frame per spoken sentence as it
+    clears the gate, then a closing frame. Only the words to be spoken are
+    in it — the written answer, citations and receipts reach the browser
+    over the session's own event stream.
     """
     if not _voice_ingress_authorized(request):
         raise HTTPException(status_code=401, detail="unauthorized")
-    try:
-        return await _voice(request).turn(
+    service = _voice(request)
+
+    async def frames() -> AsyncIterator[bytes]:
+        async for frame in service.turn_stream(
             provider_conversation_id=body.provider_conversation_id,
             metis_session_id=body.metis_session_id,
             transcript=body.transcript,
             history=list(body.history),
-        )
-    except VoiceSessionExpired as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    except ModelProviderError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
+        ):
+            yield json.dumps(frame).encode("utf-8") + b"\n"
+
+    return StreamingResponse(frames(), media_type="application/x-ndjson")
 
 
 def _meetings(request: Request) -> MeetingService:
@@ -2369,6 +2377,111 @@ async def delete_interview_session(session_id: str, request: Request) -> Respons
     """Remove a session and its transcript. Deleting one that is already gone
     is success, not an error — teardown must be repeatable."""
     await runtime(request).database.delete_interview_session(session_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ── Agent factory ────────────────────────────────────────────────────────────
+
+
+def _agents(request: Request) -> AgentFactoryService:
+    service = runtime(request).agents
+    if service is None:
+        raise HTTPException(status_code=503, detail="the agent factory is not available yet")
+    return service
+
+
+def _agent_or_404(agent: VoiceAgentV1 | None) -> VoiceAgentV1:
+    if agent is None:
+        raise not_found("agent")
+    return agent
+
+
+@router.get("/agents/availability", response_model=AgentFactoryAvailabilityV1)
+async def agent_factory_availability(request: Request) -> AgentFactoryAvailabilityV1:
+    missing = _agents(request).missing_configuration()
+    return AgentFactoryAvailabilityV1(available=not missing, missing=missing)
+
+
+@router.get("/agents", response_model=list[VoiceAgentV1])
+async def list_agents(request: Request) -> list[VoiceAgentV1]:
+    return await _agents(request).list()
+
+
+@router.post(
+    "/agents/drafts", response_model=VoiceAgentV1, status_code=status.HTTP_201_CREATED
+)
+async def draft_agent(body: AgentBriefV1, request: Request) -> VoiceAgentV1:
+    """Read the material and draft the whole agent. Nothing leaves the
+    machine for ElevenLabs here; the draft waits for review."""
+    try:
+        return await _agents(request).draft(body)
+    except AgentFactoryError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ModelProviderError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@router.get("/agents/{agent_id}", response_model=VoiceAgentV1)
+async def get_agent(agent_id: str, request: Request) -> VoiceAgentV1:
+    return _agent_or_404(await _agents(request).get(agent_id))
+
+
+@router.put("/agents/{agent_id}/spec", response_model=VoiceAgentV1)
+async def update_agent_spec(
+    agent_id: str, body: AgentSpecV1, request: Request
+) -> VoiceAgentV1:
+    """The review step: what is saved here is exactly what deploys."""
+    return _agent_or_404(await _agents(request).update_spec(agent_id, body))
+
+
+@router.post("/agents/{agent_id}/deploy", response_model=VoiceAgentV1)
+async def deploy_agent(
+    agent_id: str, body: AgentDeployV1, request: Request
+) -> VoiceAgentV1:
+    """Create or update the agent in the owner's ElevenLabs account.
+
+    Refused without `confirm`: this is the one place Metis creates external
+    resources, and the page asks before sending it.
+    """
+    service = _agents(request)
+    if not body.confirm:
+        raise HTTPException(
+            status_code=409,
+            detail="Deploying creates resources in your ElevenLabs account. Confirm to continue.",
+        )
+    try:
+        return _agent_or_404(await service.deploy(agent_id, confirmed=True))
+    except AgentFactoryError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@router.post("/agents/{agent_id}/tests", response_model=VoiceAgentV1)
+async def run_agent_tests(agent_id: str, request: Request) -> VoiceAgentV1:
+    """Run, or join, the deployed agent's simulation tests."""
+    try:
+        return _agent_or_404(await _agents(request).run_tests(agent_id))
+    except AgentFactoryError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.get("/agents/{agent_id}/demo", response_class=HTMLResponse)
+async def agent_demo_page(agent_id: str, request: Request) -> HTMLResponse:
+    """The standalone demo page: save it, send it, open it anywhere."""
+    agent = _agent_or_404(await _agents(request).get(agent_id))
+    if not agent.elevenlabs_agent_id:
+        raise HTTPException(status_code=409, detail="deploy the agent to get its demo page")
+    return HTMLResponse(render_demo_page(agent))
+
+
+@router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_agent(agent_id: str, request: Request) -> Response:
+    """Delete the agent and everything it created in the account, then the
+    row. Already gone is success. A cleanup ElevenLabs refuses keeps the row,
+    so it can be tried again."""
+    try:
+        await _agents(request).remove(agent_id)
+    except AgentFactoryError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from waqil_api.config import Settings
 from waqil_api.contracts import (
     CustomerAccountV1,
-    VoiceAnswerV1,
+    ModelResultV1,
     VoiceWriteCandidateV1,
 )
 from waqil_api.database import Database
@@ -61,13 +61,17 @@ class DraftingModel:
         self.calls: list[dict] = []
 
     async def _structured(self, schema, **kwargs):
+        # The only structured call voice makes is the one that shapes a
+        # record. A read asks for plain streamed speech instead, below.
+        assert schema is VoiceWriteCandidateV1
         self.calls.append({"schema": schema, **kwargs})
-        if schema is VoiceWriteCandidateV1:
-            return self.candidate
-        # The read path asks for a different contract entirely, and a fake that
-        # answered both with the same object would hide the fact that these are
-        # two separate prompts with two separate ceilings.
-        return VoiceAnswerV1(written="Nothing to add.", spoken="Nothing to add.")
+        return self.candidate
+
+    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+        self.calls.append({"schema": None, "user_prompt": request.user_prompt})
+        if on_token is not None:
+            await on_token("Nothing to add.")
+        return ModelResultV1(model="fake", content="Nothing to add.")
 
 
 class Customers:

@@ -1,9 +1,9 @@
 "use client";
 
 // Voice mode, inside the chat workspace rather than on a page of its own.
-// Everything spoken has a written twin here — the full answer, its sources,
-// and any refusal — because a spoken answer is heard once and an ear cannot
-// scroll back. The state label is deliberately specific: silence while Metis
+// Everything spoken is written here too — the same words, with their sources
+// and any refusal beside them — because a spoken answer is heard once and an
+// ear cannot scroll back. The state label is deliberately specific: silence while Metis
 // retrieves must read as "looking through your records", not as a connection
 // that quietly died.
 
@@ -481,7 +481,7 @@ function VoicePanelBody({
       {voice.turns.length ? (
         <section className="voiceHistory" aria-label="Voice transcript">
           <header>
-            <div><span className="voiceStageEyebrow">Written twin</span><strong>{voice.turns.length} turn{voice.turns.length === 1 ? "" : "s"}</strong></div>
+            <div><span className="voiceStageEyebrow">Transcript</span><strong>{voice.turns.length} turn{voice.turns.length === 1 ? "" : "s"}</strong></div>
             <div className="voiceHistoryActions">
               <button type="button" onClick={() => void copyTranscript()}>Copy</button>
               <button type="button" onClick={() => { exportText("metis-voice-transcript.txt", voiceTranscript(voice.turns)); setTranscriptNotice("Transcript exported"); }}>Export .txt</button>
@@ -494,7 +494,7 @@ function VoicePanelBody({
                 <p className="voiceSaid"><span>You</span>{turn.transcript}</p>
                 {turn.rendition ? (
                   <div className="voiceAnswer">
-                    {/* The written twin. What was spoken was shorter; this is all of it. */}
+                    {/* The same words that were spoken, with the sources beside them. */}
                     <span className="voiceAnswerLabel">Metis</span>
                     <p>{turn.rendition.written}</p>
                     {turn.rendition.citations.length ? (

@@ -169,13 +169,27 @@ a forgotten open tab cannot bill all afternoon.
 | `WAQIL_VOICE_RATE_PER_MINUTE` | 60 | Per provider conversation, sliding window |
 | `WAQIL_VOICE_REQUEST_TIMEOUT_SECONDS` | 60 | The loopback call to :8000 |
 
+## How a turn streams
+
+The voice model writes plain speech, and Metis does not wait for it to
+finish. Each sentence is split off as it arrives, normalized for the ear,
+checked against the retrieved evidence, and only then handed to the ingress,
+which relays it to ElevenLabs as one streaming chunk. The voice starts on the
+first sentence while the model is still writing the rest.
+
+The claim gate runs before a sentence leaves, not after: a sentence stating a
+figure the records do not contain is withheld, and Metis says so at the end
+("I left out a figure your records don't contain"). A listener cannot unhear
+a number, so nothing is spoken and then corrected. The screen shows exactly
+the words that were spoken, with the citations beside them.
+
 ## What leaves the machine
 
 **To ElevenLabs:** your microphone audio, sent directly from the browser over
-WebRTC, and the short spoken rendition of each answer. Not the written answer,
-not its citations, not any record id. The Cloudflare tunnel carries finalized
-transcript and answer text between the ElevenLabs Agent and Metis; the browser
-gets the full written result over loopback.
+WebRTC, and the spoken sentences of each answer. Not its citations, not any
+record id. The Cloudflare tunnel carries finalized transcript and spoken text
+between the ElevenLabs Agent and Metis; the browser gets the answer with its
+sources over loopback.
 
 **To the voice model** (`WAQIL_VOICE_MODEL`, a hosted Ollama model by default):
 the question, the bounded conversation history, and the evidence retrieved to

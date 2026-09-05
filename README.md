@@ -482,6 +482,9 @@ Metis refuses to follow symlinks or to overwrite an existing export. Keep the ar
 ## Further reading
 
 - [Architecture and invariants](docs/architecture.md)
+- [Voice mode operations](docs/voice-mode.md)
+- [Interviews](docs/interviews.md)
+- [The agent factory](docs/agent-factory.md)
 - [ClineCore coding engine](docs/cline-coding-engine.md)
 - [Project capability evaluation](docs/project-capability-evaluation.md)
 - [Offline packaging](docs/offline-packaging.md)

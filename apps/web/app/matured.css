@@ -5047,3 +5047,157 @@ select { border-radius: var(--m-r-field); }
   .interviewOrbStage::before,
   .interviewDeliveryPending { animation: none !important; }
 }
+
+/* ── 11 · Agents ─────────────────────────────────────────────────────────
+   The factory shares the Interviews page's editorial act: warm paper, quiet
+   fields, coral only where a decision lives. The one loud thing on the page
+   is the deploy confirmation, because it is the one thing that reaches out
+   of the machine. */
+.agentsPage { display: flex; flex-direction: column; gap: 14px; }
+.agentsPage .pageHeader h1 {
+  font-family: ui-serif, "New York", Georgia, "Times New Roman", serif;
+  font-weight: 500;
+  letter-spacing: -0.018em;
+}
+.agentsPage .pageHeader p { max-width: 56ch; }
+
+.agentLayout { display: grid; gap: 14px; grid-template-columns: 250px minmax(0, 1fr); align-items: start; }
+@media (max-width: 900px) { .agentLayout { grid-template-columns: 1fr; } }
+
+.agentList { display: grid; gap: 6px; }
+.agentListItem {
+  background: var(--m-paper);
+  border: 1px solid var(--m-line);
+  border-radius: 12px;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  text-align: left;
+  transition: border-color 0.18s var(--m-ease), background 0.18s var(--m-ease);
+}
+.agentListItem strong { color: var(--m-ink); font-size: 13px; }
+.agentListItem span { align-items: center; color: var(--m-ink-2); display: inline-flex; font-size: 11.5px; gap: 6px; }
+.agentListItem:hover { border-color: var(--m-ink-3); }
+.agentListItem.selected { background: rgba(255, 119, 89, 0.07); border-color: var(--m-coral, #ff7759); }
+.agentListItem.isNew { color: var(--m-ink); font-size: 13px; }
+
+.agentStatusDot { background: var(--m-ink-3); border-radius: 999px; display: inline-block; height: 7px; width: 7px; }
+.agentStatusDot.is-deployed, .agentStatusDot.is-passed { background: var(--m-green-ink, #00754e); }
+.agentStatusDot.is-failed { background: #9c3522; }
+.agentStatusDot.is-pending { background: var(--m-coral, #ff7759); }
+
+.agentPanel {
+  background: var(--m-paper-lift);
+  border: 1px solid var(--m-line);
+  border-radius: 16px;
+  display: grid;
+  gap: 16px;
+  padding: 20px 22px;
+}
+.agentPanel .notice ul { color: var(--m-ink-2); font-size: 12.5px; margin: 6px 0 0; padding-left: 18px; }
+.agentReviewHead h2 { font-family: ui-serif, "New York", Georgia, serif; font-size: 22px; font-weight: 500; margin: 2px 0 4px; }
+.agentReviewHead .mutedMeta { align-items: center; display: inline-flex; gap: 6px; text-transform: none; letter-spacing: 0; font-family: inherit; font-size: 12.5px; }
+
+.agentFormGrid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 700px) { .agentFormGrid { grid-template-columns: 1fr; } }
+.agentField { display: grid; gap: 6px; }
+.agentField > span {
+  color: var(--m-ink-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.agentField input,
+.agentField select,
+.agentField textarea {
+  background: var(--m-paper);
+  border: 1px solid var(--m-line);
+  border-radius: var(--m-r-field, 12px);
+  color: var(--m-ink);
+  font: inherit;
+  font-size: 13.5px;
+  padding: 9px 12px;
+  width: 100%;
+}
+.agentField textarea { line-height: 1.55; resize: vertical; }
+.agentField input:focus-visible,
+.agentField select:focus-visible,
+.agentField textarea:focus-visible,
+.agentActionButton:focus-visible,
+.agentListItem:focus-visible { outline: 2px solid var(--m-ink); outline-offset: 2px; }
+.agentFieldProblem { color: #9c3522; font-size: 12px; }
+
+.agentListEditor { display: grid; gap: 10px; }
+.agentListEditorHead { align-items: center; display: flex; gap: 8px; }
+.agentListEditorHead .eyebrow { margin-right: auto; }
+.agentListItemEditor {
+  background: var(--m-surface);
+  border-radius: 12px;
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.agentListItemEditor .agentActionButton { justify-self: start; }
+
+.agentActions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.agentActions .mutedMeta { font-family: inherit; font-size: 12.5px; letter-spacing: 0; line-height: 1.5; max-width: 48ch; text-transform: none; }
+.agentActionButton {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  color: var(--m-ink);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11.5px;
+  gap: 7px;
+  height: 34px;
+  padding: 0 14px;
+  text-decoration: none;
+  transition: border-color 0.18s var(--m-ease), background 0.18s var(--m-ease);
+}
+.agentActionButton:hover { border-color: var(--m-ink-3); }
+.agentActionButton:disabled { cursor: default; opacity: 0.55; }
+.agentActionButton.isPrimary { background: var(--m-ink); border-color: var(--m-ink); color: var(--m-paper); }
+.agentActionButton.isPrimary:hover:not(:disabled) { opacity: 0.9; }
+.agentActionButton.isStop { color: #9c3522; }
+.agentActionButton.isStop:hover { border-color: var(--m-coral-soft, #ffad9b); }
+
+/* The one loud thing: the approval, coral-edged, naming what it creates. */
+.agentConfirm {
+  align-items: center;
+  background: rgba(255, 119, 89, 0.07);
+  border: 1px solid var(--m-coral, #ff7759);
+  border-radius: 999px;
+  color: var(--m-ink);
+  display: inline-flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 8px;
+  padding: 4px 6px 4px 14px;
+}
+.agentConfirm > span { max-width: 52ch; }
+
+.agentResults { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 900px) { .agentResults { grid-template-columns: 1fr; } }
+.agentResults .mutedMeta { font-family: inherit; font-size: 12.5px; letter-spacing: 0; text-transform: none; }
+.agentTestResults { display: grid; gap: 8px; list-style: none; margin: 8px 0 0; padding: 0; }
+.agentTestResults li { align-items: baseline; display: grid; gap: 2px 8px; grid-template-columns: auto 1fr; }
+.agentTestResults strong { color: var(--m-ink); font-size: 13px; }
+.agentTestResults p { color: var(--m-ink-2); font-size: 12.5px; grid-column: 2; line-height: 1.5; margin: 0; }
+.agentSnippet {
+  background: var(--m-paper);
+  border: 1px solid var(--m-line);
+  border-radius: 12px;
+  color: var(--m-ink-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 8px 0 0;
+  overflow-x: auto;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

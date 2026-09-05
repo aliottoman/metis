@@ -1362,6 +1362,37 @@ SCHEMA_V32 = """
 ALTER TABLE meetings ADD COLUMN summary TEXT NOT NULL DEFAULT '';
 """
 
+SCHEMA_V33 = """
+-- The agent factory: one row per ElevenLabs agent Metis drafted.
+--
+-- spec_json is the whole agent as reviewed on the page — what deploys is
+-- exactly what is stored here. resources_json records every id created in
+-- the owner's account (documents, tests) so a redeploy can replace them and
+-- a removal can take them all back. tests_json is derived data from the
+-- platform's own test run, overwritable, with a tiny stage machine:
+-- '' (never run) → running → ready | failed.
+CREATE TABLE IF NOT EXISTS voice_agents (
+    id TEXT PRIMARY KEY,
+    company TEXT NOT NULL,
+    brief TEXT NOT NULL,
+    source_urls TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_urls)),
+    notes TEXT NOT NULL DEFAULT '',
+    spec_json TEXT NOT NULL CHECK(json_valid(spec_json)),
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK(status IN ('draft','deployed','failed')),
+    elevenlabs_agent_id TEXT NOT NULL DEFAULT '',
+    resources_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(resources_json)),
+    tests_stage TEXT NOT NULL DEFAULT ''
+        CHECK(tests_stage IN ('','running','ready','failed')),
+    tests_json TEXT CHECK(tests_json IS NULL OR json_valid(tests_json)),
+    deployed_at TEXT,
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_voice_agents_recent ON voice_agents(created_at DESC);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: SCHEMA_V1,
     2: SCHEMA_V2,
@@ -1395,6 +1426,7 @@ MIGRATIONS: dict[int, str] = {
     30: SCHEMA_V30,
     31: SCHEMA_V31,
     32: SCHEMA_V32,
+    33: SCHEMA_V33,
 }
 SUPPORTED_SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -2537,6 +2569,119 @@ class Database:
             with self._transaction() as conn:
                 cursor = conn.execute(
                     "DELETE FROM interview_sessions WHERE id = ?", (session_id,)
+                )
+                return cursor.rowcount > 0
+
+        return await self._call(operation)
+
+    # -- agent factory ---------------------------------------------------------
+
+    # The columns a service may change after creation. Everything else on the
+    # row is set once, at creation, and an update naming anything else is a
+    # bug worth a loud failure rather than a silent no-op.
+    _VOICE_AGENT_UPDATABLE = frozenset(
+        {
+            "spec_json",
+            "status",
+            "elevenlabs_agent_id",
+            "resources_json",
+            "tests_stage",
+            "tests_json",
+            "deployed_at",
+            "error",
+        }
+    )
+
+    async def create_voice_agent(
+        self,
+        *,
+        company: str,
+        brief: str,
+        source_urls_json: str,
+        notes: str,
+        spec_json: str,
+    ) -> dict[str, Any]:
+        agent_id, timestamp = _id("agent"), _now()
+
+        def operation() -> dict[str, Any]:
+            with self._transaction() as conn:
+                conn.execute(
+                    """INSERT INTO voice_agents
+                    (id, company, brief, source_urls, notes, spec_json,
+                     created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        agent_id,
+                        company.strip(),
+                        brief.strip(),
+                        source_urls_json,
+                        notes,
+                        spec_json,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM voice_agents WHERE id = ?", (agent_id,)
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def list_voice_agents(self, limit: int = 100) -> list[dict[str, Any]]:
+        def operation() -> list[dict[str, Any]]:
+            with self._lock:
+                rows = self._connection().execute(
+                    "SELECT * FROM voice_agents ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+                return [dict(row) for row in rows]
+
+        return await self._call(operation)
+
+    async def get_voice_agent(self, agent_id: str) -> dict[str, Any] | None:
+        def operation() -> dict[str, Any] | None:
+            with self._lock:
+                row = self._connection().execute(
+                    "SELECT * FROM voice_agents WHERE id = ?", (agent_id,)
+                ).fetchone()
+                return dict(row) if row is not None else None
+
+        return await self._call(operation)
+
+    async def update_voice_agent(
+        self, agent_id: str, **fields: Any
+    ) -> dict[str, Any] | None:
+        """Change named columns on one agent; None when it does not exist."""
+        unknown = set(fields) - self._VOICE_AGENT_UPDATABLE
+        if unknown:
+            raise ValueError(f"voice_agents cannot update {sorted(unknown)}")
+        assignments = ", ".join(f"{column} = ?" for column in fields)
+        values = [*fields.values(), _now(), agent_id]
+
+        def operation() -> dict[str, Any] | None:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    f"UPDATE voice_agents SET {assignments}, updated_at = ? "
+                    "WHERE id = ?",
+                    values,
+                )
+                if cursor.rowcount == 0:
+                    return None
+                return dict(
+                    conn.execute(
+                        "SELECT * FROM voice_agents WHERE id = ?", (agent_id,)
+                    ).fetchone()
+                )
+
+        return await self._call(operation)
+
+    async def delete_voice_agent(self, agent_id: str) -> bool:
+        def operation() -> bool:
+            with self._transaction() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM voice_agents WHERE id = ?", (agent_id,)
                 )
                 return cursor.rowcount > 0
 

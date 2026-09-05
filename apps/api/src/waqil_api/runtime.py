@@ -8,6 +8,7 @@ from typing import Any
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+from .agent_factory import AgentFactoryService
 from .asset_library import AssetManager
 from .answer_bank import AnswerBank
 from .attention import AttentionService, MorningBrief
@@ -111,6 +112,7 @@ class AppRuntime:
         self.voice: VoiceSessionService | None = None
         self.meetings: MeetingService | None = None
         self.interviews: InterviewService | None = None
+        self.agents: AgentFactoryService | None = None
         # Create-only, and the only path from voice to a customer record. Held
         # on the runtime rather than inside the graph because undo is a UI
         # action on a receipt, so the API route needs the same token store.
@@ -203,6 +205,7 @@ class AppRuntime:
         await self.checkpointer.conn.execute("PRAGMA busy_timeout=5000")
         await self.checkpointer.conn.commit()
         await self.checkpointer.setup()
+        web = WebResearch(self.settings)
         self.control_plane = ControlPlane(
             self.settings,
             self.database,
@@ -226,7 +229,7 @@ class AppRuntime:
             projects=self.projects,
             customers=self.customers,
             model_session=self.model_session,
-            web=WebResearch(self.settings),
+            web=web,
             answers=self.answers,
             coding_engine=self.coding_engine,
             coding_sessions=self.coding_sessions,
@@ -269,6 +272,16 @@ class AppRuntime:
         # the agent runs on ElevenLabs' hosted model and never calls back in.
         self.interviews = InterviewService(
             self.settings, self.database, model=self.model
+        )
+        # The factory drafts with the owner's selected model lane, reads
+        # prospect pages through the same web client chat uses, and reaches
+        # the Agents API through the speech provider's client — one key holder.
+        self.agents = AgentFactoryService(
+            self.settings,
+            self.database,
+            model=self.model,
+            preference=self.model_preference,
+            web=web,
         )
         await self.control_plane.reconcile_startup()
         try:
