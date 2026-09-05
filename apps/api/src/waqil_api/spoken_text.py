@@ -77,6 +77,22 @@ def to_speech(
     return _bounded(working, max_chars=max_chars, max_sentences=max_sentences)
 
 
+def split_sentences(buffer: str) -> tuple[list[str], str]:
+    """The finished sentences at the front of a streamed buffer, and the tail.
+
+    A sentence is finished once its terminal punctuation has whitespace after
+    it — until then the model may still be writing "4.2" or "e.g." A split at
+    an abbreviation costs nothing here: sentences are the unit the claim gate
+    checks and the speech provider receives, and it joins them back together
+    before it speaks.
+    """
+    pieces = _SENTENCE_SPLIT.split(buffer)
+    if not pieces:
+        return [], ""
+    finished = [piece.strip() for piece in pieces[:-1] if piece.strip()]
+    return finished, pieces[-1]
+
+
 def _describe_tables(text: str) -> str:
     """A table becomes its dimensions, which is all a listener can use.
 

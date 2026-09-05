@@ -67,10 +67,12 @@ class FakeGraph:
     def forget(self, voice_session_id: str) -> None:
         self.forgotten.append(voice_session_id)
 
-    async def answer(self, turn):
+    async def answer(self, turn, *, on_spoken=None):
         self.turns.append(turn)
+        if on_spoken is not None:
+            await on_spoken("Three things are waiting.")
         return VoiceRenditionV1(
-            written="Three things are waiting [1].",
+            written="Three things are waiting.",
             spoken="Three things are waiting.",
             intent="read",
             transcript=turn.transcript,
@@ -407,8 +409,40 @@ async def test_the_browser_stream_carries_the_written_answer_and_the_handoff(
 
     event = await asyncio.wait_for(queue.get(), timeout=1)
     assert event["type"] == "voice.turn"
-    assert event["rendition"]["written"] == "Three things are waiting [1]."
+    assert event["rendition"]["written"] == "Three things are waiting."
     await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_the_ingress_stream_carries_each_sentence_then_a_close(
+    tmp_path,
+) -> None:
+    """What crosses back through the tunnel: spoken sentences, and nothing else."""
+    service, _ = _service(tmp_path)
+    await service.start()
+    frames = [
+        frame
+        async for frame in service.turn_stream(
+            provider_conversation_id="c", transcript="What's waiting?"
+        )
+    ]
+    assert frames == [
+        {"type": "spoken", "text": "Three things are waiting."},
+        {"type": "done"},
+    ]
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_stream_for_an_unknown_session_is_one_error_frame(tmp_path) -> None:
+    service, _ = _service(tmp_path)
+    frames = [
+        frame
+        async for frame in service.turn_stream(
+            provider_conversation_id="conv_unknown", transcript="What's waiting?"
+        )
+    ]
+    assert [frame["type"] for frame in frames] == ["error"]
 
 
 @pytest.mark.asyncio
@@ -420,7 +454,7 @@ async def test_a_refused_build_publishes_the_verbatim_transcript_for_the_compose
     service, _ = _service(tmp_path)
 
     class RefusingGraph(FakeGraph):
-        async def answer(self, turn):
+        async def answer(self, turn, *, on_spoken=None):
             return VoiceRenditionV1(
                 written="I can't build from voice",
                 spoken="I can't build from voice",

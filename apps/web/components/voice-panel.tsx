@@ -1,9 +1,9 @@
 "use client";
 
 // Voice mode, inside the chat workspace rather than on a page of its own.
-// Everything spoken has a written twin here — the full answer, its sources,
-// and any refusal — because a spoken answer is heard once and an ear cannot
-// scroll back. The state label is deliberately specific: silence while Metis
+// Everything spoken is written here too — the same words, with their sources
+// and any refusal beside them — because a spoken answer is heard once and an
+// ear cannot scroll back. The state label is deliberately specific: silence while Metis
 // retrieves must read as "looking through your records", not as a connection
 // that quietly died.
 
@@ -332,7 +332,7 @@ function VoicePanelBody({ onHandoff }: { onHandoff: (handoff: VoiceHandoff) => v
             <p className="voiceSaid">{turn.transcript}</p>
             {turn.rendition ? (
               <div className="voiceAnswer">
-                {/* The written twin. What was spoken was shorter; this is all of it. */}
+                {/* The same words that were spoken, with the sources beside them. */}
                 <p>{turn.rendition.written}</p>
                 {turn.rendition.citations.length ? (
                   <ul className="voiceCitations">

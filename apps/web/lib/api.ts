@@ -1,4 +1,7 @@
 import type {
+  AgentBrief,
+  AgentFactoryAvailability,
+  AgentSpec,
   AnswerAtom,
   AnswerEntity,
   AttentionBatchResult,
@@ -52,6 +55,7 @@ import type {
   VoiceAvailability,
   VoiceSession,
   VoiceSessionStart,
+  VoiceAgent,
   VoiceWriteReceipt,
   InterviewAvailability,
   InterviewContext,
@@ -2338,4 +2342,58 @@ function normalizeProtections(response: unknown): ProjectProtections {
     resolved: list("resolved"),
     unmatched: list("unmatched"),
   };
+}
+
+// -- the agent factory ------------------------------------------------------
+
+export async function getAgentAvailability(): Promise<AgentFactoryAvailability> {
+  return request<AgentFactoryAvailability>(`${API_PREFIX}/agents/availability`);
+}
+
+export async function listAgents(): Promise<VoiceAgent[]> {
+  return request<VoiceAgent[]>(`${API_PREFIX}/agents`);
+}
+
+/** Draft the whole agent from the brief. Nothing reaches ElevenLabs here. */
+export async function draftAgent(brief: AgentBrief): Promise<VoiceAgent> {
+  return request<VoiceAgent>(`${API_PREFIX}/agents/drafts`, {
+    method: "POST",
+    body: JSON.stringify(brief),
+  });
+}
+
+export async function getAgent(agentId: string): Promise<VoiceAgent> {
+  return request<VoiceAgent>(`${API_PREFIX}/agents/${encodeURIComponent(agentId)}`);
+}
+
+export async function updateAgentSpec(agentId: string, spec: AgentSpec): Promise<VoiceAgent> {
+  return request<VoiceAgent>(`${API_PREFIX}/agents/${encodeURIComponent(agentId)}/spec`, {
+    method: "PUT",
+    body: JSON.stringify(spec),
+  });
+}
+
+/** The approval. Only ever sent after the page asked and the owner agreed. */
+export async function deployAgent(agentId: string): Promise<VoiceAgent> {
+  return request<VoiceAgent>(`${API_PREFIX}/agents/${encodeURIComponent(agentId)}/deploy`, {
+    method: "POST",
+    body: JSON.stringify({ confirm: true }),
+  });
+}
+
+export async function runAgentTests(agentId: string): Promise<VoiceAgent> {
+  return request<VoiceAgent>(`${API_PREFIX}/agents/${encodeURIComponent(agentId)}/tests`, {
+    method: "POST",
+  });
+}
+
+export async function removeAgent(agentId: string): Promise<void> {
+  await request<void>(`${API_PREFIX}/agents/${encodeURIComponent(agentId)}`, {
+    method: "DELETE",
+  });
+}
+
+/** Where the standalone demo page is served from, as an absolute address. */
+export function agentDemoUrl(agentId: string): string {
+  return apiUrl(`${API_PREFIX}/agents/${encodeURIComponent(agentId)}/demo`);
 }

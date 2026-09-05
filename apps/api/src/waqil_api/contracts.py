@@ -462,6 +462,11 @@ class ModelRequestV1(Contract):
     user_prompt: str
     response_schema: dict[str, Any] | None = None
     temperature: float = Field(default=0.1, ge=0, le=2)
+    # Two knobs a caller sets only when it knows better than the provider's
+    # default. None keeps that default. A spoken turn sets both: it is a few
+    # sentences long, and it has no time for the model to think first.
+    max_output_tokens: int | None = Field(default=None, ge=1)
+    reasoning: bool | None = None
 
 
 class ModelResultV1(Contract):
@@ -2281,6 +2286,150 @@ class MeetingProposalDecisionV1(Contract):
     status: Literal["accepted", "rejected"]
 
 
+# ── Agent factory ────────────────────────────────────────────────────────────
+
+
+class AgentBriefV1(Contract):
+    """What the factory starts from: who the agent is for and what it must do.
+
+    The URLs are read for source material and become the agent's knowledge
+    base; the notes are pasted text with the same untrusted posture as an
+    attachment. Neither can instruct the drafting model — the prompt marks
+    both as material to draw on.
+    """
+
+    company: str = Field(min_length=1, max_length=200)
+    brief: str = Field(min_length=1, max_length=6_000)
+    source_urls: list[str] = Field(default_factory=list, max_length=6)
+    notes: str = Field(default="", max_length=40_000)
+
+    @field_validator("source_urls")
+    @classmethod
+    def _urls_are_http(cls, urls: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(url.strip() for url in urls if url.strip()))
+        for url in cleaned:
+            if not url.startswith(("http://", "https://")) or len(url) > 400:
+                raise ValueError(f"not a web address: {url[:80]}")
+        return cleaned
+
+
+class AgentTestV1(Contract):
+    """One simulated conversation and what counts as passing it."""
+
+    name: str = Field(min_length=1, max_length=80)
+    scenario: str = Field(min_length=1, max_length=2_000)
+    success_conditions: list[str] = Field(min_length=1, max_length=5)
+    max_turns: int = Field(default=6, ge=2, le=12)
+
+    @field_validator("success_conditions")
+    @classmethod
+    def _conditions_are_sentences(cls, conditions: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in conditions if item.strip()]
+        if not cleaned:
+            raise ValueError("a test needs at least one success condition")
+        if any(len(item) > 400 for item in cleaned):
+            raise ValueError("a success condition is one sentence, 400 chars at most")
+        return cleaned
+
+
+class AgentTextDocumentV1(Contract):
+    """A knowledge document the drafting model distils from the material."""
+
+    name: str = Field(min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=8_000)
+
+
+class AgentDraftV1(Contract):
+    """What the drafting model authors. Deliberately no ids and no voice:
+    the host adds the URL documents it was given and the configured voice,
+    so a model cannot point the agent at a page nobody supplied."""
+
+    name: str = Field(min_length=1, max_length=80)
+    first_message: str = Field(min_length=1, max_length=400)
+    system_prompt: str = Field(min_length=1, max_length=12_000)
+    knowledge: list[AgentTextDocumentV1] = Field(default_factory=list, max_length=4)
+    tests: list[AgentTestV1] = Field(min_length=1, max_length=6)
+    demo_headline: str = Field(min_length=1, max_length=160)
+    demo_prompts: list[str] = Field(default_factory=list, max_length=4)
+
+
+class AgentKnowledgeV1(Contract):
+    kind: Literal["url", "text"]
+    name: str = Field(min_length=1, max_length=80)
+    url: str = Field(default="", max_length=400)
+    text: str = Field(default="", max_length=8_000)
+
+    @model_validator(mode="after")
+    def _has_its_source(self) -> AgentKnowledgeV1:
+        if self.kind == "url" and not self.url.strip():
+            raise ValueError("a url document needs a url")
+        if self.kind == "text" and not self.text.strip():
+            raise ValueError("a text document needs text")
+        return self
+
+
+class AgentSpecV1(Contract):
+    """The whole agent, as reviewed on the page and as deployed.
+
+    Everything ElevenLabs will be told is here and nowhere else, so what the
+    review screen shows is exactly what the deploy sends.
+    """
+
+    name: str = Field(min_length=1, max_length=80)
+    first_message: str = Field(min_length=1, max_length=400)
+    system_prompt: str = Field(min_length=1, max_length=12_000)
+    voice_id: str = Field(min_length=1, max_length=80)
+    language: str = Field(default="en", min_length=2, max_length=8)
+    # Empty means the platform's default model. Named ones are passed through
+    # as given; the platform validates them.
+    llm: str = Field(default="", max_length=60)
+    knowledge: list[AgentKnowledgeV1] = Field(default_factory=list, max_length=8)
+    tests: list[AgentTestV1] = Field(default_factory=list, max_length=6)
+    demo_headline: str = Field(min_length=1, max_length=160)
+    demo_prompts: list[str] = Field(default_factory=list, max_length=4)
+
+
+class AgentTestResultV1(Contract):
+    name: str
+    status: Literal["pending", "passed", "failed"] = "pending"
+    rationale: str = ""
+
+
+AgentStatus = Literal["draft", "deployed", "failed"]
+AgentTestsStage = Literal["", "running", "ready", "failed"]
+
+
+class VoiceAgentV1(Contract):
+    """One agent the factory made, wherever it is in its life."""
+
+    id: str
+    company: str
+    brief: str
+    source_urls: list[str] = Field(default_factory=list)
+    status: AgentStatus = "draft"
+    spec: AgentSpecV1
+    # Set once deployed; the id lives in the platform's own dashboard too.
+    elevenlabs_agent_id: str = ""
+    tests_stage: AgentTestsStage = ""
+    tests: list[AgentTestResultV1] = Field(default_factory=list)
+    deployed_at: datetime | None = None
+    error: str = ""
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentDeployV1(Contract):
+    """The approval. Deploying creates real resources in the owner's account,
+    so the page asks once and sends the answer explicitly."""
+
+    confirm: bool = False
+
+
+class AgentFactoryAvailabilityV1(Contract):
+    available: bool = False
+    missing: list[str] = Field(default_factory=list, max_length=6)
+
+
 class InterviewContextV1(Contract):
     """Everything the setup screen collects, and all the agent may ever know.
 
@@ -2494,32 +2643,20 @@ class VoiceCitationV1(Contract):
     provider: Literal["local", "notion", "web", "customer", "answer"] = "local"
 
 
-class VoiceAnswerV1(Contract):
-    """The only structured reply the voice model is allowed to author.
-
-    Two strings and nothing else. There is no action name, no tool, no record
-    and no permission on this contract, so a model cannot widen what the turn
-    is allowed to do by what it returns — the ceiling is re-evaluated after
-    this comes back, and there is nothing here for it to disagree with.
-    """
-
-    written: str = Field(default="", max_length=20_000)
-    spoken: str = Field(default="", max_length=1_200)
-
-
 class VoiceRenditionV1(Contract):
-    """One voice turn's two outputs, and the provenance of both.
+    """One voice turn's answer, and the provenance of it.
 
-    `written` is the full grounded answer; it travels to the browser over the
-    loopback stream and lands in the conversation. `spoken` is the short
-    rendition, and it is the *only* text that goes back through the speech
-    provider. They are separate fields rather than one truncated string
-    because they answer different questions: what can be read, and what can be
-    heard once, without scrolling back.
+    `spoken` is what the speech provider said, sentence by sentence as each one
+    cleared the claim gate. `written` is the same words for the screen, where
+    the citations sit beside them; the two are never allowed to disagree,
+    because a listener who reads back what they heard must find exactly that.
+    The written answer travels to the browser over the loopback stream and
+    lands in the conversation; the spoken one is the *only* text that goes
+    back through the tunnel.
     """
 
     written: str = Field(default="", max_length=20_000)
-    spoken: str = Field(default="", max_length=1_200)
+    spoken: str = Field(default="", max_length=2_000)
     citations: list[VoiceCitationV1] = Field(default_factory=list, max_length=12)
     intent: VoiceIntent = "read"
     # Present only on a committed append, and the reason the surface can show a

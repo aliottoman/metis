@@ -25,6 +25,7 @@ import hmac
 import json
 import time
 from collections import deque
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -200,10 +201,10 @@ def create_app(config: IngressConfig) -> FastAPI:
         if not transcript:
             return JSONResponse({"error": "no utterance"}, status_code=422)
 
-        spoken = await _ask_metis(
+        sentences = _ask_metis(
             app, config, session, metis_session, transcript, history
         )
-        return StreamingResponse(_sse(spoken, alias), media_type="text/event-stream")
+        return StreamingResponse(_sse(sentences, alias), media_type="text/event-stream")
 
     @app.post("/v1/elevenlabs/post-call")
     async def post_call(request: Request) -> Any:
@@ -377,6 +378,14 @@ def _text_of(content: Any) -> str:
     return ""
 
 
+# What this process says when the trusted side could not. Fixed and vague on
+# purpose: whatever went wrong is diagnosed on :8000, and its message is not
+# for the far end of a tunnel.
+UNREACHABLE = "I couldn't reach Metis just then. Try me again."
+FAILED = "Something went wrong on my side. Try me again."
+NO_ANSWER = "I don't have an answer for that one."
+
+
 async def _ask_metis(
     app: FastAPI,
     config: IngressConfig,
@@ -384,19 +393,25 @@ async def _ask_metis(
     metis_session: str,
     transcript: str,
     history: list[str],
-) -> str:
-    """One question to the trusted process, and only its spoken half back.
+) -> AsyncIterator[str]:
+    """One question to the trusted process; its spoken sentences back, as they
+    are decided.
 
     The written answer, the citations and any receipt travel to the browser
     over :8000's own loopback stream. Nothing but the words to be spoken
-    crosses back through here — the tunnel carries speech, not state.
+    crosses back through here — the tunnel carries speech, not state. A
+    failure after the first sentence is left to end the answer where it
+    stopped: an apology tacked onto half an answer is worse than the half.
     """
     client: httpx.AsyncClient | None = app.state.client
     if client is None:
-        return "Metis isn't reachable right now."
+        yield UNREACHABLE
+        return
+    spoke = False
     async with app.state.gate:
         try:
-            response = await client.post(
+            async with client.stream(
+                "POST",
                 "/api/v1/voice/turn",
                 json={
                     "provider_conversation_id": session,
@@ -405,28 +420,54 @@ async def _ask_metis(
                     "history": history,
                 },
                 headers={"authorization": f"Bearer {config.shared_secret}"},
-            )
+            ) as response:
+                if response.status_code >= 400:
+                    yield FAILED
+                    return
+                async for line in response.aiter_lines():
+                    frame = _frame(line)
+                    if frame is None:
+                        continue
+                    if frame["type"] == "spoken":
+                        spoke = True
+                        yield frame["text"]
+                    elif frame["type"] == "error":
+                        if not spoke:
+                            yield FAILED
+                        return
+                    elif frame["type"] == "done":
+                        break
         except httpx.HTTPError:
-            return "I couldn't reach Metis just then. Try me again."
-    if response.status_code >= 400:
-        # No detail: whatever went wrong on the trusted side is diagnosed
-        # there, and its message is not for the far end of a tunnel.
-        return "Something went wrong on my side. Try me again."
+            if not spoke:
+                yield UNREACHABLE
+            return
+    if not spoke:
+        yield NO_ANSWER
+
+
+def _frame(line: str) -> dict[str, Any] | None:
+    """One line of the trusted process's reply, or None for anything else."""
     try:
-        body = response.json()
+        frame = json.loads(line)
     except ValueError:
-        return "Something went wrong on my side. Try me again."
-    spoken = str((body or {}).get("spoken") or "").strip()
-    return spoken or "I don't have an answer for that one."
+        return None
+    if not isinstance(frame, dict):
+        return None
+    kind = str(frame.get("type") or "")
+    text = str(frame.get("text") or "").strip()
+    if kind == "spoken" and text:
+        return {"type": "spoken", "text": text}
+    if kind in ("done", "error"):
+        return {"type": kind}
+    return None
 
 
-async def _sse(spoken: str, alias: str):
+async def _sse(sentences: AsyncIterator[str], alias: str):
     """The OpenAI streaming shape ElevenLabs expects, terminated properly.
 
-    One content chunk rather than many. The spoken rendition is decided in a
-    single structured reply on the trusted side, so there is nothing genuine
-    to stream token by token, and pretending otherwise would add machinery
-    without adding a millisecond of real speed.
+    One content chunk per sentence, sent the moment the trusted side decided
+    it, so the voice starts on the first sentence while the rest is still
+    being written.
     """
     created = int(time.time())
     identifier = f"chatcmpl-{created}"
@@ -447,7 +488,12 @@ async def _sse(spoken: str, alias: str):
         )
 
     yield frame({"role": "assistant"}, None)
-    yield frame({"content": spoken}, None)
+    first = True
+    async for sentence in sentences:
+        # Chunks are concatenated on the far side, so each sentence after the
+        # first carries the space that separates it from the one before.
+        yield frame({"content": sentence if first else f" {sentence}"}, None)
+        first = False
     yield frame({}, "stop")
     yield b"data: [DONE]\n\n"
 

@@ -15,7 +15,7 @@ The order is the design:
       → classify fixed refusals      (before retrieval, before any model)
       → resolve bounded account context
       → retrieve permitted evidence
-      → synthesize written + spoken
+      → speak the answer, one gated sentence at a time
       → re-evaluate the ceiling
 
 Refusal comes first because a refusal that happened after the model saw the
@@ -23,10 +23,12 @@ transcript would mean the model had already been asked to consider building or
 approving, and the only thing between the request and the action would be that
 it declined. Refusing at the door means there was never a decision to make.
 
-Two outputs leave here, and they go different ways. `written` is the full
-grounded answer for the screen; `spoken` is the short rendition, and it is the
-only text that ever reaches the speech provider. Nothing tries to smuggle the
-written answer through the spoken field.
+The answer is streamed. The model writes plain speech, the host splits it into
+sentences as they arrive, and each sentence is normalized for the ear and
+checked against the evidence before the caller is handed it to say. Nothing
+is spoken and then corrected: a figure the records do not contain is withheld
+before it leaves, because a listener cannot unhear it. The screen gets the
+same words, with the citations beside them.
 """
 
 from __future__ import annotations
@@ -35,13 +37,14 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
 from typing import Any, Sequence
 
 from .config import Settings
 from .contracts import (
     KnowledgeSnippetV1,
+    ModelRequestV1,
     RiskLevel,
-    VoiceAnswerV1,
     VoiceCitationV1,
     VoiceRenditionV1,
     VoiceWriteCandidateV1,
@@ -51,14 +54,18 @@ from .contracts import (
 # reimplemented: a spoken answer and a typed one must not disagree about what
 # counts as a fabricated figure.
 from .control_plane import _unsupported_claims
-from .model_provider import ModelProviderError
 from .policy import (
     ExecutionBoundary,
     PolicyEngine,
     PolicyPermission,
     PolicyRequest,
 )
-from .spoken_text import SPOKEN_MAX_CHARS, SPOKEN_MAX_SENTENCES, to_speech
+from .spoken_text import (
+    SPOKEN_MAX_CHARS,
+    SPOKEN_MAX_SENTENCES,
+    split_sentences,
+    to_speech,
+)
 from .voice_accounts import AccountResolution, resolve_account
 from .voice_intents import classify_refusal
 from .voice_writes import (
@@ -136,19 +143,25 @@ Answer only from the evidence given. If it doesn't contain the answer, say so
 — a spoken "I don't have that" costs three seconds, a spoken guess costs a
 meeting.
 
-Call the supplied function once with two fields.
-
-`written`: the full answer for the screen, citing evidence as [n].
-
-`spoken`: what a person hears. Two to four sentences. No Markdown, URLs,
-tables, code or [n] markers — attribute out loud instead ("the strongest
-source is the Batelco service request"). Say the useful thing first; nobody
-can skim speech."""
+Write exactly what a person will hear, and nothing else: two to four plain
+sentences. No Markdown, headings, lists, URLs, tables, code or [n] markers —
+attribute out loud instead ("the strongest source is the Batelco service
+request"). Say the useful thing first; nobody can skim speech."""
 
 VOICE_DETAIL_NOTE = (
-    "\n\nThey asked for detail, so `spoken` may run longer than four "
+    "\n\nThey asked for detail, so the answer may run longer than four "
     "sentences — still plain speech, still no markup."
 )
+
+# What the host says in the model's place. Fixed strings, because each is a
+# decision the host made about the model's answer and must read the same way
+# every time it is made.
+WITHHELD_ANSWER = (
+    "I held that answer back — it stated figures your records don't contain. "
+    "Ask me in the chat window and I'll show you what they do."
+)
+WITHHELD_FIGURE = "I left out a figure your records don't contain."
+NO_ANSWER = "I don't have an answer for that one."
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +271,106 @@ class _Evidence:
         return "\n".join(item.text for item in self.snippets)
 
 
+# What a caller passes to hear the answer as it is decided.
+OnSpoken = Callable[[str], Awaitable[None]]
+
+
+class _Speaker:
+    """Hands each sentence to the caller the moment it may be said."""
+
+    def __init__(self, on_spoken: OnSpoken | None) -> None:
+        self._on_spoken = on_spoken
+        self.said: list[str] = []
+
+    async def say(self, sentence: str) -> None:
+        self.said.append(sentence)
+        if self._on_spoken is not None:
+            await self._on_spoken(sentence)
+
+    async def finish(self, spoken: str) -> None:
+        """A turn that decided its answer in one piece speaks it now."""
+        if not self.said and spoken:
+            await self.say(spoken)
+
+
+class _SpokenStream:
+    """The model's answer as it arrives, admitted one sentence at a time.
+
+    Each finished sentence is normalized for the ear, then checked against the
+    evidence. One that states a figure the records do not contain is withheld
+    and named at the end, rather than spoken and corrected — the ceiling on
+    sentences and characters is enforced here too, so "brief unless asked"
+    is a property of the host and not a hope about the model.
+    """
+
+    def __init__(
+        self,
+        *,
+        evidence: str,
+        speaker: _Speaker,
+        max_sentences: int,
+        max_chars: int,
+    ) -> None:
+        self.evidence = evidence
+        self.speaker = speaker
+        self.max_sentences = max_sentences
+        self.max_chars = max_chars
+        self.spoken: list[str] = []
+        self.withheld: list[str] = []
+        # True once the host changed anything the model wrote, so the surface
+        # can be honest about which it is showing.
+        self.altered = False
+        self._buffer = ""
+        self._chars = 0
+
+    async def feed(self, text: str) -> None:
+        """A chunk of the model's output; whole sentences leave immediately."""
+        self._buffer += text
+        finished, self._buffer = split_sentences(self._buffer)
+        for sentence in finished:
+            await self._admit(sentence)
+
+    async def finish(self) -> str:
+        """The model has stopped. Say what is left, then what was withheld."""
+        tail, self._buffer = self._buffer.strip(), ""
+        if tail:
+            await self._admit(tail)
+        if self.withheld:
+            logger.info("voice answer withheld, unsupported: %s", ", ".join(self.withheld[:3]))
+            self.altered = True
+            await self._say(WITHHELD_ANSWER if not self.spoken else WITHHELD_FIGURE)
+        if not self.spoken:
+            self.altered = True
+            await self._say(NO_ANSWER)
+        return " ".join(self.spoken)
+
+    async def _admit(self, raw: str) -> None:
+        """One raw sentence from the model: made sayable, then gated."""
+        clean = to_speech(raw, max_chars=self.max_chars, max_sentences=self.max_sentences)
+        if clean != raw.strip():
+            self.altered = True
+        # Normalizing can merge or split sentences (a list becomes several),
+        # so the gate runs over what will actually be said.
+        finished, tail = split_sentences(clean)
+        for sentence in finished + ([tail.strip()] if tail.strip() else []):
+            if len(self.spoken) >= self.max_sentences:
+                self.altered = True
+                return
+            if self.spoken and self._chars + len(sentence) > self.max_chars:
+                self.altered = True
+                return
+            invented = _unsupported_claims(sentence, self.evidence)
+            if invented:
+                self.withheld += invented
+                continue
+            await self._say(sentence)
+
+    async def _say(self, sentence: str) -> None:
+        self.spoken.append(sentence)
+        self._chars += len(sentence) + 1
+        await self.speaker.say(sentence)
+
+
 class VoiceGraph:
     """One spoken turn, answered inside a ceiling it cannot raise."""
 
@@ -302,11 +415,23 @@ class VoiceGraph:
 
     # -- the turn ---------------------------------------------------------
 
-    async def answer(self, turn: VoiceTurn) -> VoiceRenditionV1:
-        """One utterance in, one rendition out. Never raises for the caller."""
+    async def answer(
+        self, turn: VoiceTurn, *, on_spoken: OnSpoken | None = None
+    ) -> VoiceRenditionV1:
+        """One utterance in, one rendition out.
+
+        `on_spoken` hears each sentence as soon as it may be said — during the
+        model's reply on a read, once at the end for a refusal, a question or
+        a receipt — so the caller can start speaking before the turn is over.
+        """
         if not turn.voice_session_id or not turn.turn_id:
             raise ValueError("a voice turn needs a session and a turn identity")
+        speaker = _Speaker(on_spoken)
+        rendition = await self._answer(turn, speaker)
+        await speaker.finish(rendition.spoken)
+        return rendition
 
+    async def _answer(self, turn: VoiceTurn, speaker: _Speaker) -> VoiceRenditionV1:
         refusal = classify_refusal(turn.transcript)
         if refusal is not None:
             # Nothing below this line has run: no retrieval, no account
@@ -346,21 +471,18 @@ class VoiceGraph:
         if evidence.account.ambiguous and not evidence.snippets:
             return self._clarify_account(turn, evidence.account)
 
-        answered = await self._synthesize(turn, evidence, detail=detail)
-        # The ceiling again, after the model has spoken. There is nothing on
-        # VoiceAnswerV1 that could name an action — which is the point — and
-        # this runs anyway, so the guarantee survives the contract growing.
+        spoken, altered = await self._speak(turn, evidence, speaker, detail=detail)
+        # The ceiling again, after the model has spoken. A plain-text answer
+        # cannot name an action — which is the point — and this runs anyway,
+        # so the guarantee survives the shape of the reply changing.
         self._enforce_ceiling("voice.answer")
-
-        written = answered.written.strip()
-        spoken, fallback = self._speakable(answered.spoken, written, detail=detail)
         return self._rendition(
             turn,
-            written=written,
+            written=spoken,
             spoken=spoken,
             intent="read",
             citations=_citations(evidence.snippets),
-            spoken_fallback=fallback,
+            spoken_fallback=altered,
         )
 
     # -- the narrow write path --------------------------------------------
@@ -623,50 +745,47 @@ class VoiceGraph:
             for item in items
         ]
 
-    async def _synthesize(
-        self, turn: VoiceTurn, evidence: _Evidence, *, detail: bool = False
-    ) -> VoiceAnswerV1:
-        """One structured reply: the written answer and its spoken rendition."""
-        prompt = _prompt(turn, evidence)
-        aliases = self._aliases()
-        structured = getattr(self.model, "_structured", None)
-        if not callable(structured):
-            raise ModelProviderError("the selected provider cannot answer by voice")
-        answered: VoiceAnswerV1 = await structured(
-            VoiceAnswerV1,
+    async def _speak(
+        self,
+        turn: VoiceTurn,
+        evidence: _Evidence,
+        speaker: _Speaker,
+        *,
+        detail: bool = False,
+    ) -> tuple[str, bool]:
+        """The answer, said as it is written: `(spoken text, host altered it)`.
+
+        One plain-text streaming call. Every sentence reaches the speaker the
+        moment it clears the gate, so the first words are heard while the
+        model is still writing the rest. Output is budgeted too: a model
+        given room for an essay writes one, and the ear cannot hold it.
+        """
+        stream = _SpokenStream(
+            evidence=evidence.text,
+            speaker=speaker,
+            max_sentences=VOICE_DETAIL_SENTENCES if detail else SPOKEN_MAX_SENTENCES,
+            max_chars=SPOKEN_MAX_CHARS * 2 if detail else SPOKEN_MAX_CHARS,
+        )
+        request = ModelRequestV1(
+            role="planner",
             system_prompt=(
                 VOICE_SYSTEM_PROMPT + VOICE_DETAIL_NOTE
                 if detail
                 else VOICE_SYSTEM_PROMPT
             ),
-            user_prompt=prompt,
-            role="planner",
-            model_aliases=aliases,
-            # Output is budgeted too. A model given room for an essay writes
-            # one, and then the host has to throw most of it away unspoken.
+            user_prompt=_prompt(turn, evidence),
             max_output_tokens=(
                 VOICE_DETAIL_OUTPUT_TOKENS if detail else VOICE_OUTPUT_TOKENS
             ),
+            # A spoken turn has to come back inside the pause a person leaves
+            # after speaking; a model that thinks first has already lost it.
+            reasoning=False,
         )
-        invented = _unsupported_claims(answered.written, evidence.text)
-        if invented:
-            # No revision round: a voice turn has no time for one, and the
-            # honest answer arrives faster than the corrected one. The written
-            # answer is replaced rather than annotated, because a figure the
-            # records do not contain must not reach the screen either — and
-            # the replacement deliberately does not repeat the figure, which
-            # would put the invented number back in front of the user under a
-            # sentence explaining that it is wrong. What exactly was withheld
-            # goes to the log, where a diagnosis belongs.
-            logger.info(
-                "voice answer withheld, unsupported: %s", ", ".join(invented[:3])
-            )
-            withheld = (
-                "I held that answer back — it stated figures your records don't "
-                "contain. Ask me in the chat window and I'll show you what they do."
-            )
-            return VoiceAnswerV1(written=withheld, spoken=withheld)
-        return answered
+        await self.model.generate(
+            request, on_token=stream.feed, model_aliases=self._aliases()
+        )
+        spoken = await stream.finish()
+        return spoken, stream.altered
 
     def _aliases(self) -> dict[str, str]:
         """The voice model, from the server-owned allowlist. Never the caller's.
@@ -685,33 +804,6 @@ class VoiceGraph:
             # the `:cloud` suffix in the name is what makes them hosted.
             "_provider": "local",
         }
-
-    def _speakable(
-        self, spoken: str, written: str, *, detail: bool = False
-    ) -> tuple[str, bool]:
-        """The spoken field, or a deterministic rendition when it is unusable.
-
-        A model that forgets the field, returns Markdown in it, or writes six
-        paragraphs is not a failed turn — the written answer is already good.
-        The host renders the speech instead, and says that it did.
-
-        The sentence ceiling is where "brief unless asked" is actually
-        enforced. A model told to be brief is often brief; a model held to four
-        sentences always is, and the one turn where someone asked for the long
-        version gets it because they asked, not because the model felt like it.
-        """
-        sentences = VOICE_DETAIL_SENTENCES if detail else SPOKEN_MAX_SENTENCES
-        chars = SPOKEN_MAX_CHARS * 2 if detail else SPOKEN_MAX_CHARS
-        candidate = (spoken or "").strip()
-        normalized = to_speech(candidate, max_chars=chars, max_sentences=sentences)
-        if normalized and normalized == candidate and len(candidate) <= chars:
-            return candidate, False
-        if normalized:
-            # Same words, markup removed or length brought back inside the
-            # ceiling: still the model's rendition, just made sayable.
-            return normalized, True
-        fallback = to_speech(written, max_chars=chars, max_sentences=sentences)
-        return fallback or "I don't have an answer for that one.", True
 
     # -- results ----------------------------------------------------------
 

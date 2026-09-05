@@ -2440,11 +2440,17 @@ class OllamaModelProvider:
         wants_reasoning = on_reasoning is not None and await self.supports_thinking(
             model_name
         )
+        # A request that says no thinking gets none, whatever the caller would
+        # have done with it: a spoken answer has no time for it.
+        reasoning: bool | None = True if wants_reasoning else None
+        if request.reasoning is False:
+            reasoning, wants_reasoning = False, False
         async with self._semaphore:
             model = self.langchain_model(
                 request.role,
                 model_aliases=model_aliases,
-                reasoning=True if wants_reasoning else None,
+                max_output_tokens=request.max_output_tokens,
+                reasoning=reasoning,
             )
             messages = [
                 ("system", request.system_prompt),

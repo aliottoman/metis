@@ -20,16 +20,19 @@ from waqil_api.contracts import (
     AttentionItemV1,
     CustomerAccountV1,
     KnowledgeSnippetV1,
-    VoiceAnswerV1,
+    ModelResultV1,
 )
 from waqil_api.speech_preference import SpeechPreferenceStore
 from waqil_api.voice_graph import (
+    NO_ANSWER,
     VOICE_DETAIL_OUTPUT_TOKENS,
     VOICE_EVIDENCE_SNIPPETS,
     VOICE_HISTORY_TURNS,
     VOICE_OUTPUT_TOKENS,
     VOICE_PERMISSIONS,
     VOICE_RETRIEVAL,
+    WITHHELD_ANSWER,
+    WITHHELD_FIGURE,
     VoiceGraph,
     VoiceTurn,
 )
@@ -48,18 +51,37 @@ def _settings(tmp_path: Path, **overrides) -> Settings:
 
 
 class CountingModel:
-    """A provider that records every structured call it is asked to make."""
+    """A provider that streams a fixed answer and records every request.
 
-    def __init__(self, answer: VoiceAnswerV1 | None = None) -> None:
-        self.answer = answer or VoiceAnswerV1(
-            written="The sizing went out on Tuesday [1].",
-            spoken="The sizing went out on Tuesday.",
-        )
+    The answer arrives in small chunks that cut across sentence boundaries,
+    the way a real token stream does. `probe` is called after every chunk so
+    a test can look at what the listener had heard by then.
+    """
+
+    def __init__(
+        self, text: str = "The sizing went out on Tuesday.", *, chunk: int = 7
+    ) -> None:
+        self.text = text
+        self.chunk = chunk
         self.calls: list[dict] = []
+        self.probe = None
 
-    async def _structured(self, schema, **kwargs):
-        self.calls.append({"schema": schema, **kwargs})
-        return self.answer
+    async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+        self.calls.append(
+            {
+                "system_prompt": request.system_prompt,
+                "user_prompt": request.user_prompt,
+                "max_output_tokens": request.max_output_tokens,
+                "reasoning": request.reasoning,
+                "model_aliases": model_aliases,
+            }
+        )
+        for start in range(0, len(self.text), self.chunk):
+            if on_token is not None:
+                await on_token(self.text[start : start + self.chunk])
+            if self.probe is not None:
+                self.probe()
+        return ModelResultV1(model="fake", content=self.text)
 
 
 class CountingCorpus:
@@ -288,7 +310,7 @@ async def test_activating_a_tool_is_refused_by_the_shared_build_classifier(
 
 
 @pytest.mark.asyncio
-async def test_an_ordinary_question_retrieves_and_answers_with_two_renditions(
+async def test_an_ordinary_question_retrieves_and_says_what_it_shows(
     tmp_path,
 ) -> None:
     corpus = CountingCorpus(
@@ -306,13 +328,56 @@ async def test_an_ordinary_question_retrieves_and_answers_with_two_renditions(
     rendition = await graph.answer(_turn("When did the sizing go out?"))
 
     assert rendition.intent == "read"
-    assert rendition.written == "The sizing went out on Tuesday [1]."
-    # The spoken half never carries the citation marker the written half does.
+    # One text for the ear and the eye; the sources sit beside it as cards.
     assert rendition.spoken == "The sizing went out on Tuesday."
-    assert "[1]" not in rendition.spoken
+    assert rendition.written == rendition.spoken
+    assert rendition.spoken_fallback is False
     assert [item.label for item in rendition.citations] == ["Service request"]
     assert corpus.calls == 1
+    call = parts["model"].calls[0]
     assert len(parts["model"].calls) == 1
+    # No thinking first: the answer has to land inside a conversational pause.
+    assert call["reasoning"] is False
+
+
+@pytest.mark.asyncio
+async def test_sentences_are_spoken_while_the_model_is_still_writing(
+    tmp_path,
+) -> None:
+    """The point of streaming, asserted from the listener's side.
+
+    By the time the model has finished its second sentence, the first one has
+    already been handed to the caller — not held until the reply is whole.
+    """
+    model = CountingModel("The sizing went out on Tuesday. Batelco confirmed it.")
+    heard: list[str] = []
+    heard_by_chunk: list[int] = []
+    model.probe = lambda: heard_by_chunk.append(len(heard))
+
+    async def listen(sentence: str) -> None:
+        heard.append(sentence)
+
+    graph, _ = _graph(tmp_path, model=model)
+    rendition = await graph.answer(
+        _turn("When did the sizing go out?"), on_spoken=listen
+    )
+
+    assert heard == ["The sizing went out on Tuesday.", "Batelco confirmed it."]
+    assert rendition.spoken == " ".join(heard)
+    # The first sentence was heard before the last chunk of the second arrived.
+    assert 1 in heard_by_chunk[:-1]
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_is_spoken_exactly_once(tmp_path) -> None:
+    heard: list[str] = []
+
+    async def listen(sentence: str) -> None:
+        heard.append(sentence)
+
+    graph, _ = _graph(tmp_path)
+    await graph.answer(_turn("Build me a tool that summarises notes"), on_spoken=listen)
+    assert heard == [BUILD_REFUSAL]
 
 
 @pytest.mark.asyncio
@@ -372,57 +437,63 @@ async def test_history_is_labelled_as_a_record_not_an_instruction(tmp_path) -> N
 
 
 @pytest.mark.asyncio
-async def test_a_model_that_speaks_markdown_gets_a_host_rendition(tmp_path) -> None:
-    model = CountingModel(
-        VoiceAnswerV1(
-            written="## Where it stands\nThe **sizing** went out [1].",
-            spoken="## Where it stands\nThe **sizing** went out [1].",
-        )
-    )
+async def test_a_model_that_writes_markdown_is_made_sayable(tmp_path) -> None:
+    model = CountingModel("## Where it stands\nThe **sizing** went out [1].")
     graph, _ = _graph(tmp_path, model=model)
     rendition = await graph.answer(_turn("Where does the sizing stand?"))
 
     assert rendition.spoken_fallback is True
     for noise in ("#", "**", "[1]"):
         assert noise not in rendition.spoken
-    # The written answer keeps its markup: only the ear needed protecting.
-    assert "**sizing**" in rendition.written
+        assert noise not in rendition.written
 
 
 @pytest.mark.asyncio
-async def test_a_missing_spoken_field_is_rendered_from_the_written_answer(
-    tmp_path,
-) -> None:
-    model = CountingModel(
-        VoiceAnswerV1(written="The sizing went out on Tuesday [1].", spoken="")
-    )
-    graph, _ = _graph(tmp_path, model=model)
+async def test_an_empty_reply_is_said_as_no_answer(tmp_path) -> None:
+    graph, _ = _graph(tmp_path, model=CountingModel(""))
     rendition = await graph.answer(_turn("When did the sizing go out?"))
-
+    assert rendition.spoken == NO_ANSWER
     assert rendition.spoken_fallback is True
-    assert rendition.spoken == "The sizing went out on Tuesday."
 
 
 @pytest.mark.asyncio
-async def test_an_invented_figure_is_withheld_from_both_renditions(tmp_path) -> None:
+async def test_an_invented_figure_is_withheld_before_it_is_spoken(tmp_path) -> None:
     """The claim gate, on the surface that cannot show its working.
 
     A spoken answer is heard once and cannot be scrolled back to check, so a
-    figure the records do not contain is worse here than anywhere else.
+    figure the records do not contain must never reach the listener — not
+    even for the moment before a correction.
     """
     customers = CountingCustomers([_account("acc_bat", "Batelco")])
+    model = CountingModel("Batelco signed for $4,200,000 last quarter.")
+    heard: list[str] = []
+
+    async def listen(sentence: str) -> None:
+        heard.append(sentence)
+
+    graph, _ = _graph(tmp_path, model=model, customers=customers)
+    rendition = await graph.answer(
+        _turn("How big was the Batelco deal?"), on_spoken=listen
+    )
+
+    assert heard == [WITHHELD_ANSWER]
+    assert rendition.spoken == rendition.written == WITHHELD_ANSWER
+    assert "4,200,000" not in rendition.spoken
+
+
+@pytest.mark.asyncio
+async def test_a_supported_sentence_is_kept_when_a_later_one_is_withheld(
+    tmp_path,
+) -> None:
+    customers = CountingCustomers([_account("acc_bat", "Batelco")])
     model = CountingModel(
-        VoiceAnswerV1(
-            written="Batelco signed for $4,200,000 last quarter [1].",
-            spoken="Batelco signed for four point two million last quarter.",
-        )
+        "The workshop is on Thursday. Batelco signed for $4,200,000 last quarter."
     )
     graph, _ = _graph(tmp_path, model=model, customers=customers)
-    rendition = await graph.answer(_turn("How big was the Batelco deal?"))
+    rendition = await graph.answer(_turn("What's the latest with Batelco?"))
 
-    assert "4,200,000" not in rendition.written
-    assert "4,200,000" not in rendition.spoken
-    assert "held that" in rendition.spoken
+    assert rendition.spoken == f"The workshop is on Thursday. {WITHHELD_FIGURE}"
+    assert rendition.spoken_fallback is True
 
 
 # -- brevity -----------------------------------------------------------------
@@ -496,14 +567,13 @@ async def test_a_long_spoken_answer_is_cut_to_four_sentences_unless_asked(
     because they asked, not because the model felt expansive.
     """
     long_answer = " ".join(f"Sentence number {index}." for index in range(1, 9))
-    model = CountingModel(VoiceAnswerV1(written=long_answer, spoken=long_answer))
 
-    graph, _ = _graph(tmp_path, model=model)
+    graph, _ = _graph(tmp_path, model=CountingModel(long_answer))
     brief = await graph.answer(_turn("Where does the sizing stand?"))
     assert brief.spoken.count(".") == 4
     assert brief.spoken_fallback is True
 
-    graph, _ = _graph(tmp_path, model=CountingModel(model.answer))
+    graph, _ = _graph(tmp_path, model=CountingModel(long_answer))
     detailed = await graph.answer(_turn("Walk me through where the sizing stands"))
     assert detailed.spoken.count(".") == 8
 
@@ -518,7 +588,7 @@ async def test_the_ceiling_is_evaluated_before_and_after_the_model_replies(
     graph, _ = _graph(tmp_path)
     assert graph.last_outcome is None
     await graph.answer(_turn("When did the sizing go out?"))
-    # The last evaluation is the one made after the model's structured reply.
+    # The last evaluation is the one made after the model finished speaking.
     assert graph.last_outcome.action == "voice.answer"
     assert graph.last_outcome.disposition.value == "allow"
     assert graph.last_outcome.declared_risk.value == "R2"

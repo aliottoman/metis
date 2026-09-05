@@ -32,6 +32,7 @@ type NavIconName =
   | "knowledge"
   | "meetings"
   | "interviews"
+  | "agents"
   | "memory"
   | "sizing"
   | "today"
@@ -48,6 +49,7 @@ const navigation: Array<{ href: string; label: string; icon: NavIconName }> = [
   { href: "/tools", label: "Tool Workshop", icon: "tools" },
   { href: "/meetings", label: "Meetings", icon: "meetings" },
   { href: "/interviews", label: "Interviews", icon: "interviews" },
+  { href: "/agents", label: "Agents", icon: "agents" },
   { href: "/knowledge", label: "Knowledge", icon: "knowledge" },
   { href: "/answers", label: "Answers", icon: "answers" },
   { href: "/memory", label: "Memory", icon: "memory" },
@@ -101,6 +103,10 @@ function NavIcon({ name }: { name: NavIconName }) {
   if (name === "interviews") {
     // A question in a speech bubble: five of these, then the verdict.
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4.6 3.9h10.8a1.6 1.6 0 0 1 1.6 1.6v6a1.6 1.6 0 0 1-1.6 1.6H9.6l-3.2 3v-3H4.6A1.6 1.6 0 0 1 3 11.5v-6a1.6 1.6 0 0 1 1.6-1.6ZM8.3 6.9a1.7 1.7 0 1 1 2.5 1.9c-.6.35-.8.7-.8 1.3M10 11.4v.05" /></svg>;
+  }
+  if (name === "agents") {
+    // A microphone on a stand: an agent that speaks for someone else.
+    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M10 3.4a3.2 3.2 0 0 1 3.2 3.2v3a3.2 3.2 0 0 1-6.4 0v-3A3.2 3.2 0 0 1 10 3.4ZM5.2 9.6a4.8 4.8 0 0 0 9.6 0M10 14.4v2.2M7.4 16.6h5.2" /></svg>;
   }
   if (name === "memory") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M10 3.4a6.6 6.6 0 1 1-4.7 2M3.4 3.8v3h3M10 6.6v3.7l2.6 1.5" /></svg>;

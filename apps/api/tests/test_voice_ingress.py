@@ -42,28 +42,62 @@ def _config(**overrides) -> IngressConfig:
 
 
 class FakeLoopback:
-    """Stands in for :8000, recording exactly what the adapter forwarded."""
+    """Stands in for :8000, recording exactly what the adapter forwarded.
 
-    def __init__(self, *, spoken: str = "Three things are waiting.", status: int = 200):
+    A turn streams back as newline-delimited frames, the way the trusted
+    route answers; `frames` overrides them for a test that needs a specific
+    sequence. The webhook path still posts and gets a plain status.
+    """
+
+    def __init__(
+        self,
+        *,
+        spoken: tuple[str, ...] = ("Three things are waiting.",),
+        status: int = 200,
+        frames: list[dict] | None = None,
+    ):
         self.spoken = spoken
         self.status = status
+        self.frames = frames
         self.requests: list[dict] = []
+
+    def stream(self, method, url, *, json=None, headers=None):
+        self.requests.append({"url": url, "json": json, "headers": headers or {}})
+        frames = self.frames
+        if frames is None:
+            frames = [{"type": "spoken", "text": text} for text in self.spoken]
+            frames.append({"type": "done"})
+        return FakeStream(self.status, frames)
 
     async def post(self, url, *, json=None, headers=None):
         self.requests.append({"url": url, "json": json, "headers": headers or {}})
-        return FakeResponse(self.status, {"spoken": self.spoken})
+        return FakeResponse(self.status)
 
     async def aclose(self) -> None:
         return None
 
 
-class FakeResponse:
-    def __init__(self, status_code: int, payload: dict) -> None:
-        self.status_code = status_code
-        self._payload = payload
+class FakeStream:
+    """An `httpx` streaming response: a status and lines to read."""
 
-    def json(self) -> dict:
-        return self._payload
+    def __init__(self, status_code: int, frames: list[dict]) -> None:
+        self.status_code = status_code
+        self._frames = frames
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        return None
+
+    async def aiter_lines(self):
+        for frame in self._frames:
+            yield json.dumps(frame)
+
+
+class FakeResponse:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
 
 
 def _client(loopback: FakeLoopback | None = None, **overrides):
@@ -341,19 +375,21 @@ def test_a_flood_from_one_session_is_rate_limited() -> None:
 # -- the response ------------------------------------------------------------
 
 
+def _sse_chunks(text: str) -> list[dict]:
+    frames = [
+        line[len("data: ") :] for line in text.splitlines() if line.startswith("data: ")
+    ]
+    assert frames[-1] == "[DONE]"
+    return [json.loads(frame) for frame in frames[:-1]]
+
+
 def test_the_stream_is_valid_sse_that_ends_in_done() -> None:
-    _, client = _client(FakeLoopback(spoken="Three things are waiting."))
+    _, client = _client(FakeLoopback(spoken=("Three things are waiting.",)))
     try:
         response = client.post("/v1/chat/completions", json=_turn(), headers=_auth())
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
-        frames = [
-            line[len("data: ") :]
-            for line in response.text.splitlines()
-            if line.startswith("data: ")
-        ]
-        assert frames[-1] == "[DONE]"
-        chunks = [json.loads(frame) for frame in frames[:-1]]
+        chunks = _sse_chunks(response.text)
         assert chunks[0]["choices"][0]["delta"] == {"role": "assistant"}
         assert (
             chunks[1]["choices"][0]["delta"]["content"] == "Three things are waiting."
@@ -364,23 +400,44 @@ def test_the_stream_is_valid_sse_that_ends_in_done() -> None:
         client.__exit__(None, None, None)
 
 
-def test_only_the_spoken_half_ever_crosses_back_through_the_tunnel() -> None:
-    """The written answer, citations and receipts go to the browser, not here."""
+def test_each_sentence_is_its_own_chunk_and_they_read_back_as_one_answer() -> None:
+    """Sentences are relayed as they arrive, spaced so the far side can join
+    them into the answer the trusted side decided."""
+    _, client = _client(
+        FakeLoopback(spoken=("Three things are waiting.", "The loudest is Batelco."))
+    )
+    try:
+        response = client.post("/v1/chat/completions", json=_turn(), headers=_auth())
+        contents = [
+            chunk["choices"][0]["delta"].get("content")
+            for chunk in _sse_chunks(response.text)
+        ]
+        assert contents == [
+            None,
+            "Three things are waiting.",
+            " The loudest is Batelco.",
+            None,
+        ]
+    finally:
+        client.__exit__(None, None, None)
 
-    class RichLoopback(FakeLoopback):
-        async def post(self, url, *, json=None, headers=None):
-            self.requests.append({"url": url, "json": json})
-            return FakeResponse(
-                200,
+
+def test_only_the_spoken_text_ever_crosses_back_through_the_tunnel() -> None:
+    """Whatever else a frame carries, the words to say are all that leave."""
+    _, client = _client(
+        FakeLoopback(
+            frames=[
                 {
-                    "spoken": "Three things are waiting.",
+                    "type": "spoken",
+                    "text": "Three things are waiting.",
                     "written": "SECRET WRITTEN ANSWER with [1] citations",
                     "citations": [{"label": "Service request"}],
                     "run_id": "run_abc",
                 },
-            )
-
-    _, client = _client(RichLoopback())
+                {"type": "done"},
+            ]
+        )
+    )
     try:
         response = client.post("/v1/chat/completions", json=_turn(), headers=_auth())
         assert "SECRET WRITTEN ANSWER" not in response.text
@@ -398,6 +455,28 @@ def test_a_failure_on_the_trusted_side_is_not_described_to_the_caller() -> None:
         assert response.status_code == 200
         assert "went wrong" in response.text
         assert "500" not in response.text
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_a_failure_after_the_first_sentence_ends_the_answer_where_it_stopped() -> None:
+    """An apology tacked onto half an answer is worse than the half."""
+    _, client = _client(
+        FakeLoopback(
+            frames=[
+                {"type": "spoken", "text": "Three things are waiting."},
+                {"type": "error", "detail": "the turn failed"},
+            ]
+        )
+    )
+    try:
+        response = client.post("/v1/chat/completions", json=_turn(), headers=_auth())
+        contents = [
+            chunk["choices"][0]["delta"].get("content")
+            for chunk in _sse_chunks(response.text)
+        ]
+        assert contents == [None, "Three things are waiting.", None]
+        assert "the turn failed" not in response.text
     finally:
         client.__exit__(None, None, None)
 
