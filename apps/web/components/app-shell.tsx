@@ -1,35 +1,38 @@
 "use client";
 
+// The shell: one rail, one pane. The rail is the navigation — labels visible
+// at rest, three groups by the job you are doing, Library folded away until
+// you want it. Conversations live inside Chat, where they belong. On a phone
+// the rail is a drawer; on a narrow desktop it folds to icons.
+
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   AudioLines,
   BookOpen,
   Bot,
   Brain,
+  ChevronDown,
   Gauge,
+  Menu,
   MessageCircleQuestion,
   MessageSquare,
   MessageSquareQuote,
   Package,
+  PanelLeftClose,
+  Plus,
   Settings,
   Sun,
   Users,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { MetisCompanion } from "@/components/metis-companion";
-import { deleteConversation, getRunRecord, listConversations } from "@/lib/api";
+import { StatusDot } from "@/components/ui/status";
+import { getRunRecord, listConversations } from "@/lib/api";
 import { freshToken } from "@/lib/token";
-import {
-  CONVERSATIONS_CHANGED_EVENT,
-  forgetConversation,
-  readRecentConversations,
-} from "@/lib/recent-conversations";
-import type { ConversationSummary } from "@/lib/types";
 import {
   RUN_INDICATORS_CHANGED_EVENT,
   acknowledgeConversationRun,
@@ -39,106 +42,90 @@ import {
   type ConversationRunState,
 } from "@/lib/run-indicators";
 
-type NavIconName =
-  | "chat"
-  | "customers"
-  | "assets"
-  | "tools"
-  | "knowledge"
-  | "meetings"
-  | "interviews"
-  | "agents"
-  | "memory"
-  | "sizing"
-  | "today"
-  | "answers"
-  | "settings";
-
-const navigation: Array<{
+interface Destination {
   href: string;
   label: string;
-  icon: NavIconName;
-}> = [
-  // Today is the front door: one ranked queue of everything waiting, so work
-  // stops hiding behind eight equal destinations.
-  { href: "/today", label: "Today", icon: "today" },
-  { href: "/", label: "Chat", icon: "chat" },
-  { href: "/customers", label: "Customers", icon: "customers" },
-  { href: "/assets", label: "Assets", icon: "assets" },
-  { href: "/tools", label: "Tool Workshop", icon: "tools" },
-  { href: "/meetings", label: "Meetings", icon: "meetings" },
-  { href: "/interviews", label: "Interviews", icon: "interviews" },
-  { href: "/agents", label: "Agents", icon: "agents" },
-  { href: "/knowledge", label: "Knowledge", icon: "knowledge" },
-  { href: "/answers", label: "Answers", icon: "answers" },
-  { href: "/memory", label: "Memory", icon: "memory" },
-  { href: "/sizing", label: "Sizing", icon: "sizing" },
-  { href: "/settings", label: "Settings", icon: "settings" },
-];
+  icon: LucideIcon;
+}
 
-type SidebarSectionId = "focus" | "conversations" | "library" | "capture" | "build" | "system";
-
-const sidebarSections: Array<{
-  id: SidebarSectionId;
+interface Group {
+  id: "work" | "voice" | "library";
   label: string;
-  eyebrow: string;
-  description: string;
-  icon: NavIconName;
-  hrefs: string[];
-}> = [
-  { id: "focus", label: "Focus", eyebrow: "Workspace", description: "What needs you now", icon: "today", hrefs: ["/today"] },
-  { id: "conversations", label: "Chat", eyebrow: "Conversations", description: "Think, make, and decide", icon: "chat", hrefs: ["/"] },
-  { id: "library", label: "Library", eyebrow: "Intelligence", description: "Your connected context", icon: "knowledge", hrefs: ["/customers", "/assets", "/knowledge", "/answers", "/memory", "/sizing"] },
-  { id: "capture", label: "Capture", eyebrow: "Research", description: "Turn conversations into signal", icon: "meetings", hrefs: ["/meetings", "/interviews"] },
-  { id: "build", label: "Build", eyebrow: "Capabilities", description: "Create reusable workflows", icon: "tools", hrefs: ["/tools"] },
-  { id: "system", label: "Settings", eyebrow: "Metis", description: "Preferences and governance", icon: "settings", hrefs: ["/settings"] },
+  collapsible: boolean;
+  items: Destination[];
+}
+
+const GROUPS: Group[] = [
+  {
+    id: "work",
+    label: "Work",
+    collapsible: false,
+    items: [
+      { href: "/today", label: "Today", icon: Sun },
+      { href: "/", label: "Chat", icon: MessageSquare },
+      { href: "/customers", label: "Customers", icon: Users },
+    ],
+  },
+  {
+    id: "voice",
+    label: "Voice",
+    collapsible: false,
+    items: [
+      { href: "/meetings", label: "Meetings", icon: AudioLines },
+      { href: "/interviews", label: "Interviews", icon: MessageCircleQuestion },
+      { href: "/agents", label: "Agents", icon: Bot },
+    ],
+  },
+  {
+    id: "library",
+    label: "Library",
+    collapsible: true,
+    items: [
+      { href: "/assets", label: "Assets", icon: Package },
+      { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+      { href: "/answers", label: "Answers", icon: MessageSquareQuote },
+      { href: "/memory", label: "Memory", icon: Brain },
+      { href: "/tools", label: "Tool Workshop", icon: Wrench },
+      { href: "/sizing", label: "Sizing", icon: Gauge },
+    ],
+  },
 ];
 
-function sectionForPathname(pathname: string): SidebarSectionId {
-  return sidebarSections.find((section) =>
-    section.hrefs.some((href) => href === "/" ? pathname === "/" : pathname.startsWith(href)),
-  )?.id ?? "conversations";
+const SETTINGS: Destination = { href: "/settings", label: "Settings", icon: Settings };
+
+export const FOCUS_SEARCH_EVENT = "metis:focus-search";
+
+function isActive(href: string, pathname: string): boolean {
+  return href === "/" ? pathname === "/" : pathname.startsWith(href);
 }
 
-const DEFAULT_SIDEBAR_WIDTH = 272;
-const MIN_SIDEBAR_WIDTH = 248;
-const MAX_SIDEBAR_WIDTH = 304;
-const COMPACT_HISTORY_LIMIT = 12;
-
-function clampSidebarWidth(value: number): number {
-  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, value));
+function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? fallback : raw === "1";
+  } catch {
+    return fallback;
+  }
 }
 
-// One icon set, one stroke weight, one optical size.
-const NAV_ICONS: Record<NavIconName, LucideIcon> = {
-  today: Sun,
-  chat: MessageSquare,
-  customers: Users,
-  assets: Package,
-  tools: Wrench,
-  meetings: AudioLines,
-  interviews: MessageCircleQuestion,
-  agents: Bot,
-  knowledge: BookOpen,
-  answers: MessageSquareQuote,
-  memory: Brain,
-  sizing: Gauge,
-  settings: Settings,
-};
-
-function NavIcon({ name }: { name: NavIconName }) {
-  const Icon = NAV_ICONS[name];
-  return <Icon size={18} strokeWidth={1.6} aria-hidden="true" />;
+function writeFlag(key: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    // A preference that cannot be saved still holds for this visit.
+  }
 }
 
-function groupLabel(timestamp?: string): string {
-  if (!timestamp) return "Earlier";
-  const date = new Date(timestamp);
-  const now = new Date();
-  const delta = now.getTime() - date.getTime();
-  if (delta < 86_400_000 && date.getDate() === now.getDate()) return "Today";
-  if (delta < 7 * 86_400_000) return "Previous 7 days";
-  return "Earlier";
+function useMedia(query: string): boolean {
+  const [matches, setMatches] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const sync = () => setMatches(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, [query]);
+  return matches;
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -146,127 +133,83 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeConversation = searchParams.get("conversation");
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [query, setQuery] = useState("");
+  const narrow = useMedia("(max-width: 720px)");
+  const medium = useMedia("(max-width: 1080px)");
+
+  const [collapsedChoice, setCollapsedChoice] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-  const [activeSidebarSection, setActiveSidebarSection] = useState<SidebarSectionId>(() => sectionForPathname(pathname));
-  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
-  const [resizing, setResizing] = useState(false);
-  const [animate, setAnimate] = useState(false);
-  const [apiConnected, setApiConnected] = useState(true);
-  const [deletingConversation, setDeletingConversation] = useState<string | null>(null);
-  const [runIndicators, setRunIndicators] = useState<Record<string, ConversationRunIndicator>>({});
-  const [historyExpanded, setHistoryExpanded] = useState(false);
-  const [mobileLayout, setMobileLayout] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const mobileMenuRef = useRef<HTMLButtonElement>(null);
-  const sidebarRef = useRef<HTMLElement>(null);
-  const sidebarPanelRef = useRef<HTMLDivElement>(null);
-  const mainRef = useRef<HTMLElement>(null);
-  const drawerFocusRef = useRef<HTMLElement | null>(null);
-  const resizingRef = useRef(false);
-  const resizeOriginRef = useRef({ pointerX: 0, width: DEFAULT_SIDEBAR_WIDTH });
-  const sidebarWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
-  const desktopPanelCollapsed = collapsed && !mobileLayout;
+  const [connected, setConnected] = useState(true);
+  const [indicators, setIndicators] = useState<Record<string, ConversationRunIndicator>>({});
+  const [pill, setPill] = useState<{ top: number; visible: boolean }>({ top: 0, visible: false });
+  const navRef = useRef<HTMLElement>(null);
+  const railRef = useRef<HTMLElement>(null);
+  const menuRef = useRef<HTMLButtonElement>(null);
+
+  // Folded by choice on a wide screen, by necessity on a medium one, and
+  // never on a phone, where the rail is a drawer instead.
+  const collapsed = !narrow && (medium || collapsedChoice);
 
   useEffect(() => {
-    // Apply the persisted collapse state on mount WITHOUT a transition (a
-    // flex-basis transition fired during hydration sticks at its start value),
-    // then enable transitions a frame later so user toggles animate smoothly.
-    setCollapsed(window.localStorage.getItem("metis.sidebarCollapsed") === "1");
-    // An absent key reads back as null, and Number(null) is 0 — which is finite,
-    // so a plain isFinite check would clamp every fresh profile to the minimum
-    // width instead of leaving it at the default.
-    const savedWidth = Number(window.localStorage.getItem("metis.sidebarWidth"));
-    if (Number.isFinite(savedWidth) && savedWidth > 0) {
-      const nextWidth = clampSidebarWidth(savedWidth);
-      sidebarWidthRef.current = nextWidth;
-      setSidebarWidth(nextWidth);
+    setCollapsedChoice(readFlag("metis.railCollapsed", false));
+    setLibraryOpen(readFlag("metis.libraryOpen", false));
+  }, []);
+
+  // The active pill slides to whichever link is current. Measured after
+  // layout so it follows the rail folding and the Library opening too.
+  const placePill = useCallback(() => {
+    const nav = navRef.current;
+    const active = nav?.querySelector<HTMLElement>(".rail-link.is-active");
+    if (!nav || !active) {
+      setPill((current) => (current.visible ? { ...current, visible: false } : current));
+      return;
     }
-    const id = requestAnimationFrame(() =>
-      requestAnimationFrame(() => setAnimate(true)),
-    );
-    return () => cancelAnimationFrame(id);
+    setPill({ top: active.offsetTop, visible: true });
   }, []);
-
+  useLayoutEffect(placePill, [placePill, pathname, collapsed, libraryOpen]);
   useEffect(() => {
-    // A full rail plus detail panel leaves the workspace unusably narrow well
-    // before phone width. Use the drawer until there is room for both.
-    const query = window.matchMedia("(max-width: 1100px)");
-    const sync = () => setMobileLayout(query.matches);
-    sync();
-    query.addEventListener("change", sync);
-    return () => query.removeEventListener("change", sync);
-  }, []);
-
-  // CSS hides the detail panel on a collapsed desktop rail. Mirror that state
-  // semantically so clipped controls cannot remain in the keyboard or screen-
-  // reader order. Mobile always keeps the panel available inside its drawer.
-  useEffect(() => {
-    const panel = sidebarPanelRef.current;
-    if (!panel) return;
-    panel.inert = desktopPanelCollapsed;
+    const nav = navRef.current;
+    if (!nav) return;
+    const observer = new ResizeObserver(() => placePill());
+    observer.observe(nav);
+    // The fold and the Library animate for a moment; settle the pill after.
+    const settle = window.setTimeout(placePill, 360);
     return () => {
-      panel.inert = false;
+      observer.disconnect();
+      window.clearTimeout(settle);
     };
-  }, [desktopPanelCollapsed]);
+  }, [placePill, collapsed, libraryOpen]);
 
-  // The off-canvas navigation is a real modal surface on small screens. Keep
-  // closed links out of the tab order, trap focus while it is open, then put
-  // focus back on the button that opened it.
+  // A page inside the Library opens the group so the current page is visible.
   useEffect(() => {
-    const sidebar = sidebarRef.current;
-    const main = mainRef.current;
-    if (!sidebar || !main) return;
-    sidebar.inert = mobileLayout && !drawerOpen;
-    main.inert = mobileLayout && drawerOpen;
-    if (!mobileLayout || !drawerOpen) return;
-
-    drawerFocusRef.current = document.activeElement as HTMLElement | null;
-    const focusable = () => [
-      mobileMenuRef.current,
-      ...Array.from(
-        sidebar.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ),
-    ].filter((item): item is HTMLElement => Boolean(item));
-    window.requestAnimationFrame(() => focusable()[1]?.focus());
-
-    const trap = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setDrawerOpen(false);
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = focusable();
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", trap);
-    return () => {
-      document.removeEventListener("keydown", trap);
-      drawerFocusRef.current?.focus();
-      drawerFocusRef.current = null;
-    };
-  }, [drawerOpen, mobileLayout]);
-
-  useEffect(() => {
-    setActiveSidebarSection(sectionForPathname(pathname));
+    if (GROUPS[2].items.some((item) => isActive(item.href, pathname))) setLibraryOpen(true);
   }, [pathname]);
 
+  useEffect(() => setDrawerOpen(false), [pathname, activeConversation]);
+
+  // The drawer is a modal surface on a phone: focus goes in, Escape brings it out.
   useEffect(() => {
-    const sync = () => setRunIndicators(readRunIndicators());
+    const rail = railRef.current;
+    if (!rail) return;
+    rail.inert = narrow && !drawerOpen;
+    if (!narrow || !drawerOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    window.requestAnimationFrame(() => rail.querySelector<HTMLElement>("a, button")?.focus());
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDrawerOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      (previous ?? menuRef.current)?.focus();
+    };
+  }, [drawerOpen, narrow]);
+
+  // Runs keep going when Chat is not the visible page. The shell stays mounted
+  // across navigation, so it owns the background check and turns completion
+  // into the unread count on the Chat entry.
+  useEffect(() => {
+    const sync = () => setIndicators(readRunIndicators());
     sync();
     window.addEventListener(RUN_INDICATORS_CHANGED_EVENT, sync);
     window.addEventListener("storage", sync);
@@ -275,519 +218,202 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       window.removeEventListener("storage", sync);
     };
   }, []);
-
-  // Runs keep going when Chat is no longer the visible page. The shell stays
-  // mounted across navigation, so it owns the small background status check and
-  // turns completion into a durable, per-conversation unread signal.
   useEffect(() => {
     let stopped = false;
     const poll = async () => {
-      const current = readRunIndicators();
-      const pending = Object.values(current).filter((item) => item.state === "working" || item.state === "attention");
-      await Promise.all(pending.map(async (item) => {
-        try {
-          const run = await getRunRecord(item.runId);
-          if (stopped) return;
-          const state: ConversationRunState =
-            run.status === "completed" ? "done"
-              : run.status === "failed" ? "failed"
-                : run.status === "cancelled" ? "cancelled"
-                  : run.status === "awaiting_approval" || run.status === "awaiting_input" ? "attention"
-                    : "working";
-          const visibleHere = pathname === "/" && activeConversation === item.conversationId && document.visibilityState === "visible";
-          const unread = state === "working" ? false : !visibleHere;
-          if (state !== item.state || unread !== item.unread) updateConversationRun(item.runId, state, unread);
-        } catch {
-          // The chat itself owns detailed connection recovery. A shell badge is
-          // advisory and should not flash failure on a brief API interruption.
-        }
-      }));
+      const pending = Object.values(readRunIndicators()).filter(
+        (item) => item.state === "working" || item.state === "attention",
+      );
+      await Promise.all(
+        pending.map(async (item) => {
+          try {
+            const run = await getRunRecord(item.runId);
+            if (stopped) return;
+            const state: ConversationRunState =
+              run.status === "completed" ? "done"
+                : run.status === "failed" ? "failed"
+                  : run.status === "cancelled" ? "cancelled"
+                    : run.status === "awaiting_approval" || run.status === "awaiting_input" ? "attention"
+                      : "working";
+            const visibleHere =
+              pathname === "/" && activeConversation === item.conversationId && document.visibilityState === "visible";
+            const unread = state === "working" ? false : !visibleHere;
+            if (state !== item.state || unread !== item.unread) updateConversationRun(item.runId, state, unread);
+          } catch {
+            // A badge is advisory; a brief API blip must not flash failure.
+          }
+        }),
+      );
     };
     void poll();
     const timer = window.setInterval(() => void poll(), 2500);
-    return () => { stopped = true; window.clearInterval(timer); };
-  }, [activeConversation, pathname]);
-
-  useEffect(() => {
-    if (pathname !== "/" || !activeConversation) return;
-    acknowledgeConversationRun(activeConversation);
-  }, [activeConversation, pathname]);
-
-  const toggleCollapsed = () => {
-    if (mobileLayout) {
-      setDrawerOpen(false);
-      return;
-    }
-    resizingRef.current = false;
-    setResizing(false);
-    const next = !collapsed;
-    setCollapsed(next);
-    window.localStorage.setItem("metis.sidebarCollapsed", next ? "1" : "0");
-    if (next && sidebarPanelRef.current?.contains(document.activeElement)) {
-      window.requestAnimationFrame(() => {
-        sidebarRef.current
-          ?.querySelector<HTMLButtonElement>(
-            `[data-sidebar-section="${activeSidebarSection}"]`,
-          )
-          ?.focus();
-      });
-    }
-  };
-
-  const openSidebarSection = (section: SidebarSectionId) => {
-    if (mobileLayout) {
-      setActiveSidebarSection(section);
-      return;
-    }
-    if (activeSidebarSection === section && !collapsed) {
-      toggleCollapsed();
-      return;
-    }
-    setActiveSidebarSection(section);
-    setCollapsed(false);
-    window.localStorage.setItem("metis.sidebarCollapsed", "0");
-  };
-
-  const setAndRememberSidebarWidth = (width: number) => {
-    const nextWidth = clampSidebarWidth(width);
-    sidebarWidthRef.current = nextWidth;
-    setSidebarWidth(nextWidth);
-    window.localStorage.setItem("metis.sidebarWidth", String(nextWidth));
-  };
-
-  const handleResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (collapsed || event.button !== 0) return;
-    resizeOriginRef.current = { pointerX: event.clientX, width: sidebarWidthRef.current };
-    resizingRef.current = true;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setResizing(true);
-  };
-
-  const handleResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!resizingRef.current) return;
-    const nextWidth = clampSidebarWidth(
-      resizeOriginRef.current.width + event.clientX - resizeOriginRef.current.pointerX,
-    );
-    sidebarWidthRef.current = nextWidth;
-    setSidebarWidth(nextWidth);
-  };
-
-  const handleResizeEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!resizingRef.current) return;
-    resizingRef.current = false;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    window.localStorage.setItem("metis.sidebarWidth", String(sidebarWidthRef.current));
-    setResizing(false);
-  };
-
-  const handleResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!event.key.startsWith("Arrow")) return;
-    event.preventDefault();
-    const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
-    if (direction) setAndRememberSidebarWidth(sidebarWidthRef.current + direction * 16);
-  };
-
-  useEffect(() => {
-    let mounted = true;
-    const load = async () => {
-      try {
-        const items = await listConversations();
-        if (!mounted) return;
-        setConversations(items.length ? items : readRecentConversations());
-        setApiConnected(true);
-      } catch {
-        if (!mounted) return;
-        setConversations(readRecentConversations());
-        setApiConnected(false);
-      }
-    };
-    void load();
-    const onChanged = () => void load();
-    window.addEventListener(CONVERSATIONS_CHANGED_EVENT, onChanged);
     return () => {
-      mounted = false;
-      window.removeEventListener(CONVERSATIONS_CHANGED_EVENT, onChanged);
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [activeConversation, pathname]);
+  useEffect(() => {
+    if (pathname === "/" && activeConversation) acknowledgeConversationRun(activeConversation);
+  }, [activeConversation, pathname]);
+
+  // Connection status for the rail foot: one cheap call, then every half minute.
+  useEffect(() => {
+    let stopped = false;
+    const check = () =>
+      listConversations()
+        .then(() => !stopped && setConnected(true))
+        .catch(() => !stopped && setConnected(false));
+    void check();
+    const timer = window.setInterval(() => void check(), 30_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
     };
   }, []);
 
-  useEffect(() => setDrawerOpen(false), [pathname, activeConversation]);
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      // Shift is deliberately excluded: ⌘⇧K belongs to whichever page is open
-      // (the Customers page searches customer records with it), and this
-      // listener would otherwise steal the focus out from under it.
-      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "k") {
+      const meta = event.metaKey || event.ctrlKey;
+      // ⌘⇧K belongs to the page (Customers searches records with it).
+      if (meta && !event.shiftKey && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setActiveSidebarSection("conversations");
-        if (!mobileLayout) {
-          setCollapsed(false);
-          window.localStorage.setItem("metis.sidebarCollapsed", "0");
-        }
-        setDrawerOpen(true);
-        window.setTimeout(() => searchRef.current?.focus(), 0);
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+        if (pathname === "/") window.dispatchEvent(new Event(FOCUS_SEARCH_EVENT));
+        else router.push("/?focus=search");
+      } else if (meta && event.key.toLowerCase() === "n") {
         event.preventDefault();
         router.push(`/?new=${freshToken()}`);
-      } else if (event.key === "Escape") {
-        resizingRef.current = false;
-        setResizing(false);
-        setDrawerOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mobileLayout, router]);
+  }, [pathname, router]);
 
-  const filtered = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return conversations;
-    return conversations.filter((item) =>
-      `${item.title} ${item.last_message ?? ""}`.toLowerCase().includes(normalized),
+  const unread = useMemo(() => Object.values(indicators).filter((item) => item.unread).length, [indicators]);
+
+  const toggleCollapsed = () => {
+    const next = !collapsedChoice;
+    setCollapsedChoice(next);
+    writeFlag("metis.railCollapsed", next);
+  };
+  const toggleLibrary = () => {
+    const next = !libraryOpen;
+    setLibraryOpen(next);
+    writeFlag("metis.libraryOpen", next);
+  };
+
+  const link = (item: Destination) => {
+    const active = isActive(item.href, pathname);
+    const Icon = item.icon;
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        className={`rail-link${active ? " is-active" : ""}`}
+        aria-current={active ? "page" : undefined}
+        title={collapsed ? item.label : undefined}
+      >
+        <Icon size={18} strokeWidth={1.6} aria-hidden="true" />
+        <span>{item.label}</span>
+        {item.href === "/" && unread ? (
+          <b className="rail-badge" aria-label={`${unread} finished runs to read`}>{unread}</b>
+        ) : null}
+      </Link>
     );
-  }, [conversations, query]);
-
-  // The rail is for returning to current work, not for displaying the entire
-  // database at once. Search always sees everything; the resting view shows a
-  // compact recent set and offers the full history on request.
-  const visibleHistory = useMemo(
-    () => query.trim() || historyExpanded ? filtered : filtered.slice(0, COMPACT_HISTORY_LIMIT),
-    [filtered, historyExpanded, query],
-  );
-
-  const grouped = useMemo(() => {
-    return visibleHistory.reduce<Record<string, ConversationSummary[]>>((result, item) => {
-      const label = groupLabel(item.updated_at ?? item.created_at);
-      result[label] = [...(result[label] ?? []), item];
-      return result;
-    }, {});
-  }, [visibleHistory]);
-
-  const unreadRunCount = useMemo(
-    () => Object.values(runIndicators).filter((item) => item.unread).length,
-    [runIndicators],
-  );
-
-  const currentSidebarSection = sectionForPathname(pathname);
-  const currentDestination = navigation.find((item) =>
-    item.href === "/" ? pathname === "/" : pathname.startsWith(item.href),
-  );
-  const activeSection = sidebarSections.find((section) => section.id === activeSidebarSection) ?? sidebarSections[1];
-  const sectionNavigation = navigation.filter((item) => activeSection.hrefs.includes(item.href));
-
-  const removeConversation = async (conversation: ConversationSummary) => {
-    if (deletingConversation || !window.confirm(`Delete “${conversation.title}”? This permanently removes this chat and its messages.`)) return;
-    setDeletingConversation(conversation.id);
-    try {
-      await deleteConversation(conversation.id);
-      forgetConversation(conversation.id);
-      setConversations((current) => current.filter((item) => item.id !== conversation.id));
-      if (activeConversation === conversation.id) router.push("/");
-    } catch {
-      window.alert("This conversation could not be deleted. Please try again.");
-    } finally {
-      setDeletingConversation(null);
-    }
   };
 
   return (
-    <div
-      className={`appShell ${collapsed ? "isCollapsed" : ""} ${animate ? "animate" : ""} ${resizing ? "isResizing" : ""}`}
-      data-sidebar-state={desktopPanelCollapsed ? "collapsed" : "expanded"}
-      data-sidebar-layout={mobileLayout ? "drawer" : "desktop"}
-      data-drawer-state={drawerOpen ? "open" : "closed"}
-      data-current-section={currentSidebarSection}
-    >
-      <div className="ambient" aria-hidden="true">
-        <span className="bloom bloom-green" />
-        <span className="bloom bloom-coral" />
-        <span className="bloom bloom-lav" />
-        <span className="bloom bloom-gold" />
-      </div>
-      <div className="grain" aria-hidden="true" />
-
-      {/* Declared once for the whole app: the turbulence field that bends the
-          companion's colour film, so it pools like liquid rather than sliding
-          past as a rigid layer. */}
-      <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
-        <defs>
-          <filter id="metisWarp" x="-35%" y="-35%" width="170%" height="170%" colorInterpolationFilters="sRGB">
-            <feTurbulence type="fractalNoise" baseFrequency="0.019" numOctaves={2} seed={9} result="n" />
-            <feDisplacementMap in="SourceGraphic" in2="n" scale={30} xChannelSelector="R" yChannelSelector="G" />
-          </filter>
-        </defs>
-      </svg>
-
+    <div className={`shell${collapsed ? " is-collapsed" : ""}${drawerOpen ? " is-drawer-open" : ""}`}>
       <button
-        ref={mobileMenuRef}
-        className="mobileMenuButton"
+        ref={menuRef}
+        className="shell-menu"
         type="button"
         aria-label={drawerOpen ? "Close navigation" : "Open navigation"}
         aria-expanded={drawerOpen}
-        aria-controls="metis-main-navigation"
+        aria-controls="metis-rail"
         onClick={() => setDrawerOpen((current) => !current)}
       >
-        <span />
-        <span />
+        <Menu size={18} aria-hidden="true" />
       </button>
+      <button className="shell-scrim" type="button" tabIndex={-1} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
 
-      {drawerOpen ? (
-        <button className="drawerScrim" tabIndex={-1} aria-label="Close navigation" onClick={() => setDrawerOpen(false)} />
-      ) : null}
+      <aside ref={railRef} id="metis-rail" className="rail" aria-label="Main navigation">
+        <Link href="/today" className="rail-brand" aria-label="Metis">
+          <span className="brandMark" aria-hidden="true">
+            <MetisCompanion size={30} energy="calm" />
+          </span>
+          <strong>Metis</strong>
+        </Link>
 
-      <aside
-        ref={sidebarRef}
-        id="metis-main-navigation"
-        className={`sidebar sidebarShell ${drawerOpen ? "sidebarOpen" : ""}`}
-        aria-label="Main navigation"
-        aria-hidden={mobileLayout && !drawerOpen ? true : undefined}
-        role={mobileLayout ? "dialog" : undefined}
-        aria-modal={mobileLayout && drawerOpen ? true : undefined}
-        data-sidebar-state={desktopPanelCollapsed ? "collapsed" : "expanded"}
-        data-active-section={activeSidebarSection}
-        data-current-section={currentSidebarSection}
-        data-current-destination={currentDestination?.href ?? ""}
-        style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
-      >
-        <div className="sidebarRail sidebarShellRail" data-sidebar-rail>
-          <Link href="/" className="railBrand" aria-label="Metis home" title="Metis">
-            <span className="brandMark" aria-hidden="true">
-              <MetisCompanion size={34} energy="expressive" />
-            </span>
-          </Link>
-
-          <button
-            className="railCompose"
-            type="button"
-            onClick={() => router.push(`/?new=${freshToken()}`)}
-            aria-label="New conversation"
-            title="New conversation · ⌘N"
-          >
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M10 4v12M4 10h12" />
-            </svg>
-          </button>
-
-          <nav className="railNav" aria-label="Workspace sections">
-            {sidebarSections.filter((section) => section.id !== "system").map((section) => {
-              const panelActive = activeSidebarSection === section.id;
-              const routeActive = currentSidebarSection === section.id;
-              const routeLabel = routeActive && currentDestination
-                ? currentDestination.label
-                : section.label;
-              const tooltip = routeActive && routeLabel !== section.label
-                ? `${section.label} · Current: ${routeLabel}`
-                : section.label;
-              const tooltipId = `sidebar-${section.id}-tooltip`;
-              return (
-                <button
-                  key={section.id}
-                  type="button"
-                  className={`railSectionButton ${panelActive ? "active isPanelActive" : ""} ${routeActive ? "isRouteActive" : ""}`}
-                  data-sidebar-section={section.id}
-                  data-panel-active={panelActive ? "true" : "false"}
-                  data-route-active={routeActive ? "true" : "false"}
-                  data-current-label={routeActive ? routeLabel : undefined}
-                  onClick={() => openSidebarSection(section.id)}
-                  aria-label={`${mobileLayout ? "Show" : panelActive && !desktopPanelCollapsed ? "Collapse" : "Open"} ${section.label} panel${routeActive ? `, current page ${routeLabel}` : ""}`}
-                  aria-controls="metis-sidebar-panel"
-                  aria-expanded={panelActive && !desktopPanelCollapsed}
-                  aria-current={routeActive ? "location" : undefined}
-                  aria-describedby={desktopPanelCollapsed ? tooltipId : undefined}
-                  title={tooltip}
-                >
-                  <span className="railActivePill" aria-hidden="true" />
-                  <span className="navGlyph" aria-hidden="true"><NavIcon name={section.icon} /></span>
-                  {section.id === "conversations" && unreadRunCount ? <span className="railBadge" aria-hidden="true">{unreadRunCount}</span> : null}
-                  <span id={tooltipId} className="railTooltip" role="tooltip">{tooltip}</span>
-                </button>
-              );
-            })}
-          </nav>
-
-          <div className="railFooter">
-            <span
-              className={`railConnection ${apiConnected ? "connected" : "disconnected"}`}
-              role="status"
-              aria-label={apiConnected ? "Metis is connected" : "Metis is offline"}
-              title={apiConnected ? "Metis is connected" : "Metis is offline"}
-            />
-            <button
-              type="button"
-              className={`railSectionButton ${activeSidebarSection === "system" ? "active isPanelActive" : ""} ${currentSidebarSection === "system" ? "isRouteActive" : ""}`}
-              data-sidebar-section="system"
-              data-panel-active={activeSidebarSection === "system" ? "true" : "false"}
-              data-route-active={currentSidebarSection === "system" ? "true" : "false"}
-              data-current-label={currentSidebarSection === "system" ? "Settings" : undefined}
-              onClick={() => openSidebarSection("system")}
-              aria-label={`${mobileLayout ? "Show" : activeSidebarSection === "system" && !desktopPanelCollapsed ? "Collapse" : "Open"} Settings panel${currentSidebarSection === "system" ? ", current page" : ""}`}
-              aria-controls="metis-sidebar-panel"
-              aria-expanded={activeSidebarSection === "system" && !desktopPanelCollapsed}
-              aria-current={currentSidebarSection === "system" ? "location" : undefined}
-              aria-describedby={desktopPanelCollapsed ? "sidebar-system-tooltip" : undefined}
-              title="Settings"
-            >
-              <span className="railActivePill" aria-hidden="true" />
-              <span className="navGlyph" aria-hidden="true"><NavIcon name="settings" /></span>
-              <span id="sidebar-system-tooltip" className="railTooltip" role="tooltip">Settings</span>
-            </button>
-          </div>
-        </div>
-
-        <div
-          ref={sidebarPanelRef}
-          id="metis-sidebar-panel"
-          className="sidebarPanel sidebarShellPanel"
-          role="region"
-          aria-labelledby="metis-sidebar-panel-title"
-          aria-hidden={desktopPanelCollapsed ? true : undefined}
-          data-panel-state={desktopPanelCollapsed ? "collapsed" : "expanded"}
-          data-panel-section={activeSidebarSection}
+        <button
+          className="rail-new"
+          type="button"
+          onClick={() => router.push(`/?new=${freshToken()}`)}
+          title="New chat · ⌘N"
         >
-          <header className="sidebarPanelHeader">
-            <div className="sidebarPanelHeading">
-              <span className="sidebarPanelEyebrow">{activeSection.eyebrow}</span>
-              <strong id="metis-sidebar-panel-title">{activeSection.label}</strong>
-              <small className="sidebarPanelDescription">{activeSection.description}</small>
-            </div>
+          <Plus size={16} strokeWidth={2} aria-hidden="true" />
+          <span>New chat</span>
+          <kbd aria-hidden="true">⌘N</kbd>
+        </button>
+
+        <nav ref={navRef} className="rail-nav" aria-label="Pages">
+          <span className={`rail-pill${pill.visible ? " is-visible" : ""}`} style={{ top: pill.top }} aria-hidden="true" />
+          {GROUPS.map((group) =>
+            group.collapsible ? (
+              <div className="rail-group" key={group.id}>
+                <button
+                  type="button"
+                  className="rail-group-toggle"
+                  aria-expanded={libraryOpen}
+                  aria-controls={`rail-group-${group.id}`}
+                  onClick={toggleLibrary}
+                  title={collapsed ? group.label : undefined}
+                >
+                  <span>{group.label}</span>
+                  <ChevronDown size={14} aria-hidden="true" />
+                </button>
+                <div id={`rail-group-${group.id}`} className={`rail-collapsible${libraryOpen ? " is-open" : ""}`}>
+                  <div>{group.items.map(link)}</div>
+                </div>
+              </div>
+            ) : (
+              <div className="rail-group" key={group.id}>
+                <span className="rail-group-label">{group.label}</span>
+                {group.items.map(link)}
+              </div>
+            ),
+          )}
+        </nav>
+
+        <div className="rail-foot">
+          {link(SETTINGS)}
+          <span
+            className="rail-status"
+            role="status"
+            title={connected ? "Metis is connected · private by default" : "Metis is offline"}
+          >
+            <StatusDot state={connected ? "live" : "stopped"} />
+            <span>{connected ? "Private by default" : "Offline"}</span>
+          </span>
+          {!narrow ? (
             <button
               type="button"
-              className="collapseToggle"
+              className="rail-link rail-toggle"
               onClick={toggleCollapsed}
-              aria-label={mobileLayout ? "Close navigation" : "Collapse sidebar panel"}
-              aria-controls="metis-sidebar-panel"
-              aria-expanded={!desktopPanelCollapsed}
-              title={mobileLayout ? "Close navigation" : "Collapse panel"}
+              aria-pressed={collapsedChoice}
+              title={collapsed ? "Expand the rail" : "Fold the rail"}
             >
-              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                <path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <PanelLeftClose size={18} strokeWidth={1.6} aria-hidden="true" />
+              <span>{collapsed ? "Expand" : "Fold rail"}</span>
             </button>
-          </header>
-
-          {activeSidebarSection === "conversations" ? (
-            <>
-              <button className="newChatButton" type="button" onClick={() => router.push(`/?new=${freshToken()}`)} title="New conversation">
-                <span aria-hidden="true">＋</span>
-                <span className="navLabel">New conversation</span>
-                <kbd>⌘ N</kbd>
-              </button>
-
-              <label className="sidebarSearch">
-                <span aria-hidden="true">⌕</span>
-                <input
-                  ref={searchRef}
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search conversations"
-                  aria-label="Search conversations"
-                />
-                {query ? <button className="searchClear" type="button" aria-label="Clear search" onClick={() => { setQuery(""); searchRef.current?.focus(); }}>×</button> : null}
-                <kbd><span>⌘</span><span>K</span></kbd>
-              </label>
-
-              <div className="historyHeader">
-                <span>Recent</span>
-                <span>{conversations.length}</span>
-              </div>
-              <div className="conversationHistory">
-                {Object.entries(grouped).map(([label, items]) => (
-                  <section key={label}>
-                    <h2>{label}</h2>
-                    {items.map((conversation) => (
-                      <div key={conversation.id} className={`conversationHistoryItem run-${runIndicators[conversation.id]?.state ?? "idle"} ${runIndicators[conversation.id]?.unread ? "hasUnread" : ""}`}>
-                        <Link href={`/?conversation=${encodeURIComponent(conversation.id)}`} onClick={() => acknowledgeConversationRun(conversation.id)} className={pathname === "/" && activeConversation === conversation.id ? "active" : ""} aria-current={pathname === "/" && activeConversation === conversation.id ? "page" : undefined} title={conversation.title}>
-                          <span>{conversation.title}</span>
-                          {runIndicators[conversation.id] && (
-                            runIndicators[conversation.id].state !== "done" || runIndicators[conversation.id].unread
-                          ) ? (
-                            <small className="conversationRunState">
-                              <i aria-hidden="true" />
-                              {runIndicators[conversation.id].state === "working" ? "Working"
-                                : runIndicators[conversation.id].state === "attention" ? "Needs you"
-                                  : runIndicators[conversation.id].state === "failed" ? "Interrupted"
-                                    : runIndicators[conversation.id].state === "cancelled" ? "Stopped"
-                                      : runIndicators[conversation.id].unread ? "Done" : ""}
-                            </small>
-                          ) : null}
-                        </Link>
-                        <button type="button" className="conversationDeleteButton" aria-label={`Delete ${conversation.title}`} title="Delete conversation" disabled={deletingConversation === conversation.id} onClick={() => void removeConversation(conversation)}>×</button>
-                      </div>
-                    ))}
-                  </section>
-                ))}
-                {!query.trim() && filtered.length > COMPACT_HISTORY_LIMIT ? (
-                  <button
-                    className="historyExpandButton"
-                    type="button"
-                    aria-expanded={historyExpanded}
-                    onClick={() => setHistoryExpanded((value) => !value)}
-                  >
-                    <span>{historyExpanded ? "Show recent only" : `View all ${filtered.length} conversations`}</span>
-                    <b aria-hidden="true">{historyExpanded ? "↑" : "↓"}</b>
-                  </button>
-                ) : null}
-                {!filtered.length ? (
-                  <p className="historyEmpty">{query ? "No matching conversations" : "Your local conversations will appear here."}</p>
-                ) : null}
-              </div>
-            </>
-          ) : (
-            <nav className="primaryNav sectionNav" aria-label={activeSection.label}>
-              {sectionNavigation.map((item) => {
-                const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={active ? "active isCurrentDestination" : ""}
-                    data-sidebar-destination={item.href}
-                    data-route-active={active ? "true" : "false"}
-                    aria-current={active ? "page" : undefined}
-                    title={item.label}
-                  >
-                    <span className="navGlyph" aria-hidden="true"><NavIcon name={item.icon} /></span>
-                    <span className="navLabel">{item.label}</span>
-                    <svg className="navChevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" /></svg>
-                  </Link>
-                );
-              })}
-            </nav>
-          )}
-
-          <div className="privacyBadge">
-            <span className="privacyPulse" />
-            <span>
-              <strong>Private by default</strong>
-              <small>Local memory · governed actions</small>
-            </span>
-          </div>
+          ) : null}
         </div>
-
-        <div
-          className="sidebarResizeHandle"
-          role="separator"
-          aria-label="Resize sidebar"
-          aria-orientation="vertical"
-          aria-valuemin={MIN_SIDEBAR_WIDTH}
-          aria-valuemax={MAX_SIDEBAR_WIDTH}
-          aria-valuenow={sidebarWidth}
-          aria-hidden={mobileLayout || desktopPanelCollapsed ? true : undefined}
-          tabIndex={!mobileLayout && !desktopPanelCollapsed ? 0 : -1}
-          onDoubleClick={() => setAndRememberSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
-          onKeyDown={handleResizeKeyDown}
-          onPointerDown={handleResizeStart}
-          onPointerMove={handleResizeMove}
-          onPointerUp={handleResizeEnd}
-          onPointerCancel={handleResizeEnd}
-          onLostPointerCapture={handleResizeEnd}
-          title="Drag to resize · Double-click to reset"
-        ><span /></div>
       </aside>
 
-      <main ref={mainRef} className="appMain">{children}</main>
+      <main className="appMain">
+        <div key={pathname} className="pane-view">
+          {children}
+        </div>
+      </main>
     </div>
   );
 }

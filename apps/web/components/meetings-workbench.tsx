@@ -379,17 +379,22 @@ export function MeetingsWorkbench() {
 
   return (
     <div className="workspacePage meetingsPage audioWorkspacePage">
-      <header className="pageHeader meetingHero audioWorkspaceHero">
-        <div className="meetingHeroCopy">
+      <header className="pageHeader">
+        <div>
           <span className="eyebrow">Conversation intelligence</span>
-          <h1>Turn talk into<br /><em>forward motion.</em></h1>
-          <p>Upload the room. Metis separates voices, maps every useful moment back to the recording, and keeps the final call yours.</p>
-          <div className="meetingHeroStats" aria-label="Meeting library summary">
-            <span><strong>{meetings.length}</strong><small>recordings</small></span>
-            <span><strong>{readyCount}</strong><small>ready to review</small></span>
-            <span><strong>{totalHours}</strong><small>captured</small></span>
-          </div>
+          <h1>Meetings</h1>
+          <p>
+            <span><strong>{meetings.length}</strong> recordings</span>
+            <span><strong>{readyCount}</strong> ready to review</span>
+            <span><strong>{totalHours}</strong> captured</span>
+          </p>
         </div>
+        <button className="primaryButton" type="button" onClick={() => fileRef.current?.click()} disabled={uploading}>
+          <span aria-hidden="true">＋</span>{uploading ? "Uploading…" : "Choose recordings"}
+        </button>
+      </header>
+
+      <section className="meetingCapture" aria-label="New recording">
         <div className="meetingCaptureCard">
           <span className={`meetingCaptureOrb ${uploading ? "isBusy" : ""}`} aria-hidden="true"><i /><i /><i /></span>
           <div><span className="eyebrow">New recording</span><strong>{uploading ? "Adding it to your studio…" : "Drop in audio or video"}</strong><small>Speaker-aware transcript · evidence-linked insights</small></div>
@@ -402,7 +407,7 @@ export function MeetingsWorkbench() {
           </button>
           <small>MP3, WAV, M4A, MP4, or WebM</small>
         </div>
-      </header>
+      </section>
 
       {error ? (
         <div className="composerError" role="alert">

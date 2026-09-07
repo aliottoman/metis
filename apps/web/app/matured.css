@@ -17,30 +17,6 @@
 /* tokens live in tokens.css */
 
 body { background: var(--m-paper); color: var(--m-ink); }
-
-/* ── Grain over the whole app ────────────────────────────────────────────
-   Greyscale noise through overlay: mid-grey is a no-op, so only the
-   deviation shows and it reads as film rather than as a grey veil. */
-.grain {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  pointer-events: none;
-  opacity: 0.5;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='220' height='220' filter='url(%23g)'/></svg>");
-  background-size: 220px 220px;
-}
-/* The old ambient blooms are replaced by the chrome field below. */
-.appShell > .ambient { display: none; }
-
-/* ── Sidebar: warm paper, quiet ─────────────────────────────────────────── */
-.appShell { background: var(--m-paper); }
-.sidebar {
-  background: var(--m-paper);
-  border-right: 1px solid var(--m-line);
-  box-shadow: none;
-}
 /* The rainbow logotype was doing most of the childish work. Ink here, so
    the bead beside it is the only thing carrying the full spectrum. */
 .brand .metisWordmark {
@@ -52,50 +28,6 @@ body { background: var(--m-paper); color: var(--m-ink); }
   font-weight: 400;
   letter-spacing: -0.028em;
 }
-.sidebar .brandRow small,
-.historyHeader > span:first-child {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--m-ink-3);
-}
-.newChatButton {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: 999px;
-  box-shadow: none;
-  color: var(--m-ink);
-  overflow: hidden;
-  position: relative;
-}
-.newChatButton::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(76deg, transparent 34%, rgba(195, 156, 224, 0.3) 50%, transparent 66%);
-  transform: translateX(-115%);
-  transition: transform 0.62s var(--m-ease);
-}
-.newChatButton:hover { background: var(--m-paper-lift); border-color: #c6b8d6; }
-.newChatButton:hover::after { transform: translateX(115%); }
-.primaryNav a { color: var(--m-ink-2); border-radius: var(--radius-control); }
-.primaryNav a:hover,
-.primaryNav a.active { background: var(--m-surface); color: var(--m-ink); }
-.primaryNav a.active .navGlyph { color: var(--m-ink); }
-.sidebarDivider { background: var(--m-line); }
-.sidebarSearch { background: var(--m-surface); border-color: transparent; box-shadow: none; }
-.conversationHistory h2 {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--m-ink-3);
-}
-.conversationHistoryItem a:hover,
-.conversationHistoryItem a.active { background: var(--m-surface); color: var(--m-ink); }
-.privacyBadge { background: var(--m-surface); border: 0; box-shadow: none; }
 
 /* ── The button ─────────────────────────────────────────────────────────
    One diagonal cut, and the gap is real: you see the page through it.
@@ -697,12 +629,12 @@ body { background: var(--m-paper); color: var(--m-ink); }
    card is roughly half the height the old one was, so that budget is no
    longer spent — they come back, and the escape hatch moves to the heights
    where it is actually needed. */
-@media (max-height: 760px) and (min-width: 681px) {
+@media (max-height: 760px) and (min-width: 721px) {
   .chatWorkspace.isEmpty .customerSnippetRecent,
   .chatWorkspace.isEmpty .trustLine { display: flex; }
   .chatWorkspace.isEmpty .customerSnippet > p { display: block; }
 }
-@media (max-height: 618px) and (min-width: 681px) {
+@media (max-height: 618px) and (min-width: 721px) {
   .chatWorkspace.isEmpty .customerSnippetRecent,
   .chatWorkspace.isEmpty .customerSnippet > p,
   .chatWorkspace.isEmpty .trustLine { display: none; }
@@ -878,137 +810,11 @@ body { background: var(--m-paper); color: var(--m-ink); }
    ═══════════════════════════════════════════════════════════════════════ */
 
 .workspacePage { background: transparent; }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   THE PAGE HEAD — the same room, one door further in.
-
-   Colour was the only thing these pages had taken from the front door, and
-   colour alone reads as a palette swap rather than as one product. So the
-   title of every workspace page now sits on the actual material: purple,
-   with the chrome surfacing behind it and the app grain over the top. The
-   working surface below stays paper, because that is what it is for.
-   ═══════════════════════════════════════════════════════════════════════ */
-.pageHeader,
-.customerWorkbenchHeader {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  align-items: center;   /* flex-end dropped the actions to the band's floor */
-  /* Knowledge lays its page out as a column flex container, so the header
-     was a shrinkable flex ITEM: its content box collapsed to zero and the
-     title simply overflowed, invisibly, until this band started clipping. */
-  flex: 0 0 auto;
-  margin-bottom: 30px;
-  padding: 27px 30px 29px;
-  border-radius: var(--radius-pane);
-  background: var(--m-purple);
-  color: #fff;
-  box-shadow: 0 22px 48px -30px rgba(60, 30, 80, 0.55);
-}
-/* The metal, surfacing at the right shoulder the way cf2 does on the home
-   field — one form, because a header band is a tenth of that canvas. */
-.pageHeader::before,
-.customerWorkbenchHeader::before {
-  content: "";
-  position: absolute;
-  z-index: -2;
-  top: -62%;
-  right: -6%;
-  width: 480px;
-  height: 340px;
-  transform: rotate(19deg);
-  border-radius: 54% 46% 38% 62% / 48% 56% 44% 52%;
-  /* The fringe screened over the metal is what makes it read as chrome
-     picking up the room rather than as a grey smudge — the home field gets
-     the same treatment from a separate layer inside .chromeForm. */
-  background: var(--m-fringe), var(--m-chrome);
-  background-blend-mode: screen, normal;
-  filter: blur(3px);
-  opacity: 0.72;
-  -webkit-mask-image: radial-gradient(closest-side, #000 38%, rgba(0, 0, 0, 0.55) 72%, transparent 100%);
-  mask-image: radial-gradient(closest-side, #000 38%, rgba(0, 0, 0, 0.55) 72%, transparent 100%);
-}
-/* Purple poured back over the metal, densest under the type. */
-.pageHeader::after,
-.customerWorkbenchHeader::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background:
-    radial-gradient(64% 132% at 20% 46%, rgba(194, 156, 224, 0.95) 0%,
-      rgba(194, 156, 224, 0.72) 52%, rgba(194, 156, 224, 0.22) 100%),
-    linear-gradient(196deg, rgba(163, 121, 206, 0.34), rgba(255, 119, 89, 0.12));
-}
-.pageHeader > *,
-.customerWorkbenchHeader > * { position: relative; z-index: 1; }
-
-/* One rhythm for every band. The pages each carried their own heading
-   margins, which is why Sizing's two-line description sat on the title's
-   descenders while Memory's had room to breathe. */
-.appMain .pageHeader h1,
-.appMain .customerWorkbenchHeader h1 {
-  margin: 7px 0 0;
-  color: #fff;
-  line-height: 1.04;
-}
-.pageHeader .eyebrow,
-.customerWorkbenchHeader .eyebrow { color: rgba(255, 255, 255, 0.82); }
-.pageHeader p,
-.customerWorkbenchHeader p {
-  margin: 11px 0 0;
-  max-width: 68ch;
-  color: rgba(255, 255, 255, 0.88);
-}
-.assetsHeader .assetCatalogSummary,
-.assetsHeader .assetCatalogSummary strong { color: #fff; }
-
-/* Header actions invert onto the field, as the composer's do on home. */
-.pageHeader .secondaryButton,
-.pageHeader .ghostButton,
-.pageHeader .iconButton,
-.customerWorkbenchHeader .secondaryButton,
-.customerWorkbenchHeader .ghostButton {
-  background: rgba(38, 22, 48, 0.3);
-  border: 0;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
-  color: #fff;
-}
-.pageHeader .secondaryButton:hover:not(:disabled),
-.pageHeader .ghostButton:hover:not(:disabled),
-.pageHeader .iconButton:hover:not(:disabled),
-.customerWorkbenchHeader .secondaryButton:hover:not(:disabled),
-.customerWorkbenchHeader .ghostButton:hover:not(:disabled) {
-  background: rgba(38, 22, 48, 0.44);
-  border: 0;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
-  color: #fff;
-}
-.pageHeader .secondaryButton kbd,
-.customerWorkbenchHeader .secondaryButton kbd {
-  background: rgba(255, 255, 255, 0.18);
-  border-color: transparent;
-  color: rgba(255, 255, 255, 0.9);
-}
-/* The primary action stays the ink pill — it is the one thing on the band
-   that should read as heavier than the field, not lighter. */
-.pageHeader .primaryButton,
-.customerWorkbenchHeader .primaryButton { background: var(--m-ink-btn); color: #fbf8f2; }
-
-/* Headings: size and tightness carry them, not weight. Most page titles
-   are bare <h1> with no class, so this reaches for the element. */
-.appMain h1,
-.appMain h2,
-.appMain h3,
 .sectionTitle {
   font-weight: 400;
   color: var(--m-ink);
 }
-.appMain h1 { letter-spacing: -0.034em; }
-.appMain h2 { letter-spacing: -0.022em; }
-.appMain h3,
 .sectionTitle { letter-spacing: -0.016em; }
-.pageHeader p,
 .sectionLede { color: var(--m-ink-2); }
 
 /* The eyebrow is the single most Cohere thing on a page: mono, uppercase,
@@ -1109,12 +915,7 @@ select,
   border-color: var(--m-line);
   color: var(--m-ink);
 }
-
-/* The green marketing slabs read as a different product; they take the
-   same ink as every other heavy surface — and everything inside them has
-   to invert with the ground, or the figures vanish into it. */
-.statStrip,
-.healthHero {
+.statStrip {
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -1122,11 +923,7 @@ select,
   background: linear-gradient(140deg, #24211d 0%, #1a1815 100%);
   color: rgba(255, 255, 255, 0.72);
 }
-/* The same metal that surfaces in the page band, catching the far corner of
-   the dark slab — enough that the two read as one material system rather
-   than as a coloured header sitting above an unrelated black box. */
-.statStrip::before,
-.healthHero::before {
+.statStrip::before {
   content: "";
   position: absolute;
   z-index: -1;
@@ -1146,17 +943,10 @@ select,
 .statStrip strong,
 .statStrip b,
 .statStrip h2,
-.statStrip h3,
-.healthHero strong,
-.healthHero b,
-.healthHero h2,
-.healthHero h3 { color: #fff; }
+.statStrip h3 { color: #fff; }
 .statStrip small,
 .statStrip span,
-.statStrip p,
-.healthHero small,
-.healthHero span,
-.healthHero p { color: rgba(255, 255, 255, 0.72); }
+.statStrip p { color: rgba(255, 255, 255, 0.72); }
 
 .filterTabs button,
 .tierTag,
@@ -1169,52 +959,6 @@ select,
   background: var(--m-ink-btn);
   border-color: transparent;
   color: #fbf8f2;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   Revision pass — the leftover generations retired.
-
-   globals.css carries several eras of ornament (gradient location dots,
-   glass sheens, green accents, amber banners). Each block below exists to
-   silence one of them; delete a block only together with its source.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-/* ── Sidebar: one clear pill, nothing else moving ─────────────────────── */
-.primaryNav a,
-.primaryNav a.active {
-  gap: 11px;
-  padding-left: 12px;
-  padding-right: 12px;   /* the 36px was clearance for the retired dot */
-}
-/* Both generations of the animated location dot. */
-.primaryNav a::before { display: none; }
-.primaryNav .navSignal { display: none; }
-.primaryNav a {
-  border-color: transparent;
-  box-shadow: none;
-  color: var(--m-ink-2);
-  font-size: var(--text-sm);
-  transition: background-color var(--motion-base) var(--m-ease), color var(--motion-base) var(--m-ease);
-}
-.primaryNav a:hover {
-  background: rgba(33, 31, 29, 0.05);
-  border-color: transparent;
-  box-shadow: none;
-  color: var(--m-ink);
-}
-.primaryNav a.active {
-  background: var(--m-surface);
-  border-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--m-line);
-  color: var(--m-ink);
-}
-/* The hover tilt read as jitter next to a static pill. */
-.primaryNav a:hover .navGlyph,
-.primaryNav a.active .navGlyph { transform: none; }
-.primaryNav a.active .navGlyph { color: var(--m-ink); }
-@media (min-width: 901px) {
-  .isCollapsed .primaryNav a,
-  .isCollapsed .primaryNav a.active { padding: 0; }
 }
 
 /* ── Header new chat: one continuous pill, same ink as primaryButton ──── */
@@ -1464,10 +1208,6 @@ select,
 .toolTrustBanner p { color: var(--m-ink-2); }
 .toolTrustMark { background: var(--m-ink-btn); border-radius: var(--radius-card); }
 .capabilityPanel { background: var(--m-paper-lift); border: 1px solid var(--m-line); }
-
-/* ── Customers: give the header its room back ─────────────────────────── */
-.customerWorkbenchHeader { padding-right: 0; }
-.customerWorkbenchActions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
 .customerWorkbenchBody {
   background: var(--m-surface);
   border: 1px solid var(--m-line);
@@ -1501,26 +1241,8 @@ select,
   font-size: var(--text-xs);
   font-style: normal;
 }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   CONTROL SHAPE + HIGHLIGHT
-
-   Three generations of button geometry were still live at once: 999px
-   pills, an asymmetric `14px 14px 14px 7px` from the glass pass, and a
-   plain 10px. Worse, the highlight layers carried their OWN radius, so a
-   bloom could be a rounded rectangle sitting behind a pill and a sheen
-   could be a hard rectangle inside one.
-
-   The rule from here: a control declares its shape once, and every layer
-   that lights it up inherits that shape rather than restating it.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-/* tokens live in tokens.css */
-
-/* Text controls are pills. */
 .headerNewChat,
 .headerNewChat .segMain,
-.newChatButton,
 .timelineToggle,
 .attachButton,
 .retryResponse,
@@ -1542,33 +1264,17 @@ select,
 .filterTabs button,
 .customerAccountFilters button,
 .composerAddContext { border-radius: var(--m-r-pill); }
-
-/* Icon-only controls are circles — a pill and a circle are the same shape
-   at a 1:1 aspect, so this stays consistent rather than becoming a third
-   language. */
-.collapseToggle,
-.searchClear,
 .runDrawerClose,
-.conversationDeleteButton,
 .sendButton { border-radius: 50%; }
-
-/* Fields keep the softer rectangle; a text input shaped like a pill fights
-   the caret and wastes its first and last character of room. */
 .selectTrigger,
-.sidebarSearch,
 input[type="text"],
 input[type="search"],
 input[type="number"],
 textarea,
 select { border-radius: var(--m-r-field); }
-
-/* Every highlight layer takes its host's shape. This is the rule that was
-   missing; the specific radii above only matter because of it. */
 .headerNewChat::before,
 .headerNewChat::after,
 .headerNewChat .segMain::after,
-.newChatButton::before,
-.newChatButton::after,
 .primaryButton::before,
 .primaryButton::after,
 .secondaryButton::before,
@@ -1578,14 +1284,8 @@ select { border-radius: var(--m-r-field); }
 .compactRunActivity::before,
 .compactRunActivity::after,
 .filterTabs button::before,
-.filterTabs button::after,
-.primaryNav a::before,
-.primaryNav a::after { border-radius: inherit; }
-
-/* One motion for the whole family, so no two controls answer the pointer
-   at a different speed. */
+.filterTabs button::after { border-radius: inherit; }
 .headerNewChat,
-.newChatButton,
 .timelineToggle,
 .attachButton,
 .modelControlTrigger,
@@ -1599,26 +1299,15 @@ select { border-radius: var(--m-r-field); }
 .compactRunActivity,
 .recoveryActions button,
 .filterTabs button,
-.customerAccountFilters button,
-.collapseToggle {
+.customerAccountFilters button {
   transition:
     background-color 0.22s var(--m-ease),
     border-color 0.22s var(--m-ease),
     color 0.22s var(--m-ease),
     box-shadow 0.22s var(--m-ease);
 }
-
-/* The sidebar's sheen sweep is clipped to the pill by overflow, but it was
-   declared as a bare rectangle; giving it the host shape means it still
-   reads correctly if that clip is ever removed. */
-.newChatButton::after,
 .headerNewChat .segMain::after { border-radius: inherit; }
-
-/* A focus ring that follows the shape, on every control, in one place.
-   `outline` tracks border-radius in every browser this app targets, so the
-   ring is a pill on a pill and a circle on a circle without restating it. */
 .headerNewChat:focus-visible,
-.newChatButton:focus-visible,
 .timelineToggle:focus-visible,
 .attachButton:focus-visible,
 .modelControlTrigger:focus-visible,
@@ -1630,24 +1319,18 @@ select { border-radius: var(--m-r-field); }
 .feedbackPrompt button:focus-visible,
 .toolBuildButton:focus-visible,
 .compactRunActivity:focus-visible,
-.collapseToggle:focus-visible,
-.sendButton:focus-visible,
-.primaryNav a:focus-visible {
+.sendButton:focus-visible {
   outline: 2px solid var(--m-purple);
   outline-offset: 2px;
 }
-/* On the field the ring has to be light, or it disappears into the purple. */
-.chatHeader :focus-visible,
-.pageHeader :focus-visible,
-.customerWorkbenchHeader :focus-visible {
+.chatHeader :focus-visible {
   outline-color: rgba(255, 255, 255, 0.9);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .headerNewChat::before,
-  .primaryButton::before,
-  .newChatButton::after,
-  .headerNewChat .segMain::after { transition: none; }
+.headerNewChat::before,
+.primaryButton::before,
+.headerNewChat .segMain::after { transition: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1910,11 +1593,6 @@ select { border-radius: var(--m-r-field); }
 .metisMarkAnimated { animation: none; }
 .metisMarkAnimated .metisBeadFilm { animation: metisBeadTurn 7s linear infinite; }
 @keyframes metisBeadTurn { to { transform: rotate(360deg); } }
-
-/* The brand cluster used to be four separate shapes needing their own box;
-   one bead just fills the space it is given. */
-.brandMark { display: grid; place-items: center; }
-.brandMark svg { width: 100%; height: 100%; }
 
 @media (prefers-reduced-motion: reduce) {
   .metisMarkAnimated .metisBeadFilm { animation: none; }
@@ -2470,110 +2148,8 @@ select { border-radius: var(--m-r-field); }
   background: var(--m-lav-surface);
   border-bottom: 1px solid var(--m-lav-edge);
 }
-
-/* ── 10 · Sidebar ────────────────────────────────────────────────────────
-   It was the last surface still wearing the previous generation: a glass
-   slab with two coloured blooms bleeding through it. Flat paper, one
-   hairline, and the only colour is the coral tick on the open conversation
-   — the same move their site makes, where one warm mark does all the
-   "you are here" work in an otherwise achromatic column. */
-.sidebar {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  background: var(--m-paper);
-  border-right: 1px solid var(--m-line);
-  box-shadow: none;
-  padding: 18px 12px 12px;
-}
 .brandRow { margin-bottom: 16px; }
-.newChatButton {
-  background: var(--m-ink-btn);
-  border: 0;
-  color: #fbf8f2;
-  font-size: var(--text-sm);
-  min-height: 38px;
-}
-.newChatButton:hover { background: var(--m-volcanic); border: 0; }
-.newChatButton kbd {
-  background: rgba(255, 255, 255, 0.15);
-  border: 0;
-  color: rgba(255, 255, 255, 0.72);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-}
-.newChatButton::after {
-  background: linear-gradient(76deg, transparent 34%, rgba(255, 255, 255, 0.16) 50%, transparent 66%);
-}
-.primaryNav { gap: 1px; }
-.primaryNav a {
-  border: 0;
-  border-radius: var(--radius-control);
-  color: var(--m-ink-2);
-  font-size: var(--text-sm);
-  font-weight: 400;
-  min-height: 34px;
-}
-.primaryNav a:hover { background: var(--m-surface); color: var(--m-ink); }
-.primaryNav a.active { background: var(--m-surface); color: var(--m-ink); font-weight: 500; }
-.primaryNav a.active .navGlyph { color: var(--m-forest); }
-.navGlyph { color: var(--m-ink-3); }
 .navSignal::before { background: var(--m-coral); }
-.sidebarDivider { background: var(--m-line); margin: 14px 2px; }
-.historyHeader { padding: 0 4px 6px; }
-.historyHeader > span:last-child {
-  color: var(--m-ink-3);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-}
-.sidebarSearch {
-  background: var(--m-surface);
-  border: 0;
-  border-radius: var(--radius-control);
-  box-shadow: none;
-  min-height: 32px;
-}
-.sidebarSearch:focus-within { box-shadow: inset 0 0 0 1px var(--m-lav-edge); }
-.sidebarSearch input { color: var(--m-ink); font-size: var(--text-sm); }
-.sidebarSearch > span,
-.sidebarSearch input::placeholder { color: var(--m-ink-3); }
-.sidebarSearch kbd {
-  background: none;
-  border: 0;
-  color: var(--m-ink-3);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-}
-.conversationHistory a {
-  border-radius: var(--radius-control);
-  color: var(--m-ink-2);
-  font-size: var(--text-sm);
-  min-height: 30px;
-}
-.conversationHistory a:hover { background: var(--m-surface); color: var(--m-ink); }
-.conversationHistory a.active {
-  background: var(--m-surface);
-  box-shadow: inset 2px 0 0 var(--m-coral);
-  color: var(--m-ink);
-}
-.conversationDeleteButton:hover { background: rgba(192, 73, 47, 0.1); color: #c0492f; }
-.historyEmpty { color: var(--m-ink-3); font-size: var(--text-xs); }
-.privacyBadge {
-  background: none;
-  border: 0;
-  border-top: 1px solid var(--m-line);
-  border-radius: 0;
-  box-shadow: none;
-  padding: 12px 4px 4px;
-}
-.privacyBadge strong { color: var(--m-ink-2); font-size: var(--text-xs); font-weight: 500; }
-.privacyBadge small {
-  color: var(--m-ink-3);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-.privacyPulse { background: var(--m-forest); box-shadow: 0 0 0 4px rgba(57, 89, 77, 0.14); }
 .connectionDot.connected { background: var(--m-forest); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2634,70 +2210,12 @@ select { border-radius: var(--m-r-field); }
 }
 .chatWorkspace.isEmpty .atmos::after { animation: mFieldBreathe 39s ease-in-out infinite; }
 
-/* ── The sidebar is paper, not a fill ────────────────────────────────────
-   It was the one surface with no texture at all: a flat `--m-paper` slab
-   next to a chat pane carrying metal, colour and grain. The app-wide
-   `.grain` does cover it, but over an unmodulated fill a uniform noise
-   field reads as regular dots rather than as tooth.
-
-   Two layers fix that. A very faint wash gives the noise something to sit
-   on so it stops being uniform, and a second grain at a different scale
-   and rotation breaks up the repeat of the shared 220px tile. Both are
-   ::before/::after on the sidebar itself, under the content. */
-.sidebar { isolation: isolate; position: relative; }
-.sidebar::before {
-  background:
-    radial-gradient(120% 62% at 0% 0%, rgba(194, 156, 224, 0.09), transparent 62%),
-    radial-gradient(90% 46% at 100% 100%, rgba(255, 119, 89, 0.045), transparent 66%),
-    linear-gradient(180deg, rgba(255, 253, 249, 0.85), rgba(237, 233, 225, 0.5));
-  content: "";
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-  z-index: -2;
-}
-.sidebar::after {
-  /* 140px tile against the global 220px one: the two never line up, so the
-     repeat stops being findable. Multiply rather than overlay, because the
-     sidebar is light throughout and overlay would only lift it. */
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='s'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='140' height='140' filter='url(%23s)' opacity='0.55'/></svg>");
-  background-size: 140px 140px;
-  content: "";
-  inset: 0;
-  mix-blend-mode: multiply;
-  opacity: 0.09;
-  pointer-events: none;
-  position: absolute;
-  z-index: -1;
-}
-/* The nav's own surfaces sit ON that texture, so they need to be opaque
-   enough to read as raised rather than as a hole cut in the noise. */
-.primaryNav a:hover,
-.primaryNav a.active,
-.conversationHistory a:hover,
-.conversationHistory a.active { background: rgba(237, 233, 225, 0.92); }
-.sidebarSearch { background: rgba(237, 233, 225, 0.86); }
-
 @media (prefers-reduced-motion: reduce) {
   .chatWorkspace.isEmpty .cf1,
   .chatWorkspace.isEmpty .cf2,
   .chatWorkspace.isEmpty .cf3,
   .chatWorkspace.isEmpty .cf4,
   .chatWorkspace.isEmpty .atmos::after { animation: none; }
-}
-
-/* ── Fixes after the sidebar went to paper ───────────────────────────────
-   The glass pass in globals styles the whole button family with
-   `.newChatButton:hover:not(:disabled)` — a white gradient whose extra
-   :not() outweighs any plain `.newChatButton:hover` regardless of file
-   order. On the old light button that read as a sheen; on today's ink
-   button it flashed COMPLETELY white. Matched specificity, later in the
-   cascade, ink stays ink. */
-.newChatButton:hover:not(:disabled) {
-  background: var(--m-volcanic);
-  border: 0;
-  box-shadow: none;
-  color: #fbf8f2;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -2809,7 +2327,6 @@ select { border-radius: var(--m-r-field); }
    status reads as its own section rather than a pale chip on blank space. */
 .assetDrawer { background: var(--m-paper); }
 .assetDrawerBody { padding: 22px 26px 40px; }
-.appMain .assetDrawerHeader h2 { font-size: var(--text-3xl); }
 .assetDrawerHeader p { color: var(--m-ink-2); font-size: var(--text-md); line-height: 1.6; margin-top: 10px; max-width: 60ch; }
 .assetDrawerKicker, .assetSectionLabel { font-size: var(--text-xs); }
 
@@ -3362,46 +2879,7 @@ select { border-radius: var(--m-r-field); }
 .companionEnergyGrid > button > i { width: 12px; height: 12px; border: 1px solid #a59c90; border-radius: 50%; }
 .companionEnergyGrid > button.selected > i { border: 3px solid var(--m-paper-lift); background: #87659d; box-shadow: 0 0 0 1px #87659d; }
 .companionEnergyPreview { display: grid; place-items: center; min-height: 54px; }
-
-.conversationHistoryItem > a { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 7px; }
-.conversationHistoryItem > a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conversationRunState {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--m-ink-3);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  letter-spacing: .01em;
-  white-space: nowrap;
-}
-.conversationRunState i { width: 6px; height: 6px; border-radius: 50%; background: #9c90a4; }
-.conversationHistoryItem.run-working .conversationRunState i { background: #9f75b8; animation: mRunDot 1.5s ease-in-out infinite; }
-.conversationHistoryItem.run-attention .conversationRunState i { background: #d69b48; box-shadow: 0 0 0 3px rgba(214,155,72,.13); }
-.conversationHistoryItem.run-done .conversationRunState i { background: #4f9f83; }
-.conversationHistoryItem.run-failed .conversationRunState i { background: #d46c57; }
-.conversationHistoryItem.run-cancelled .conversationRunState i { background: #908a82; }
-.conversationHistoryItem.hasUnread > a { background: rgba(194, 156, 224, .09); color: var(--m-ink); }
 @keyframes mRunDot { 50% { box-shadow: 0 0 0 4px rgba(159,117,184,.16); transform: scale(.82); } }
-
-.primaryNav .navSignal.hasUnread {
-  display: inline-grid;
-  place-items: center;
-  min-width: 18px;
-  width: auto;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: #8a659f;
-  color: #fff;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  line-height: 1;
-  box-shadow: 0 0 0 3px rgba(138,101,159,.11);
-}
-.primaryNav .navSignal.hasUnread::before { display: none; }
 
 /* Audit repair: entrance animation is decorative, never a gate. In embedded
    browsers or background tabs it may be throttled before its first frame; the
@@ -3420,30 +2898,12 @@ select { border-radius: var(--m-r-field); }
 .welcomeState > p,
 .welcomeState > .eyebrow { text-shadow: 0 2px 18px rgba(52, 28, 66, .18); }
 
-@media (max-width: 840px) {
+@media (max-width: 1080px) {
   .companionEnergyGrid { grid-template-columns: 1fr; }
   .companionEnergyGrid > button { min-height: 72px; }
   .sourceAddForm .selectField { flex-basis: 100%; }
   .projectActivityHeading small { white-space: normal; }
   .messageList > .projectActivity { width: 100%; margin-left: 0; }
-}
-
-@media (max-width: 900px) {
-  .mobileMenuButton {
-    transition: border-radius var(--motion-base) var(--m-menu-ease), background-color var(--motion-base) ease, box-shadow var(--motion-base) ease;
-  }
-  .mobileMenuButton span {
-    transform-origin: center;
-    transition: transform var(--motion-base) var(--m-menu-ease);
-  }
-  .mobileMenuButton[aria-expanded="true"] {
-    z-index: 70;
-    border-radius: 50%;
-    background: var(--m-paper-lift);
-    box-shadow: 0 12px 28px -15px rgba(53, 31, 64, .65);
-  }
-  .mobileMenuButton[aria-expanded="true"] span:first-child { transform: translateY(2.5px) rotate(45deg); }
-  .mobileMenuButton[aria-expanded="true"] span:last-child { transform: translateY(-2.5px) rotate(-45deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3456,65 +2916,12 @@ select { border-radius: var(--m-r-field); }
   .commandPickerOption,
   .projectActivityChevron,
   .companionEnergyGrid > button { transition: none !important; }
-  .projectActivityPulse::before,
-  .projectActivityPulse i,
-  .projectActivityNode,
-  .pearlAura,
-  .pearlSpark,
-  .conversationRunState i { animation: none !important; }
+.projectActivityPulse::before,
+.projectActivityPulse i,
+.projectActivityNode,
+.pearlAura,
+.pearlSpark { animation: none !important; }
 }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   METIS ELEVATION — native frame, clearer intent, visibly alive motion.
-
-   Identity and state are allowed to move; reading and configuration remain
-   settled. These overrides deliberately keep the existing warm paper,
-   lavender field, ink, grain, and companion rather than introducing another
-   product's visual language.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-/* The macOS shell paints underneath its transparent title bar. Only the
-   sidebar needs clearance for the native traffic lights. */
-.metisNativeWindow .sidebar { padding-top: 48px; }
-
-/* The companion is the app mark. Its movement comes from the pearl itself,
-   so the holder becomes invisible and stays geometrically still. */
-.brandMark {
-  width: 38px;
-  height: 38px;
-  overflow: visible;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  transform: none;
-  transition: transform var(--motion-base) var(--m-menu-ease);
-}
-.brandMark::after { display: none; }
-.brandMark .companion { overflow: visible; }
-.brand:hover .brandMark { transform: translateY(-2px) rotate(-2deg); }
-
-/* Recent conversations stay useful without turning the sidebar into a long
-   index. Search still sees everything; this control only changes browsing. */
-.historyExpandButton {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  min-height: 32px;
-  margin: 5px 0 9px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--m-ink-3);
-  cursor: pointer;
-  font: 500 10.5px/1.2 var(--font-mono, ui-monospace, monospace);
-  text-align: left;
-  transition: color var(--motion-base) ease, background-color var(--motion-base) ease, transform var(--motion-base) var(--m-menu-ease);
-}
-.historyExpandButton:hover { color: var(--m-ink); background: var(--m-surface); transform: translateX(2px); }
-.historyExpandButton b { color: #87659d; font-size: var(--text-xs); font-weight: 600; }
 
 /* The composer's first menu is a decision, not a searchable command palette.
    Two generous rows explain the boundary before opening the detailed picker. */
@@ -3701,7 +3108,7 @@ select { border-radius: var(--m-r-field); }
   to { opacity: 1; clip-path: none; transform: translateY(0) scale(1); }
 }
 
-@media (max-width: 620px) {
+@media (max-width: 720px) {
   .composerContextMenu { width: min(360px, calc(100vw - 22px)); }
   .composerContextMenu > footer { display: none; }
 }
@@ -3710,17 +3117,13 @@ select { border-radius: var(--m-r-field); }
   .composerContextMenu,
   .composerContextChoices > button,
   .modelControlAdvanced { animation: none !important; }
-  .brandMark,
-  .historyExpandButton,
-  .composerContextChoices > button,
-  .composerContextChoices em,
-  .modelControlRoute,
-  .modelControlRoute::before,
-  .modelControlAdvancedToggle b { transition: none !important; }
-  .brand:hover .brandMark,
-  .historyExpandButton:hover,
-  .composerContextChoices > button:hover,
-  .modelControlRoute:hover:not(:disabled) { transform: none; }
+.composerContextChoices > button,
+.composerContextChoices em,
+.modelControlRoute,
+.modelControlRoute::before,
+.modelControlAdvancedToggle b { transition: none !important; }
+.composerContextChoices > button:hover,
+.modelControlRoute:hover:not(:disabled) { transform: none; }
 }
 
 /* ── 8 · Voice ───────────────────────────────────────────────────────────
@@ -4081,7 +3484,7 @@ select { border-radius: var(--m-r-field); }
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
   align-items: start;
 }
-@media (max-width: 900px) { .meetingsLayout { grid-template-columns: 1fr; } }
+@media (max-width: 1080px) { .meetingsLayout { grid-template-columns: 1fr; } }
 
 .meetingsList {
   border: 1px dashed transparent;
@@ -4201,56 +3604,7 @@ select { border-radius: var(--m-r-field); }
    the library becomes a proper rail, and the document itself is a continuous
    paper surface with audio, reviewable intelligence, then transcript. */
 .meetingsPage { padding-bottom: 54px; }
-.meetingHero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 282px;
-  overflow: hidden;
-  padding-bottom: 76px;
-  position: relative;
-}
-.meetingHeroCopy { max-width: 660px; }
-.meetingHero h1 { font-size: clamp(38px, 5vw, 66px); line-height: .92; max-width: 720px; }
-.meetingHero h1 em { font-family: Georgia, "Times New Roman", serif; font-weight: 400; letter-spacing: -.055em; }
-.meetingHero p { font-size: var(--text-md); line-height: 1.6; max-width: 550px; }
-.meetingHeroAside { align-items: center; display: flex; flex-direction: column; gap: 13px; justify-content: center; min-width: 170px; }
-.meetingHeroAside .primaryButton { align-items: center; display: inline-flex; gap: 7px; }
-.meetingHeroOrb {
-  animation: meetingOrbFloat 5s ease-in-out infinite;
-  background:
-    radial-gradient(circle at 35% 28%, rgba(255,255,245,.94), transparent 18%),
-    radial-gradient(circle at 67% 68%, #ff7759, transparent 42%),
-    radial-gradient(circle at 24% 70%, #7be3d8, transparent 38%),
-    #8f66ae;
-  border: 1px solid rgba(255,255,255,.72);
-  border-radius: 47% 53% 44% 56% / 55% 45% 55% 45%;
-  box-shadow: inset 9px 8px 18px rgba(255,255,255,.32), 0 20px 48px rgba(56,29,72,.28);
-  height: 92px;
-  overflow: hidden;
-  position: relative;
-  width: 92px;
-}
-.meetingHeroOrb i { background: rgba(255,255,255,.4); border-radius: 50%; filter: blur(7px); position: absolute; }
-.meetingHeroOrb i:nth-child(1) { height: 40px; left: 10px; top: 8px; width: 47px; }
-.meetingHeroOrb i:nth-child(2) { background: rgba(209,142,226,.6); bottom: 7px; height: 45px; right: 4px; width: 49px; }
-.meetingHeroOrb i:nth-child(3) { background: rgba(255,224,138,.55); bottom: 9px; height: 27px; left: 8px; width: 31px; }
 @keyframes meetingOrbFloat { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-7px) rotate(3deg); } }
-.meetingHeroStats {
-  align-items: stretch;
-  backdrop-filter: blur(16px);
-  background: rgba(252,250,246,.52);
-  border: 1px solid rgba(255,255,255,.38);
-  border-radius: var(--radius-card);
-  bottom: 16px;
-  display: flex;
-  left: 18px;
-  overflow: hidden;
-  position: absolute;
-}
-.meetingHeroStats > span { display: grid; gap: 0; min-width: 120px; padding: 10px 16px; }
-.meetingHeroStats > span + span { border-left: 1px solid rgba(33,31,29,.12); }
-.meetingHeroStats strong { color: var(--m-ink); font-size: var(--text-xl); font-weight: 460; letter-spacing: -.03em; }
-.meetingHeroStats small { color: rgba(33,31,29,.58); font-size: var(--text-xs); letter-spacing: .035em; text-transform: uppercase; }
 
 .meetingStudio { align-items: start; gap: 18px; grid-template-columns: minmax(270px, 318px) minmax(0, 1fr); margin-top: 18px; }
 .meetingsList {
@@ -4405,20 +3759,13 @@ select { border-radius: var(--m-r-field); }
 .meetingTimestamp { background: transparent; border: 0; color: var(--m-ink-3); font-family: var(--font-mono); font-size: var(--text-xs); padding: 0; }
 .meetingTurnText { font-size: var(--text-md); line-height: 1.7; margin-top: 6px; }
 
-@media (max-width: 980px) {
+@media (max-width: 1080px) {
   .meetingStudio { grid-template-columns: 1fr; }
   .meetingsList { max-height: none; min-height: 0; position: static; }
   .meetingLibraryRows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 260px; }
   .meetingDropHint { display: none; }
 }
-@media (max-width: 900px) {
-  .meetingHero { grid-template-columns: 1fr; padding-bottom: 116px; }
-  .meetingHeroAside { align-items: flex-start; flex-direction: row; justify-content: flex-start; min-width: 0; }
-  .meetingHeroOrb { display: none; }
-  .meetingHeroStats { display: grid; grid-template-columns: repeat(3, 1fr); right: 18px; }
-  .meetingHeroStats > span { min-width: 0; padding: 9px 10px; }
-}
-@media (max-width: 680px) {
+@media (max-width: 720px) {
   .meetingLibraryRows { grid-template-columns: 1fr; }
   .meetingDetail { padding: 18px 15px 24px; }
   .meetingHead { flex-wrap: wrap; }
@@ -4428,7 +3775,6 @@ select { border-radius: var(--m-r-field); }
   .meetingProposalActions { grid-column: 2; }
   .meetingInsights > header, .meetingTranscriptSection > header { align-items: flex-start; flex-direction: column; gap: 3px; }
 }
-@media (prefers-reduced-motion: reduce) { .meetingHeroOrb { animation: none !important; } }
 /* ── 10 · Interviews ─────────────────────────────────────────────────────
    Two acts, one page. The setup form and the scorecard are the Cohere act:
    warm paper, an editorial serif, coral where a decision lives. The live
@@ -4437,14 +3783,6 @@ select { border-radius: var(--m-r-field); }
    screen. The act change is the design change — starting an interview should
    feel like the room going quiet. */
 .interviewsPage { display: flex; flex-direction: column; gap: 14px; }
-
-/* The Cohere act opens editorially: a serif headline over quiet paper. */
-.interviewsPage .pageHeader h1 {
-  font-family: ui-serif, "New York", Georgia, "Times New Roman", serif;
-  font-weight: 500;
-  letter-spacing: -0.018em;
-}
-.interviewsPage .pageHeader p { max-width: 52ch; }
 
 .interviewSetup {
   background: var(--m-paper-lift);
@@ -4977,7 +4315,7 @@ select { border-radius: var(--m-r-field); }
 .interviewInterrupted h2 { color: var(--m-ink); font-size: var(--text-lg); margin: 0; }
 .interviewInterrupted p { color: var(--m-ink-2); font-size: var(--text-md); line-height: 1.55; margin: 0; }
 
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
   .interviewRounds { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
@@ -5002,15 +4340,9 @@ select { border-radius: var(--m-r-field); }
    is the deploy confirmation, because it is the one thing that reaches out
    of the machine. */
 .agentsPage { display: flex; flex-direction: column; gap: 14px; }
-.agentsPage .pageHeader h1 {
-  font-family: ui-serif, "New York", Georgia, "Times New Roman", serif;
-  font-weight: 500;
-  letter-spacing: -0.018em;
-}
-.agentsPage .pageHeader p { max-width: 56ch; }
 
 .agentLayout { display: grid; gap: 14px; grid-template-columns: 250px minmax(0, 1fr); align-items: start; }
-@media (max-width: 900px) { .agentLayout { grid-template-columns: 1fr; } }
+@media (max-width: 1080px) { .agentLayout { grid-template-columns: 1fr; } }
 
 .agentList { display: grid; gap: 6px; }
 .agentListItem {
@@ -5030,7 +4362,6 @@ select { border-radius: var(--m-r-field); }
 .agentListItem.selected { background: rgba(255, 119, 89, 0.07); border-color: var(--m-coral, #ff7759); }
 .agentListItem.isNew { color: var(--m-ink); font-size: var(--text-md); }
 
-
 .agentPanel {
   background: var(--m-paper-lift);
   border: 1px solid var(--m-line);
@@ -5044,7 +4375,7 @@ select { border-radius: var(--m-r-field); }
 .agentReviewHead .mutedMeta { align-items: center; display: inline-flex; gap: 6px; text-transform: none; letter-spacing: 0; font-family: inherit; font-size: var(--text-sm); }
 
 .agentFormGrid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
-@media (max-width: 700px) { .agentFormGrid { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .agentFormGrid { grid-template-columns: 1fr; } }
 
 .agentListEditor { display: grid; gap: 10px; }
 .agentListEditorHead { align-items: center; display: flex; gap: 8px; }
@@ -5077,7 +4408,7 @@ select { border-radius: var(--m-r-field); }
 .agentConfirm > span { max-width: 52ch; }
 
 .agentResults { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-@media (max-width: 900px) { .agentResults { grid-template-columns: 1fr; } }
+@media (max-width: 1080px) { .agentResults { grid-template-columns: 1fr; } }
 .agentResults .mutedMeta { font-family: inherit; font-size: var(--text-sm); letter-spacing: 0; text-transform: none; }
 .agentTestResults { display: grid; gap: 8px; list-style: none; margin: 8px 0 0; padding: 0; }
 .agentTestResults li { align-items: baseline; display: grid; gap: 2px 8px; grid-template-columns: auto 1fr; }
@@ -5102,29 +4433,6 @@ select { border-radius: var(--m-r-field); }
    Spatial navigation, restrained glass, quiet motion. Owns the app chrome. */
 /* tokens live in tokens.css */
 
-body {
-  background: #e8e6e1;
-}
-
-button,
-a,
-input,
-textarea {
-  -webkit-tap-highlight-color: transparent;
-}
-
-button,
-a,
-input,
-textarea,
-.selectOption {
-  transition:
-    background-color var(--ui-motion-fast) var(--ui-ease-standard),
-    border-color var(--ui-motion-fast) var(--ui-ease-standard),
-    color var(--ui-motion-fast) var(--ui-ease-standard),
-    opacity var(--ui-motion-fast) var(--ui-ease-standard);
-}
-
 button,
 .selectOption {
   transition:
@@ -5134,694 +4442,6 @@ button,
     opacity var(--ui-motion-fast) var(--ui-ease-standard),
     box-shadow var(--ui-motion-base) var(--ui-ease-out),
     transform var(--ui-motion-base) var(--ui-ease-out);
-}
-
-button:active:not(:disabled) {
-  transform: translateY(1px) scale(0.985);
-  transition-duration: var(--motion-fast);
-}
-
-.appShell {
-  background:
-    radial-gradient(70% 95% at 0% 0%, rgba(198, 173, 219, 0.16), transparent 54%),
-    radial-gradient(65% 90% at 100% 100%, rgba(238, 179, 155, 0.12), transparent 58%),
-    #e8e6e1;
-  gap: 8px;
-  padding: 10px;
-}
-
-.appMain {
-  background: #f6f5f2;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: var(--ui-radius);
-  box-shadow:
-    0 1px 1px rgba(37, 32, 27, 0.04),
-    0 18px 50px rgba(49, 42, 36, 0.1);
-  overflow: hidden;
-}
-
-.appMain::before {
-  opacity: 0.16;
-}
-
-.sidebar {
-  background:
-    radial-gradient(circle at 18% 0%, rgba(198, 151, 226, 0.13), transparent 29%),
-    radial-gradient(circle at 100% 100%, rgba(255, 128, 104, 0.055), transparent 31%),
-    linear-gradient(165deg, #1b1720 0%, #241d2a 58%, #18151c 100%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--radius-pane);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    0 18px 44px rgba(33, 24, 38, 0.17);
-  display: grid;
-  flex: 0 0 var(--sidebar-width, 272px);
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 0;
-  height: 100%;
-  isolation: isolate;
-  overflow: hidden;
-  padding: 0;
-}
-
-.sidebar::before {
-  background-image: radial-gradient(rgba(255, 255, 255, 0.2) 0.5px, transparent 0.5px);
-  background-size: 8px 8px;
-  border-radius: inherit;
-  inset: 0;
-  mask-image: linear-gradient(125deg, #000, transparent 68%);
-  opacity: 0.12;
-  z-index: -1;
-}
-
-.sidebar::after {
-  display: none;
-}
-
-.sidebarRail {
-  align-items: center;
-  background: rgba(9, 7, 12, 0.12);
-  border: 0;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 0;
-  box-shadow: none;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 10px;
-  position: relative;
-  z-index: 3;
-}
-
-.railBrand {
-  align-items: center;
-  display: flex;
-  height: 44px;
-  justify-content: center;
-  margin-bottom: 8px;
-  width: 44px;
-}
-
-.railBrand .brandMark {
-  filter: drop-shadow(0 7px 13px rgba(0, 0, 0, 0.25));
-  height: 34px;
-  transform: none;
-  width: 34px;
-}
-
-.railBrand:hover .brandMark {
-  transform: translateY(-1px) rotate(-2deg) scale(1.04);
-}
-
-.railCompose,
-.railNav button,
-.railFooter button {
-  align-items: center;
-  appearance: none;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-card);
-  color: rgba(255, 255, 255, 0.56);
-  display: flex;
-  height: 44px;
-  justify-content: center;
-  padding: 0;
-  position: relative;
-  width: 44px;
-}
-
-.railCompose {
-  background: #fffaf3;
-  box-shadow:
-    inset 0 1px 0 #fff,
-    0 7px 18px rgba(0, 0, 0, 0.24);
-  color: #1e1e20;
-  margin-bottom: 12px;
-}
-
-.railCompose:hover {
-  background: #fff;
-  box-shadow:
-    inset 0 1px 0 #fff,
-    0 9px 24px rgba(0, 0, 0, 0.3),
-    0 0 0 3px rgba(201, 166, 227, 0.15);
-  transform: translateY(-1px);
-}
-
-.railCompose svg {
-  fill: none;
-  height: 18px;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-width: 1.65;
-  width: 18px;
-}
-
-.railNav {
-  align-items: center;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 4px;
-  min-height: 0;
-}
-
-.railNav button:hover,
-.railFooter button:hover {
-  background: rgba(255, 255, 255, 0.075);
-  color: rgba(255, 255, 255, 0.94);
-}
-
-.railNav button.active,
-.railFooter button.active {
-  background: rgba(255, 255, 255, 0.105);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-  color: #fff;
-}
-
-/* The luminous marker follows the page that is actually open. Opening a
-   different contextual panel gets a quieter outline, so browsing navigation
-   never pretends that a route change already happened. */
-.railNav .railSectionButton.isPanelActive:not(.isRouteActive),
-.railFooter .railSectionButton.isPanelActive:not(.isRouteActive) {
-  background: rgba(255, 255, 255, 0.055);
-  box-shadow: inset 0 0 0 1px rgba(212, 181, 232, 0.13);
-  color: rgba(255, 250, 243, 0.82);
-}
-
-.railNav .railSectionButton.isRouteActive,
-.railFooter .railSectionButton.isRouteActive {
-  background: rgba(255, 255, 255, 0.11);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.065);
-  color: #fff;
-}
-
-.railNav .navGlyph,
-.railFooter .navGlyph {
-  display: grid;
-  height: 20px;
-  place-items: center;
-  width: 20px;
-}
-
-.railNav .navGlyph svg,
-.railFooter .navGlyph svg {
-  height: 19px;
-  width: 19px;
-}
-
-.railActivePill {
-  background: transparent;
-  border-radius: 999px;
-  height: 18px;
-  left: -7px;
-  position: absolute;
-  transition:
-    background var(--ui-motion-fast) var(--ui-ease-standard),
-    box-shadow var(--ui-motion-base) var(--ui-ease-out),
-    opacity var(--ui-motion-fast) var(--ui-ease-standard);
-  width: 3px;
-}
-
-.railNav .railSectionButton.isRouteActive .railActivePill,
-.railFooter .railSectionButton.isRouteActive .railActivePill {
-  background: #d4b5e8;
-  box-shadow: 0 0 12px rgba(212, 181, 232, 0.68);
-  height: 18px;
-}
-
-.railNav .railSectionButton:not(.isRouteActive) .railActivePill,
-.railFooter .railSectionButton:not(.isRouteActive) .railActivePill {
-  background: transparent;
-  box-shadow: none;
-  height: 18px;
-}
-
-.railBadge {
-  align-items: center;
-  background: #e1c0f3;
-  border: 2px solid #242326;
-  border-radius: 999px;
-  color: #201e22;
-  display: flex;
-  font-size: var(--text-xs);
-  font-weight: 750;
-  height: 16px;
-  justify-content: center;
-  min-width: 16px;
-  padding: 0 3px;
-  position: absolute;
-  right: 2px;
-  top: 2px;
-}
-
-.railTooltip {
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
-  background: rgba(255, 252, 247, 0.96);
-  border: 1px solid rgba(41, 33, 48, 0.11);
-  border-radius: var(--radius-control);
-  box-shadow: 0 12px 30px rgba(31, 22, 36, 0.18);
-  color: var(--ui-field);
-  font-size: var(--text-xs);
-  font-weight: 560;
-  left: calc(100% + 12px);
-  opacity: 0;
-  padding: 6px 9px;
-  pointer-events: none;
-  position: absolute;
-  transform: translateX(-4px) scale(0.97);
-  transition: opacity var(--ui-motion-fast) var(--ui-ease-standard), transform var(--ui-motion-base) var(--ui-ease-out);
-  white-space: nowrap;
-  z-index: 20;
-}
-
-.railNav button:hover .railTooltip,
-.railFooter button:hover .railTooltip,
-.railNav button:focus-visible .railTooltip,
-.railFooter button:focus-visible .railTooltip {
-  opacity: 1;
-  transform: none;
-}
-
-.railFooter {
-  align-items: center;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.railConnection {
-  background: #8a8a8e;
-  border: 2px solid #242326;
-  border-radius: 50%;
-  height: 9px;
-  margin-bottom: 2px;
-  width: 9px;
-}
-
-.railConnection.connected {
-  background: #70c394;
-  box-shadow: 0 0 0 4px rgba(112, 195, 148, 0.1), 0 0 9px rgba(112, 195, 148, 0.42);
-}
-
-.railConnection.disconnected {
-  background: #d77a68;
-}
-
-.sidebarPanel {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.016));
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  opacity: 1;
-  overflow: hidden;
-  padding: 15px 13px 9px 14px;
-  transform: translateX(0);
-  transition:
-    opacity 170ms ease,
-    transform 260ms var(--ui-spring),
-    visibility 0ms linear;
-  visibility: visible;
-}
-
-.sidebarPanelHeader {
-  align-items: flex-start;
-  display: flex;
-  flex: 0 0 auto;
-  justify-content: space-between;
-  min-height: 70px;
-  padding: 3px 2px 9px 3px;
-}
-
-.sidebarPanelHeader > div {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.sidebarPanelHeader span {
-  color: rgba(255, 250, 243, 0.43);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-weight: 650;
-  letter-spacing: 0.12em;
-  line-height: 1;
-  margin: 2px 0 7px;
-  text-transform: uppercase;
-}
-
-.sidebarPanelHeader strong {
-  color: #fffaf3;
-  font-family: var(--font-display, -apple-system, sans-serif);
-  font-size: var(--text-2xl);
-  font-weight: 590;
-  letter-spacing: -0.035em;
-  line-height: 1.05;
-}
-
-.sidebarPanelHeader small {
-  color: rgba(255, 250, 243, 0.57);
-  font-size: var(--text-xs);
-  margin-top: 5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebarPanelHeader .collapseToggle {
-  background: rgba(255, 255, 255, 0.065);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: var(--radius-control);
-  color: rgba(255, 250, 243, 0.67);
-  flex: 0 0 auto;
-  height: 34px;
-  margin-left: 8px;
-  width: 34px;
-}
-
-.sidebarPanelHeader .collapseToggle:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #fffaf3;
-  transform: translateX(-1px);
-}
-
-.sidebarPanel .newChatButton {
-  background: #fffaf3;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: var(--radius-card);
-  box-shadow: 0 8px 20px rgba(29, 27, 25, 0.12);
-  color: var(--ui-field);
-  flex: 0 0 auto;
-  font-size: var(--text-xs);
-  min-height: 40px;
-  padding: 0 10px 0 13px;
-}
-
-.sidebarPanel .newChatButton:hover:not(:disabled) {
-  background: #fff;
-  box-shadow: 0 12px 28px rgba(10, 7, 13, 0.24), 0 0 0 3px rgba(184, 147, 213, 0.12);
-  transform: translateY(-1px);
-}
-
-.sidebarPanel .newChatButton kbd {
-  background: rgba(31, 24, 35, 0.07);
-  border: 1px solid rgba(31, 24, 35, 0.07);
-  border-radius: var(--radius-control);
-  color: rgba(31, 24, 35, 0.56);
-  padding: 3px 6px;
-}
-
-.sidebarPanel .newChatButton::after {
-  background: linear-gradient(105deg, transparent 28%, rgba(255, 255, 255, 0.15), transparent 72%);
-}
-
-.sidebarPanel .sidebarSearch {
-  background: rgba(255, 255, 255, 0.065);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: var(--radius-card);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
-  flex: 0 0 auto;
-  margin: 10px 0 9px;
-  min-height: 38px;
-}
-
-.sidebarPanel .sidebarSearch:focus-within {
-  background: rgba(255, 255, 255, 0.11);
-  border-color: rgba(212, 181, 232, 0.46);
-  box-shadow: 0 0 0 3px rgba(184, 147, 213, 0.1), inset 0 1px 0 rgba(255,255,255,.09);
-}
-
-.sidebarPanel .sidebarSearch input {
-  color: #fffaf3;
-  font-size: var(--text-xs);
-}
-
-.sidebarPanel .sidebarSearch input::placeholder { color: rgba(255, 250, 243, 0.42); }
-
-.sidebarPanel .sidebarSearch kbd {
-  color: rgba(255, 250, 243, 0.4);
-  opacity: 0.86;
-}
-
-.sidebarPanel .historyHeader {
-  align-items: center;
-  display: flex;
-  flex: 0 0 auto;
-  justify-content: space-between;
-  padding: 2px 5px 7px;
-}
-
-.sidebarPanel .historyHeader > span:first-child,
-.sidebarPanel .conversationHistory h2 {
-  color: rgba(255, 250, 243, 0.43);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-weight: 650;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.sidebarPanel .historyHeader > span:last-child {
-  background: rgba(255, 255, 255, 0.07);
-  border-radius: 999px;
-  color: rgba(255, 250, 243, 0.52);
-  font-size: var(--text-xs);
-  min-width: 23px;
-  padding: 2px 6px;
-  text-align: center;
-}
-
-.sidebarPanel .conversationHistory {
-  flex: 1;
-  min-height: 0;
-  padding-right: 2px;
-}
-
-.sidebarPanel .conversationHistory section {
-  margin-bottom: 13px;
-}
-
-.sidebarPanel .conversationHistory h2 {
-  margin: 0 0 4px;
-  padding: 0 6px;
-}
-
-.sidebarPanel .conversationHistory a {
-  border-radius: var(--radius-control);
-  color: rgba(255, 250, 243, 0.63);
-  font-size: var(--text-xs);
-  min-height: 32px;
-  padding: 6px 25px 6px 9px;
-}
-
-.sidebarPanel .conversationHistory a:hover {
-  background: rgba(255, 255, 255, 0.075);
-  color: #fffaf3;
-}
-
-.sidebarPanel .conversationHistory a.active,
-.sidebarPanel .conversationHistoryItem.hasUnread > a {
-  background: rgba(255, 255, 255, 0.11);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.065),
-    0 7px 18px rgba(8, 6, 10, 0.12);
-  color: #fffaf3;
-}
-
-.sidebarPanel .conversationHistory a.active::before {
-  background: var(--ui-accent);
-  border-radius: 999px;
-  content: "";
-  height: 14px;
-  left: 2px;
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 2px;
-}
-
-.sidebarPanel .sectionNav {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.sidebarPanel .sectionNav a,
-.sidebarPanel .sectionNav a.active {
-  align-items: center;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-card);
-  color: rgba(255, 250, 243, 0.64);
-  display: grid;
-  font-size: var(--text-sm);
-  font-weight: 480;
-  grid-template-columns: 34px minmax(0, 1fr) 16px;
-  min-height: 44px;
-  padding: 5px 10px 5px 7px;
-}
-
-.sidebarPanel .sectionNav a:hover {
-  background: rgba(255, 255, 255, 0.075);
-  border-color: rgba(255, 255, 255, 0.06);
-  color: #fffaf3;
-  transform: translateX(2px);
-}
-
-.sidebarPanel .sectionNav a.active {
-  background: rgba(255, 255, 255, 0.11);
-  border-color: rgba(255, 255, 255, 0.075);
-  box-shadow: 0 9px 24px rgba(8, 6, 10, 0.13);
-  color: #fffaf3;
-  font-weight: 580;
-}
-
-.sidebarPanel .sectionNav a::before,
-.sidebarPanel .sectionNav a::after {
-  display: none;
-}
-
-.sidebarPanel .sectionNav .navGlyph {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.065);
-  border-radius: var(--radius-control);
-  color: rgba(255, 250, 243, 0.56);
-  display: flex;
-  height: 28px;
-  justify-content: center;
-  width: 28px;
-}
-
-.sidebarPanel .sectionNav a.active .navGlyph {
-  background: rgba(212, 181, 232, 0.16);
-  color: #dfc3ef;
-}
-
-.sidebarPanel .sectionNav .navGlyph svg {
-  height: 17px;
-  width: 17px;
-}
-
-.navChevron {
-  fill: none;
-  height: 14px;
-  opacity: 0.4;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.4;
-  transition: opacity var(--motion-base) ease, transform var(--motion-base) var(--ui-spring);
-  width: 14px;
-}
-
-.sectionNav a:hover .navChevron,
-.sectionNav a.active .navChevron {
-  opacity: 0.75;
-  transform: translateX(2px);
-}
-
-.sidebarPanel .privacyBadge {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: 0;
-  box-shadow: none;
-  flex: 0 0 auto;
-  gap: 9px;
-  margin: auto 0 0;
-  min-height: 48px;
-  padding: 10px 5px 4px;
-}
-
-.sidebarPanel .privacyPulse {
-  background: var(--ui-positive);
-  box-shadow: 0 0 0 4px rgba(93, 163, 125, 0.1);
-  height: 7px;
-  width: 7px;
-}
-
-.sidebarPanel .privacyBadge strong {
-  color: rgba(255, 250, 243, 0.72);
-  font-size: var(--text-xs);
-  font-weight: 580;
-}
-
-.sidebarPanel .privacyBadge small {
-  color: rgba(255, 250, 243, 0.4);
-  font-size: var(--text-xs);
-}
-
-.sidebarResizeHandle {
-  right: -8px;
-}
-
-.sidebarResizeHandle span {
-  background: rgba(212, 181, 232, 0.36);
-  height: 36px;
-  width: 2px;
-}
-
-.sidebarResizeHandle:hover span,
-.sidebarResizeHandle:focus-visible span,
-.isResizing .sidebarResizeHandle span {
-  background: #9d70bd;
-  box-shadow: 0 0 0 4px rgba(184, 147, 213, 0.12);
-}
-
-@media (min-width: 1101px) {
-  .appShell.animate .sidebar {
-    transition:
-      flex-basis var(--ui-motion-slow) var(--ui-ease-out),
-      box-shadow var(--ui-motion-base) var(--ui-ease-standard),
-      border-color var(--ui-motion-base) var(--ui-ease-standard);
-  }
-
-  .appShell.isCollapsed .sidebar {
-    flex-basis: 64px;
-    grid-template-columns: 64px 0;
-    /* Older collapsed-rail rules still added 11px of horizontal padding.
-       That shifted the 64px rail outside its own 64px container, while the
-       zero-width panel continued to lay out and paint decorative effects over
-       the conversation. A collapsed sidebar is now a real, clipped rail. */
-    overflow: hidden;
-    padding: 0;
-    width: 64px;
-  }
-
-  .appShell.isCollapsed .sidebarRail { border-right: 0; border-radius: var(--radius-pane); }
-
-  .appShell.isCollapsed .sidebarRail { padding-inline: 10px; }
-
-  .appShell.isCollapsed .railNav button,
-  .appShell.isCollapsed .railFooter button {
-    flex-direction: row;
-    gap: 0;
-    height: 44px;
-    width: 44px;
-  }
-
-  .appShell.isCollapsed .railActivePill { left: -7px; }
-
-  .appShell.isCollapsed .sidebarPanel {
-    display: none;
-    inline-size: 0;
-    opacity: 0;
-    padding: 0;
-    pointer-events: none;
-    transform: translateX(-10px) scale(0.98);
-    visibility: hidden;
-  }
-
-  .appShell.isCollapsed .sidebarResizeHandle {
-    display: none;
-  }
-
-  .appShell:not(.isCollapsed) .railTooltip { display: none; }
 }
 
 /* Floating controls form one coherent glass family. */
@@ -5863,158 +4483,6 @@ button:active:not(:disabled) {
   background:
     radial-gradient(80% 70% at 0% 0%, rgba(199, 169, 221, 0.07), transparent 55%),
     linear-gradient(145deg, rgba(255, 255, 255, 0.42), transparent 42%);
-}
-
-/* Meetings and Interviews established the product's strongest visual idea:
-   a dark editorial field with soft plum, coral, and mint light. Other
-   workspaces now begin in that same world without duplicating their exact
-   layouts. */
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader {
-  align-items: end;
-  background:
-    radial-gradient(circle at 86% 8%, rgba(255, 128, 104, 0.17), transparent 25%),
-    radial-gradient(circle at 61% 110%, rgba(119, 222, 210, 0.1), transparent 27%),
-    linear-gradient(128deg, var(--ui-field) 0%, var(--ui-field-2) 58%, var(--ui-field-3) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-pane);
-  box-shadow: 0 24px 64px rgba(38, 27, 44, 0.15);
-  color: #fffaf3;
-  min-height: 168px;
-  overflow: hidden;
-  padding: clamp(27px, 3.4vw, 42px);
-  position: relative;
-}
-
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader::after {
-  background-image: radial-gradient(rgba(255, 255, 255, 0.2) 0.5px, transparent 0.5px);
-  background-size: 8px 8px;
-  content: "";
-  inset: 0 0 0 56%;
-  mask-image: linear-gradient(90deg, transparent, #000);
-  opacity: 0.16;
-  pointer-events: none;
-  position: absolute;
-}
-
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader::before { display: none; }
-
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader > * {
-  position: relative;
-  z-index: 1;
-}
-
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .eyebrow {
-  color: rgba(255, 250, 243, 0.56);
-}
-
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader h1 {
-  color: #fffaf3;
-  font-size: clamp(42px, 5vw, 67px);
-  font-weight: 470;
-  letter-spacing: -0.055em;
-  line-height: 0.96;
-}
-
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader p {
-  color: rgba(255, 250, 243, 0.67);
-  font-size: var(--text-md);
-  line-height: 1.6;
-  max-width: 66ch;
-}
-
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .secondaryButton,
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .ghostButton {
-  background: #fffaf3;
-  border-color: rgba(255, 255, 255, 0.75);
-  color: var(--ui-field);
-  min-height: 44px;
-}
-
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .secondaryButton:hover:not(:disabled),
-.workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader .ghostButton:hover:not(:disabled) {
-  background: #fff;
-  border-color: #fff;
-  box-shadow: 0 12px 28px rgba(7, 5, 9, 0.22);
-  transform: translateY(-2px);
-}
-
-/* Customers uses a dedicated workbench wrapper instead of .workspacePage,
-   but its entrance should still feel like the same product world. */
-.customerWorkbenchHeader {
-  align-items: end;
-  background:
-    radial-gradient(circle at 86% 8%, rgba(255, 128, 104, 0.17), transparent 25%),
-    radial-gradient(circle at 61% 110%, rgba(119, 222, 210, 0.1), transparent 27%),
-    linear-gradient(128deg, var(--ui-field) 0%, var(--ui-field-2) 58%, var(--ui-field-3) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-pane);
-  box-shadow: 0 24px 64px rgba(38, 27, 44, 0.15);
-  color: #fffaf3;
-  min-height: 168px;
-  overflow: hidden;
-  padding: clamp(27px, 3.4vw, 42px);
-  position: relative;
-}
-
-.customerWorkbenchHeader::before { display: none; }
-
-.customerWorkbenchHeader::after {
-  background: radial-gradient(rgba(255, 255, 255, 0.2) 0.5px, transparent 0.5px);
-  background-size: 8px 8px;
-  inset: 0 0 0 56%;
-  mask-image: linear-gradient(90deg, transparent, #000);
-  opacity: 0.16;
-  pointer-events: none;
-}
-
-.appMain .customerWorkbenchHeader h1 {
-  color: #fffaf3;
-  font-size: clamp(42px, 5vw, 67px);
-  font-weight: 470;
-  letter-spacing: -0.055em;
-  line-height: 0.96;
-}
-
-.customerWorkbenchHeader .eyebrow { color: rgba(255, 250, 243, 0.56); }
-
-.customerWorkbenchHeader p {
-  color: rgba(255, 250, 243, 0.67);
-  font-size: var(--text-md);
-  line-height: 1.6;
-  max-width: 62ch;
-}
-
-.customerWorkbenchHeader .secondaryButton,
-.customerWorkbenchHeader .ghostButton {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.14);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05);
-  color: #fffaf3;
-  min-height: 44px;
-}
-
-.customerWorkbenchHeader .secondaryButton:hover:not(:disabled),
-.customerWorkbenchHeader .ghostButton:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.23);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08), 0 12px 28px rgba(7, 5, 9, 0.16);
-  color: #fff;
-  transform: translateY(-2px);
-}
-
-.customerWorkbenchHeader .primaryButton {
-  background: #fffaf3;
-  border-color: rgba(255, 255, 255, 0.75);
-  color: var(--ui-field);
-  min-height: 44px;
-}
-
-.customerWorkbenchHeader .primaryButton:hover:not(:disabled) {
-  background: #fff;
-  border-color: #fff;
-  box-shadow: 0 12px 28px rgba(7, 5, 9, 0.22);
-  color: var(--ui-field);
-  transform: translateY(-2px);
 }
 
 /* Chat is one continuous canvas. Metis colour now lives in the atmosphere and
@@ -6118,172 +4586,20 @@ button:active:not(:disabled) {
     0 12px 30px rgba(49, 42, 36, 0.055);
 }
 
-.mobileMenuButton {
-  -webkit-backdrop-filter: saturate(160%) blur(18px);
-  backdrop-filter: saturate(160%) blur(18px);
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.74);
-  border-radius: var(--radius-card);
-  box-shadow: 0 8px 24px rgba(37, 32, 27, 0.12);
-}
-
-@media (max-width: 1100px) {
-  .appShell {
-    display: block;
-    padding: 0;
-  }
-
-  .appMain {
-    border: 0;
-    border-radius: 0;
-    height: 100%;
-  }
-
-  .sidebar,
-  .appShell.isCollapsed .sidebar {
-    border-radius: var(--radius-pane);
-    box-shadow: 0 24px 70px rgba(25, 22, 20, 0.28);
-    flex-basis: auto;
-    grid-template-columns: 64px minmax(0, 1fr);
-    height: calc(100% - 20px);
-    left: 10px;
-    padding: 0;
-    position: fixed;
-    top: 10px;
-    transition: transform var(--ui-motion-base) var(--ui-ease-out);
-    transform: translateX(calc(-100% - 16px));
-    width: min(320px, calc(100vw - 20px));
-    z-index: 50;
-  }
-
-  .sidebar.sidebarOpen,
-  .appShell.isCollapsed .sidebar.sidebarOpen {
-    transform: translateX(0);
-  }
-
-  .appShell.isCollapsed .sidebarPanel {
-    opacity: 1;
-    pointer-events: auto;
-    transform: none;
-    visibility: visible;
-  }
-
-  .sidebarRail,
-  .appShell.isCollapsed .sidebarRail {
-    border-radius: 0;
-    border-right: 1px solid rgba(255, 255, 255, 0.08);
-    padding-inline: 10px;
-  }
-
-  .drawerScrim {
-    -webkit-backdrop-filter: blur(7px);
-    backdrop-filter: blur(7px);
-    background: rgba(25, 23, 25, 0.34);
-    animation: uiScrimIn var(--motion-base) var(--ui-ease-standard) both;
-    border: 0;
-    display: block;
-    inset: 0;
-    position: fixed;
-    z-index: 40;
-  }
-
-  .mobileMenuButton {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    height: 44px;
-    justify-content: center;
-    position: fixed;
-    left: 14px;
-    padding: 0 13px;
-    top: 14px;
-    transition:
-      left var(--ui-motion-base) var(--ui-ease-out),
-      background var(--ui-motion-fast) var(--ui-ease-standard),
-      box-shadow var(--ui-motion-base) var(--ui-ease-out);
-    width: 44px;
-    z-index: 55;
-  }
-
-  .mobileMenuButton span {
-    background: var(--ui-ink);
-    display: block;
-    height: 1px;
-    width: 16px;
-  }
+@media (max-width: 1080px) {
 
   .chatHeader {
     padding-left: 68px;
   }
 
-  .appShell:has(.sidebarOpen) .mobileMenuButton {
-    left: min(280px, calc(100vw - 58px));
-  }
-
   .todayGridPage {
     padding-top: 68px;
-  }
-
-  .workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader {
-    align-items: stretch;
-    min-height: 0;
-    padding: 27px 22px;
-  }
-
-  .workspacePage:not(.meetingsPage):not(.interviewsPage) > .pageHeader h1 {
-    font-size: clamp(40px, 10vw, 56px);
-  }
-
-  .customerWorkbenchHeader {
-    align-items: stretch;
-    min-height: 0;
-    padding: 27px 22px;
-  }
-
-  .appMain .customerWorkbenchHeader h1 {
-    font-size: clamp(40px, 10vw, 56px);
   }
 }
 
 @keyframes uiScrimIn {
   from { opacity: 0; }
   to { opacity: 1; }
-}
-
-@media (max-height: 660px) and (min-width: 1101px) {
-  .railNav { gap: 1px; }
-  .railCompose { margin-bottom: 8px; }
-}
-
-/* One interaction grammar for everyday controls. Specialty surfaces may
-   change color, but size, corners, focus and disabled behavior stay familiar. */
-.appMain :where(.primaryButton, .secondaryButton, .dangerButton, .textButton) {
-  border-radius: var(--ui-control-radius);
-  min-height: var(--ui-control-height);
-}
-
-.appMain :where(.iconButton) {
-  border-radius: var(--ui-control-radius);
-}
-
-.appMain :where(
-  .primaryButton,
-  .secondaryButton,
-  .dangerButton,
-  .textButton,
-  .iconButton,
-  input,
-  textarea,
-  select,
-  [role="button"]
-):focus-visible {
-  outline: 3px solid var(--ui-focus);
-  outline-offset: 2px;
-}
-
-.appMain :where(button, input, textarea, select):disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
 }
 
 /* Data should read the same in chat and in workspaces: quiet header tint,
@@ -6332,43 +4648,13 @@ html.metisNativeWindow body {
   background: #1b1720;
 }
 
-.metisNativeWindow .appShell {
-  background:
-    linear-gradient(180deg, #1b1720 0 38px, transparent 38px),
-    radial-gradient(70% 95% at 0% 0%, rgba(198, 173, 219, 0.16), transparent 54%),
-    radial-gradient(65% 90% at 100% 100%, rgba(238, 179, 155, 0.12), transparent 58%),
-    #e8e6e1;
-  padding-top: 38px;
-}
-
-.metisNativeWindow .sidebar {
-  padding-top: 0;
-}
-
-@media (max-width: 1100px) {
-  .metisNativeWindow .sidebar,
-  .metisNativeWindow .appShell.isCollapsed .sidebar {
-    height: calc(100% - 58px);
-    top: 48px;
-  }
-
-  .metisNativeWindow .mobileMenuButton {
-    top: 52px;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .sidebar,
-  .sidebarPanel,
-  .railActivePill,
-  .railTooltip,
-  .selectPopup,
-  .modelControlPanel,
-  .commandPicker,
-  .composerContextMenu,
-  .drawerScrim,
-  button,
-  a {
+.selectPopup,
+.modelControlPanel,
+.commandPicker,
+.composerContextMenu,
+button,
+a {
     animation: none !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
@@ -6413,14 +4699,6 @@ html.metisNativeWindow body {
 
 .todayStudioHero .todayTopbar { align-items: end; }
 .todayStudioHero .todayTopbar .eyebrow { color: rgba(255, 250, 243, 0.55); }
-.appMain .todayGridPage .todayStudioHero h1 {
-  color: #fffaf3;
-  font-size: clamp(48px, 5.7vw, 78px);
-  font-weight: 470;
-  letter-spacing: -0.064em;
-  line-height: 0.93;
-  margin-top: 10px;
-}
 
 .todayStudioHero .todayRefresh {
   background: #fffaf3;
@@ -6701,94 +4979,6 @@ html.metisNativeWindow body {
   max-width: 1500px;
   padding-bottom: 56px;
 }
-
-.audioWorkspaceHero.meetingHero {
-  background:
-    radial-gradient(circle at 79% 15%, rgba(255, 128, 104, .22), transparent 22%),
-    radial-gradient(circle at 54% 100%, rgba(119, 222, 210, .14), transparent 29%),
-    linear-gradient(128deg, #19151f 0%, #28202f 56%, #211a27 100%);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: var(--radius-pane);
-  box-shadow: var(--audio-shadow);
-  color: #fffaf3;
-  display: grid;
-  gap: 26px;
-  grid-template-columns: minmax(0, 1.2fr) minmax(290px, .62fr);
-  overflow: hidden;
-  padding: clamp(28px, 4vw, 50px);
-  position: relative;
-}
-
-.audioWorkspaceHero.meetingHero::before {
-  background-image: radial-gradient(rgba(255,255,255,.16) .5px, transparent .5px);
-  background-size: 7px 7px;
-  content: "";
-  inset: 0;
-  mask-image: linear-gradient(110deg, black, transparent 65%);
-  opacity: .18;
-  pointer-events: none;
-  position: absolute;
-}
-
-.audioWorkspaceHero .meetingHeroCopy,
-.audioWorkspaceHero .meetingCaptureCard { position: relative; z-index: 1; }
-
-.audioWorkspaceHero .meetingHeroCopy {
-  align-content: center;
-  display: grid;
-  gap: 14px;
-  max-width: 760px;
-}
-
-.audioWorkspaceHero .eyebrow { color: rgba(255,250,243,.54); }
-
-.audioWorkspaceHero.meetingHero h1 {
-  color: #fffaf3;
-  font-size: clamp(44px, 5.5vw, 76px);
-  letter-spacing: -.064em;
-  line-height: .91;
-  margin: 0;
-}
-
-.audioWorkspaceHero.meetingHero h1 em {
-  color: #dbbfdc;
-  font-family: Georgia, "Times New Roman", serif;
-  font-weight: 400;
-}
-
-.audioWorkspaceHero.meetingHero .meetingHeroCopy > p {
-  color: rgba(255,250,243,.68);
-  font-size: var(--text-base);
-  line-height: 1.65;
-  margin: 0;
-  max-width: 590px;
-}
-
-.audioWorkspaceHero .meetingHeroStats {
-  backdrop-filter: none;
-  bottom: auto;
-  background: transparent;
-  border: 0;
-  display: flex;
-  left: auto;
-  margin: 9px 0 0;
-  overflow: visible;
-  padding: 0;
-  position: static;
-  right: auto;
-  width: max-content;
-}
-
-.audioWorkspaceHero .meetingHeroStats > span {
-  border-left: 1px solid rgba(255,255,255,.13);
-  display: grid;
-  min-width: 110px;
-  padding: 0 20px;
-}
-
-.audioWorkspaceHero .meetingHeroStats > span:first-child { border: 0; padding-left: 0; }
-.audioWorkspaceHero .meetingHeroStats strong { color: #fffaf3; font-size: var(--text-2xl); }
-.audioWorkspaceHero .meetingHeroStats small { color: rgba(255,250,243,.42); }
 
 .meetingCaptureCard {
   align-content: start;
@@ -7153,7 +5343,7 @@ html.metisNativeWindow body {
 .meetingEventTimeline p { color: #716a74; font-size: var(--text-xs); margin: 1px 0; }
 .meetingEventTimeline small { color: #a29aa4; font-family: var(--font-mono); font-size: var(--text-xs); }
 
-@media (max-width: 1120px) {
+@media (max-width: 1080px) {
   .dailyBriefPlayer { grid-template-columns: 1fr; }
   .meetingStudioShell { grid-template-columns: 280px minmax(0, 1fr); }
   .meetingOverviewGrid { grid-template-columns: 1fr; }
@@ -7161,10 +5351,7 @@ html.metisNativeWindow body {
   .meetingHeaderActions .meetingUtilityButton { display: none; }
 }
 
-@media (max-width: 820px) {
-  .audioWorkspaceHero.meetingHero { grid-template-columns: 1fr; }
-  .audioWorkspaceHero .meetingHeroStats { max-width: 100%; width: 100%; }
-  .audioWorkspaceHero .meetingHeroStats > span { flex: 1; min-width: 0; }
+@media (max-width: 1080px) {
   .meetingStudioShell { grid-template-columns: 1fr; }
   .meetingLibrary.meetingsList { min-height: 320px; max-height: 430px; }
   .meetingReviewHeader.meetingHead { flex-direction: column; }
@@ -7172,13 +5359,10 @@ html.metisNativeWindow body {
   .meetingActivityView { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .dailyBriefPlayer { border-radius: var(--radius-card); padding: 15px; }
   .dailyBriefTransport { flex-wrap: wrap; }
   .dailyBriefTimeline { min-width: 180px; order: 5; width: 100%; }
-  .audioWorkspaceHero.meetingHero { border-radius: var(--radius-pane); padding: 25px 20px; }
-  .audioWorkspaceHero.meetingHero h1 { font-size: var(--text-5xl); }
-  .audioWorkspaceHero .meetingHeroStats > span { padding: 0 10px; }
   .meetingPlayerStudio.meetingPlayerDock { flex-wrap: wrap; padding: 13px; }
   .meetingPlayerTimeline { min-width: calc(100% - 52px); }
   .meetingDetailTabs { overflow-x: auto; padding: 0 12px; }
@@ -7205,43 +5389,6 @@ html.metisNativeWindow body {
   max-width: 1420px;
   padding-bottom: 58px;
 }
-
-.interviewsPage > .pageHeader {
-  align-items: end;
-  background:
-    radial-gradient(circle at 86% 14%, rgba(255, 128, 104, .17), transparent 24%),
-    linear-gradient(125deg, #19151f, #292130 58%, #211a27);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: var(--radius-pane);
-  box-shadow: var(--audio-shadow);
-  color: #fffaf3;
-  min-height: 190px;
-  overflow: hidden;
-  padding: clamp(28px, 4vw, 46px);
-  position: relative;
-}
-
-.interviewsPage > .pageHeader::after {
-  background-image: radial-gradient(rgba(255,255,255,.22) .55px, transparent .55px);
-  background-size: 8px 8px;
-  content: "";
-  inset: 0 0 0 58%;
-  mask-image: linear-gradient(90deg, transparent, black);
-  opacity: .2;
-  pointer-events: none;
-  position: absolute;
-}
-
-.interviewsPage > .pageHeader .eyebrow { color: rgba(255,250,243,.68); }
-.interviewsPage > .pageHeader h1 {
-  color: #fffaf3;
-  font-family: inherit;
-  font-size: clamp(46px, 6vw, 74px);
-  font-weight: 470;
-  letter-spacing: -.06em;
-  line-height: .95;
-}
-.interviewsPage > .pageHeader p { color: rgba(255,250,243,.72); font-size: var(--text-base); }
 
 .interviewSetup.interviewLaunchpad {
   background: transparent;
@@ -7581,7 +5728,6 @@ html.metisNativeWindow body {
 .meetingUtilityButton { min-height: 44px; }
 .meetingOverview .proposalAccept { min-height: 44px; }
 .meetingProposalActions .proposalDismiss { min-height: 44px; min-width: 44px; }
-.audioWorkspaceHero .meetingHeroStats small,
 .meetingCaptureCard > div > small,
 .meetingCaptureCard > small { color: rgba(255,250,243,.7); }
 .meetingUploadTitle > span { color: rgba(255,250,243,.72); }
@@ -7592,7 +5738,7 @@ html.metisNativeWindow body {
 .meetingTranscriptWord:hover { color: var(--audio-plum); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .meetingTranscriptWord:focus-visible { border-radius: var(--radius-control); outline: 2px solid var(--audio-plum); outline-offset: 2px; }
 
-@media (max-width: 1040px) {
+@media (max-width: 1080px) {
   .interviewLaunchGrid { grid-template-columns: 1fr; }
   .interviewSessionBrief { position: static; }
   .interviewBriefFacts { grid-template-columns: repeat(3, 1fr); }
@@ -7605,10 +5751,7 @@ html.metisNativeWindow body {
   .todayStudioHero .todayTopbar { align-items: stretch; flex-direction: column; }
   .todayStudioHero .todayTopbarActions { width: 100%; }
   .todayStudioHero .todayRefresh { justify-content: center; width: 100%; }
-  .appMain .todayGridPage .todayStudioHero h1 { font-size: clamp(42px, 12vw, 58px); }
   .todayStudioHero .todayRail { margin-inline: -2px; padding-bottom: 2px; }
-  .interviewsPage > .pageHeader { border-radius: var(--radius-pane); min-height: 160px; padding: 25px 21px; }
-  .interviewsPage > .pageHeader h1 { font-size: var(--text-5xl); }
   .interviewLaunchSection { padding: 21px 18px 24px; }
   .interviewSessionBrief { padding: 21px; }
   .interviewBriefFacts { grid-template-columns: 1fr; }
@@ -7626,7 +5769,7 @@ html.metisNativeWindow body {
   .meetingSkipButton { display: inline-flex; }
 }
 
-@media (max-width: 430px) {
+@media (max-width: 720px) {
   .interviewLaunchSectionHead { grid-template-columns: 34px minmax(0, 1fr); }
   .interviewLaunchStep { border-radius: var(--radius-control); height: 34px; width: 34px; }
   .interviewQuickFocusChip { min-height: 44px; }
@@ -8077,7 +6220,7 @@ html.metisNativeWindow body {
   padding: 6px 10px;
 }
 
-@media (max-width: 680px) {
+@media (max-width: 720px) {
   .voiceStageHeader { align-items: stretch; flex-direction: column; gap: 12px; }
   .voiceModelControl { justify-items: stretch; min-width: 0; }
   .voiceModelSelect { min-width: 0; width: 100%; }
@@ -8164,13 +6307,13 @@ html.metisNativeWindow body {
 .audioGuardrailCard strong { color: var(--audio-ink); font-size: var(--text-xs); }
 .audioGuardrailCard small { color: #756d78; font-size: var(--text-xs); line-height: 1.4; }
 
-@media (max-width: 1100px) {
+@media (max-width: 1080px) {
   .audioSettingsGrid { grid-template-columns: 1fr 1fr; }
   .audioGuardrailCard { grid-column: 1 / -1; }
   .audioGuardrailCard ul { grid-template-columns: repeat(3, 1fr); }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 720px) {
   .audioSettingsHero { align-items: start; grid-template-columns: 48px 1fr; padding: 21px 18px; }
   .audioSettingsMark { height: 46px; }
   .audioSettingsBadges { grid-column: 1 / -1; justify-items: start; }
@@ -8179,10 +6322,47 @@ html.metisNativeWindow body {
   .audioGuardrailCard ul { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 460px) {
+@media (max-width: 720px) {
   .audioProviderChoices { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 900px) {
-  .mobileMenuButton { height: 44px; width: 44px; }
+/* ── 14 · Page rules restored from the old pane prefix ──────────────────
+   These styled page content but were written under the old .appMain
+   selector. Same declarations, without the prefix. */
+.todayGridPage h1 { font-size: clamp(24px, 2.6vw, 34px); line-height: 1.03; margin: 5px 0 0; }
+.todaySlide h2 { font-size: var(--text-lg); letter-spacing: -0.01em; margin: 0; }
+.todayEmpty h2 { font-size: var(--text-2xl); margin: 4px 0 0; }
+
+/* ── 14 · Page rules restored from the old pane prefix ──────────────────
+   These styled page content but were written under the old .appMain
+   selector. Same declarations, without the prefix. */
+.pageHeader h1,
+.customerWorkbenchHeader h1 {
+  margin: 7px 0 0;
+  color: #fff;
+  line-height: 1.04;
+}
+.assetDrawerHeader h2 { font-size: var(--text-3xl); }
+.customerWorkbenchHeader h1 {
+  color: #fffaf3;
+  font-size: clamp(42px, 5vw, 67px);
+  font-weight: 470;
+  letter-spacing: -0.055em;
+  line-height: 0.96;
+}
+.todayGridPage .todayStudioHero h1 {
+  color: #fffaf3;
+  font-size: clamp(48px, 5.7vw, 78px);
+  font-weight: 470;
+  letter-spacing: -0.064em;
+  line-height: 0.93;
+  margin-top: 10px;
+}
+@media (max-width: 1100px) {
+.customerWorkbenchHeader h1 {
+    font-size: clamp(40px, 10vw, 56px);
+  }
+}
+@media (max-width: 720px) {
+.todayGridPage .todayStudioHero h1 { font-size: clamp(42px, 12vw, 58px); }
 }

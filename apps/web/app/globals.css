@@ -55,7 +55,7 @@
   transition: none;
 }
 
-@media (max-width: 1120px) {
+@media (max-width: 1080px) {
 .chatWorkspace.timelineVisible {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -69,7 +69,7 @@
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .runDrawer,
 .runDrawer.open {
     min-width: 0;
@@ -131,26 +131,6 @@ a {
   height: 100dvh;
   justify-content: center;
 }
-.appShell {
-  display: flex;
-  height: 100dvh;
-  min-height: 0;
-  overflow: hidden;
-  width: 100%;
-}
-.sidebar {
-  background:
-    radial-gradient(circle at 10% 0%, rgba(92, 132, 113, 0.16), transparent 34%),
-    var(--forest);
-  color: #e9edea;
-  display: flex;
-  flex: 0 0 270px;
-  flex-direction: column;
-  min-height: 0;
-  padding: 18px 14px 14px;
-  position: relative;
-  z-index: 50;
-}
 .brandRow {
   align-items: center;
   display: flex;
@@ -161,32 +141,6 @@ a {
   align-items: center;
   display: flex;
   gap: 11px;
-}
-.brandMark {
-  align-items: center;
-  background: #e9e5d9;
-  border-radius: var(--radius-control);
-  color: var(--forest);
-  display: flex;
-  font-family: var(--font-display);
-  font-size: var(--text-2xl);
-  font-weight: 700;
-  height: 37px;
-  justify-content: center;
-  position: relative;
-  transform: rotate(-2deg);
-  width: 37px;
-}
-.brandMark::after {
-  background: var(--terracotta);
-  border: 2px solid var(--forest);
-  border-radius: 50%;
-  bottom: -3px;
-  content: "";
-  height: 8px;
-  position: absolute;
-  right: -3px;
-  width: 8px;
 }
 .brand strong,
 .brand small {
@@ -218,30 +172,6 @@ a {
 .connectionDot.disconnected {
   background: #d5826b;
 }
-.newChatButton {
-  align-items: center;
-  background: #e8e4d9;
-  border: 1px solid #f5f1e7;
-  border-radius: var(--radius-control);
-  color: var(--forest);
-  display: flex;
-  font-size: var(--text-md);
-  font-weight: 700;
-  gap: 8px;
-  margin-bottom: 13px;
-  min-height: 43px;
-  padding: 0 11px;
-  transition: background var(--motion-base) ease, transform var(--motion-base) ease;
-}
-.newChatButton:hover {
-  background: #f5f2e9;
-  transform: translateY(-1px);
-}
-.newChatButton > span:first-child {
-  font-size: var(--text-2xl);
-  font-weight: 300;
-  line-height: 0;
-}
 kbd {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.09);
@@ -252,169 +182,6 @@ kbd {
   font-weight: 500;
   margin-left: auto;
   padding: 2px 5px;
-}
-.newChatButton kbd {
-  background: rgba(29, 43, 38, 0.07);
-  border-color: rgba(29, 43, 38, 0.07);
-  color: #69736f;
-}
-.primaryNav {
-  display: grid;
-  gap: 3px;
-}
-.primaryNav a {
-  align-items: center;
-  border-radius: var(--radius-control);
-  color: #abb5b0;
-  display: flex;
-  font-size: var(--text-sm);
-  font-weight: 580;
-  gap: 10px;
-  min-height: 36px;
-  padding: 0 10px;
-  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
-}
-.primaryNav a:hover,
-.primaryNav a.active {
-  background: rgba(255, 255, 255, 0.065);
-  color: #f3f5f4;
-}
-.navGlyph {
-  color: #82938b;
-  font-size: var(--text-lg);
-  text-align: center;
-  width: 17px;
-}
-.primaryNav a.active .navGlyph {
-  color: #d7ac79;
-}
-.sidebarDivider {
-  background: rgba(255, 255, 255, 0.075);
-  height: 1px;
-  margin: 14px 5px 16px;
-}
-.historyHeader {
-  align-items: center;
-  color: #819089;
-  display: flex;
-  font-size: var(--text-xs);
-  font-weight: 700;
-  justify-content: space-between;
-  letter-spacing: 0.1em;
-  padding: 0 8px 9px;
-  text-transform: uppercase;
-}
-.sidebarSearch {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.045);
-  border: 1px solid rgba(255, 255, 255, 0.055);
-  border-radius: var(--radius-control);
-  display: flex;
-  margin: 0 3px 8px;
-  min-height: 34px;
-  padding: 0 8px;
-}
-.sidebarSearch > span {
-  color: #829089;
-  font-size: var(--text-lg);
-  margin-right: 6px;
-}
-.sidebarSearch input {
-  background: transparent;
-  border: 0;
-  color: #edf0ee;
-  font-size: var(--text-xs);
-  min-width: 0;
-  outline: 0;
-  width: 100%;
-}
-.sidebarSearch input::placeholder {
-  color: #6f7e77;
-}
-.conversationHistory {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 3px;
-  scrollbar-color: rgba(255,255,255,.14) transparent;
-  scrollbar-width: thin;
-}
-.conversationHistory section {
-  margin: 13px 0 17px;
-}
-.conversationHistory h2 {
-  color: #687870;
-  font-size: var(--text-xs);
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  margin: 0 8px 5px;
-  text-transform: uppercase;
-}
-.conversationHistory a {
-  border-radius: var(--radius-control);
-  color: #a7b2ad;
-  display: block;
-  font-size: var(--text-xs);
-  margin: 1px 0;
-  overflow: hidden;
-  padding: 7px 8px;
-  text-overflow: ellipsis;
-  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
-  white-space: nowrap;
-}
-.conversationHistory a:hover,
-.conversationHistory a.active {
-  background: rgba(255, 255, 255, 0.055);
-  color: #f0f2f1;
-}
-.conversationHistory a.active {
-  box-shadow: inset 2px 0 #c9855d;
-}
-.historyEmpty {
-  color: #77847e;
-  font-size: var(--text-xs);
-  line-height: 1.55;
-  padding: 9px;
-}
-.privacyBadge {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.045);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: var(--radius-control);
-  display: flex;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 10px;
-}
-.privacyPulse {
-  background: #65b78a;
-  border-radius: 50%;
-  box-shadow: 0 0 0 5px rgba(101, 183, 138, 0.08);
-  height: 8px;
-  width: 8px;
-}
-.privacyBadge strong,
-.privacyBadge small {
-  display: block;
-}
-.privacyBadge strong {
-  color: #d7ddda;
-  font-size: var(--text-xs);
-}
-.privacyBadge small {
-  color: #75847d;
-  font-size: var(--text-xs);
-  margin-top: 1px;
-}
-.appMain {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  position: relative;
-}
-.mobileMenuButton,
-.drawerScrim {
-  display: none;
 }
 /* Shared page primitives */
 .workspacePage {
@@ -427,13 +194,6 @@ kbd {
   margin-right: auto;
   max-width: 1160px;
 }
-.pageHeader {
-  align-items: flex-end;
-  display: flex;
-  gap: 30px;
-  justify-content: space-between;
-  margin-bottom: 35px;
-}
 .eyebrow {
   color: var(--sage);
   display: block;
@@ -443,7 +203,6 @@ kbd {
   margin-bottom: 8px;
   text-transform: uppercase;
 }
-.pageHeader h1,
 .welcomeState h1 {
   font-family: var(--font-display);
   font-size: clamp(36px, 5vw, 58px);
@@ -451,12 +210,6 @@ kbd {
   letter-spacing: -0.045em;
   line-height: 1;
   margin: 0;
-}
-.pageHeader p {
-  color: var(--ink-soft);
-  font-size: var(--text-base);
-  margin: 13px 0 0;
-  max-width: 620px;
 }
 .primaryButton,
 .secondaryButton,
@@ -2280,7 +2033,7 @@ to { background-position: -200% 0; }
 .memoryComposerActions select { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-control); min-height: 35px; padding: 0 28px 0 9px; text-transform: none; }
 .memoryComposerActions > span { color: var(--muted); font-size: var(--text-xs); margin: 0 auto 10px 0; }
 
-@media (max-width: 620px) {
+@media (max-width: 720px) {
 .memoryComposerActions { align-items: stretch; flex-direction: column; }
 .memoryComposerActions > span { margin: 0; }
 }
@@ -2356,41 +2109,6 @@ to { background-position: -200% 0; }
   margin-top: 13px;
   padding-top: 12px;
 }
-/* Settings */
-.healthHero {
-  align-items: center;
-  background: var(--forest);
-  border-radius: var(--radius-lg);
-  color: white;
-  display: flex;
-  gap: 21px;
-  margin-bottom: 20px;
-  padding: 25px 27px;
-}
-.healthOrb {
-  align-items: center;
-  background: rgba(255,255,255,.08);
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 50%;
-  display: flex;
-  flex: 0 0 58px;
-  height: 58px;
-  justify-content: center;
-}
-.healthOrb i {
-  background: #d17c65;
-  border-radius: 50%;
-  box-shadow: 0 0 0 8px rgba(209, 124, 101, .09);
-  height: 12px;
-  width: 12px;
-}
-.healthHero.healthy .healthOrb i {
-  background: #65bc8d;
-  box-shadow: 0 0 0 8px rgba(101, 188, 141, .1);
-}
-.healthHero .eyebrow { color: #8ea49a; font-size: var(--text-xs); margin-bottom: 2px; }
-.healthHero h2 { font-family: var(--font-display); font-size: var(--text-2xl); font-weight: 500; margin: 0; }
-.healthHero p { color: #9cacA5; font-size: var(--text-xs); margin: 4px 0 0; }
 .settingsSection {
   margin-bottom: 18px;
   padding: 20px;
@@ -2493,7 +2211,7 @@ to { background-position: -200% 0; }
 .serviceDown { background: #ce725e; }
 .serviceNeutral { background: #aaa69c; }
 
-@media (max-width: 1120px) {
+@media (max-width: 1080px) {
 .chatWorkspace,
 .chatWorkspace.timelineVisible {
     grid-template-columns: minmax(0, 1fr);
@@ -2520,48 +2238,7 @@ to { background-position: -200% 0; }
   }
 }
 
-@media (max-width: 900px) {
-.sidebar {
-    box-shadow: 15px 0 50px rgba(10, 15, 13, .24);
-    height: 100%;
-    left: 0;
-    position: fixed;
-    top: 0;
-    transform: translateX(-105%);
-    transition: transform var(--motion-base) ease;
-    width: 278px;
-  }
-.sidebar.sidebarOpen { transform: translateX(0); }
-.drawerScrim {
-    background: rgba(12, 18, 15, .42);
-    border: 0;
-    display: block;
-    inset: 0;
-    position: fixed;
-    z-index: 40;
-  }
-.mobileMenuButton {
-    background: rgba(255,255,255,.72);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-control);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    height: 34px;
-    justify-content: center;
-    left: 13px;
-    padding: 0 9px;
-    position: fixed;
-    top: 13px;
-    width: 34px;
-    z-index: 35;
-  }
-.mobileMenuButton span {
-    background: var(--ink);
-    display: block;
-    height: 1px;
-    width: 14px;
-  }
+@media (max-width: 1080px) {
 .chatHeader {
     padding-left: 58px;
   }
@@ -2575,17 +2252,10 @@ to { background-position: -200% 0; }
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .workspacePage {
     padding: 72px 16px 60px;
   }
-.pageHeader {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 17px;
-  }
-.pageHeader h1 { font-size: var(--text-5xl); }
-.pageHeader .secondaryButton { align-self: stretch; }
 .statStrip {
     grid-template-columns: 1fr 1fr;
   }
@@ -2646,21 +2316,6 @@ to { background-position: -200% 0; }
 .activationActions { flex-direction: column-reverse; }
 .activationActions button { width: 100%; }
 }
-/* The drifting colour blooms and the film-grain overlay are gone. They sat
-   behind every surface at z-index -2/-1 and were the reason the app read as
-   four hues at once. The canvas is now simply the canvas. */
-/* Brand mark — one geometric glyph, one colour. */
-.brandMark {
-  background: none;
-  border: 0;
-  transform: none;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-}
-.brandMark::after { display: none; }
-.brandMark svg { width: 26px; height: 26px; display: block; }
 /* Wordmark — set in ink, not a gradient. */
 .brand strong {
   font-family: var(--font-display);
@@ -2669,58 +2324,15 @@ to { background-position: -200% 0; }
   color: var(--ink);
   -webkit-text-fill-color: var(--ink);
 }
-/* ---- Sidebar: from dark forest slab to a light glass rail ---- */
-.sidebar {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border-right: 1px solid var(--line);
-  color: var(--ink);
-}
 .brand small { color: var(--muted); }
 .connectionDot { border: 2px solid var(--line); }
 .connectionDot.connected { background: var(--green); box-shadow: 0 0 0 4px var(--green-tint); }
 .connectionDot.disconnected { background: var(--coral); }
-.newChatButton {
-  background: var(--glass-bg-strong);
-  border: 1px solid var(--glass-border);
-  color: var(--ink);
-  box-shadow: var(--shadow-sm);
-}
-.newChatButton:hover { background: #fff; }
-.newChatButton > span:first-child { color: var(--green-ink); }
 kbd {
   background: var(--canvas-deep);
   border: 1px solid var(--line);
   color: var(--muted);
 }
-.primaryNav a { color: var(--muted); }
-.primaryNav a:hover,
-.primaryNav a.active { background: var(--green-tint); color: var(--ink); }
-.navGlyph { color: var(--faint); }
-.primaryNav a.active .navGlyph { color: var(--green); }
-.sidebarDivider { background: var(--line); }
-.historyHeader { color: var(--muted); }
-.sidebarSearch { background: var(--glass-bg-strong); border: 1px solid var(--line); }
-.sidebarSearch > span { color: var(--muted); }
-.sidebarSearch input { color: var(--ink); }
-.sidebarSearch input::placeholder { color: var(--faint); }
-.conversationHistory h2 { color: var(--muted); }
-.conversationHistory a { color: var(--ink-soft); }
-.conversationHistory a:hover,
-.conversationHistory a.active { background: var(--green-tint); color: var(--ink); }
-.conversationHistory a.active { box-shadow: inset 2px 0 var(--coral); }
-.conversationHistoryItem { display: flex; align-items: center; gap: 2px; }
-.conversationHistoryItem > a { flex: 1; min-width: 0; }
-.conversationDeleteButton { flex: 0 0 auto; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--muted); font-size: var(--text-xl); line-height: 1; opacity: 0; cursor: pointer; }
-.conversationHistoryItem:hover .conversationDeleteButton,
-.conversationDeleteButton:focus-visible { opacity: 1; }
-.conversationDeleteButton:hover { color: var(--danger, #b54242); background: rgba(181, 66, 66, .1); }
-.historyEmpty { color: var(--muted); }
-.privacyBadge { background: var(--green-tint); border: 1px solid var(--line); }
-.privacyPulse { background: var(--green); box-shadow: 0 0 0 5px var(--green-tint); }
-.privacyBadge strong { color: var(--ink); }
-.privacyBadge small { color: var(--muted); }
 /* ---- Chat header + activity toggle as glass ---- */
 .chatHeader { background: var(--glass-bg); border-bottom: 1px solid var(--line); }
 .localStatus { background: var(--green-tint); color: var(--green-ink); }
@@ -2776,11 +2388,8 @@ kbd {
 .primaryButton:hover:not(:disabled) { background: var(--green-strong); border-color: var(--green-strong); }
 .secondaryButton { background: var(--glass-bg); border: 1px solid var(--line); }
 .secondaryButton:hover:not(:disabled) { background: #fff; border-color: var(--line-2, rgba(26, 25, 23, 0.16)); }
-.statStrip,
-.healthHero { background: linear-gradient(140deg, #0d7d38 0%, #0a5f2c 100%); }
-.statStrip span,
-.healthHero p,
-.healthHero .eyebrow { color: rgba(255, 255, 255, 0.72); }
+.statStrip { background: linear-gradient(140deg, #0d7d38 0%, #0a5f2c 100%); }
+.statStrip span { color: rgba(255, 255, 255, 0.72); }
 .toolCard,
 .memoryCard,
 .settingsSection,
@@ -2811,7 +2420,6 @@ kbd {
 .evidenceBody pre { background: var(--ink); }
 
 @media (prefers-reduced-motion: reduce) {
-.bloom { animation: none !important; }
 *,
 *::before,
 *::after {
@@ -2830,16 +2438,6 @@ kbd {
   padding-bottom: 92px;
 }
 .knowledgePage > * { width: 100%; }
-.knowledgePage .pageHeader {
-  align-items: center;
-  margin-bottom: 4px;
-}
-.knowledgePage .pageHeader h1 { font-size: clamp(42px, 4.6vw, 60px); }
-.knowledgePage .pageHeader p {
-  font-size: var(--text-base);
-  line-height: 1.6;
-  max-width: 720px;
-}
 .knowledgePage .knowledgeBanner {
   align-items: center;
   border-radius: var(--radius-card) var(--radius-card) var(--radius-card) var(--radius-control);
@@ -3223,7 +2821,7 @@ kbd {
 .notionFormFooter .notionActions { align-self: stretch; }
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1080px) {
 .knowledgeSetupGrid > .profileSection,
 .knowledgeSetupGrid > .notionWorkspace,
 .codeGraphSection,
@@ -3233,9 +2831,8 @@ kbd {
 .sourceGrid { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .knowledgePage { gap: 14px; }
-.knowledgePage .pageHeader { align-items: flex-start; }
 .knowledgeDashboardBar .knowledgeTabs { grid-template-columns: 1fr 1fr; }
 .knowledgeDashboardBar .knowledgeTab { grid-template-columns: 27px minmax(0, 1fr); min-height: 58px; }
 .knowledgeTabGlyph { height: 27px; width: 27px; }
@@ -3255,7 +2852,7 @@ kbd {
 .sourceGrid .memoryMeta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-@media (max-width: 430px) {
+@media (max-width: 720px) {
 .knowledgeDashboardBar .knowledgeTabHint { display: none; }
 .notionIdentity { align-items: flex-start; }
 .notionMonogram { flex-basis: 42px; height: 42px; width: 42px; }
@@ -3568,58 +3165,10 @@ kbd {
   color: var(--muted);
   word-break: break-all;
 }
-/* ═══════════════════════════════════════════════════════════════════════════
-   Batch UI pass — a collapsible sidebar plus a motion & interaction layer that
-   gives every page entrance flow and tactile life, on top of the glass theme.
-   All of it is neutralised under prefers-reduced-motion at the bottom.
-   ═══════════════════════════════════════════════════════════════════════════ */
-/* ── Collapsible sidebar ─────────────────────────────────────────────────── */
-.collapseToggle {
-  align-items: center;
-  background: var(--glass-bg-strong);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  color: var(--muted);
-  cursor: pointer;
-  display: inline-flex;
-  flex: none;
-  height: 26px;
-  justify-content: center;
-  transition: background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease;
-  width: 26px;
-}
-.collapseToggle:hover {
-  background: var(--green-tint);
-  border-color: var(--green-glow);
-  color: var(--ink);
-}
-.collapseToggle svg {
-  height: 15px;
-  transition: transform var(--motion-base) var(--ease, var(--ease-out));
-  width: 15px;
-}
 
-@media (min-width: 901px) {
-/* Only transition after mount (.animate), so the persisted collapse state
-     applies instantly on load instead of a flex-basis transition sticking. */
-.appShell.animate .sidebar {
-    transition: flex-basis var(--motion-base) var(--ease, var(--ease-out)),
-      padding var(--motion-base) var(--ease, var(--ease-out));
-  }
-.appShell.isCollapsed .sidebar {
-    flex-basis: 70px;
-    padding-left: 11px;
-    padding-right: 11px;
-  }
-.isCollapsed .navLabel,
+@media (min-width: 1081px) {
 .isCollapsed .brand > span:last-child,
-.isCollapsed .brandRow .connectionDot,
-.isCollapsed .sidebarSearch,
-.isCollapsed .historyHeader,
-.isCollapsed .conversationHistory,
-.isCollapsed .sidebarDivider,
-.isCollapsed .newChatButton kbd,
-.isCollapsed .privacyBadge > span:last-child {
+.isCollapsed .brandRow .connectionDot {
     display: none;
   }
 .isCollapsed .brandRow {
@@ -3630,33 +3179,6 @@ kbd {
 .isCollapsed .brand {
     gap: 0;
     justify-content: center;
-  }
-.isCollapsed .newChatButton {
-    justify-content: center;
-    min-height: 44px;
-    padding: 0;
-  }
-.isCollapsed .newChatButton > span:first-child {
-    font-size: var(--text-3xl);
-  }
-.isCollapsed .primaryNav a {
-    justify-content: center;
-    padding: 0;
-  }
-.isCollapsed .navGlyph {
-    width: auto;
-  }
-.isCollapsed .privacyBadge {
-    justify-content: center;
-    padding: 10px 0;
-  }
-.isCollapsed .collapseToggle svg {
-    transform: rotate(180deg);
-  }
-}
-@media (max-width: 900px) {
-.collapseToggle {
-    display: none;
   }
 }
 
@@ -3671,15 +3193,6 @@ to {
     transform: translateY(0);
   }
 }
-.workspacePage > *,
-.welcomeState {
-  animation: rise 560ms var(--ease, var(--ease-out)) both;
-}
-.workspacePage > *:nth-child(2) { animation-delay: var(--motion-fast); }
-.workspacePage > *:nth-child(3) { animation-delay: var(--motion-fast); }
-.workspacePage > *:nth-child(4) { animation-delay: var(--motion-base); }
-.workspacePage > *:nth-child(5) { animation-delay: var(--motion-base); }
-.workspacePage > *:nth-child(n + 6) { animation-delay: var(--motion-base); }
 .toolGrid > *,
 .memoryList > *,
 .improvementGrid > *,
@@ -3718,24 +3231,6 @@ to {
   box-shadow: var(--shadow-lg);
   transform: translateY(-3px);
 }
-/* ── Nav: a growing accent bar marks hover and the active page ───────────── */
-.primaryNav a {
-  position: relative;
-}
-.primaryNav a::before {
-  background: linear-gradient(var(--green), var(--sage));
-  border-radius: 0 var(--radius-control) var(--radius-control) 0;
-  content: "";
-  height: 0;
-  left: 0;
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  transition: height var(--motion-base) var(--ease, var(--ease-out));
-  width: 3px;
-}
-.primaryNav a:hover::before { height: 12px; }
-.primaryNav a.active::before { height: 18px; }
 
 /* ── Living pulses + tactile presses ─────────────────────────────────────── */
 @keyframes livePulse {
@@ -3743,7 +3238,6 @@ to {
 70% { box-shadow: 0 0 0 7px rgba(47, 125, 85, 0); }
 100% { box-shadow: 0 0 0 0 rgba(47, 125, 85, 0); }
 }
-.privacyPulse,
 .streamState.stream-live i {
   animation: livePulse 2.6s ease-out infinite;
 }
@@ -3758,8 +3252,7 @@ to { transform: translateY(-6px); }
 }
 .primaryButton:active:not(:disabled),
 .secondaryButton:active:not(:disabled),
-.dangerButton:active:not(:disabled),
-.newChatButton:active {
+.dangerButton:active:not(:disabled) {
   transform: translateY(0) scale(0.97);
 }
 /* ── A brand-tinted tick before every eyebrow, for a little header life ──── */
@@ -3807,11 +3300,6 @@ body {
 }
 ::selection { background: rgba(194, 92, 59, 0.19); }
 :focus-visible { outline-color: var(--accent-glow); }
-/* Ambient color is now atmospheric, not a green wash. */
-.ambient {
-  filter: blur(110px);
-  opacity: 0.88;
-}
 .bloom-green {
   background: radial-gradient(circle, rgba(59, 151, 104, 0.18), transparent 67%);
   height: 42vmax;
@@ -3844,25 +3332,8 @@ body {
   right: -5vmax;
   width: 32vmax;
 }
-.grain { opacity: 0.012; }
-/* Smoked-grey glass rail with a restrained green and lilac atmosphere. */
-.sidebar {
-  background:
-    radial-gradient(circle at 0% -8%, rgba(59, 151, 104, 0.16), transparent 30%),
-    radial-gradient(circle at 105% 0%, rgba(126, 108, 195, 0.17), transparent 34%),
-    linear-gradient(180deg, rgba(232, 236, 234, 0.88), rgba(218, 223, 221, 0.84));
-  -webkit-backdrop-filter: saturate(122%) blur(28px);
-  backdrop-filter: saturate(122%) blur(28px);
-  border-right: 1px solid rgba(255, 255, 255, 0.62);
-  box-shadow: 10px 0 38px rgba(43, 49, 46, 0.09);
-  color: var(--ink);
-  flex-basis: 254px;
-  padding: 18px 13px 14px;
-}
 .brandRow { padding: 3px 7px 21px; }
 .brand { gap: 10px; }
-.brandMark { height: 36px; width: 34px; }
-.brandMark svg { height: 29px; width: 29px; }
 .brand strong {
   background: linear-gradient(95deg, var(--ink) 0%, #4557c7 62%, #b34e3e 100%);
   background-clip: text;
@@ -3875,61 +3346,6 @@ body {
 .brand small { color: #777986; font-size: var(--text-xs); letter-spacing: 0.13em; }
 .connectionDot { border-color: rgba(26, 25, 23, 0.1); }
 .connectionDot.connected { background: var(--success); box-shadow: 0 0 0 4px var(--success-tint); }
-.newChatButton {
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: var(--radius-control);
-  box-shadow: var(--shadow-sm), var(--glass-sheen);
-  color: #1c1e25;
-  min-height: 44px;
-}
-.newChatButton:hover { background: #fff; box-shadow: 0 10px 24px rgba(55, 53, 77, 0.11); }
-.newChatButton > span:first-child { color: var(--fresh-ink); }
-.newChatButton kbd { background: #ecebea; border-color: #deddda; color: #656772; }
-.primaryNav { gap: 3px; }
-.primaryNav a {
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  color: var(--muted);
-  font-size: var(--text-xs);
-  min-height: 39px;
-  padding: 0 10px;
-}
-.primaryNav a:hover { background: rgba(255, 255, 255, 0.4); color: var(--ink); }
-.primaryNav a.active {
-  background: rgba(255, 255, 255, 0.61);
-  border-color: rgba(255, 255, 255, 0.66);
-  box-shadow: 0 4px 15px rgba(49, 56, 52, 0.07), var(--glass-sheen);
-  color: var(--ink);
-}
-.primaryNav a::before { background: linear-gradient(var(--fresh), var(--accent)); left: -1px; }
-.navGlyph { color: var(--muted); display: grid; place-items: center; width: 18px; }
-.navGlyph svg { height: 17px; width: 17px; }
-.primaryNav a.active .navGlyph { color: var(--fresh-ink); }
-.sidebarDivider { background: rgba(26, 25, 23, 0.085); }
-.historyHeader { color: #7a7c89; }
-.sidebarSearch {
-  background: rgba(255, 255, 255, 0.33);
-  border-color: rgba(255, 255, 255, 0.5);
-}
-.sidebarSearch:focus-within { background: rgba(255, 255, 255, 0.64); border-color: var(--fresh-glow); }
-.sidebarSearch > span { color: var(--muted); }
-.sidebarSearch input { color: var(--ink); }
-.sidebarSearch input::placeholder { color: #92949e; }
-.sidebarSearch kbd { background: rgba(237, 237, 244, 0.9); border-color: rgba(26, 25, 23, 0.07); color: #777986; }
-.conversationHistory h2 { color: #8a8c97; }
-.conversationHistory a { color: var(--muted); }
-.conversationHistory a:hover { background: rgba(255, 255, 255, 0.4); color: var(--ink); }
-.conversationHistory a.active { background: rgba(255, 255, 255, 0.58); color: var(--ink); box-shadow: inset 2px 0 var(--fresh); }
-.historyEmpty { color: #858792; }
-.privacyBadge { background: rgba(255, 255, 255, 0.31); border-color: rgba(255, 255, 255, 0.5); }
-.privacyPulse { background: var(--success); box-shadow: 0 0 0 5px var(--success-tint); }
-.privacyBadge strong { color: var(--ink); }
-.privacyBadge small { color: var(--faint); }
-.collapseToggle { background: rgba(255, 255, 255, 0.35); border-color: rgba(255, 255, 255, 0.52); color: #747a77; }
-.collapseToggle:hover { background: #fff; border-color: rgba(194, 92, 59, 0.22); color: var(--accent-ink); }
-/* Quiet chrome and a stronger editorial welcome. */
-.appMain { background: rgba(230, 234, 232, 0.18); }
 .chatHeader {
   background: rgba(239, 242, 240, 0.73);
   -webkit-backdrop-filter: saturate(120%) blur(22px);
@@ -4029,9 +3445,6 @@ body {
 .dropOverlay span { background: var(--accent); }
 /* Shared editorial pages and controls. */
 .workspacePage { padding-top: 58px; }
-.pageHeader { margin-bottom: 31px; }
-.pageHeader h1 { font-size: clamp(40px, 4.5vw, 54px); font-weight: 610; letter-spacing: -0.052em; }
-.pageHeader p { color: var(--muted); font-size: var(--text-md); line-height: 1.65; }
 .primaryButton { background: var(--accent); border-color: var(--accent); box-shadow: 0 5px 12px rgba(169, 78, 47, 0.17); }
 .primaryButton:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
 .secondaryButton { background: rgba(255, 255, 255, 0.76); border-color: var(--line); }
@@ -4061,8 +3474,7 @@ body {
 .snippetCard:hover,
 .sourceCard:hover,
 .graphColumn:hover { border-color: rgba(194, 92, 59, 0.24); }
-.statStrip,
-.healthHero {
+.statStrip {
   background:
     radial-gradient(circle at 88% -35%, rgba(115, 128, 206, 0.18), transparent 45%),
     radial-gradient(circle at 2% 130%, rgba(59, 151, 104, 0.13), transparent 38%),
@@ -4075,13 +3487,7 @@ body {
 }
 .statStrip > div { border-right-color: var(--line-soft); }
 .statStrip strong { color: var(--ink); }
-.statStrip span,
-.healthHero p,
-.healthHero .eyebrow { color: var(--muted); }
-.healthHero h2 { color: var(--ink); }
-.healthHero .eyebrow::before { background: linear-gradient(90deg, var(--fresh), var(--accent)); }
-.healthOrb { background: rgba(255, 255, 255, 0.66); border-color: rgba(194, 92, 59, 0.1); }
-.healthHero.healthy .healthOrb i { background: #53b482; box-shadow: 0 0 0 8px rgba(83, 180, 130, 0.12); }
+.statStrip span { color: var(--muted); }
 .toolIcon { background: var(--accent); color: #fff; box-shadow: 0 7px 17px rgba(169, 78, 47, 0.22); }
 .toolCard:nth-child(2n) .toolIcon { background: #8e78c6; box-shadow: 0 7px 17px rgba(105, 83, 161, 0.18); }
 .evalBar > span { background: var(--accent); }
@@ -4163,19 +3569,7 @@ body {
 .artifactModal,
 .modalCard { background: rgba(251, 250, 247, 0.96); border-color: rgba(255, 255, 255, 0.5); }
 
-@media (max-width: 900px) {
-.sidebar {
-    background:
-      radial-gradient(circle at 0% -8%, rgba(59, 151, 104, 0.17), transparent 30%),
-      radial-gradient(circle at 105% 0%, rgba(126, 108, 195, 0.19), transparent 34%),
-      linear-gradient(180deg, rgba(232, 236, 234, 0.94), rgba(218, 223, 221, 0.92));
-    box-shadow: 18px 0 54px rgba(45, 42, 66, 0.18);
-  }
-.drawerScrim { background: rgba(34, 33, 47, 0.24); backdrop-filter: blur(4px); }
-.mobileMenuButton { background: rgba(255, 255, 255, 0.86); box-shadow: var(--shadow-sm); }
-}
-
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .workspacePage { padding-left: 18px; padding-right: 18px; }
 .welcomeState { padding: 56px 20px 28px; }
 .welcomeState h1 { font-size: clamp(42px, 12vw, 52px); }
@@ -4184,98 +3578,6 @@ body {
 .trustLine > span { padding: 4px 7px; }
 .composer { border-radius: var(--radius-card); }
 .statStrip > div:nth-child(-n+2) { border-bottom-color: var(--line-soft); }
-}
-/* ═══════════════════════════════════════════════════════════════════════════
-   QOL pass — adjustable workspace rail, coherent controls, recoverable errors,
-   and a small brand-native companion. These rules intentionally sit last.
-   ═══════════════════════════════════════════════════════════════════════════ */
-/* The rail can be dragged from 220–390px and keeps its width between visits. */
-.sidebar {
-  flex-basis: var(--sidebar-width, 254px);
-  min-width: 0;
-}
-.sidebarResizeHandle {
-  align-items: center;
-  bottom: 0;
-  cursor: col-resize;
-  display: flex;
-  justify-content: center;
-  position: absolute;
-  right: -7px;
-  top: 0;
-  touch-action: none;
-  width: 14px;
-  z-index: 4;
-}
-.sidebarResizeHandle span {
-  background: rgba(194, 92, 59, 0.28);
-  border-radius: 999px;
-  height: 42px;
-  opacity: 0;
-  transform: scaleY(0.7);
-  transition: opacity var(--motion-fast) ease, transform var(--motion-base) ease, background var(--motion-fast) ease;
-  width: 3px;
-}
-.sidebarResizeHandle:hover span,
-.sidebarResizeHandle:focus-visible span,
-.isResizing .sidebarResizeHandle span {
-  background: var(--accent);
-  opacity: 1;
-  transform: scaleY(1);
-}
-.sidebarResizeHandle:focus-visible {
-  outline: 0;
-}
-.appShell.isResizing {
-  cursor: col-resize;
-  user-select: none;
-}
-.appShell.isResizing .sidebar {
-  transition: none;
-}
-/* Search has one visual height; the shortcut no longer collapses into a chip. */
-.sidebarSearch {
-  gap: 5px;
-  min-height: 39px;
-  padding: 0 7px 0 10px;
-}
-.sidebarSearch > span {
-  flex: 0 0 auto;
-  margin-right: 1px;
-}
-.sidebarSearch kbd {
-  align-items: center;
-  border-radius: var(--radius-control);
-  display: inline-flex;
-  flex: 0 0 auto;
-  font-size: var(--text-xs);
-  gap: 2px;
-  height: 24px;
-  justify-content: center;
-  margin-left: 2px;
-  min-width: 39px;
-  padding: 0 6px;
-  white-space: nowrap;
-}
-.sidebarSearch kbd span:first-child {
-  font-size: var(--text-xs);
-}
-.searchClear {
-  align-items: center;
-  background: rgba(26, 25, 23, 0.055);
-  border: 0;
-  border-radius: 50%;
-  color: var(--muted);
-  display: inline-flex;
-  flex: 0 0 20px;
-  font-size: var(--text-base);
-  height: 20px;
-  justify-content: center;
-  padding: 0;
-}
-.searchClear:hover {
-  background: rgba(26, 25, 23, 0.1);
-  color: var(--ink);
 }
 /* A consistent, tactile control family with the clipped corner from the ref. */
 .headerNewChat,
@@ -4299,8 +3601,7 @@ body {
   padding: 0 11px;
   transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, transform var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
-.headerNewChat,
-.newChatButton {
+.headerNewChat {
   clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 0 100%);
 }
 .headerNewChat:hover:not(:disabled),
@@ -4424,16 +3725,7 @@ body {
 50% { opacity: 0.55; transform: scale(0.94); }
 }
 
-@media (max-width: 900px) {
-.sidebar {
-    flex-basis: 270px;
-  }
-.sidebarResizeHandle {
-    display: none;
-  }
-}
-
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .chatHeader {
     padding-left: 60px;
     padding-right: 12px;
@@ -4628,11 +3920,11 @@ body {
   opacity: 0.45;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
 .registryGrid { grid-template-columns: minmax(0, 1fr); }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .registrySection { padding: 14px; }
 .definitionInboxRow { grid-template-columns: 1fr auto; }
 .definitionInboxRow p { grid-column: 1 / -1; }
@@ -4643,12 +3935,6 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 .assetsPage > * {
   max-width: 1320px;
-}
-.assetsHeader {
-  align-items: center;
-}
-.assetsHeader > div {
-  min-width: 0;
 }
 .assetRefreshButton {
   gap: 8px;
@@ -5482,9 +4768,6 @@ to { background-position: -120% 0; }
 }
 
 @media (max-width: 720px) {
-.assetsHeader {
-    align-items: flex-start;
-  }
 .assetToolbar {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -5497,7 +4780,7 @@ to { background-position: -120% 0; }
   }
 }
 
-@media (max-width: 520px) {
+@media (max-width: 720px) {
 .assetGrid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -5565,7 +4848,7 @@ to { background-position: -120% 0; }
   transition: none;
 }
 
-@media (max-width: 1120px) {
+@media (max-width: 1080px) {
 .chatWorkspace.timelineVisible {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -5576,7 +4859,7 @@ to { background-position: -120% 0; }
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .runDrawer,
 .runDrawer.open {
     min-width: 0;
@@ -5597,25 +4880,6 @@ to { background-position: -120% 0; }
   margin-left: 0;
   margin-right: 0;
   max-width: none;
-}
-.assetsHeader {
-  align-items: flex-start;
-  margin-bottom: 21px;
-}
-.assetsHeader h1 {
-  font-size: clamp(36px, 4vw, 48px);
-  font-weight: 630;
-  letter-spacing: -0.045em;
-}
-.assetsHeader p {
-  color: var(--muted);
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  margin-top: 9px;
-  max-width: 650px;
-}
-.assetHeaderCopy {
-  min-width: 0;
 }
 .assetCatalogSummary {
   align-items: center;
@@ -6192,7 +5456,7 @@ to { transform: rotate(1turn); }
   padding: 4px 0;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
 .assetToolbar {
     grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(130px, 170px));
   }
@@ -6207,9 +5471,6 @@ to { transform: rotate(1turn); }
 @media (max-width: 720px) {
 .assetsPage:not(.isPlayerOpen) {
     padding-top: 28px;
-  }
-.assetsHeader {
-    gap: 16px;
   }
 .assetToolbar {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -6249,10 +5510,7 @@ to { transform: rotate(1turn); }
   }
 }
 
-@media (max-width: 520px) {
-.assetsHeader {
-    flex-direction: column;
-  }
+@media (max-width: 720px) {
 .assetRefreshButton {
     align-self: stretch;
   }
@@ -6296,30 +5554,6 @@ to { transform: rotate(1turn); }
     border-top-color: currentColor;
   }
 }
-/* --------------------------------------------------------------------------
-   Metis interface refinement — quieter hierarchy, dot fields, clear actions.
-   This final layer intentionally consolidates the older visual experiments.
-   -------------------------------------------------------------------------- */
-/* The metis-* surface tokens are now aliases in the single :root at the top. */
-.appMain {
-  background: #f3f5f1;
-  isolation: isolate;
-  position: relative;
-}
-.appMain::before {
-  background-image: radial-gradient(circle, var(--metis-dot) 1.05px, transparent 1.1px);
-  background-position: 4px 4px;
-  background-size: 19px 19px;
-  content: "";
-  inset: 0;
-  mask-image: linear-gradient(135deg, #000 0%, transparent 52%);
-  opacity: 0.52;
-  pointer-events: none;
-  position: absolute;
-  z-index: -1;
-}
-.ambient { opacity: 0.32; }
-.grain { opacity: 0.006; }
 /* Cohere-inspired soft pills and squircles: confident shape, little chrome. */
 .primaryButton,
 .secondaryButton,
@@ -6360,58 +5594,7 @@ to { transform: rotate(1turn); }
   box-shadow: 0 8px 18px rgba(26, 31, 28, 0.08);
   transform: translateY(-1px);
 }
-button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
-/* Navigation is quieter and uses the dot motif as a location cue. */
-.sidebar {
-  background: linear-gradient(180deg, rgba(235, 239, 235, 0.97), rgba(226, 231, 227, 0.96));
-  border-right: 1px solid rgba(26, 25, 23, 0.08);
-  box-shadow: 8px 0 28px rgba(26, 25, 23, 0.055);
-  overflow: hidden;
-}
-.sidebar::before {
-  background-image: radial-gradient(circle, rgba(44, 86, 66, 0.15) 1px, transparent 1.05px);
-  background-size: 16px 16px;
-  content: "";
-  height: 150px;
-  opacity: 0.6;
-  pointer-events: none;
-  position: absolute;
-  right: -28px;
-  top: -24px;
-  width: 170px;
-}
-.brandRow,
-.newChatButton,
-.primaryNav,
-.sidebarDivider,
-.historyHeader,
-.sidebarSearch,
-.conversationHistory,
-.privacyBadge { position: relative; z-index: 1; }
-.brandMark {
-  background: #f8faf7;
-  border: 1px solid rgba(33, 47, 39, 0.08);
-  border-radius: var(--radius-card) var(--radius-card) var(--radius-card) var(--radius-control);
-  box-shadow: 0 7px 18px rgba(34, 49, 40, 0.09);
-}
-.newChatButton {
-  border-radius: var(--radius-card) var(--radius-card) var(--radius-card) var(--radius-control);
-  min-height: 46px;
-}
-.primaryNav a {
-  border-radius: var(--radius-card) var(--radius-card) var(--radius-card) var(--radius-control);
-  font-size: var(--text-sm);
-  min-height: 42px;
-}
-.primaryNav a::before {
-  border-radius: 999px;
-  height: 6px;
-  left: 11px;
-  top: calc(50% - 3px);
-  width: 6px;
-}
-.primaryNav a.active { padding-left: 24px; }
-.privacyBadge { border-radius: var(--radius-card) var(--radius-card) var(--radius-card) var(--radius-control); }
+.brandRow { position: relative; z-index: 1; }
 /* Chat: model choice appears where it matters, without becoming dashboard UI. */
 .chatHeader {
   background: rgba(246, 248, 245, 0.84);
@@ -6633,7 +5816,7 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
   color: white;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 720px) {
 .notionForm { grid-template-columns: 1fr; }
 .notionStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .notionRootsField,
@@ -6643,8 +5826,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 }
 /* Shared page hierarchy. */
 .workspacePage { padding-top: clamp(34px, 6vh, 58px); }
-.pageHeader h1 { color: #1b2420; }
-.pageHeader p { font-size: var(--text-base); max-width: 680px; }
 .eyebrow { color: #37654e; font-size: var(--text-xs); }
 .eyebrow::before { background: #47a779; border-radius: 50%; height: 6px; width: 6px; }
 .statStrip,
@@ -6714,21 +5895,6 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 .registryPills { gap: 6px; }
 /* Assets: richer cards and tags, while keeping runtime controls prominent. */
 .assetsPage:not(.isPlayerOpen) { padding-top: 42px; }
-.assetsHeader { position: relative; }
-.assetsHeader::after {
-  background-image: radial-gradient(circle, rgba(70, 91, 80, 0.18) 1px, transparent 1.05px);
-  background-size: 15px 15px;
-  content: "";
-  height: 92px;
-  opacity: 0.62;
-  pointer-events: none;
-  position: absolute;
-  right: 150px;
-  top: -20px;
-  width: 150px;
-  z-index: -1;
-}
-.assetsHeader h1 { color: #1b2420; }
 .assetCatalogSummary { font-size: var(--text-xs); }
 .assetRefreshButton { min-height: 42px; }
 .assetToolbar {
@@ -6835,7 +6001,7 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 .assetEnvControl input { border-radius: var(--radius-card) var(--radius-card) var(--radius-card) var(--radius-control); font-size: var(--text-sm); min-height: 44px; }
 .assetEnvControl button { min-height: 34px; }
 
-@media (max-width: 980px) {
+@media (max-width: 1080px) {
 .chatTitle .localStatus { display: none; }
 .assetToolbar { grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(130px, 170px)); }
 .assetToolbarSummary { grid-column: 1 / -1; min-height: 30px; padding-top: 0; }
@@ -6854,7 +6020,7 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 .assetRuntimeStrip { margin-left: -20px; margin-right: -20px; padding-left: 20px; padding-right: 20px; }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 720px) {
 .timelineToggle { font-size: 0; padding-inline: 10px; }
 .timelineToggle svg { height: 16px; width: 16px; }
 .assetToolbar { grid-template-columns: minmax(0, 1fr); }
@@ -6870,59 +6036,11 @@ button:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 .textButton,
 .assetCard { transition-duration: 0.01ms !important; }
 }
-/* --------------------------------------------------------------------------
-   Metis visual QA pass — collision-free navigation, readable examples,
-   coherent status tabs, and a genuinely responsive asset settings drawer.
-   -------------------------------------------------------------------------- */
-/* Keep the animated location dot out of the icon and label hit areas. */
-.primaryNav a,
-.primaryNav a.active {
-  gap: 11px;
-  padding-left: 12px;
-  padding-right: 36px;
-}
-.primaryNav a::before {
-  background: linear-gradient(135deg, #4aa778, #7466c4);
-  border-radius: 50%;
-  height: 7px;
-  left: auto;
-  opacity: 0;
-  right: 13px;
-  top: 50%;
-  transform: translate3d(0, -50%, 0) scale(0.55);
-  transition: opacity var(--motion-base) ease, transform var(--motion-base) var(--ease), box-shadow var(--motion-base) ease;
-  width: 7px;
-}
-.primaryNav a:hover::before {
-  height: 7px;
-  opacity: 0.45;
-  transform: translate3d(0, -50%, 0) scale(0.82);
-}
-.primaryNav a.active::before {
-  animation: metisNavPulse 2.8s ease-in-out infinite;
-  box-shadow: 0 0 0 4px rgba(74, 167, 120, 0.1);
-  height: 7px;
-  opacity: 1;
-  transform: translate3d(0, -50%, 0) scale(1);
-}
-.primaryNav a.active .navGlyph {
-  color: #2d7956;
-}
 
 @keyframes metisNavPulse {
 0%,
 100% { box-shadow: 0 0 0 3px rgba(74, 167, 120, 0.08); }
 50% { box-shadow: 0 0 0 6px rgba(74, 167, 120, 0.025); }
-}
-
-@media (min-width: 901px) {
-.isCollapsed .primaryNav a,
-.isCollapsed .primaryNav a.active {
-    padding: 0;
-  }
-.isCollapsed .primaryNav a::before {
-    right: 4px;
-  }
 }
 /* The home examples should reveal clearly and never hide their instructions. */
 .welcomeState {
@@ -7045,10 +6163,6 @@ to { opacity: 1; transform: scaleX(1); }
 .memoryPrinciple p + p { margin-top: 7px; }
 .memoryPage .emptyPanel { min-height: 220px; }
 .memoryCard blockquote { overflow-wrap: anywhere; }
-/* Float the asset settings panel inside the viewport and protect every row. */
-.appMain:has(.assetDrawerLayer.isOpen) {
-  z-index: 200;
-}
 .assetDrawer {
   border: 1px solid rgba(26, 25, 23, 0.1);
   border-radius: var(--radius-pane) var(--radius-pane) var(--radius-pane) var(--radius-control);
@@ -7107,17 +6221,14 @@ to { opacity: 1; transform: scaleX(1); }
   scrollbar-width: thin;
 }
 .workspacePage::-webkit-scrollbar,
-.assetDrawerBody::-webkit-scrollbar,
-.conversationHistory::-webkit-scrollbar { width: 9px; }
+.assetDrawerBody::-webkit-scrollbar { width: 9px; }
 .workspacePage::-webkit-scrollbar-thumb,
-.assetDrawerBody::-webkit-scrollbar-thumb,
-.conversationHistory::-webkit-scrollbar-thumb {
+.assetDrawerBody::-webkit-scrollbar-thumb {
   background: rgba(65, 80, 72, 0.2);
   background-clip: padding-box;
   border: 3px solid transparent;
   border-radius: 999px;
 }
-.pageHeader .secondaryButton { flex: 0 0 auto; }
 .toolTrustBanner p { max-width: 850px; }
 
 @media (max-width: 720px) {
@@ -7149,7 +6260,7 @@ to { opacity: 1; transform: scaleX(1); }
   }
 }
 
-@media (max-width: 520px) {
+@media (max-width: 720px) {
 .filterTabs { width: 100%; }
 .filterTabs button { flex: 1 0 auto; justify-content: center; }
 .assetDrawerHeader { gap: 10px; padding: 19px 17px 15px; }
@@ -7158,7 +6269,6 @@ to { opacity: 1; transform: scaleX(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-.primaryNav a.active::before,
 .welcomeState > .companion,
 .welcomeState > .eyebrow,
 .welcomeState > h1,
@@ -7169,32 +6279,6 @@ to { opacity: 1; transform: scaleX(1); }
     opacity: 1;
     transform: none;
   }
-}
-/* --------------------------------------------------------------------------
-   Metis motion polish — structural nav spacing and a little more character.
-   The active cue owns a real grid column, so it can never cover the label.
-   -------------------------------------------------------------------------- */
-.primaryNav a,
-.primaryNav a.active {
-  align-items: center;
-  column-gap: 11px;
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 18px;
-  padding-left: 12px;
-  padding-right: 10px;
-}
-.primaryNav a::before {
-  content: none;
-  display: none;
-}
-.primaryNav .navGlyph {
-  transition: color var(--motion-base) ease, transform var(--motion-base) var(--ease);
-}
-.primaryNav .navLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .navSignal {
   align-items: center;
@@ -7214,30 +6298,8 @@ to { opacity: 1; transform: scaleX(1); }
   transition: opacity var(--motion-base) ease, transform var(--motion-base) var(--ease), box-shadow var(--motion-base) ease;
   width: 7px;
 }
-.primaryNav a:hover .navSignal::before {
-  opacity: 0.45;
-  transform: scale(0.82);
-}
-.primaryNav a.active .navSignal::before {
-  animation: metisNavPulse 2.8s ease-in-out infinite;
-  opacity: 1;
-  transform: scale(1);
-}
-.primaryNav a:hover .navGlyph {
-  transform: translate3d(1px, -1px, 0) rotate(-3deg);
-}
-.primaryNav a.active .navGlyph {
-  transform: translate3d(0, -1px, 0);
-}
 
-@media (min-width: 901px) {
-.isCollapsed .primaryNav a,
-.isCollapsed .primaryNav a.active {
-    display: grid;
-    grid-template-columns: 1fr;
-    justify-items: center;
-    padding: 0;
-  }
+@media (min-width: 1081px) {
 .isCollapsed .navSignal {
     bottom: 5px;
     height: 10px;
@@ -7250,25 +6312,16 @@ to { opacity: 1; transform: scaleX(1); }
     width: 5px;
   }
 }
-/* The dotted surface drifts almost imperceptibly across every workspace. */
-.appMain::before {
-  animation: metisDotField 34s linear infinite alternate;
-  will-change: background-position;
-}
 
 @keyframes metisDotField {
 from { background-position: 4px 4px; }
 to { background-position: 42px 23px; }
 }
-.filterTabs button span,
-.brandMark {
+.filterTabs button span {
   transition: transform var(--motion-base) var(--ease);
 }
 .filterTabs button:hover span {
   transform: translateY(-1px) rotate(5deg);
-}
-.brand:hover .brandMark {
-  transform: translateY(-2px) rotate(-2deg);
 }
 .trustLine > span {
   transition: background-color var(--motion-base) ease, border-color var(--motion-base) ease, transform var(--motion-base) var(--ease);
@@ -7278,7 +6331,6 @@ to { background-position: 42px 23px; }
   border-color: rgba(74, 167, 120, 0.2);
   transform: translateY(-2px);
 }
-.workspacePage .pageHeader .eyebrow::before,
 .welcomeState > .eyebrow::before {
   animation: metisEyebrowBeat 3.8s ease-in-out infinite;
   transform-origin: left center;
@@ -7292,22 +6344,14 @@ to { background-position: 42px 23px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-.appMain::before,
-.primaryNav a.active .navSignal::before,
-.workspacePage .pageHeader .eyebrow::before,
 .welcomeState > .eyebrow::before {
     animation: none !important;
   }
-.primaryNav .navGlyph,
 .filterTabs button span,
-.brandMark,
 .trustLine > span {
     transition-duration: 0.01ms !important;
   }
-.primaryNav a:hover .navGlyph,
-.primaryNav a.active .navGlyph,
 .filterTabs button:hover span,
-.brand:hover .brandMark,
 .trustLine > span:hover {
     transform: none;
   }
@@ -7315,7 +6359,6 @@ to { background-position: 42px 23px; }
 /* Knowledge v2 owns these shared primitives after the legacy theme cascade. */
 .knowledgePage { gap: 18px; max-width: none; padding-bottom: 92px; }
 .knowledgePage > * { width: 100%; }
-.knowledgePage .pageHeader { align-items: center; margin-bottom: 4px; }
 .knowledgeSection.profileSection {
   background:
     radial-gradient(circle at 1px 1px, rgba(59, 83, 70, 0.075) 1px, transparent 1.05px) 0 0 / 19px 19px,
@@ -7333,12 +6376,11 @@ to { background-position: 42px 23px; }
 .notionSection.notionWorkspace::after { display: none; }
 .sourceList.sourceGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
-@media (max-width: 860px) {
+@media (max-width: 1080px) {
 .sourceList.sourceGrid { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 680px) {
-.knowledgePage .pageHeader { align-items: flex-start; }
+@media (max-width: 720px) {
 .knowledgeSection.notionSection.notionWorkspace { padding: 17px; }
 }
 /* ── Sizing (Dedicated AI Cluster) ───────────────────────────────────────────
@@ -7708,7 +6750,7 @@ to { opacity: 1; transform: translateY(0); }
   padding: 1px 5px;
 }
 
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .dacPage section { padding: 17px; }
 .dacControls { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 .dacCandidateHead { flex-wrap: wrap; }
@@ -7818,7 +6860,7 @@ to { opacity: 1; transform: translateY(0); }
 .folderRouteFooter span { color: var(--muted); }
 .folderRouteFooter p { color: var(--ink-soft); }
 
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
 .folderRoutePopover { right: 8px; top: 66px; width: calc(100% - 16px); }
 }
 /* ── Pinned local-model session ─────────────────────────────────────────── */
@@ -7876,9 +6918,6 @@ to { opacity: 1; transform: translateY(0); }
   border: 3px solid transparent;
   border-radius: 999px;
 }
-.customerWorkbenchHeader { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; padding-right: 180px; }
-.customerWorkbenchHeader h1 { margin: 5px 0 7px; font-size: clamp(28px, 4vw, 44px); letter-spacing: -.04em; }
-.customerWorkbenchHeader p { margin: 0; max-width: 650px; color: var(--muted); font-size: var(--text-md); }
 .customerNotice { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 12px; padding: 10px 14px; border-radius: var(--radius-control); background: rgba(89, 147, 107, .1); color: var(--green-ink); font-size: var(--text-sm); }
 .customerNotice.error { background: rgba(191, 61, 49, .1); color: #914c43; }
 .customerNotice button { border: 0; background: transparent; color: inherit; cursor: pointer; }
@@ -8000,16 +7039,13 @@ to { opacity: 1; transform: translateY(0); }
 .customerReviewModal > footer { align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
 .customerReviewModal > footer span { color: var(--muted); font-size: var(--text-xs); }
 
-@media (max-width: 1050px) {
-.customerWorkbenchHeader { padding-right: 0; }
+@media (max-width: 1080px) {
 .customerWorkbenchBody { grid-template-columns: 205px minmax(0, 1fr); }
 .customerOverview { grid-template-columns: repeat(2, 1fr); }
 .chatHeader { padding-right: 175px; }
 }
-@media (max-width: 760px) {
+@media (max-width: 720px) {
 .customerWorkbench { padding: 70px 12px 28px; }
-.customerWorkbenchHeader { align-items: flex-start; }
-.customerWorkbenchHeader p { display: none; }
 .customerWorkbenchBody { display: block; }
 .customerAccounts { border-right: 0; border-bottom: 1px solid var(--line); }
 .customerAccounts nav { display: flex; overflow-x: auto; }
@@ -8040,12 +7076,6 @@ to { opacity: 1; transform: translateY(0); }
 .brand .metisWordmark {
   font-size: var(--text-lg);
   line-height: 1;
-}
-.brandMark {
-  background: none;
-  border: 0;
-  box-shadow: none;
-  color: var(--accent);
 }
 .heroWordmark {
   font-size: clamp(52px, 6vw, 82px);
@@ -8079,13 +7109,10 @@ to { opacity: 1; transform: translateY(0); }
 .chatWorkspace.isEmpty .trustLine {
   margin-top: 13px;
 }
-/* Glass control family. The low-left radius keeps the Cohere-like cut shape. */
 .headerNewChat,
 .timelineToggle,
 .attachButton,
-.selectTrigger,
-.newChatButton,
-.collapseToggle {
+.selectTrigger {
   background: var(--metis-glass);
   -webkit-backdrop-filter: saturate(150%) blur(20px);
   backdrop-filter: saturate(150%) blur(20px);
@@ -8093,29 +7120,13 @@ to { opacity: 1; transform: translateY(0); }
   border-radius: var(--radius-card) var(--radius-card) var(--radius-card) var(--radius-control);
   box-shadow: var(--metis-glass-shadow);
 }
-.headerNewChat,
-.newChatButton {
+.headerNewChat {
   clip-path: none;
-}
-/* The sidebar is drag-resizable down to 220px. "New conversation" is wider than
-   that leaves once the glyph and the shortcut are placed, so pin the label to a
-   single line — a two-line label makes the button read as broken. */
-.newChatButton .navLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.newChatButton > span:first-child,
-.newChatButton kbd {
-  flex: none;
 }
 .headerNewChat:hover:not(:disabled),
 .timelineToggle:hover:not(:disabled),
 .attachButton:hover:not(:disabled),
-.selectTrigger:hover:not(:disabled),
-.newChatButton:hover:not(:disabled),
-.collapseToggle:hover:not(:disabled) {
+.selectTrigger:hover:not(:disabled) {
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(245, 242, 251, 0.76));
   border-color: rgba(120, 117, 109, 0.24);
@@ -8356,7 +7367,7 @@ to { opacity: 1; transform: translateY(0) scale(1); }
 50% { transform: translateY(-1px); }
 }
 
-@media (max-height: 760px) and (min-width: 681px) {
+@media (max-height: 760px) and (min-width: 721px) {
 .chatWorkspace.isEmpty .welcomeState {
     padding-bottom: 10px;
     padding-top: 10px;
@@ -8379,7 +7390,7 @@ to { opacity: 1; transform: translateY(0) scale(1); }
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .heroWordmark {
     font-size: clamp(54px, 19vw, 78px);
   }
@@ -8584,7 +7595,7 @@ from { filter: blur(3px); opacity: 0; transform: translateY(3px); }
 to { filter: blur(0); opacity: 1; transform: translateY(0); }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 720px) {
 .compactRunActivity {
     max-width: 100%;
     width: fit-content;
@@ -8625,7 +7636,7 @@ to { filter: blur(0); opacity: 1; transform: translateY(0); }
 .customerWinServicePicker button { padding: 6px 11px; border: 1px solid rgba(26, 25, 23, .16); border-radius: 999px; background: rgba(255, 255, 255, .6); color: var(--muted); font: inherit; font-size: var(--text-xs); cursor: pointer; transition: all var(--motion-base) var(--ease, ease); }
 .customerWinServicePicker button.active { border-color: var(--green); background: rgba(46, 105, 68, .1); color: var(--ink); font-weight: 620; }
 .customerWinFormRow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-@media (max-width: 860px) {
+@media (max-width: 1080px) {
 .customerWinFormRow { grid-template-columns: 1fr; }
 }
 /* ── Customers page QOL pass ──────────────────────────────────────────────
@@ -8843,7 +7854,7 @@ to { filter: blur(0); opacity: 1; transform: translateY(0); }
 .customerSummaryRail { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .customerSummaryRail > button { grid-column: span 2; }
 }
-@media (max-width: 860px) {
+@media (max-width: 1080px) {
 .customerSummary { padding: 18px; }
 .customerSummaryRail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .customerAccounts { max-height: none; grid-template-rows: auto auto auto; }
@@ -8935,11 +7946,6 @@ to { filter: blur(0); opacity: 1; transform: translateY(0); }
   background: rgba(255, 255, 255, .32);
   color: var(--muted); font-size: var(--text-xs); line-height: 1.45;
 }
-/* The project popover is now just a frame around the picker. */
-/* ── Customers page: editing, notes, and the attention queue ──────────────
-   Everything an extraction can write, a person can correct — so every list on
-   this page carries its own row actions and inline form. */
-.customerWorkbenchActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .customerSearchTrigger { display: inline-flex; align-items: center; gap: 7px; }
 .customerSearchTrigger kbd {
   padding: 2px 6px; border: 1px solid rgba(26, 25, 23, .16); border-radius: var(--radius-control);
@@ -9140,13 +8146,12 @@ to { filter: blur(0); opacity: 1; transform: translateY(0); }
 }
 .saveToAccountButton { margin-left: 10px; }
 
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
 .customerProfileGrid { grid-template-columns: 1fr; }
 .customerAttention article { grid-template-columns: 1fr auto; }
 .customerAttentionAccount { grid-column: 1 / -1; }
 .customerSearchResults > button > i { width: 60px; }
 .customerSearchResults > button > b { display: none; }
-.customerWorkbenchActions { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
 .customerRailButton,
@@ -9156,7 +8161,6 @@ to { filter: blur(0); opacity: 1; transform: translateY(0); }
    were the two full-width actions; the count tiles are buttons now too and
    must keep tile geometry. */
 .customerSummaryRail > .customerRailButton { grid-column: auto; height: auto; margin-top: 0; }
-.customerWorkbenchActions { justify-content: flex-end; }
 /* The customer trigger sits at the left end of the chat header, so a
    right-anchored panel would open off the pane and be clipped. */
 .headerPickerAnchor .commandPicker {
@@ -9409,7 +8413,6 @@ to { opacity: 1; }
 /* The live footprint reads as a measurement, not as advice, so it sits above
    the advice block in its own quieter register. */
 
-
 /* ═══════════════════════════════════════════════════════════════════════════
    RESTORED ORIGINAL LAYERS
    The quiet-chrome palette, the metis-* surface tokens, the brand hues, the
@@ -9430,19 +8433,6 @@ body {
     radial-gradient(circle at 8% 108%, rgba(59, 151, 104, 0.095), transparent 28%),
     var(--canvas);
 }
-
-/* Reusable glass primitive: translucent white, backdrop blur, wet top edge */
-
-/* Ambient light: soft Cohere-tone blooms behind frosted glass — green leads */
-.ambient {
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  overflow: hidden;
-  pointer-events: none;
-  filter: blur(70px);
-}
-.bloom { position: absolute; display: block; border-radius: 50%; will-change: transform; }
 .bloom-green {
   width: 52vmax; height: 52vmax; top: -20vmax; right: -14vmax; opacity: 0.62;
   background: radial-gradient(circle, rgba(16, 178, 76, 0.42), transparent 66%);
@@ -9463,10 +8453,6 @@ body {
   background: radial-gradient(circle, rgba(16, 168, 70, 0.30), transparent 66%);
   animation: bloom-drift-b 38s var(--ease) infinite alternate;
 }
-.grain {
-  position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.02;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
 @keyframes bloom-drift-a {
   from { transform: translate3d(0, 0, 0) scale(1); }
   to   { transform: translate3d(6vmax, 4vmax, 0) scale(1.08); }
@@ -9475,25 +8461,6 @@ body {
   from { transform: translate3d(0, 0, 0) scale(1); }
   to   { transform: translate3d(-5vmax, 5vmax, 0) scale(1.1); }
 }
-
-/* Brand mark — cluster of rounded shapes */
-.brandMark {
-  background:
-    radial-gradient(circle at 18% 14%, rgba(255, 255, 255, 0.96), transparent 46%),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(236, 239, 244, 0.6));
-  border: 0;
-  border-color: rgba(255, 255, 255, 0.8);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    0 8px 21px rgba(53, 55, 72, 0.12);
-  display: grid;
-  place-items: center;
-  height: 37px;
-  width: 34px;
-}
-.brandMark::after { display: none; }
-.brandMark svg { width: 30px; height: 30px; display: block; }
-.brandMark svg,
 .messageAvatar.metisAvatar svg,
 .compactActivityCore svg {
   filter: drop-shadow(0 3px 4px rgba(62, 64, 92, 0.14));
@@ -9716,7 +8683,7 @@ body {
 
 /* The old fixed dock reserved header space; the control is now in flow. */
 .chatHeader { padding-right: 24px; }
-@media (max-width: 760px) { .chatHeader { padding-right: 14px; } }
+@media (max-width: 720px) { .chatHeader { padding-right: 14px; } }
 
 .modelControl { position: relative; display: inline-flex; }
 
@@ -9996,7 +8963,6 @@ body {
    the summary, and it reads faster than prose. */
 .todayTopbar { align-items: flex-end; display: flex; flex: 0 0 auto; gap: 20px; justify-content: space-between; }
 .todayTopbarCopy { min-width: 0; }
-.appMain .todayGridPage h1 { font-size: clamp(24px, 2.6vw, 34px); line-height: 1.03; margin: 5px 0 0; }
 .todayTopbar .eyebrow::before {
   background: var(--m-purple, #c29ce0);
   border-radius: 50%;
@@ -10103,7 +9069,6 @@ body {
 .todaySlideHead { align-items: center; display: flex; flex: 0 0 auto; gap: 10px; }
 .todaySlideTitle { align-items: baseline; display: flex; gap: 10px; min-width: 0; }
 .todaySlideDot { align-self: center; background: var(--kind-hue, var(--m-ink-3)); border-radius: 50%; flex: none; height: 9px; width: 9px; }
-.appMain .todaySlide h2 { font-size: var(--text-lg); letter-spacing: -0.01em; margin: 0; }
 .todaySlideCount {
   color: var(--m-ink-3, #7b7789);
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -10284,7 +9249,6 @@ body {
   opacity: 0.9;
   width: 54px;
 }
-.appMain .todayEmpty h2 { font-size: var(--text-2xl); margin: 4px 0 0; }
 .todayEmpty p { color: var(--m-ink-2, #5e5a54); font-size: var(--text-base); line-height: 1.6; margin: 0 auto; max-width: 46ch; }
 
 /* The batch bar floats over the deck while a selection is live, then vanishes. */
@@ -10322,7 +9286,7 @@ body {
   z-index: 6;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 720px) {
   .todayRow.hasCheck { grid-template-columns: auto 1fr; }
   .todayRowActions { grid-column: 1 / -1; justify-content: flex-start; }
   .todayRow.hasCheck .todayRowActions { padding-left: 28px; }
@@ -10467,7 +9431,7 @@ body {
 .answerConflicts small { color: var(--m-ink-3, #7b7789); font-size: var(--text-xs); }
 .answerActions { display: flex; gap: 8px; margin-top: 6px; }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .answerMetaRow { gap: 4px; grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -10524,8 +9488,6 @@ body {
   z-index: -1;
 }
 .workspacePage .secondaryButton:hover:not(:disabled)::before { opacity: 0.8; transform: scale(1); }
-.pageHeader .secondaryButton::before,
-.customerWorkbenchHeader .secondaryButton::before { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .todayRailChip,

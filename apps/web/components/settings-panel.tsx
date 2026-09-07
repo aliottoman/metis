@@ -12,6 +12,7 @@ import {
   setSpeechPreference,
 } from "@/lib/api";
 import { clinePassReady } from "@/lib/model-route";
+import { ThemeControl } from "@/components/ui/theme-control";
 import type { HealthSnapshot, ModelPreference, SpeechPreference, VoiceAvailability } from "@/lib/types";
 import { MetisCompanion } from "@/components/metis-companion";
 import { SelectMenu } from "@/components/select-menu";
@@ -215,6 +216,11 @@ export function SettingsPanel() {
           <h2>{systemStatusTitle}</h2>
           <p>{systemStatusMessage}</p>
         </div>
+      </section>
+
+      <section className="settingsSection">
+        <div className="sectionTitle"><div><h2>Appearance</h2><p>Follow your Mac, or pin light or dark. Remembered on this device.</p></div></div>
+        <ThemeControl />
       </section>
 
       <section className="settingsSection companionSettings">

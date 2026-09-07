@@ -45,10 +45,12 @@ Canonical names, and what they are for:
   animation and stay literal.
 - **Elevation** `--shadow-1`, `--shadow-2`, `--shadow-3`; `--focus-ring`.
 
-The dark set is defined under `:root[data-theme="dark"]` and switched on by
-the theme toggle in a later phase. It covers the canonical names only, which
-is the point: a component that reads canonical tokens is dark-ready, and one
-that reads a legacy name is not.
+The dark set is defined twice with the same values: under
+`prefers-color-scheme: dark` for the un-stamped "system" state, and under
+`:root[data-theme="dark"]` for a pinned choice. It covers the canonical names
+and the legacy names the older stylesheets still read, so the whole app
+follows it; a component that reads canonical tokens is dark-ready by
+construction.
 
 ### Legacy names
 
@@ -76,6 +78,32 @@ pointing its users at the nearest canonical token and deleting the line.
 
 The Agents page is the reference implementation: it uses nothing but these
 and its own layout classes.
+
+## The shell
+
+`apps/web/app/shell.css` and `components/app-shell.tsx` are the frame every
+page sits in, built from Phase 1 of the interface audit:
+
+- **One rail, labelled at rest.** Three groups by the job: Work (Today,
+  Chat, Customers), Voice (Meetings, Interviews, Agents), Library (Assets,
+  Knowledge, Answers, Memory, Tool Workshop, Sizing). Library is collapsed
+  by default and remembered; a page inside it opens it. Settings and the
+  connection status sit at the foot. The active pill slides between entries.
+- **Conversations live inside Chat** (`components/conversation-list.tsx`),
+  as a collapsible column beside the workspace. ⌘K focuses its search from
+  anywhere; ⌘N starts a chat.
+- **The command strip.** `.pageHeader` and `.ui-page-header` are the same
+  64px strip: eyebrow, name, one line of context, the primary action on the
+  right, a hairline beneath. Today keeps its hero; nothing else has one.
+- **Three breakpoints.** 720 (phone: the rail is a drawer, headers and
+  toolbars wrap), 1080 (the rail folds to icons), 1440. Every old media
+  query was mapped onto these.
+- **Theme.** `lib/theme.ts` stamps `data-theme` on the root; the tokens'
+  `prefers-color-scheme` rule handles "system". A saved choice is applied by
+  an inline script before first paint. The control is in Settings.
+- **Motion, once.** `--motion-*` and `--ease-*` drive every transition; the
+  page enters with one short rise; the old per-element stagger and the
+  global button press-scale are gone.
 
 ## Icons
 

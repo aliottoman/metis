@@ -6,6 +6,7 @@
    absorbed yet — retire it by pointing its users at a canonical token. */
 
 :root {
+  color-scheme: light;
   /* color */
   --color-ground: #e8e6e1;
   --color-pane: #f6f5f2;
@@ -29,6 +30,9 @@
   --color-danger: #9c3522;
   --color-rail: #1b1720;
   --color-rail-ink: #fffaf3;
+  --color-rail-muted: rgba(255, 250, 243, 0.62);
+  --color-rail-hover: rgba(255, 255, 255, 0.07);
+  --color-rail-active: rgba(255, 255, 255, 0.12);
   /* type */
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
@@ -73,8 +77,75 @@
   --focus-ring: 0 0 0 2px var(--color-pane), 0 0 0 4px var(--color-ink);
 }
 
-/* The dark set, defined now and switched on by the theme toggle later. */
+/* The dark set: the system asks for it, or the toggle pins it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-ground: #121015;
+    --color-pane: #1a171e;
+    --color-paper: #1f1b24;
+    --color-paper-lift: #26212c;
+    --color-surface: #2c2733;
+    --color-ink: #ece8e1;
+    --color-ink-2: #c3bdc9;
+    --color-ink-3: #9d97a8;
+    --color-line: #3a3441;
+    --color-accent: #c9a6e4;
+    --color-accent-ink: #d9bdf0;
+    --color-accent-surface: #33273d;
+    --color-coral-soft: #7a3d2f;
+    --color-mint-surface: #1f3a30;
+    --color-green-ink: #7fd0a8;
+    --color-danger: #e58a78;
+    --color-rail: #0f0d12;
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 7px 18px rgba(0, 0, 0, 0.35);
+    --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 34px rgba(0, 0, 0, 0.45);
+    --shadow-3: 0 24px 60px rgba(0, 0, 0, 0.55);
+    /* legacy names the older stylesheets still read */
+    --paper: #1f1b24;
+    --panel: #26212c;
+    --canvas: #1a171e;
+    --canvas-deep: #121015;
+    --ink: #ece8e1;
+    --ink-soft: #c3bdc9;
+    --muted: #9d97a8;
+    --faint: #6f6979;
+    --line: rgba(236, 232, 225, 0.12);
+    --line-soft: rgba(236, 232, 225, 0.07);
+    --line-2: rgba(236, 232, 225, 0.16);
+    --glass-bg: linear-gradient(145deg, rgba(38, 33, 44, 0.7), rgba(31, 27, 36, 0.5));
+    --glass-bg-strong: linear-gradient(145deg, rgba(38, 33, 44, 0.9), rgba(31, 27, 36, 0.75));
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --metis-surface: rgba(38, 33, 44, 0.82);
+    --metis-surface-strong: rgba(38, 33, 44, 0.95);
+    --metis-border: rgba(255, 255, 255, 0.09);
+    --metis-glass: linear-gradient(145deg, rgba(38, 33, 44, 0.82), rgba(31, 27, 36, 0.56));
+    --metis-glass-border: rgba(255, 255, 255, 0.1);
+    --ui-glass: rgba(31, 27, 36, 0.72);
+    --ui-glass-strong: rgba(31, 27, 36, 0.9);
+    --ui-glass-line: rgba(255, 255, 255, 0.08);
+    --ui-line: rgba(255, 255, 255, 0.1);
+    --ui-ink: #ece8e1;
+    --ui-muted: #9d97a8;
+    --ui-surface: rgba(255, 255, 255, 0.05);
+    --ui-surface-hover: rgba(255, 255, 255, 0.09);
+    --audio-paper: #1f1b24;
+    --audio-cloud: #2a2431;
+    --audio-ink: #ece8e1;
+    --audio-ink-2: #c3bdc9;
+    --audio-line: rgba(255, 255, 255, 0.1);
+    --m-menu-surface: rgba(38, 33, 44, 0.985);
+    --m-menu-line: rgba(255, 255, 255, 0.12);
+    --m-lav-surface: #33273d;
+    --m-lav-edge: #4a3a58;
+    --m-mint-surface: #1f3a30;
+    --m-mint-edge: #2f5a48;
+    --m-volcanic: #ece8e1;
+  }
+}
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --color-ground: #121015;
   --color-pane: #1a171e;
   --color-paper: #1f1b24;
@@ -95,6 +166,47 @@
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 7px 18px rgba(0, 0, 0, 0.35);
   --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 34px rgba(0, 0, 0, 0.45);
   --shadow-3: 0 24px 60px rgba(0, 0, 0, 0.55);
+  /* legacy names the older stylesheets still read */
+  --paper: #1f1b24;
+  --panel: #26212c;
+  --canvas: #1a171e;
+  --canvas-deep: #121015;
+  --ink: #ece8e1;
+  --ink-soft: #c3bdc9;
+  --muted: #9d97a8;
+  --faint: #6f6979;
+  --line: rgba(236, 232, 225, 0.12);
+  --line-soft: rgba(236, 232, 225, 0.07);
+  --line-2: rgba(236, 232, 225, 0.16);
+  --glass-bg: linear-gradient(145deg, rgba(38, 33, 44, 0.7), rgba(31, 27, 36, 0.5));
+  --glass-bg-strong: linear-gradient(145deg, rgba(38, 33, 44, 0.9), rgba(31, 27, 36, 0.75));
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --metis-surface: rgba(38, 33, 44, 0.82);
+  --metis-surface-strong: rgba(38, 33, 44, 0.95);
+  --metis-border: rgba(255, 255, 255, 0.09);
+  --metis-glass: linear-gradient(145deg, rgba(38, 33, 44, 0.82), rgba(31, 27, 36, 0.56));
+  --metis-glass-border: rgba(255, 255, 255, 0.1);
+  --ui-glass: rgba(31, 27, 36, 0.72);
+  --ui-glass-strong: rgba(31, 27, 36, 0.9);
+  --ui-glass-line: rgba(255, 255, 255, 0.08);
+  --ui-line: rgba(255, 255, 255, 0.1);
+  --ui-ink: #ece8e1;
+  --ui-muted: #9d97a8;
+  --ui-surface: rgba(255, 255, 255, 0.05);
+  --ui-surface-hover: rgba(255, 255, 255, 0.09);
+  --audio-paper: #1f1b24;
+  --audio-cloud: #2a2431;
+  --audio-ink: #ece8e1;
+  --audio-ink-2: #c3bdc9;
+  --audio-line: rgba(255, 255, 255, 0.1);
+  --m-menu-surface: rgba(38, 33, 44, 0.985);
+  --m-menu-line: rgba(255, 255, 255, 0.12);
+  --m-lav-surface: #33273d;
+  --m-lav-edge: #4a3a58;
+  --m-mint-surface: #1f3a30;
+  --m-mint-edge: #2f5a48;
+  --m-volcanic: #ece8e1;
 }
 
 /* Legacy names, by the file that introduced them. */

@@ -1138,7 +1138,7 @@ export function CustomerWorkbench() {
 
   return (
     <div className="customerWorkbench">
-      <header className="customerWorkbenchHeader">
+      <header className="pageHeader">
         <div>
           <span className="eyebrow">Customer intelligence</span>
           <h1>Customer Workbench</h1>
