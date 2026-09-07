@@ -105,6 +105,35 @@ page sits in, built from Phase 1 of the interface audit:
   page enters with one short rise; the old per-element stagger and the
   global button press-scale are gone.
 
+## The chat page
+
+`apps/web/app/chat.css`, `hooks/use-chat.ts` and `components/chat/*` are
+Phase 2 of the audit. The old 2,400-line workspace became one engine hook
+and four small views:
+
+- **`useChat()` owns the state**: conversation, composer contents, the run
+  and its events, message actions, and scope (customer, project, sources,
+  model). `chat-workspace.tsx` only arranges the pieces.
+- **Composer first.** A new conversation opens on the composer, with what is
+  waiting on you phrased as things to say and the last three conversations
+  (`chat/welcome.tsx`). No wordmark, no marketing copy, no disclaimer.
+- **One "+" menu.** Customer, Project, Attach files, Dictate, and the
+  Auto / Notion / Web sources live behind one button; typing `/` opens the
+  same menu. Send becomes a queue button while a run is live, and Stop sits
+  beside it.
+- **A quiet thread.** Your messages are right-aligned blocks, replies are
+  the reading column, the time shows on hover, and actions (Copy, Edit,
+  Retry, Make a tool, Save to account, feedback) appear on hover. A reply
+  that used retrieval carries "Grounded in N sources".
+- **A quiet timeline.** `run-timeline.tsx` folds routine bookkeeping behind
+  "Show N routine events", shows elapsed time once in the header and a
+  duration per step, and goes red only on the failed step. It opens as a
+  360px drawer, a slide-over under 1080.
+- **Conversations are titled by their first message.** Chat did this
+  already; voice sessions now create their conversation on the first thing
+  said, titled by it, so an unused session leaves nothing behind. The list
+  hides conversations nobody said anything in.
+
 ## Icons
 
 `lucide-react`, 18px, stroke 1.6, through `NavIcon` in the shell. New icons

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { ApprovalCard } from "@/components/approval-card";
 import { approvalFrom } from "@/lib/approvals";
@@ -382,6 +382,27 @@ export function runEventSummary(event: RunEventV1): string {
   );
 }
 
+// Bookkeeping the control plane records for itself: shown only on request.
+const ROUTINE = new Set(["run.created", "run.started", "input.ingested", "message.created", "message.delta", "message.reasoning", "assistant.message", "message.completed"]);
+const FALLBACK_SUMMARY = "Recorded by the control plane";
+
+function isRoutine(event: RunEventV1): boolean {
+  return ROUTINE.has(event.type) || event.type.includes("delta") || runEventSummary(event) === FALLBACK_SUMMARY;
+}
+
+function seconds(from?: string, to?: string): number | null {
+  if (!from || !to) return null;
+  const delta = (new Date(to).getTime() - new Date(from).getTime()) / 1000;
+  return Number.isFinite(delta) && delta >= 0 ? delta : null;
+}
+
+function duration(value: number | null): string {
+  if (value === null) return "";
+  if (value < 1) return "<1s";
+  if (value < 60) return `${value.toFixed(value < 10 ? 1 : 0)}s`;
+  return `${Math.floor(value / 60)}m ${Math.round(value % 60)}s`;
+}
+
 export function RunTimeline({
   events,
   connection,
@@ -391,77 +412,49 @@ export function RunTimeline({
   decisionBusy,
   approveLabel = "Approve once",
 }: RunTimelineProps) {
-  const ordered = useMemo(
-    () => [...events].sort((a, b) => a.sequence - b.sequence),
-    [events],
-  );
+  const [showRoutine, setShowRoutine] = useState(false);
+  const ordered = useMemo(() => [...events].sort((a, b) => a.sequence - b.sequence), [events]);
+  const shown = useMemo(() => (showRoutine ? ordered : ordered.filter((event) => !isRoutine(event))), [ordered, showRoutine]);
+  const routineCount = ordered.length - shown.length;
+  const elapsed = duration(seconds(ordered[0]?.timestamp, ordered[ordered.length - 1]?.timestamp));
+  const live = connection === "live" || connection === "connecting" || connection === "reconnecting";
 
   return (
-    <div className="timelinePanel">
-      <header className="timelineHeader">
-        <div>
-          <span className="eyebrow">Live run</span>
-          <h2>Activity</h2>
-        </div>
-        <span className={`streamState stream-${connection}`}>
-          <i />
-          {connection}
+    <div className="tl">
+      <header className="tl-head">
+        <strong>Activity</strong>
+        <span className="tl-meta">
+          {elapsed ? <span>{elapsed}</span> : null}
+          <span className="ui-status"><span className={`ui-dot ${live ? "is-waiting" : connection === "error" ? "is-needs-review" : "is-stopped"}`} aria-hidden="true" />{connection === "closed" ? "finished" : connection}</span>
         </span>
       </header>
-      {streamError ? (
-        <div className="streamWarning">
-          Connection interrupted. Reconnecting from the last event…
-        </div>
-      ) : null}
-      <div className="timelineList" aria-live="polite">
-        {!ordered.length ? (
-          <div className="timelineEmpty">
-            <span>↗</span>
-            <p>Run steps, approvals, and validation results appear here.</p>
-          </div>
-        ) : null}
-        {ordered.map((event) => {
+      {streamError ? <p className="tl-warning">Connection interrupted. Reconnecting from the last event…</p> : null}
+      <div className="tl-list" aria-live="polite">
+        {!ordered.length ? <p className="tl-empty">Steps, approvals and checks appear here as Metis works.</p> : null}
+        {shown.map((event, index) => {
           const approval = approvalFrom(event);
-          const decided = approval
-            ? decidedApprovals.has(approval.id) || approval.status !== "pending"
-            : false;
+          const decided = approval ? decidedApprovals.has(approval.id) || approval.status !== "pending" : false;
+          const took = duration(seconds(event.timestamp, shown[index + 1]?.timestamp));
           return (
-            <article
-              className={`timelineEvent tone-${runEventTone(event)}`}
-              key={event.id}
-            >
-              <span className="timelineNode" />
-              <div className="timelineEventBody">
-                <div className="timelineEventTitle">
+            <article className={`tl-step tone-${runEventTone(event)}`} key={event.id}>
+              <span className="tl-node" aria-hidden="true" />
+              <div className="tl-body">
+                <div className="tl-title">
                   <strong>{runEventTitle(event.type)}</strong>
-                  <time>
-                    {event.timestamp
-                      ? new Date(event.timestamp).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : `#${event.sequence}`}
-                  </time>
+                  <time>{index === 0 && event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : took}</time>
                 </div>
                 <p>{runEventSummary(event)}</p>
-                {approval ? (
-                  <ApprovalCard
-                    approval={approval}
-                    decided={decided}
-                    decisionBusy={decisionBusy}
-                    onDecision={onDecision}
-                    approveLabel={approveLabel}
-                  />
-                ) : null}
+                {approval ? <ApprovalCard approval={approval} decided={decided} decisionBusy={decisionBusy} onDecision={onDecision} approveLabel={approveLabel} /> : null}
               </div>
             </article>
           );
         })}
+        {routineCount || showRoutine ? (
+          <button type="button" className="ui-btn is-quiet is-sm tl-routine" aria-expanded={showRoutine} onClick={() => setShowRoutine((value) => !value)}>
+            {showRoutine ? "Hide routine events" : `Show ${routineCount} routine events`}
+          </button>
+        ) : null}
       </div>
-      <footer className="timelineFooter">
-        Operational summaries only. The model&rsquo;s thinking streams to the
-        answer, under Thinking, and is never stored.
-      </footer>
     </div>
   );
 }

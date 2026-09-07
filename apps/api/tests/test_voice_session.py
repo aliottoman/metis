@@ -757,6 +757,40 @@ async def test_a_post_call_is_stored_as_evidence_and_creates_no_records(
         await database.close()
 
 
+@pytest.mark.asyncio
+async def test_the_first_thing_said_names_the_conversation(tmp_path) -> None:
+    """A voice session that nobody spoke in leaves no conversation behind,
+    and one that was spoken in is listed under what was said."""
+    from waqil_api.database import Database
+
+    settings = _settings(tmp_path, **READY)
+    database = Database(settings.database_path)
+    await database.open()
+    try:
+        service, _ = _service(tmp_path)
+        service.database = database
+        opened = await service.start()
+        assert await database.list_conversations() == []
+
+        await service.turn(
+            provider_conversation_id="conv_named",
+            transcript="What's waiting on me for Batelco this week?",
+        )
+        listed = await database.list_conversations()
+        assert [item.title for item in listed] == [
+            "What's waiting on me for Batelco this week?"
+        ]
+        assert service._sessions[opened.session.id].conversation_id == listed[0].id
+
+        await service.turn(
+            provider_conversation_id="conv_named", transcript="And after that?"
+        )
+        assert len(await database.list_conversations()) == 1
+        await service.shutdown()
+    finally:
+        await database.close()
+
+
 def test_the_locally_minted_secret_is_stable_and_kept_to_the_owner(tmp_path) -> None:
     service, _ = _service(tmp_path)
     secret = service.shared_secret()

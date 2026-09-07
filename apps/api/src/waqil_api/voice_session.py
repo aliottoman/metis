@@ -259,10 +259,13 @@ class VoiceSessionService:
             await self._ensure_processes()
             preference = self.speech_preference.load()
             now = datetime.now(UTC)
-            conversation = await self._conversation()
             session = _Session(
                 id=f"vs_{uuid.uuid4().hex[:20]}",
-                conversation_id=conversation,
+                # Created by the first thing said, so an unused session leaves
+                # no empty conversation behind.
+                conversation_id=""
+                if self.database is not None
+                else f"conv_voice_{uuid.uuid4().hex[:12]}",
                 started_at=now,
                 lease_expires_at=now
                 + timedelta(seconds=self.settings.voice_lease_seconds),
@@ -639,12 +642,6 @@ class VoiceSessionService:
 
     # -- persistence ------------------------------------------------------
 
-    async def _conversation(self) -> str:
-        if self.database is None:
-            return f"conv_voice_{uuid.uuid4().hex[:12]}"
-        created = await self.database.create_conversation("Voice conversation")
-        return created.id
-
     async def _record_question(
         self, session: _Session, transcript: str, turn_id: str
     ) -> str:
@@ -652,6 +649,9 @@ class VoiceSessionService:
         if self.database is None:
             return ""
         try:
+            if not session.conversation_id:
+                created = await self.database.create_conversation(transcript[:54])
+                session.conversation_id = created.id
             message = await self.database.add_message(
                 session.conversation_id, "user", transcript
             )

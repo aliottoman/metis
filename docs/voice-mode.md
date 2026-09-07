@@ -269,7 +269,8 @@ sqlite3 .data/waqil.db \
 that says whose opinion it is. Nothing in that table becomes a customer fact,
 an action, a memory or an account link on its own.
 
-Written answers land in the voice session's conversation, so a spoken
+The first thing said creates the conversation and titles it; written
+answers land in it, so a spoken
 conversation can be read back in the chat window afterwards.
 
 Everything voice added, including what was later undone:

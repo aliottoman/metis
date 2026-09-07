@@ -17,139 +17,6 @@
 /* tokens live in tokens.css */
 
 body { background: var(--m-paper); color: var(--m-ink); }
-/* The rainbow logotype was doing most of the childish work. Ink here, so
-   the bead beside it is the only thing carrying the full spectrum. */
-.brand .metisWordmark {
-  background: none;
-  -webkit-background-clip: initial;
-  background-clip: initial;
-  -webkit-text-fill-color: var(--m-ink);
-  color: var(--m-ink);
-  font-weight: 400;
-  letter-spacing: -0.028em;
-}
-
-/* ── The button ─────────────────────────────────────────────────────────
-   One diagonal cut, and the gap is real: you see the page through it.
-   All four corners of each segment are rounded so the clip meets a curve
-   and the cut tips come out soft, the way their bezier does. */
-.headerNewChat {
-  --h: 36px;
-  display: inline-flex;
-  align-items: stretch;
-  /* Their ratio is a .478h total gap, but that is tuned for a wide
-     marketing button. On a two-word control it reads as a hole, so this
-     compact variant runs a .33h total — the flex gap, less the run. */
-  gap: calc(var(--h) * 0.1075);
-  height: var(--h);
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  box-shadow: none;
-  clip-path: none;
-  font-size: var(--text-sm);
-  font-weight: 400;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #fbf8f2;
-  transition: gap var(--motion-slow) var(--m-ease);
-}
-.headerNewChat > span {
-  position: relative;
-  overflow: hidden;
-  display: inline-flex;
-  align-items: center;
-  background: var(--m-ink-btn);
-  border-radius: calc(var(--h) * 0.15);
-  transition: background-color var(--motion-slow);
-}
-.headerNewChat > span.segMain,
-.headerNewChat > span.segEnd { font-size: var(--text-sm); font-weight: 400; color: inherit; line-height: 1; }
-.headerNewChat .segMain {
-  gap: 7px;
-  padding: 0 calc(var(--h) * 0.4) 0 calc(var(--h) * 0.36);
-  clip-path: polygon(0 0, 100% 0, calc(100% - var(--h) * 0.2225) 100%, 0 100%);
-}
-.headerNewChat .segEnd {
-  width: calc(var(--h) * 0.873);
-  flex: none;
-  justify-content: center;
-  padding-left: calc(var(--h) * 0.2);
-  font-size: var(--text-md);
-  clip-path: polygon(calc(var(--h) * 0.2225) 0, 100% 0, 100% 100%, 0 100%);
-}
-.headerNewChat .segMain i { font-style: normal; font-size: var(--text-md); }
-/* Theirs narrows on hover; at app scale opening the slice reads better. */
-.headerNewChat:hover:not(:disabled) { gap: calc(var(--h) * 0.185); }
-/* The bloom. It is a halo that hugs the control, not a coloured rectangle
-   dropped behind it: it takes the host's radius, sits a few pixels proud of
-   every edge, and grows into place. The original translated the bloom down
-   and left, which on a pill read as an orange smear escaping the bottom
-   corner rather than as the button lighting up. */
-.headerNewChat::before {
-  content: "";
-  position: absolute;
-  inset: -3px;
-  z-index: -1;
-  border-radius: inherit;
-  background: var(--m-bloom);
-  filter: blur(8px);
-  opacity: 0;
-  transform: scale(0.94);
-  transition: transform var(--motion-slow) var(--m-ease), opacity var(--motion-slow) var(--m-ease);
-}
-.headerNewChat { position: relative; z-index: 0; }
-.headerNewChat:hover:not(:disabled)::before { opacity: 0.85; transform: scale(1); }
-.headerNewChat .segMain::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(76deg, transparent 30%,
-    rgba(255, 224, 138, 0.3) 42%, rgba(209, 142, 226, 0.44) 50%, rgba(123, 227, 216, 0.3) 58%, transparent 70%);
-  transform: translateX(-115%);
-  transition: transform 0.62s var(--m-ease);
-}
-.headerNewChat:hover:not(:disabled) .segMain::after { transform: translateX(115%); }
-.headerNewChat:disabled { opacity: 0.5; }
-
-/* The on-colour inversion of this button lives with the rest of the header
-   chrome, below — it applies in every state, not only the empty one. */
-
-/* ── The chat stage: a purple grain field carrying chrome ────────────────
-   The field is the room, and it does not go away when you start talking —
-   walking into a thread used to swap the whole pane for flat white, which
-   read as a different application. Instead a sheet of paper is laid over
-   the field for the reading passage, masked open at the head and foot so
-   the colour keeps bleeding behind the header and the composer. */
-.chatWorkspace .conversationPane {
-  position: relative;
-  background: var(--m-purple);
-  overflow: hidden;
-}
-.atmos {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 0;
-}
-/* Three things stop these reading as pasted cut-outs: the edges dissolve
-   instead of ending on a hard silhouette, each sits at a different focal
-   depth, and the metal picks up the room's colour the way chrome does. */
-.chromeForm { position: absolute; }
-.chromeForm,
-.chromeForm::before,
-.chromeForm::after {
-  -webkit-mask-image: radial-gradient(closest-side, #000 40%, rgba(0, 0, 0, 0.6) 70%, transparent 100%);
-  mask-image: radial-gradient(closest-side, #000 40%, rgba(0, 0, 0, 0.6) 70%, transparent 100%);
-}
-.chromeForm { background: var(--m-chrome); }
-.chromeForm::before,
-.chromeForm::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
-.chromeForm::before { background: var(--m-fringe); mix-blend-mode: screen; opacity: 0.42; }
-.chromeForm::after { background: var(--m-purple); mix-blend-mode: color; opacity: 0.5; }
 .cf1 {
   width: 560px; height: 470px; left: -230px; top: -190px;
   transform: rotate(-14deg); opacity: 0.92; filter: blur(2px);
@@ -170,184 +37,19 @@ body { background: var(--m-paper); color: var(--m-ink); }
   transform: rotate(16deg); opacity: 0.66; filter: blur(16px);
   border-radius: 48% 52% 60% 40% / 56% 42% 58% 44%;
 }
-/* Purple poured back over the metal, densest where the type sits. */
-.atmos::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(48% 44% at 40% 46%, rgba(194, 156, 224, 0.94) 0%, rgba(194, 156, 224, 0.78) 40%,
-      rgba(194, 156, 224, 0.3) 74%, rgba(194, 156, 224, 0) 100%),
-    linear-gradient(200deg, rgba(163, 121, 206, 0.34), rgba(194, 156, 224, 0.12) 60%, rgba(255, 119, 89, 0.1));
-}
-
-/* ── The paper sheet ────────────────────────────────────────────────────
-   One element doing the whole transition: the field never moves, and this
-   fades in over it. The mask is what keeps the two surfaces from meeting
-   on a line — paper is fully opaque only through the reading column, and
-   dissolves before it reaches either end of the pane. */
-.paperSheet {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  background: var(--m-paper);
-  opacity: 0;
-  -webkit-mask-image: linear-gradient(to bottom,
-    transparent 0, rgba(0, 0, 0, 0.5) 62px, #000 116px,
-    #000 calc(100% - 244px), rgba(0, 0, 0, 0.42) calc(100% - 138px), transparent calc(100% - 34px));
-  mask-image: linear-gradient(to bottom,
-    transparent 0, rgba(0, 0, 0, 0.5) 62px, #000 116px,
-    #000 calc(100% - 244px), rgba(0, 0, 0, 0.42) calc(100% - 138px), transparent calc(100% - 34px));
-}
-.chatWorkspace:not(.isEmpty) .paperSheet { opacity: 1; }
-/* A recovery banner adds its own band under the header, so the paper has
-   to start below that instead of behind it. */
-.chatWorkspace.hasBanner .paperSheet {
-  -webkit-mask-image: linear-gradient(to bottom,
-    transparent 0, rgba(0, 0, 0, 0.5) 118px, #000 176px,
-    #000 calc(100% - 244px), rgba(0, 0, 0, 0.42) calc(100% - 138px), transparent calc(100% - 34px));
-  mask-image: linear-gradient(to bottom,
-    transparent 0, rgba(0, 0, 0, 0.5) 118px, #000 176px,
-    #000 calc(100% - 244px), rgba(0, 0, 0, 0.42) calc(100% - 138px), transparent calc(100% - 34px));
-}
-/* The field itself settles a little once it is a backdrop rather than the
-   subject, so the metal never competes with a paragraph. */
-.chatWorkspace:not(.isEmpty) .atmos { opacity: 0.82; }
-/* Both layers animate only after the first paint — see morphReady. */
-.chatWorkspace.morphReady .paperSheet,
-.chatWorkspace.morphReady .atmos { transition: opacity 700ms var(--m-ease); }
-@media (prefers-reduced-motion: reduce) {
-  .chatWorkspace.morphReady .paperSheet,
-  .chatWorkspace.morphReady .atmos { transition: none; }
-}
-
-.messageViewport { position: relative; z-index: 2; }
-/* Content scrolls past the ends of the paper, so it has to dissolve there
-   the same way the paper does. Without this a bubble slides under the
-   header and stops on a hard horizontal cut against the colour. */
-.chatWorkspace:not(.isEmpty) .messageViewport {
-  -webkit-mask-image: linear-gradient(to bottom,
-    transparent 0, #000 48px, #000 calc(100% - 28px), transparent 100%);
-  mask-image: linear-gradient(to bottom,
-    transparent 0, #000 48px, #000 calc(100% - 28px), transparent 100%);
-}
-.composerDock { position: relative; z-index: 3; }
-/* The header holds the model-control popover, which must clear the recovery
-   banner (z-index 4 in globals). */
-.chatHeader { position: relative; z-index: 6; }
-
-/* ── Header chrome: on colour in EVERY state ────────────────────────────
-   These were scoped to .isEmpty, which is why sending one message swapped
-   the whole bar to white-on-white and made the top of the app look like a
-   different product. The header sits on the field now, so it is always the
-   on-colour treatment — and the frosted band that produced the visible
-   seam under the bar is switched off here. */
-.chatHeader {
-  background: transparent;
-  border-bottom: 0;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  color: #fff;
-}
-.chatTitle strong { color: #fff; }
-.localStatus {
-  background: rgba(38, 22, 48, 0.34);
-  border: 0;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
-  color: rgba(255, 255, 255, 0.92);
-}
-.localStatus i { background: #8ff0b4; }
-/* Ink-tinted glass rather than white-tinted: the chrome forms surface at
-   near-white in places, and a white pill on white metal is unreadable no
-   matter how the label is weighted. Darkening the glass instead means the
-   pills hold on both the pale and the deep passages of the field. */
-.timelineToggle,
 .modelControlTrigger {
   background: rgba(38, 22, 48, 0.34);
   border: 0;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
   color: #fff;
 }
-.timelineToggle:hover:not(:disabled),
 .modelControlTrigger:hover {
   background: rgba(38, 22, 48, 0.46);
   border: 0;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
   color: #fff;
 }
-.timelineToggle b { background: rgba(255, 255, 255, 0.26); color: #fff; }
 .modelControlTrigger > b { color: rgba(255, 255, 255, 0.72); }
-/* The new-chat button inverts on colour, as their hero CTA does. */
-.headerNewChat { color: var(--m-ink-btn); }
-.headerNewChat > span { background: #fbf8f2; }
-
-/* A scrim under the header. The field is bright where the chrome forms
-   surface, and white-on-glass pills disappeared over those patches — this
-   gives the bar one consistent ground to sit on wherever the metal lands,
-   and softens the head of the paper sheet at the same time. */
-.chatHeader::before {
-  content: "";
-  position: absolute;
-  inset: -2px 0 -30px;
-  z-index: -1;
-  pointer-events: none;
-  background: linear-gradient(to bottom,
-    rgba(52, 28, 66, 0.42) 0%, rgba(52, 28, 66, 0.28) 58%, rgba(52, 28, 66, 0) 100%);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   THE THREAD.
-
-   Everything below used to be styled only by globals.css, which is why
-   sending one message put you back in the previous generation of the app:
-   coral-tinted bubbles, accent-tinted avatars, 7px chips, a navy code
-   block. The conversation is the surface the product is actually used on,
-   so it gets the language rather than inheriting the leftovers.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-.messageList { max-width: 1040px; }
-/* Nothing should rest inside the mask ramp at the head of the sheet. */
-.chatWorkspace:not(.isEmpty) .messageList { padding-top: 52px; }
-
-.messageAuthor strong {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace);
-  font-size: var(--text-xs);
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--m-ink-3);
-}
-
-/* What you said reads as something set down on the page; what Metis said
-   reads as the page itself. Only one of the two needs a container. */
-.chatMessage.message-user:not(.message-failed) .messageBody {
-  background: var(--m-surface);
-  border: 1px solid var(--m-line);
-  border-radius: var(--radius-card);
-  box-shadow: none;
-}
-/* Your message is a contained bubble: it shrinks to its text and sits toward
-   Metis's column, so a short reply reads small and the focus stays on what
-   Metis says. A long one caps its width AND height, then scrolls inside the
-   bubble instead of pushing the whole thread down. Editing gets full width. */
-.chatMessage.message-user:not(.isEditing) .messageBody {
-  justify-self: end;
-  max-width: min(72%, 620px);
-}
-.chatMessage.message-user:not(.isEditing) .messageContent {
-  max-height: 340px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.chatMessage.message-user .messageAuthor { display: none; }
-.chatMessage.message-user .messageActions { justify-content: flex-end; }
-.chatMessage.message-assistant .messageBody {
-  background: none;
-  border: 0;
-  box-shadow: none;
-}
 .messageContent { color: var(--m-ink); font-size: var(--text-md); line-height: 1.62; }
 .messageContent a { color: var(--m-ink); text-decoration-color: var(--m-ink-3); }
 .messageContent pre,
@@ -357,151 +59,7 @@ body { background: var(--m-paper); color: var(--m-ink); }
   border: 1px solid #302c28;
   border-radius: var(--radius-card);
 }
-
-.messageAvatar { background: var(--m-surface); box-shadow: inset 0 0 0 1px var(--m-line); }
-/* The companion is the assistant mark now, so its slot is just a centred
-   holder — no disc, no ring behind the bead — sized to the 32px avatar column
-   and letting the streaming bead's morph spill past its box. */
-.messageAvatar.metisAvatar {
-  background: none;
-  border: 0;
-  box-shadow: none;
-  padding: 0;
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  overflow: visible;
-}
-.message-user .messageAvatar,
-.messageAvatar.userAvatar { background: #ece4f5; color: var(--m-ink); box-shadow: inset 0 0 0 1px #ddd0ea; }
-
-/* The run chip: a quiet pill that reports, rather than a status badge that
-   announces. Its four beads carry the only colour it needs. */
-.compactRunActivity {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: 999px;
-  box-shadow: none;
-  color: var(--m-ink);
-  transition: border-color var(--motion-base) var(--m-ease), background-color var(--motion-base) var(--m-ease);
-}
-.compactRunActivity:hover { background: var(--m-surface); border-color: #c6b8d6; }
-.compactRunActivity .compactActivityCopy strong { font-size: var(--text-sm); font-weight: 500; }
-.compactRunActivity .compactActivityCopy small {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  color: var(--m-ink-3);
-}
-
-/* Feedback and the inline actions under an answer. */
-.feedbackControls { border-top: 1px solid var(--m-line); }
-.feedbackPrompt > span {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--m-ink-3);
-}
-.feedbackPrompt button {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: 999px;
-  color: var(--m-ink);
-  font-size: var(--text-xs);
-  font-weight: 400;
-  min-height: 29px;
-  padding: 0 13px;
-  transition: background-color var(--motion-base) var(--m-ease), color var(--motion-base) var(--m-ease);
-}
-.feedbackPrompt button:hover {
-  background: var(--m-ink-btn);
-  border-color: transparent;
-  color: #fbf8f2;
-}
-.feedbackRecorded { color: var(--m-ink-2); font-weight: 400; }
-
-.inlineAttachments > span {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: 999px;
-  color: var(--m-ink-2);
-}
-/* The one offer under an answer deserves to look like an offer. */
-.toolBuildButton {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: 999px;
-  color: var(--m-ink);
-  font-size: var(--text-sm);
-  font-weight: 400;
-  min-height: 32px;
-  padding: 0 15px;
-  transition: background-color var(--motion-base) var(--m-ease), color var(--motion-base) var(--m-ease);
-}
-.toolBuildButton:hover:not(:disabled) {
-  background: var(--m-ink-btn);
-  border-color: transparent;
-  color: #fbf8f2;
-}
-.workingText { color: var(--m-ink-2); }
-.thinkingPulse i,
-.messageLoading span,
 .previewLoading span { background: var(--m-ink-3); }
-
-/* The activity drawer is part of the thread, not a system panel. Its own
-   head takes the field too, so the colour band runs unbroken across the
-   full width of the app instead of stopping at the drawer's left edge. */
-.runDrawer { background: var(--m-paper-lift); border-left: 1px solid var(--m-line); }
-.timelineHeader {
-  min-height: 72px;
-  background: linear-gradient(to bottom, rgba(52, 28, 66, 0.42), rgba(52, 28, 66, 0.28)), var(--m-purple);
-  border-bottom: 0;
-  color: #fff;
-}
-.timelineHeader h2,
-.timelineHeader strong { color: #fff; }
-.timelineHeader .eyebrow,
-.timelineHeader small,
-.timelineHeader span { color: rgba(255, 255, 255, 0.82); }
-.runDrawerClose { color: rgba(255, 255, 255, 0.9); }
-.runDrawerClose:hover { color: #fff; }
-
-.companionDockLabel { color: var(--m-ink-2); }
-
-/* ── Welcome state — sized to sit in one screen, no scroll ─────────────── */
-.welcomeState {
-  max-width: 780px;
-  padding: 14px 30px 12px;
-  gap: 0;
-}
-.welcomeState .companion { width: 78px; height: 78px; margin: 0; }
-.welcomeState .eyebrow {
-  margin: 18px 0 0;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-sm);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.86);
-}
-.welcomeState .eyebrow::before { display: none; }
-.welcomeState h1 { margin: 10px 0 0; font-size: var(--text-5xl); line-height: 0.98; letter-spacing: -0.034em; }
-.welcomeState h1 .metisWordmark {
-  background: none;
-  -webkit-background-clip: initial;
-  background-clip: initial;
-  -webkit-text-fill-color: #fff;
-  color: #fff;
-  font-weight: 400;
-}
-.welcomeState > p {
-  margin: 11px 0 0;
-  max-width: 44ch;
-  font-size: var(--text-lg);
-  line-height: 1.5;
-  color: rgba(255, 255, 255, 0.9);
-}
 .trustLine { margin-top: 14px; gap: 20px; }
 .trustLine > span {
   padding: 0;
@@ -634,134 +192,11 @@ body { background: var(--m-paper); color: var(--m-ink); }
   .chatWorkspace.isEmpty .trustLine { display: flex; }
   .chatWorkspace.isEmpty .customerSnippet > p { display: block; }
 }
-@media (max-height: 618px) and (min-width: 721px) {
-  .chatWorkspace.isEmpty .customerSnippetRecent,
-  .chatWorkspace.isEmpty .customerSnippet > p,
-  .chatWorkspace.isEmpty .trustLine { display: none; }
-}
-
-/* ── Composer ───────────────────────────────────────────────────────────── */
-.composerDock { background: none; }
-.composer {
-  background: var(--m-paper-lift);
-  border: 0;
-  border-radius: var(--radius-pane);
-  box-shadow: 0 20px 44px -22px rgba(60, 30, 80, 0.62), inset 0 0 0 1px rgba(255, 255, 255, 0.6);
-  backdrop-filter: none;
-}
-.composer:focus-within {
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.3), 0 20px 44px -22px rgba(60, 30, 80, 0.62);
-}
-/* The composer floats on the wash in every state — it used to flatten to a
-   hairline outline the moment a thread started, which is what made the foot
-   of the app change character mid-conversation. */
-.composerHint,
-.composerDisclaimer { color: rgba(255, 255, 255, 0.78); }
-
-/* The send button is the chrome itself — no text to fight it. A 44px disc
-   cannot hold the full 18-stop gradient, so it gets a 7-stop version. */
-.sendButton {
-  background: linear-gradient(142deg, #fffcf2 0%, #c9c1aa 18%, #2a2724 42%,
-    #12100f 54%, #e4dcc7 74%, #6e6757 88%, #1b1a19 100%);
-  background-size: 170% 170%;
-  background-position: 44% 14%;
-  color: #fffdf6;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5), 0 6px 16px -6px rgba(50, 40, 30, 0.55);
-  transition: background-position 0.7s var(--m-ease), transform var(--motion-slow) var(--m-ease);
-}
-.sendButton:hover:not(:disabled) { background-position: 14% 64%; transform: translateY(-1px); }
 
 /* ── The companion ──────────────────────────────────────────────────────
    The pearl. It uses its own class names and its own rules; the original
    "orb" and its globals.css styles are long gone. */
 .companion { position: relative; }
-
-.pearlBody {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  /* The film blends with `multiply`; without isolation its blend group is the
-     page, so it mixed with the purple field behind the bead instead of with
-     the bead's own body. */
-  isolation: isolate;
-  border-radius: 56% 44% 48% 52% / 47% 52% 48% 53%;
-  background: radial-gradient(112% 112% at 32% 24%, #fffdfe 0%, #f2eaf0 58%, #d6c8de 100%);
-  box-shadow:
-    inset -9px -11px 24px rgba(90, 58, 90, 0.3),
-    inset 7px 9px 20px rgba(255, 255, 255, 0.95),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
-    0 20px 38px -16px rgba(50, 20, 70, 0.6);
-  animation: mPearlMorph 8s ease-in-out infinite;
-}
-/* The oil film turns inside the body, so the surface shifts hue as it
-   moves rather than showing gradient spokes. */
-/* The film is split in two — see the markup comment in metis-companion.tsx.
-   The outer half owns the mask and the blend; its mask fades out by 62% of
-   its own half-size, and at 148% of the body that is ~0.92 of the body's
-   radius: every pixel of colour dies inside the silhouette, with margin for
-   the morph animation pinching the boundary. The INNER half owns the warp
-   filter, the colours, and the spin, so nothing that promotes itself to a
-   compositor layer is ever the thing responsible for its own containment. */
-.pearlFilm {
-  position: absolute;
-  inset: -24%;
-  border-radius: 50%;
-  display: block;
-  mix-blend-mode: multiply;
-  opacity: 0.68;
-  overflow: hidden;
-  /* Fades out by 56% of the film's half-size (~41% of the body): tight enough
-     that the parallax shift below can never carry colour past the morph's
-     most pinched corner. */
-  -webkit-mask-image: radial-gradient(closest-side, #000 0 42%, rgba(0, 0, 0, 0.5) 50%, transparent 56%);
-  mask-image: radial-gradient(closest-side, #000 0 42%, rgba(0, 0, 0, 0.5) 50%, transparent 56%);
-  /* Percentages, not pixels: a fixed 9px was a third of the 34px dock bead,
-     which walked the whole film — mask and all — out of the silhouette. */
-  transform: translate(calc(var(--mx, 0) * -2.5%), calc(var(--my, 0) * -2%));
-  transition: transform 0.6s var(--m-ease);
-}
-.pearlFilmInk {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  display: block;
-  filter: url(#metisWarp) blur(6px) saturate(1.35);
-  background:
-    radial-gradient(38% 34% at 68% 24%, #ff7f5c 0%, rgba(255, 127, 92, 0) 66%),
-    radial-gradient(40% 36% at 78% 62%, #c77bee 0%, rgba(199, 123, 238, 0) 66%),
-    radial-gradient(42% 38% at 34% 72%, #4fd3e4 0%, rgba(79, 211, 228, 0) 66%),
-    radial-gradient(34% 32% at 26% 30%, #ffd25a 0%, rgba(255, 210, 90, 0) 66%),
-    radial-gradient(30% 28% at 52% 50%, #ff8fb4 0%, rgba(255, 143, 180, 0) 68%);
-  animation: mPearlSpin 14s linear infinite;
-}
-.pearlSpec {
-  position: absolute;
-  left: 20%;
-  top: 12%;
-  width: 30%;
-  height: 17%;
-  border-radius: 50%;
-  background: #fff;
-  filter: blur(5px);
-  opacity: 0.92;
-  /* Of the spec's own box (30% × 17% of the body), so the highlight travels
-     ~9% of the body at every size instead of 20px — which on the dock bead
-     was a white smear parked outside the blob. */
-  transform: translate(calc(var(--mx, 0) * 30%), calc(var(--my, 0) * 40%));
-  transition: transform var(--motion-slow) var(--m-ease);
-}
-.pearlShadow {
-  position: absolute;
-  left: 50%;
-  bottom: -14px;
-  transform: translateX(-50%);
-  width: 56%;
-  height: 12px;
-  border-radius: 50%;
-  background: rgba(50, 20, 70, 0.34);
-  filter: blur(9px);
-  animation: mPearlContact 8s ease-in-out infinite;
-}
 @keyframes mPearlMorph {
   0%, 100% { border-radius: 56% 44% 48% 52% / 47% 52% 48% 53%; transform: translateY(0) rotate(0deg); }
   33% { border-radius: 44% 56% 60% 40% / 57% 42% 58% 43%; transform: translateY(-6px) rotate(2.5deg); }
@@ -772,31 +207,9 @@ body { background: var(--m-paper); color: var(--m-ink); }
   0%, 100% { opacity: 0.34; width: 56%; }
   50% { opacity: 0.2; width: 44%; }
 }
-/* Moods, as the component already drives them. */
-.companion[data-mood="listening"] .pearlBody { animation-duration: 5s; }
-.companion[data-mood="thinking"] .pearlBody { animation-duration: 2s; }
-.companion[data-mood="thinking"] .pearlFilmInk { animation-duration: 5s; }
-.companion[data-mood="thinking"] .pearlFilm { opacity: 0.8; }
-.companion[data-mood="done"] .pearlFilmInk { filter: url(#metisWarp) blur(6px) saturate(1.05) hue-rotate(82deg); }
-.companion[data-mood="done"] .pearlFilm { opacity: 0.52; }
-.companion[data-mood="trouble"] .pearlBody { animation: mPearlSlump 7s ease-in-out infinite; }
 @keyframes mPearlSlump {
   0%, 100% { border-radius: 48% 52% 40% 60% / 34% 36% 64% 66%; transform: translateY(5px) scale(1.08, 0.84); }
   50% { border-radius: 50% 50% 42% 58% / 36% 34% 66% 64%; transform: translateY(6px) scale(1.1, 0.82); }
-}
-.companion[data-mood="trouble"] .pearlFilmInk { filter: blur(11px) saturate(0.1); }
-.companion[data-mood="trouble"] .pearlFilm { opacity: 0.42; }
-/* Below 28px the morph reads as a wobble, so small beads sit still. */
-.companion.isSmall .pearlBody { animation: none; border-radius: 50%; }
-.companion.isSmall .pearlSpec { display: none; }
-
-@media (prefers-reduced-motion: reduce) {
-  .pearlBody,
-  .pearlFilm,
-  .pearlFilmInk,
-  .pearlShadow { animation: none !important; }
-  .pearlFilm,
-  .pearlSpec { transition: none !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -960,43 +373,6 @@ select,
   border-color: transparent;
   color: #fbf8f2;
 }
-
-/* ── Header new chat: one continuous pill, same ink as primaryButton ──── */
-.headerNewChat { gap: 0; }
-.headerNewChat:hover:not(:disabled) { gap: 0; }
-.headerNewChat .segEnd { display: none; }
-.headerNewChat .segMain {
-  border-radius: 999px;
-  clip-path: none;
-  gap: 7px;
-  padding: 0 16px;
-}
-.headerNewChat::before { border-radius: 999px; }
-
-/* ── Recovery banner: paper and ink, not amber ────────────────────────── */
-.recoveryBanner {
-  background: var(--m-paper-lift);
-  border-bottom: 1px solid var(--m-line);
-}
-.recoveryIcon { background: var(--m-surface); color: var(--m-ink-2); }
-.recoverySummary strong { color: var(--m-ink); }
-.recoverySummary small { color: var(--m-ink-2); font-size: var(--text-xs); }
-.recoveryActions { scrollbar-width: thin; }
-.recoveryActions button {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: 999px;
-  color: var(--m-ink);
-  font-size: var(--text-xs);
-  font-weight: 500;
-}
-.recoveryActions button:hover:not(:disabled) {
-  background: var(--m-ink-btn);
-  border-color: transparent;
-  color: #fbf8f2;
-}
-.recoveryActions button.selected { background: var(--m-surface); border-color: var(--m-line); }
-.recoveryActions button > span { background: var(--m-ink-btn); border-radius: 999px; color: #fbf8f2; }
 
 /* ── Model control: greige panel, ink selection, no green tint ──────────
    The TRIGGER is deliberately not restyled here: it lives in the chat
@@ -1241,15 +617,7 @@ select,
   font-size: var(--text-xs);
   font-style: normal;
 }
-.headerNewChat,
-.headerNewChat .segMain,
-.timelineToggle,
-.attachButton,
-.retryResponse,
-.clearFailedResponse,
-.errorFreshStart,
 .modelControlTrigger,
-.localStatus,
 .primaryButton,
 .secondaryButton,
 .ghostButton,
@@ -1257,47 +625,26 @@ select,
 .assetRefreshButton,
 .modelControlLaunch,
 .modelControlStop,
-.feedbackPrompt button,
-.toolBuildButton,
-.compactRunActivity,
-.recoveryActions button,
 .filterTabs button,
-.customerAccountFilters button,
-.composerAddContext { border-radius: var(--m-r-pill); }
-.runDrawerClose,
-.sendButton { border-radius: 50%; }
+.customerAccountFilters button { border-radius: var(--m-r-pill); }
 .selectTrigger,
 input[type="text"],
 input[type="search"],
 input[type="number"],
 textarea,
 select { border-radius: var(--m-r-field); }
-.headerNewChat::before,
-.headerNewChat::after,
-.headerNewChat .segMain::after,
 .primaryButton::before,
 .primaryButton::after,
 .secondaryButton::before,
 .secondaryButton::after,
-.timelineToggle::before,
-.timelineToggle::after,
-.compactRunActivity::before,
-.compactRunActivity::after,
 .filterTabs button::before,
 .filterTabs button::after { border-radius: inherit; }
-.headerNewChat,
-.timelineToggle,
-.attachButton,
 .modelControlTrigger,
 .primaryButton,
 .secondaryButton,
 .ghostButton,
 .dangerButton,
 .iconButton,
-.feedbackPrompt button,
-.toolBuildButton,
-.compactRunActivity,
-.recoveryActions button,
 .filterTabs button,
 .customerAccountFilters button {
   transition:
@@ -1306,141 +653,18 @@ select { border-radius: var(--m-r-field); }
     color 0.22s var(--m-ease),
     box-shadow 0.22s var(--m-ease);
 }
-.headerNewChat .segMain::after { border-radius: inherit; }
-.headerNewChat:focus-visible,
-.timelineToggle:focus-visible,
-.attachButton:focus-visible,
 .modelControlTrigger:focus-visible,
 .primaryButton:focus-visible,
 .secondaryButton:focus-visible,
 .ghostButton:focus-visible,
 .dangerButton:focus-visible,
-.iconButton:focus-visible,
-.feedbackPrompt button:focus-visible,
-.toolBuildButton:focus-visible,
-.compactRunActivity:focus-visible,
-.sendButton:focus-visible {
+.iconButton:focus-visible {
   outline: 2px solid var(--m-purple);
   outline-offset: 2px;
 }
-.chatHeader :focus-visible {
-  outline-color: rgba(255, 255, 255, 0.9);
-}
 
 @media (prefers-reduced-motion: reduce) {
-.headerNewChat::before,
-.primaryButton::before,
-.headerNewChat .segMain::after { transition: none; }
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   THE ACTIVITY DRAWER
-
-   This panel was built at the type scale of a debug console: 10px titles,
-   9px summaries, 8px timestamps, and a `min-width: 350px` inside a drawer
-   whose minimum was 300 — so at its own floor the panel overflowed its
-   container and every title wrapped mid-phrase.
-
-   It is a reading surface. It gets a reading scale, a real rail, and room.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-/* Never wider than what holds it; the drawer decides the width. */
-.timelinePanel { min-width: 0; }
-
-.timelineHeader { flex: 0 0 auto; padding: 0 20px; }
-.timelineHeader h2 { font-size: var(--text-xl); font-weight: 400; letter-spacing: -0.018em; }
-.timelineHeader .eyebrow { font-size: var(--text-xs); margin-bottom: 2px; }
-/* The connection state, on the header's colour. */
-.streamState {
-  background: rgba(255, 255, 255, 0.16);
-  border: 0;
-  border-radius: var(--m-r-pill);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
-  color: rgba(255, 255, 255, 0.92);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-weight: 400;
-  letter-spacing: 0.06em;
-  padding: 4px 10px;
-}
-.streamState i { background: currentColor; }
-.stream-live { background: rgba(255, 255, 255, 0.2); color: #eafff2; }
-.stream-live i { background: #8ff0b4; }
-.stream-error i { background: #ffb3a6; }
-
-.streamWarning {
-  background: var(--m-surface);
-  border-bottom: 1px solid var(--m-line);
-  color: var(--m-ink-2);
-  font-size: var(--text-xs);
-  padding: 10px 20px;
-}
-
-.timelineList { padding: 22px 20px 30px 22px; }
-
-/* One rail, drawn continuously behind the nodes rather than as a stub per
-   row, so the run reads as a single thread of work. */
-.timelineEvent {
-  grid-template-columns: 11px minmax(0, 1fr);
-  gap: 14px;
-  padding-bottom: 19px;
-}
-.timelineEvent::before {
-  background: var(--m-line);
-  left: 5px;
-  top: 12px;
-  height: calc(100% - 4px);
-}
-.timelineNode {
-  width: 9px;
-  height: 9px;
-  margin-top: 5px;
-  background: var(--m-ink-3);
-  border: 2px solid var(--m-paper-lift);
-  box-shadow: 0 0 0 1px var(--m-line);
-}
-/* Tones in the warm palette, so a failure is not the only red in the app. */
-.tone-success .timelineNode { background: #4f8f6b; box-shadow: 0 0 0 1px #4f8f6b; }
-.tone-attention .timelineNode { background: #c08a3e; box-shadow: 0 0 0 1px #c08a3e; }
-.tone-danger .timelineNode { background: #c0492f; box-shadow: 0 0 0 1px #c0492f; }
-.tone-model .timelineNode { background: #8a6fb0; box-shadow: 0 0 0 1px #8a6fb0; }
-
-.timelineEventTitle { gap: 12px; }
-.timelineEventTitle strong {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--m-ink);
-  letter-spacing: -0.006em;
-}
-.timelineEventTitle time {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  color: var(--m-ink-3);
-}
-.timelineEventBody > p {
-  margin: 4px 0 0;
-  color: var(--m-ink-2);
-  font-size: var(--text-xs);
-  line-height: 1.55;
-}
-
-.timelineEmpty { max-width: 220px; gap: 12px; }
-.timelineEmpty span {
-  width: 44px;
-  height: 44px;
-  background: var(--m-surface);
-  color: var(--m-ink-3);
-  font-size: var(--text-xl);
-}
-.timelineEmpty p { font-size: var(--text-sm); line-height: 1.6; color: var(--m-ink-2); }
-
-.timelineFooter {
-  border-top: 1px solid var(--m-line);
-  background: var(--m-surface);
-  color: var(--m-ink-3);
-  font-size: var(--text-xs);
-  line-height: 1.5;
-  padding: 12px 20px 14px;
+.primaryButton::before { transition: none; }
 }
 
 /* An approval is the one thing in the panel you are asked to act on, so it
@@ -1484,25 +708,6 @@ select { border-radius: var(--m-r-field); }
 .elicitationTextForm { gap: 8px; margin-top: 9px; }
 .decisionRecorded { color: var(--m-ink-2); font-size: var(--text-xs); margin-top: 9px; }
 .approvalBlocked > p { color: var(--m-ink-2); font-size: var(--text-xs); line-height: 1.55; }
-
-/* The toggle's pressed state was still the indigo from the accent era, which
-   on the purple field read as a third colour. It stays the same glass as its
-   neighbours and simply gets brighter. */
-.timelineToggle.active,
-.timelineToggle.isLive {
-  /* Pressed reads DEEPER than resting, not paler: a lighter glass on a pale
-     passage of the field left the white label with nothing to sit on. */
-  background: rgba(34, 19, 44, 0.56);
-  border: 0;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
-  color: #fff;
-}
-.timelineToggle.active b,
-.timelineToggle.isLive b { background: rgba(255, 255, 255, 0.26); color: #fff; }
-
-/* The rail was a hairline at the panel's own paper value — invisible against
-   it. It carries the eye down the run, so it needs to be seen. */
-.timelineEvent::before { background: #d6cfc2; }
 
 /* ═══════════════════════════════════════════════════════════════════════
    LAYOUT REPAIRS
@@ -1578,449 +783,22 @@ select { border-radius: var(--m-r-field); }
   border: 0;
 }
 .tierTag { background: #f2e4f8; border-color: #e2ccec; color: #773d92; }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   THE MARK
-
-   It is the companion's bead now, so it animates the way the bead does:
-   the film turns inside a still body rather than the whole logo pulsing.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-.metisMark { display: block; overflow: visible; }
-.metisMark .metisBeadFilm { transform-origin: 50% 50%; }
-/* The root breathe from the previous mark is retired — a logo that shrinks
-   and fades to 55% every 2.4s reads as a loading state, not as life. */
-.metisMarkAnimated { animation: none; }
-.metisMarkAnimated .metisBeadFilm { animation: metisBeadTurn 7s linear infinite; }
 @keyframes metisBeadTurn { to { transform: rotate(360deg); } }
-
-@media (prefers-reduced-motion: reduce) {
-  .metisMarkAnimated .metisBeadFilm { animation: none; }
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   REFINEMENT PASS — measured off cohere.com, second sitting.
-
-   The first pass took the purple hero and the sliced button. This one takes
-   the rest of their palette, which turns out to be where the restraint
-   lives: two ink tones, one deep green, one coral, and two pale surfaces
-   that do all the "this is selected" work without a saturated fill.
-
-   Read out of their own stylesheet and off the painted page:
-     --volcanic  #212121   ink
-     --marble    #fafafa   paper
-     --green     #39594d   deep, desaturated — their signature
-     --coral     #ff7759   the one warm accent
-     #f0dff3               pale lavender surface
-     #e5f4ef               pale mint surface
-     #75758a               lavender-grey, for secondary type
-     #00754e               green ink, for text on mint
-   ═══════════════════════════════════════════════════════════════════════ */
-
-/* tokens live in tokens.css */
-
-/* ── 1 · The colour stops at the top ─────────────────────────────────────
-   The sheet used to dissolve at BOTH ends, which put a purple wash under
-   the composer — the brightest thing on screen sitting under the thing you
-   are typing into. It now runs solid to the foot, so colour survives only
-   as the band behind the header. */
-.chatWorkspace:not(.isEmpty) .paperSheet {
-  -webkit-mask-image: linear-gradient(to bottom,
-    transparent 0, rgba(0, 0, 0, 0.5) 62px, #000 116px, #000 100%);
-  mask-image: linear-gradient(to bottom,
-    transparent 0, rgba(0, 0, 0, 0.5) 62px, #000 116px, #000 100%);
-}
-.chatWorkspace.hasBanner:not(.isEmpty) .paperSheet {
-  -webkit-mask-image: linear-gradient(to bottom,
-    transparent 0, rgba(0, 0, 0, 0.5) 118px, #000 176px, #000 100%);
-  mask-image: linear-gradient(to bottom,
-    transparent 0, rgba(0, 0, 0, 0.5) 118px, #000 176px, #000 100%);
-}
-/* And what is left of it is quieter. The welcome screen is untouched — the
-   full-strength field is the front door, and only the reading surface had
-   the problem. */
-.chatWorkspace:not(.isEmpty) .conversationPane { background: var(--m-purple-quiet); }
-.chatWorkspace:not(.isEmpty) .atmos { opacity: 0.5; }
-.chatWorkspace:not(.isEmpty) .atmos::after {
-  background:
-    radial-gradient(46% 40% at 42% 30%, rgba(205, 182, 223, 0.9) 0%,
-      rgba(205, 182, 223, 0.6) 46%, rgba(205, 182, 223, 0) 100%),
-    linear-gradient(200deg, rgba(163, 121, 206, 0.2), rgba(205, 182, 223, 0.08) 60%,
-      rgba(255, 119, 89, 0.05));
-}
-.chatWorkspace:not(.isEmpty) .chatHeader::before {
-  background: linear-gradient(to bottom,
-    rgba(52, 28, 66, 0.3) 0%, rgba(52, 28, 66, 0.17) 58%, rgba(52, 28, 66, 0) 100%);
-}
-/* The foot is paper now, so everything standing on it takes ink. These were
-   white for a wash that is no longer there. */
-.chatWorkspace:not(.isEmpty) .composerHint,
-.chatWorkspace:not(.isEmpty) .composerDisclaimer { color: var(--m-ink-3); }
-.chatWorkspace:not(.isEmpty) .composer {
-  box-shadow: 0 1px 2px rgba(33, 31, 29, 0.04), 0 14px 34px -20px rgba(33, 31, 29, 0.3),
-    inset 0 0 0 1px var(--m-line);
-}
-.chatWorkspace:not(.isEmpty) .composer:focus-within {
-  box-shadow: 0 0 0 3px rgba(194, 156, 224, 0.26), 0 14px 34px -20px rgba(33, 31, 29, 0.32),
-    inset 0 0 0 1px var(--m-lav-edge);
-}
-/* Content no longer has to dissolve into colour at the foot, only clear the
-   composer. A shorter ramp means less of the last line is faded while you
-   are reading it. */
-.chatWorkspace:not(.isEmpty) .messageViewport {
-  -webkit-mask-image: linear-gradient(to bottom,
-    transparent 0, #000 48px, #000 calc(100% - 12px), transparent 100%);
-  mask-image: linear-gradient(to bottom,
-    transparent 0, #000 48px, #000 calc(100% - 12px), transparent 100%);
-}
-
-/* ── 2 · The companion perches ON the composer's corner ──────────────────
-   Not inside the box and not beside it: astride the top-right corner, half
-   in and half out, the way a creature sits on the edge of the desk you are
-   writing at. No halo, no plate, no background — the bead's own body and
-   shadow are the whole rendering, and the mood shows in its colour and
-   tempo, which is the point of having a creature instead of an icon. */
-.composer { position: relative; }
-.companionPerch {
-  align-items: center;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-  position: absolute;
-  right: -12px;
-  top: -16px;
-  z-index: 4;
-}
-.companionPerch .companion { flex: 0 0 38px; height: 38px; margin: 0; width: 38px; }
-/* Only the inner half of the bead hangs over the paper, so the text needs
-   far less clearance than a bead parked fully inside did. */
-.composer textarea { padding-right: 26px; }
-/* Perched, it can afford to be livelier than the hero bead: a faster
-   breath, a faster film, and a settle-bob when its mood changes. */
-.companionPerch .pearlBody { animation-duration: 5.5s; }
-.companionPerch .pearlFilmInk { animation-duration: 9s; }
-.companionPerch .companion { animation: mPerchSettle 480ms var(--m-ease); }
 @keyframes mPerchSettle {
   0% { transform: translateY(-4px) scale(0.94); }
   60% { transform: translateY(1px) scale(1.03); }
   100% { transform: translateY(0) scale(1); }
 }
-
-/* ── 3 · No avatar on your own messages ──────────────────────────────────
-   Yours were the only messages with an avatar that told you nothing, and it
-   cost a 29px gutter on every one of them. Metis keeps its mark: that one
-   is the thing that animates while an answer streams. */
-.chatMessage.message-user { grid-template-columns: minmax(0, 1fr); }
-.chatMessage.message-user .compactRunActivity { grid-column: 1; }
-
-/* ── 4 · What you can do to a message ────────────────────────────────────
-   Copy on everything, Edit on yours, Retry on Metis's. Hidden until the
-   message is hovered or something inside it has focus, so a long thread
-   does not read as a wall of buttons. */
-.messageActions {
-  display: flex;
-  gap: 2px;
-  margin-top: 7px;
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--m-ease);
-}
-.chatMessage:hover .messageActions,
-.messageActions:focus-within { opacity: 1; }
-.messageActions button {
-  background: none;
-  border: 0;
-  border-radius: var(--radius-control);
-  color: var(--m-ink-3);
-  cursor: pointer;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  padding: 4px 8px;
-  text-transform: uppercase;
-  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
-}
-.messageActions button:hover:not(:disabled) { background: var(--m-surface); color: var(--m-ink); }
-.messageActions button:disabled { cursor: default; opacity: 0.4; }
 /* Touch has no hover, so on a coarse pointer they are simply always there. */
 @media (hover: none) {
   .messageActions { opacity: 1; }
 }
-
-.messageEditor { margin-top: 6px; }
-.messageEditor textarea {
-  background: var(--m-paper-lift);
-  border: 0;
-  border-radius: var(--radius-card);
-  box-shadow: inset 0 0 0 1px var(--m-lav-edge), 0 0 0 3px rgba(194, 156, 224, 0.2);
-  color: var(--m-ink);
-  display: block;
-  font: inherit;
-  font-size: var(--text-base);
-  line-height: 1.66;
-  min-height: 86px;
-  padding: 12px 14px;
-  resize: vertical;
-  width: 100%;
-}
-.messageEditor textarea:focus { outline: none; }
-.messageEditorActions {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-.messageEditorActions small {
-  color: var(--m-ink-3);
-  flex: 1;
-  font-size: var(--text-xs);
-  line-height: 1.4;
-}
-.chatMessage.isEditing .messageBody { background: none; box-shadow: none; padding: 0; }
-
-/* ── 5 · The step indicator, unboxed ─────────────────────────────────────
-   It was a bordered glass card with its own shadow, floating over a page
-   that already had four. Now it is type on the page with one living shape
-   beside it: no border, no fill until you hover it, and the blob is a real
-   morphing body rather than four dots taking turns. */
-.compactRunActivity {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  animation: none;
-  background: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  gap: 12px;
-  min-height: 40px;
-  min-width: 0;
-  padding: 2px 0;
-  transition: none;
-}
-/* Never a box: not at rest, not on hover, not while live. The blob is the
-   living part; the words are ink on the page like every other sentence.
-   Hover affordance is the label underlining, the way links earn a click. */
-.compactRunActivity:hover {
-  background: none;
-  border: 0;
-  box-shadow: none;
-  transform: none;
-}
-.compactRunActivity:hover .compactActivityCopy strong {
-  text-decoration: underline;
-  text-decoration-color: var(--m-ink-3);
-  text-underline-offset: 3px;
-}
-/* The pearl replaces the hand-rolled blob: one creature everywhere in the
-   app, and its film is contained by its own mask — no halo spilling past
-   the silhouette, no colour wheel reading as a flash. The pearl is the only
-   living part of this row; nothing here may animate a background. */
-.compactActivityPearl {
-  align-self: center;
-  flex: 0 0 auto;
-  margin: 0 2px 3px 0;
-}
-.compactActivityPearl .pearlShadow { bottom: -7px; height: 8px; }
-/* Two lines, not one row: the label is the sentence and the count is the
-   footnote under it. And in ink — these were white, for a dark glass card
-   that no longer exists. */
-.compactActivityCopy {
-  align-items: flex-start;
-  display: grid;
-  gap: 1px;
-}
-.compactActivityCopy strong {
-  animation: none;
-  color: var(--m-ink);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  line-height: 1.4;
-  /* The stage line is the row's point — it wraps, it never ellipsizes. */
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-}
-.compactActivityCopy small {
-  color: var(--m-ink-3);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-.compactActivityChevron { color: var(--m-ink-3); }
-
-/* The pre-answer line gets the same treatment: it is a sentence on the
-   page, breathing, rather than a grey label sitting still. */
-.workingText {
-  animation: mWorkingBreathe 2.6s ease-in-out infinite;
-  color: var(--m-ink-3);
-  font-size: var(--text-base);
-}
 @keyframes mWorkingBreathe { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
-
-/* ── 6 · Following, or not ───────────────────────────────────────────────
-   The pill only exists while you are away from the foot, so it never
-   overlaps a thread you are already at the bottom of. */
-.jumpToLatest {
-  align-items: center;
-  align-self: center;
-  animation: mJumpIn var(--motion-base) var(--m-ease);
-  background: var(--m-ink-btn);
-  border: 0;
-  border-radius: 999px;
-  box-shadow: 0 8px 22px -10px rgba(33, 31, 29, 0.6);
-  color: #fbf8f2;
-  cursor: pointer;
-  display: inline-flex;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  gap: 6px;
-  letter-spacing: 0.02em;
-  margin: 0 auto 8px;
-  padding: 7px 14px;
-  text-transform: uppercase;
-}
-.jumpToLatest:hover { background: var(--m-volcanic); }
 @keyframes mJumpIn { from { opacity: 0; transform: translateY(6px); } }
-
-.queuedMessage {
-  align-items: center;
-  background: var(--m-lav-surface);
-  border-radius: var(--radius-card);
-  display: flex;
-  gap: 9px;
-  margin-bottom: 8px;
-  padding: 8px 10px 8px 12px;
-}
-.queuedMessage p {
-  color: var(--m-ink-2);
-  display: flex;
-  flex: 1;
-  font-size: var(--text-sm);
-  gap: 8px;
-  margin: 0;
-  min-width: 0;
-}
-.queuedMessage p strong {
-  color: var(--m-quartz);
-  flex: 0 0 auto;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-.queuedMessage p { overflow: hidden; }
-.queuedMessage p::after { content: ""; }
-.queuedMessage button {
-  background: none;
-  border: 0;
-  border-radius: var(--radius-control);
-  color: var(--m-ink-2);
-  cursor: pointer;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  padding: 4px 8px;
-  text-transform: uppercase;
-}
-.queuedMessage button:hover { background: rgba(33, 31, 29, 0.07); color: var(--m-ink); }
-.queuedPulse {
-  animation: mQueuePulse 1.9s ease-in-out infinite;
-  background: var(--m-purple);
-  border-radius: 50%;
-  flex: 0 0 7px;
-  height: 7px;
-}
 @keyframes mQueuePulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
-
-/* ── 7 · The mic ─────────────────────────────────────────────────────────
-   The ring is the live input level, so the control proves it is hearing you
-   before you commit to a sentence. --mic-level is written by the hook. */
-.micButton {
-  align-items: center;
-  background: none;
-  border: 0;
-  border-radius: 999px;
-  color: var(--m-ink-2);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: var(--text-xs);
-  gap: 5px;
-  height: 28px;
-  padding: 0 11px 0 8px;
-  position: relative;
-  transition: background var(--motion-base) ease, color var(--motion-base) ease;
-}
-.micButton svg { height: 15px; width: 15px; fill: currentColor; }
-.micButton:hover:not(:disabled) { background: var(--m-surface); color: var(--m-ink); }
-.micButton:disabled { cursor: default; opacity: 0.55; }
-.micRing {
-  border-radius: 999px;
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-}
-.micButton.state-recording { background: rgba(255, 119, 89, 0.14); color: #b8341a; }
-.micButton.state-recording .micRing {
-  box-shadow: 0 0 0 calc(1px + var(--mic-level, 0) * 7px) rgba(255, 119, 89, 0.3);
-  transition: box-shadow var(--motion-fast) linear;
-}
-.micButton.state-transcribing { background: var(--m-lav-surface); color: #6b4b86; }
-.micButton.state-transcribing .micRing {
-  animation: mMicWait 1.4s ease-in-out infinite;
-  box-shadow: 0 0 0 2px rgba(194, 156, 224, 0.45);
-}
 @keyframes mMicWait { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
-
-.sendButton.isQueueing {
-  background: var(--m-surface);
-  box-shadow: inset 0 0 0 1px var(--m-line);
-  color: var(--m-ink-2);
-}
-.sendButton.isQueueing:hover:not(:disabled) { background: var(--m-lav-surface); color: var(--m-ink); }
-
-/* ── 8 · Selected things are lavender and mint, not blue ─────────────────
-   The blue was #4c6ee6, which IS one of their colours — it appears four
-   times on their whole front page, none of them a selected state. What
-   they actually use to say "this one" is a pale surface with dark type,
-   and it sits beside the purple field instead of arguing with it. */
-.contextChip {
-  background: var(--m-lav-surface);
-  border: 1px solid var(--m-lav-edge);
-  border-radius: 999px;
-  color: #4e4b66;
-  font-weight: 500;
-}
-.contextChip[data-kind="project"] {
-  background: var(--m-mint-surface);
-  border-color: var(--m-mint-edge);
-  color: var(--m-green-ink);
-}
-.contextChip > button:hover:not(:disabled) { background: rgba(33, 31, 29, 0.08); }
-
-/* The tracker-update action sits in the chips row but is a verb, not a
-   context tag: seat it at the pills' height and weight without the pill fill. */
-.trackerChipAction {
-  align-self: center;
-  font-size: var(--text-xs);
-  font-weight: 600;
-}
-.trackerChipAction:disabled { opacity: 0.55; cursor: default; }
-
-/* Everywhere else the accent blue was standing in for "chosen". */
 .modelControlChoice button.selected,
-.pickerOption[aria-selected="true"],
-.knowledgeScopeSwitch button.selected {
-  background: var(--m-lav-surface);
-  border-color: var(--m-lav-edge);
-  color: var(--m-ink);
-}
-.knowledgeScopeSwitch button.notionSelected {
-  background: var(--m-mint-surface);
-  border-color: var(--m-mint-edge);
-  color: var(--m-green-ink);
-}
-.knowledgeScopeSwitch button.webSelected {
+.pickerOption[aria-selected="true"] {
   background: var(--m-lav-surface);
   border-color: var(--m-lav-edge);
   color: var(--m-ink);
@@ -2031,103 +809,6 @@ select { border-radius: var(--m-r-field); }
   color: #f4f7f5;
 }
 .primaryButton:hover:not(:disabled) { background: #2f4a40; border-color: #2f4a40; }
-
-/* ── 9 · The activity drawer, unboxed ────────────────────────────────────
-   It read as a system console bolted to the side of a reading app: a hard
-   header band, a card per event, a rule under everything. It is a margin
-   note now — one hairline rail, quiet mono labels, and nothing boxed except
-   the approvals, which are the only things you are asked to act on. */
-.runDrawer { background: var(--m-paper); border-left: 1px solid var(--m-line); }
-.timelineHeader {
-  align-items: baseline;
-  background: none;
-  border-bottom: 0;
-  color: var(--m-ink);
-  min-height: 0;
-  padding: 22px 20px 12px 24px;
-}
-.timelineHeader h2 {
-  color: var(--m-ink);
-  font-size: var(--text-body);
-  font-weight: 400;
-  letter-spacing: -0.02em;
-}
-.timelineHeader strong { color: var(--m-ink); }
-.timelineHeader .eyebrow,
-.timelineHeader small {
-  color: var(--m-ink-3);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-.timelineHeader .eyebrow::before { display: none; }
-.timelineHeader span { color: var(--m-ink-3); }
-.runDrawerClose { color: var(--m-ink-3); }
-.runDrawerClose:hover { color: var(--m-ink); }
-.streamState {
-  background: none;
-  border: 0;
-  color: var(--m-ink-3);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  padding: 0;
-}
-.streamState.stream-live { background: none; border: 0; color: var(--m-green-ink); }
-.streamState i { height: 6px; width: 6px; }
-
-.timelineList { padding: 6px 20px 24px 24px; }
-.timelineEvent { gap: 11px; grid-template-columns: 9px 1fr; padding-bottom: 17px; }
-/* One continuous hairline behind every node, rather than a segment drawn
-   per event that stops and restarts at each gap. */
-.timelineEvent::before { background: var(--m-line); left: 4px; top: 9px; width: 1px; }
-.timelineNode {
-  background: var(--m-paper);
-  border: 0;
-  box-shadow: inset 0 0 0 1.5px #c3bcae;
-  height: 9px;
-  margin-top: 4px;
-  width: 9px;
-}
-.tone-success .timelineNode { box-shadow: inset 0 0 0 1.5px var(--m-green-ink); }
-.tone-model .timelineNode { box-shadow: inset 0 0 0 1.5px #b48ad0; }
-.tone-attention .timelineNode { background: var(--m-coral-soft); box-shadow: inset 0 0 0 1.5px var(--m-coral); }
-.tone-danger .timelineNode { background: #c0492f; box-shadow: inset 0 0 0 1.5px #c0492f; }
-.timelineEventTitle strong {
-  color: var(--m-ink);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  letter-spacing: 0;
-}
-.timelineEventTitle time {
-  color: var(--m-ink-3);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-}
-.timelineEventBody > p {
-  color: var(--m-ink-2);
-  font-size: var(--text-xs);
-  line-height: 1.55;
-  margin: 2px 0 0;
-}
-.timelineEmpty { color: var(--m-ink-3); max-width: 210px; }
-.timelineEmpty span {
-  background: var(--m-surface);
-  color: var(--m-ink-3);
-  font-size: var(--text-body);
-  height: 34px;
-  width: 34px;
-}
-.timelineEmpty p { font-size: var(--text-xs); line-height: 1.6; }
-.timelineFooter {
-  border-top: 1px solid var(--m-line);
-  color: var(--m-ink-3);
-  font-size: var(--text-xs);
-  line-height: 1.55;
-  padding: 11px 20px 12px 24px;
-}
 /* The approvals stay a card. They are the one thing in this panel that is
    a question rather than a record, and they should not read as prose. */
 .approvalCard {
@@ -2144,21 +825,9 @@ select { border-radius: var(--m-r-field); }
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--text-xs);
 }
-.recoveryBanner {
-  background: var(--m-lav-surface);
-  border-bottom: 1px solid var(--m-lav-edge);
-}
 .brandRow { margin-bottom: 16px; }
 .navSignal::before { background: var(--m-coral); }
 .connectionDot.connected { background: var(--m-forest); }
-
-@media (prefers-reduced-motion: reduce) {
-  .compactActivityCore i,
-  .workingText,
-  .queuedPulse,
-  .micButton.state-transcribing .micRing,
-  .jumpToLatest { animation: none; }
-}
 
 /* ═══════════════════════════════════════════════════════════════════════
    THE FRONT DOOR BREATHES — and the sidebar gets its texture back.
@@ -2198,24 +867,11 @@ select { border-radius: var(--m-r-field); }
   38% { transform: rotate(23deg) translate3d(34px, -20px, 0) scale(1.1); border-radius: 60% 40% 46% 54% / 42% 58% 42% 58%; }
   72% { transform: rotate(11deg) translate3d(-16px, -32px, 0) scale(0.94); border-radius: 44% 56% 58% 42% / 60% 40% 60% 40%; }
 }
-.chatWorkspace.isEmpty .cf1 { animation: mDriftOne 47s ease-in-out infinite; }
-.chatWorkspace.isEmpty .cf2 { animation: mDriftTwo 61s ease-in-out infinite; }
-.chatWorkspace.isEmpty .cf3 { animation: mDriftThree 53s ease-in-out infinite; }
-.chatWorkspace.isEmpty .cf4 { animation: mDriftFour 73s ease-in-out infinite; }
 /* The purple pour breathes with them, or the blobs read as objects sliding
    under a fixed gel rather than as one moving field. */
 @keyframes mFieldBreathe {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.88; transform: scale(1.04); }
-}
-.chatWorkspace.isEmpty .atmos::after { animation: mFieldBreathe 39s ease-in-out infinite; }
-
-@media (prefers-reduced-motion: reduce) {
-  .chatWorkspace.isEmpty .cf1,
-  .chatWorkspace.isEmpty .cf2,
-  .chatWorkspace.isEmpty .cf3,
-  .chatWorkspace.isEmpty .cf4,
-  .chatWorkspace.isEmpty .atmos::after { animation: none; }
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -2230,16 +886,6 @@ select { border-radius: var(--m-r-field); }
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
 }
-.chatWorkspace .messageContent,
-.chatWorkspace .reasoningPanel,
-.chatWorkspace .inlineApprovalDock {
-  animation: mMsgIn var(--motion-slow) var(--m-ease) both;
-}
-
-/* An approval surfaced inline where you are reading — capped to a comfortable
-   measure, left in the column, and a touch more present than the drawer's
-   card because it is the live question. */
-.inlineApprovalDock { margin: 12px 0 4px; max-width: 680px; }
 .approvalCard.isInline {
   margin-top: 0;
   padding: 15px 17px;
@@ -2254,12 +900,6 @@ select { border-radius: var(--m-r-field); }
 .customerSectionCard em.sourceWaiting { color: var(--m-coral); font-style: normal; }
 .customerSectionCard em.sourceSaved { color: var(--m-ink-3); font-style: normal; }
 
-@media (prefers-reduced-motion: reduce) {
-  .chatWorkspace .messageContent,
-  .chatWorkspace .reasoningPanel,
-  .chatWorkspace .inlineApprovalDock { animation: none; }
-}
-
 /* A note/action opened from the Today queue flashes a soft ring when you land
    on it, so "open" points your eye at the exact item, not just the tab. */
 @keyframes mDeepLinkFlash {
@@ -2271,21 +911,6 @@ select { border-radius: var(--m-r-field); }
 @media (prefers-reduced-motion: reduce) {
   .isDeepLinked { animation: none; }
 }
-
-/* "＋ Knowledge" on an attached document — a quiet pill beside the file, so a
-   dropped doc can be kept in the knowledge base, not just read for one turn. */
-.attachmentKnowledge {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: var(--m-r-pill);
-  color: var(--m-ink-2);
-  font-size: var(--text-xs);
-  padding: 2px 9px;
-  margin-right: 4px;
-  transition: background-color var(--motion-base) var(--m-ease), color var(--motion-base) var(--m-ease);
-}
-.attachmentKnowledge:hover:not(:disabled) { background: var(--m-surface); color: var(--m-ink); }
-.attachmentKnowledge:disabled { opacity: 0.72; cursor: default; }
 
 /* ═══════════════════════════════════════════════════════════════════════
    Assets — the page fields and the detail drawer, brought onto the matured
@@ -2384,8 +1009,7 @@ select { border-radius: var(--m-r-field); }
 
 .selectField { min-width: 0; }
 .selectMenu,
-.modelControl,
-.headerPickerAnchor { isolation: isolate; }
+.modelControl { isolation: isolate; }
 .selectMenu.isOpen { z-index: 210; }
 /* Several editorial panels use backdrop-filter, which makes each one a new
    stacking context. Lift the containing panel while its menu is open so the
@@ -2554,40 +1178,6 @@ select { border-radius: var(--m-r-field); }
   border-bottom-color: transparent;
   border-radius: var(--radius-card) var(--radius-card) 0 0;
 }
-
-/* Header and composer command menus use the same connected transformation. */
-.headerPickerAnchor:has(> .commandPicker) { z-index: 150; }
-.headerPickerAnchor:has(> .commandPicker) > button {
-  position: relative;
-  z-index: 2;
-  border-color: var(--m-menu-line);
-  border-bottom-color: transparent;
-  border-radius: var(--radius-card) var(--radius-card) 0 0;
-  background: var(--m-menu-surface);
-  color: var(--m-ink);
-  box-shadow: none;
-}
-.headerPickerAnchor > .commandPicker {
-  top: calc(100% - 1px);
-  border: 1px solid var(--m-menu-line);
-  border-radius: var(--radius-card) var(--radius-card) var(--radius-card) 0;
-  background: var(--m-menu-surface);
-  box-shadow: var(--m-menu-shadow);
-  transform-origin: top left;
-  animation: mCommandUnfold var(--motion-base) var(--m-menu-ease);
-}
-.composerScope .headerPickerAnchor:has(> .commandPicker) > button {
-  border-top-color: transparent;
-  border-bottom-color: var(--m-menu-line);
-  border-radius: 0 0 var(--radius-card) var(--radius-card);
-}
-.composerScope .commandPicker {
-  top: auto;
-  bottom: calc(100% - 1px);
-  border-radius: var(--radius-card) var(--radius-card) 0 var(--radius-card);
-  transform-origin: bottom left;
-  animation-name: mCommandUnfoldUp;
-}
 @keyframes mCommandUnfold {
   from { opacity: 0; clip-path: inset(0 0 96% 0 round 18px); transform: scaleX(0.84) translateY(-4px); }
   to { opacity: 1; clip-path: inset(0 0 0 0 round 18px); transform: scaleX(1) translateY(0); }
@@ -2672,7 +1262,6 @@ select { border-radius: var(--m-r-field); }
   animation-duration: 4.8s;
 }
 .projectActivity.isAttention .projectActivityPulse i { animation: none; opacity: .82; }
-.messageList > .projectActivity { width: calc(100% - 46px); margin: 0 0 20px 46px; }
 .projectActivity > button {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto 20px;
@@ -2794,116 +1383,18 @@ select { border-radius: var(--m-r-field); }
    ═══════════════════════════════════════════════════════════════════════ */
 
 .companion { --m-aura: 194, 156, 224; isolation: isolate; }
-.pearlBody { z-index: 2; }
-.pearlShadow { z-index: 0; }
-.pearlAura {
-  position: absolute;
-  inset: -14%;
-  z-index: 1;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(var(--m-aura), .34), rgba(var(--m-aura), 0) 70%);
-  filter: blur(7px);
-  opacity: .52;
-  pointer-events: none;
-  animation: mAuraBreathe 3.8s ease-in-out infinite;
-}
-.pearlSpark {
-  position: absolute;
-  top: -6%;
-  left: 48%;
-  z-index: 3;
-  width: 7%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: rgba(255,255,255,.94);
-  box-shadow: 0 0 9px rgba(var(--m-aura), .95), 0 0 0 1px rgba(255,255,255,.68);
-  opacity: 0;
-  transform-origin: 50% 850%;
-  pointer-events: none;
-}
-.pearlSpark::after {
-  content: "";
-  position: absolute;
-  width: 72%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: rgba(var(--m-aura), .9);
-  transform: translate(220%, 370%);
-}
 .companion[data-mood="listening"] { --m-aura: 130, 178, 235; }
 .companion[data-mood="thinking"] { --m-aura: 209, 142, 226; }
 .companion[data-mood="done"] { --m-aura: 79, 194, 158; }
 .companion[data-mood="trouble"] { --m-aura: 255, 119, 89; }
-.companion[data-mood="done"] .pearlAura { animation: mAuraDone 1.5s var(--m-menu-ease) both; }
-.companion[data-mood="trouble"] .pearlAura { opacity: .7; animation-duration: 1.25s; }
-.companion[data-energy="expressive"][data-mood="listening"] .pearlSpark,
-.companion[data-energy="expressive"][data-mood="thinking"] .pearlSpark,
-.companion[data-energy="playful"] .pearlSpark { opacity: .9; animation: mSparkOrbit 4.2s linear infinite; }
-.companion[data-energy="calm"] .pearlAura { opacity: .28; animation-duration: 7s; }
-.companion[data-energy="calm"] .pearlBody { animation-duration: 12s; }
-.companion[data-energy="calm"] .pearlFilmInk { animation-duration: 22s; }
-.companion[data-energy="calm"] .pearlSpark { display: none; }
-.companion[data-energy="playful"] .pearlAura { inset: -24%; opacity: .72; animation-duration: 2.2s; }
-.companion[data-energy="playful"] .pearlBody { animation-duration: 3.5s; }
-.companion[data-energy="playful"] .pearlFilmInk { animation-duration: 6.5s; }
-.companion[data-energy="playful"][data-mood="thinking"] .pearlBody { animation-duration: 1.35s; }
-.companion.isSmall .pearlAura,
-.companion.isSmall .pearlSpark { display: none; }
 @keyframes mAuraBreathe { 0%, 100% { opacity: .32; transform: scale(.88); } 50% { opacity: .66; transform: scale(1.08); } }
 @keyframes mAuraDone { 0% { opacity: .2; transform: scale(.8); } 45% { opacity: .85; transform: scale(1.3); } 100% { opacity: .42; transform: scale(1); } }
 @keyframes mSparkOrbit { to { transform: rotate(360deg); } }
-
-.companionEnergyGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
-.companionEnergyGrid > button {
-  position: relative;
-  display: grid;
-  grid-template-columns: 54px minmax(0, 1fr) 16px;
-  align-items: center;
-  gap: 11px;
-  min-height: 82px;
-  padding: 12px;
-  border: 1px solid var(--m-line);
-  border-radius: var(--radius-card);
-  background: var(--m-paper-lift);
-  color: var(--m-ink);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  transition: border-color var(--motion-base) ease, background-color var(--motion-base) ease, transform var(--motion-base) var(--m-menu-ease);
-}
-.companionEnergyGrid > button:hover { border-color: #c6b8d6; transform: translateY(-1px); }
-.companionEnergyGrid > button.selected { border-color: #9f80b3; background: rgba(194, 156, 224, .1); box-shadow: 0 0 0 3px rgba(194, 156, 224, .12); }
-.companionEnergyGrid > button > span:nth-child(2) { display: grid; gap: 4px; }
-.companionEnergyGrid strong { font-size: var(--text-sm); font-weight: 600; }
-.companionEnergyGrid small { color: var(--m-ink-2); font-size: var(--text-xs); line-height: 1.4; }
-.companionEnergyGrid > button > i { width: 12px; height: 12px; border: 1px solid #a59c90; border-radius: 50%; }
-.companionEnergyGrid > button.selected > i { border: 3px solid var(--m-paper-lift); background: #87659d; box-shadow: 0 0 0 1px #87659d; }
-.companionEnergyPreview { display: grid; place-items: center; min-height: 54px; }
 @keyframes mRunDot { 50% { box-shadow: 0 0 0 4px rgba(159,117,184,.16); transform: scale(.82); } }
 
-/* Audit repair: entrance animation is decorative, never a gate. In embedded
-   browsers or background tabs it may be throttled before its first frame; the
-   content must remain legible regardless. */
-.welcomeState > .companion,
-.welcomeState > .eyebrow,
-.welcomeState > h1,
-.welcomeState > p,
-.welcomeState > .customerSnippet,
-.welcomeState > .trustLine {
-  opacity: 1;
-  transform: none;
-  animation: none;
-}
-.welcomeState h1,
-.welcomeState > p,
-.welcomeState > .eyebrow { text-shadow: 0 2px 18px rgba(52, 28, 66, .18); }
-
 @media (max-width: 1080px) {
-  .companionEnergyGrid { grid-template-columns: 1fr; }
-  .companionEnergyGrid > button { min-height: 72px; }
   .sourceAddForm .selectField { flex-basis: 100%; }
   .projectActivityHeading small { white-space: normal; }
-  .messageList > .projectActivity { width: 100%; margin-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2912,105 +1403,13 @@ select { border-radius: var(--m-r-field); }
   .modelControlPanel,
   .modelControlRoleRungs,
   .projectActivityBody { animation: none !important; }
-  .selectOption,
-  .commandPickerOption,
-  .projectActivityChevron,
-  .companionEnergyGrid > button { transition: none !important; }
+.selectOption,
+.commandPickerOption,
+.projectActivityChevron { transition: none !important; }
 .projectActivityPulse::before,
 .projectActivityPulse i,
-.projectActivityNode,
-.pearlAura,
-.pearlSpark { animation: none !important; }
+.projectActivityNode { animation: none !important; }
 }
-
-/* The composer's first menu is a decision, not a searchable command palette.
-   Two generous rows explain the boundary before opening the detailed picker. */
-.headerPickerAnchor:has(> .composerContextMenu) { z-index: 155; }
-.composerScope .headerPickerAnchor:has(> .composerContextMenu) > .composerAddContext {
-  position: relative;
-  z-index: 2;
-  border-color: var(--m-menu-line);
-  border-top-color: transparent;
-  border-radius: 0 0 var(--radius-card) var(--radius-card);
-  background: var(--m-menu-surface);
-  color: var(--m-ink);
-  box-shadow: none;
-}
-.composerContextMenu {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% - 1px);
-  width: min(390px, calc(100vw - 28px));
-  overflow: hidden;
-  border: 1px solid var(--m-menu-line);
-  border-radius: var(--radius-card) var(--radius-card) var(--radius-card) 0;
-  background: var(--m-menu-surface);
-  color: var(--m-ink);
-  box-shadow: var(--m-menu-shadow);
-  transform-origin: bottom left;
-  animation: mContextMenuIn var(--motion-base) var(--m-menu-ease);
-  z-index: 1;
-}
-.composerContextMenu > header { padding: 17px 18px 13px; border-bottom: 1px solid var(--m-line); }
-.composerContextMenu > header .eyebrow { color: #87659d; }
-.composerContextMenu > header strong { display: block; margin-top: 5px; font-size: var(--text-lg); font-weight: 570; letter-spacing: -0.018em; }
-.composerContextMenu > header p { margin: 5px 0 0; color: var(--m-ink-2); font-size: var(--text-xs); line-height: 1.45; }
-.composerContextChoices { display: grid; gap: 4px; padding: 7px; }
-.composerContextChoices > button {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto 14px;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 66px;
-  padding: 9px 10px;
-  border: 0;
-  border-radius: var(--radius-card);
-  background: transparent;
-  color: var(--m-ink);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  transition: background-color var(--motion-fast) ease, transform var(--motion-base) var(--m-menu-ease);
-  animation: mContextChoiceIn var(--motion-slow) var(--m-menu-ease) both;
-}
-.composerContextChoices > button:nth-child(2) { animation-delay: 35ms; }
-.composerContextChoices > button:hover,
-.composerContextChoices > button:focus-visible { background: var(--m-surface); transform: translateX(3px); outline: 0; }
-.composerContextChoices > button > i {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-control);
-  background: rgba(194, 156, 224, 0.14);
-  color: #76558b;
-  font-size: var(--text-lg);
-  font-style: normal;
-}
-.composerContextChoices > button:nth-child(2) > i { background: rgba(255, 119, 89, 0.12); color: #ad503a; }
-.composerContextChoices > button > span { display: grid; gap: 3px; min-width: 0; }
-.composerContextChoices strong { font-size: var(--text-sm); font-weight: 620; }
-.composerContextChoices small { color: var(--m-ink-2); font-size: var(--text-xs); line-height: 1.35; }
-.composerContextChoices b {
-  min-width: 22px;
-  padding: 4px 6px;
-  border-radius: 999px;
-  background: var(--m-paper-lift);
-  color: var(--m-ink-3);
-  font: 600 9px/1 var(--font-mono, ui-monospace, monospace);
-  text-align: center;
-}
-.composerContextChoices em { color: #87659d; font-size: var(--text-md); font-style: normal; transition: transform var(--motion-base) var(--m-menu-ease); }
-.composerContextChoices > button:hover em { transform: translateX(2px); }
-.composerContextMenu > footer {
-  padding: 9px 17px 10px;
-  border-top: 1px solid var(--m-line);
-  background: rgba(237, 233, 225, 0.5);
-  color: var(--m-ink-3);
-  font: 500 9px/1.3 var(--font-mono, ui-monospace, monospace);
-}
-.composerContextEmpty { margin: 0; padding: 14px 11px; color: var(--m-ink-2); font-size: var(--text-xs); }
 @keyframes mContextMenuIn {
   from { opacity: 0; transform: translateY(8px) scale(0.965); }
   to { opacity: 1; transform: translateY(0) scale(1); }
@@ -3108,21 +1507,11 @@ select { border-radius: var(--m-r-field); }
   to { opacity: 1; clip-path: none; transform: translateY(0) scale(1); }
 }
 
-@media (max-width: 720px) {
-  .composerContextMenu { width: min(360px, calc(100vw - 22px)); }
-  .composerContextMenu > footer { display: none; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .composerContextMenu,
-  .composerContextChoices > button,
-  .modelControlAdvanced { animation: none !important; }
-.composerContextChoices > button,
-.composerContextChoices em,
+.modelControlAdvanced { animation: none !important; }
 .modelControlRoute,
 .modelControlRoute::before,
 .modelControlAdvancedToggle b { transition: none !important; }
-.composerContextChoices > button:hover,
 .modelControlRoute:hover:not(:disabled) { transform: none; }
 }
 
@@ -3263,23 +1652,6 @@ select { border-radius: var(--m-r-field); }
 }
 .voiceReceipt.is-undone .voiceReceiptKind { color: var(--m-ink-3); }
 .voiceReceipt.is-failed { background: rgba(255, 119, 89, 0.12); border-color: var(--m-coral-soft, #ffad9b); }
-
-/* Voice is a conversation mode, not an accessory panel. The canvas keeps the
-   same lavender room as chat, but replaces the welcome/message layer with one
-   centered instrument. The orb is drawn entirely from the Metis palette and
-   responds to the actual session state rather than playing a generic loop. */
-.chatWorkspace.voiceMode .paperSheet { opacity: 0; }
-.chatWorkspace.voiceMode .messageViewport { padding-bottom: 8px; }
-.chatWorkspace.voiceMode .composerDock { padding-top: 8px; }
-.voiceCanvas {
-  align-items: center;
-  display: flex;
-  justify-content: center;
-  min-height: 100%;
-  padding: 76px 34px 24px;
-  position: relative;
-  z-index: 2;
-}
 .voiceStage {
   background: transparent;
   border: 0;
@@ -3416,50 +1788,7 @@ select { border-radius: var(--m-r-field); }
 .voiceDisclosure .voiceSetupList, .voiceUnavailable .voiceSetupList { text-align: left; }
 .voiceDisclosure .voiceSetupLink, .voiceUnavailable .voiceSetupLink { align-self: center; }
 
-/* The bottom control is a real mode switch. In Voice the ordinary context,
-   attachment and dictation furniture gets out of the way, leaving a compact
-   text fallback directly beneath the orb. */
-.conversationModeSwitch {
-  align-items: center;
-  background: rgba(237,233,225,.84);
-  border: 1px solid var(--m-line);
-  border-radius: 999px;
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-}
-.conversationModeSwitch button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 999px;
-  color: var(--m-ink-2);
-  display: inline-flex;
-  font-size: var(--text-xs);
-  gap: 5px;
-  height: 23px;
-  padding: 0 9px;
-}
-.conversationModeSwitch button.selected { background: var(--m-paper-lift); box-shadow: 0 1px 4px rgba(33,31,29,.12); color: var(--m-ink); }
-.modeVoiceDot { background: var(--m-bloom); border-radius: 50%; height: 7px; width: 7px; }
-.voiceMode .voiceTextComposer {
-  backdrop-filter: blur(22px);
-  background: rgba(252,250,246,.82);
-  border-color: rgba(255,255,255,.5);
-  box-shadow: 0 16px 50px rgba(47,28,59,.18), inset 0 1px 0 rgba(255,255,255,.72);
-  max-width: 650px;
-  min-height: 78px;
-}
-.voiceMode .voiceTextComposer textarea { min-height: 24px; padding-bottom: 9px; padding-top: 8px; }
-.voiceMode .voiceTextComposer .composerScope,
-.voiceMode .voiceTextComposer .attachButton,
-.voiceMode .voiceTextComposer .micButton,
-.voiceMode .voiceTextComposer .knowledgeScopeSwitch,
-.voiceMode .voiceTextComposer .composerHint { display: none; }
-.voiceMode .composerDisclaimer { color: rgba(255,255,255,.72); }
-
 @media (max-width: 720px) {
-  .voiceCanvas { padding: 70px 16px 18px; }
   .voiceStageHeader { align-items: stretch; flex-direction: column; gap: 10px; }
   .voiceModelControl { justify-items: stretch; min-width: 0; }
   .voiceModelControl > span { text-align: left; }
@@ -3907,7 +2236,6 @@ select { border-radius: var(--m-r-field); }
   overflow: hidden;
   position: relative;
 }
-.interviewLive .atmos { display: none; }
 .interviewLiveInner {
   display: flex;
   flex-direction: column;
@@ -4443,20 +2771,14 @@ button,
     box-shadow var(--ui-motion-base) var(--ui-ease-out),
     transform var(--ui-motion-base) var(--ui-ease-out);
 }
-
-/* Floating controls form one coherent glass family. */
-.chatHeader,
 .modelControlPanel,
 .selectMenuPopover,
 .commandPicker,
-.composerContextMenu,
 .todayBatchBar {
   -webkit-backdrop-filter: saturate(165%) blur(24px);
   backdrop-filter: saturate(165%) blur(24px);
 }
-
 .modelControlTrigger,
-.timelineToggle,
 .workspacePage .secondaryButton,
 .todayRailChip,
 .todayArrow {
@@ -4466,9 +2788,7 @@ button,
     inset 0 1px 0 rgba(255, 255, 255, 0.72),
     0 5px 15px rgba(45, 39, 34, 0.04);
 }
-
 .modelControlTrigger:hover,
-.timelineToggle:hover:not(:disabled),
 .workspacePage .secondaryButton:hover:not(:disabled),
 .todayRailChip:hover,
 .todayArrow:hover:not(:disabled) {
@@ -4485,96 +2805,6 @@ button,
     linear-gradient(145deg, rgba(255, 255, 255, 0.42), transparent 42%);
 }
 
-/* Chat is one continuous canvas. Metis colour now lives in the atmosphere and
-   companion instead of a separate purple header slab, giving the workspace
-   the quiet, seamless feel of a native coding conversation. */
-.chatWorkspace.isEmpty .conversationPane,
-.chatWorkspace:not(.isEmpty) .conversationPane {
-  background:
-    radial-gradient(76% 58% at 42% 8%, rgba(196, 163, 218, 0.14), transparent 70%),
-    radial-gradient(44% 45% at 100% 94%, rgba(255, 128, 104, 0.06), transparent 72%),
-    #f7f4f3;
-}
-
-.chatWorkspace .atmos {
-  opacity: 0.16;
-}
-
-.chatWorkspace .atmos::after,
-.chatWorkspace:not(.isEmpty) .atmos::after {
-  background:
-    radial-gradient(48% 42% at 44% 30%, rgba(196, 163, 218, 0.28), transparent 78%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent 58%);
-}
-
-.chatWorkspace .paperSheet {
-  background: rgba(250, 248, 245, 0.9);
-}
-
-.chatWorkspace .chatHeader {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  background: transparent;
-  border-bottom: 0;
-  box-shadow: none;
-  color: var(--ui-ink);
-}
-
-.chatWorkspace .chatHeader::before { display: none; }
-
-.chatWorkspace .localStatus,
-.chatWorkspace .timelineToggle,
-.chatWorkspace .modelControlTrigger {
-  background: rgba(255, 255, 255, 0.62);
-  border: 1px solid rgba(45, 41, 36, 0.09);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 5px 15px rgba(45, 39, 34, 0.04);
-  color: var(--ui-ink);
-}
-
-.chatWorkspace .localStatus:hover,
-.chatWorkspace .timelineToggle:hover:not(:disabled),
-.chatWorkspace .modelControlTrigger:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(45, 41, 36, 0.14);
-  box-shadow:
-    inset 0 1px 0 #fff,
-    0 8px 20px rgba(45, 39, 34, 0.06);
-  color: var(--ui-ink);
-}
-
-.chatWorkspace .chatTitle strong,
-.chatWorkspace .modelControlTrigger > b {
-  color: var(--ui-ink);
-}
-
-.chatWorkspace .localStatus i {
-  background: var(--ui-positive);
-}
-
-.chatWorkspace.isEmpty .welcomeState > .eyebrow {
-  color: #716a74;
-}
-
-.chatWorkspace.isEmpty .welcomeState h1,
-.chatWorkspace.isEmpty .heroWordmark {
-  background: none;
-  color: #252228;
-  text-shadow: 0 16px 42px rgba(92, 67, 109, 0.1);
-  -webkit-text-fill-color: #252228;
-}
-
-.chatWorkspace.isEmpty .welcomeState > p {
-  color: #625d59;
-  text-shadow: none;
-}
-
-.chatWorkspace.isEmpty .composerHint,
-.chatWorkspace.isEmpty .composerDisclaimer {
-  color: #77716c;
-}
-
 .todaySlide,
 .workbenchPanel,
 .settingsCard,
@@ -4587,10 +2817,6 @@ button,
 }
 
 @media (max-width: 1080px) {
-
-  .chatHeader {
-    padding-left: 68px;
-  }
 
   .todayGridPage {
     padding-top: 68px;
@@ -4652,7 +2878,6 @@ html.metisNativeWindow body {
 .selectPopup,
 .modelControlPanel,
 .commandPicker,
-.composerContextMenu,
 button,
 a {
     animation: none !important;
@@ -4761,19 +2986,6 @@ a {
 }
 
 .todayStudioHero .todayRailChip.isActive .todayRailLabel { color: rgba(255, 250, 243, 0.86); }
-
-.micButton { min-height: 36px; }
-.dictationCancel {
-  background: transparent;
-  border: 0;
-  border-radius: 999px;
-  color: #963f2e;
-  font: inherit;
-  font-size: var(--text-xs);
-  min-height: 36px;
-  padding: 0 10px;
-}
-.dictationCancel:hover { background: rgba(255,128,104,.12); }
 
 /* ── Daily brief player ─────────────────────────────────────────────── */
 

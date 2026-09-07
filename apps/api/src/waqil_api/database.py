@@ -2777,7 +2777,9 @@ class Database:
                 return list(
                     self._connection()
                     .execute(
-                        "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?",
+                        "SELECT * FROM conversations WHERE EXISTS ("
+                        " SELECT 1 FROM messages WHERE messages.conversation_id = conversations.id)"
+                        " ORDER BY updated_at DESC LIMIT ?",
                         (limit,),
                     )
                     .fetchall()
