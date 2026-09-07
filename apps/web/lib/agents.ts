@@ -2,7 +2,8 @@
 // validation, the embed snippet, and the words for a test run. No fetch, no
 // React — everything here is testable with plain assertions.
 
-import type { AgentBrief, AgentStatus, AgentTestsStage, VoiceAgent } from "@/lib/types";
+import type { StatusState } from "@/components/ui/status";
+import type { AgentBrief, AgentStatus, AgentTestResult, AgentTestsStage, VoiceAgent } from "@/lib/types";
 
 /** What the brief form holds: the URLs and notes are free text until parsed. */
 export interface AgentBriefDraft {
@@ -90,4 +91,18 @@ export function testsSummary(agent: Pick<VoiceAgent, "tests" | "tests_stage">): 
   if (stage !== "ready") return "Not run yet";
   const passed = agent.tests.filter((item) => item.status === "passed").length;
   return `${passed} of ${agent.tests.length} passed`;
+}
+
+/** An agent's status in the app's five-word vocabulary. */
+export function agentState(status: AgentStatus): StatusState {
+  if (status === "deployed") return "live";
+  if (status === "failed") return "needs-review";
+  return "ready";
+}
+
+/** A test result in the same vocabulary. */
+export function testState(status: AgentTestResult["status"]): StatusState {
+  if (status === "passed") return "live";
+  if (status === "failed") return "needs-review";
+  return "waiting";
 }

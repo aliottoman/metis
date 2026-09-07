@@ -19,14 +19,20 @@ import {
 } from "@/lib/api";
 import {
   EMPTY_BRIEF,
+  agentState,
   briefToRequest,
   embedSnippet,
   splitLines,
   statusLabel,
+  testState,
   testsSummary,
   validateBrief,
   type AgentBriefDraft,
 } from "@/lib/agents";
+import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusDot } from "@/components/ui/status";
+import { useToast } from "@/components/ui/toast";
 import type {
   AgentFactoryAvailability,
   AgentKnowledge,
@@ -69,26 +75,16 @@ export function AgentFactory() {
 
   return (
     <div className="workspacePage agentsPage">
-      <header className="pageHeader">
-        <div>
-          <span className="eyebrow">ElevenLabs</span>
-          <h1>Agents</h1>
-          <p>
-            A prospect brief in, a deployed voice agent out: prompt, knowledge,
-            simulation tests, and a demo page. Nothing reaches ElevenLabs until you
-            have read it and said so.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="ElevenLabs"
+        title="Agents"
+        lede="A prospect brief in, a deployed voice agent out: prompt, knowledge, simulation tests, and a demo page. Nothing reaches ElevenLabs until you have read it and said so."
+      />
 
       {error ? (
-        <div className="composerError" role="alert">
-          <span>!</span>
-          <p>{error}</p>
-          <button className="errorDismiss" type="button" aria-label="Dismiss" onClick={() => setError(null)}>
-            ×
-          </button>
-        </div>
+        <Notice kind="error" onDismiss={() => setError(null)}>
+          {error}
+        </Notice>
       ) : null}
 
       <div className="agentLayout">
@@ -109,7 +105,7 @@ export function AgentFactory() {
             >
               <strong>{agent.spec.name}</strong>
               <span>
-                <i className={`agentStatusDot is-${agent.status}`} aria-hidden="true" />
+                <StatusDot state={agentState(agent.status)} />
                 {agent.company} · {statusLabel(agent.status)}
               </span>
             </button>
@@ -178,40 +174,39 @@ function BriefForm({
   return (
     <section className="agentPanel" aria-label="New agent brief">
       {blocked ? (
-        <div className="notice" role="status">
-          <strong>The factory isn&apos;t configured yet</strong>
+        <Notice kind="info" title="The factory isn't configured yet">
           <ul>
             {availability?.missing.map((item) => <li key={item}>{item}</li>)}
           </ul>
-        </div>
+        </Notice>
       ) : null}
       <div className="agentFormGrid">
-        <label className="agentField">
+        <label className="ui-field">
           <span>Company</span>
           <input type="text" value={draft.company} maxLength={200} placeholder="Batelco"
             onChange={(event) => update("company", event.target.value)} />
         </label>
-        <label className="agentField">
+        <label className="ui-field">
           <span>Pages to read (one per line)</span>
           <textarea value={draft.source_urls} rows={3} placeholder="https://www.batelco.com/help/billing"
             onChange={(event) => update("source_urls", event.target.value)} />
-          {problems.source_urls ? <small className="agentFieldProblem">{problems.source_urls}</small> : null}
+          {problems.source_urls ? <small>{problems.source_urls}</small> : null}
         </label>
       </div>
-      <label className="agentField">
+      <label className="ui-field">
         <span>What the agent is for</span>
         <textarea value={draft.brief} rows={4} maxLength={6000}
           placeholder="Answer billing questions for postpaid customers, book a callback when it can't, and never quote a price it wasn't given."
           onChange={(event) => update("brief", event.target.value)} />
       </label>
-      <label className="agentField">
+      <label className="ui-field">
         <span>Notes and pasted material (optional)</span>
         <textarea value={draft.notes} rows={6} maxLength={40000}
           placeholder="Policies, product facts, an FAQ, a call transcript…"
           onChange={(event) => update("notes", event.target.value)} />
       </label>
       <div className="agentActions">
-        <button type="button" className="agentActionButton isPrimary" disabled={!request || busy || blocked} onClick={() => void submit()}>
+        <button type="button" className="ui-btn is-primary" disabled={!request || busy || blocked} onClick={() => void submit()}>
           {busy ? "Reading the material and drafting…" : "Draft the agent"}
         </button>
         <span className="mutedMeta">Drafting reads the pages and asks your selected model. It creates nothing in ElevenLabs.</span>
@@ -238,6 +233,7 @@ function AgentReview({
   const [busy, setBusy] = useState<"" | "save" | "deploy" | "tests" | "remove">("");
   const [confirming, setConfirming] = useState<"" | "deploy" | "remove">("");
   const [copied, setCopied] = useState(false);
+  const toast = useToast();
 
   const edit = (patch: Partial<AgentSpec>) => {
     setSpec((current) => ({ ...current, ...patch }));
@@ -261,6 +257,7 @@ function AgentReview({
     if (saved) {
       onChange(saved);
       setDirty(false);
+      toast("Saved");
     }
     return saved;
   }
@@ -270,13 +267,19 @@ function AgentReview({
     // Unsaved edits deploy too: what is on screen is what goes.
     if (dirty && !(await save())) return;
     const deployed = await run("deploy", () => deployAgent(agent.id));
-    if (deployed) onChange(deployed);
+    if (deployed) {
+      onChange(deployed);
+      toast(deployed.status === "deployed" ? "Deployed to ElevenLabs" : "Deploy failed", deployed.status === "deployed" ? "default" : "error");
+    }
   }
 
   async function remove() {
     setConfirming("");
     const done = await run("remove", () => removeAgent(agent.id).then(() => true));
-    if (done) onRemoved(agent.id);
+    if (done) {
+      onRemoved(agent.id);
+      toast("Removed");
+    }
   }
 
   async function copySnippet() {
@@ -298,25 +301,25 @@ function AgentReview({
           <span className="eyebrow">{agent.company}</span>
           <h2>{spec.name}</h2>
           <p className="mutedMeta">
-            <i className={`agentStatusDot is-${agent.status}`} aria-hidden="true" />
+            <StatusDot state={agentState(agent.status)} />
             {statusLabel(agent.status)}
             {agent.elevenlabs_agent_id ? ` · ${agent.elevenlabs_agent_id}` : ""}
             {dirty ? " · unsaved edits" : ""}
           </p>
         </div>
       </header>
-      {agent.error ? <p className="agentFieldProblem" role="alert">{agent.error}</p> : null}
+      {agent.error ? <Notice kind="error">{agent.error}</Notice> : null}
 
       <div className="agentFormGrid">
-        <label className="agentField">
+        <label className="ui-field">
           <span>Name</span>
           <input type="text" value={spec.name} maxLength={80} onChange={(event) => edit({ name: event.target.value })} />
         </label>
-        <label className="agentField">
+        <label className="ui-field">
           <span>Voice id</span>
           <input type="text" value={spec.voice_id} maxLength={80} onChange={(event) => edit({ voice_id: event.target.value })} />
         </label>
-        <label className="agentField">
+        <label className="ui-field">
           <span>Model</span>
           <select value={spec.llm} onChange={(event) => edit({ llm: event.target.value })}>
             {LLM_OPTIONS.map((option) => (
@@ -324,16 +327,16 @@ function AgentReview({
             ))}
           </select>
         </label>
-        <label className="agentField">
+        <label className="ui-field">
           <span>Language</span>
           <input type="text" value={spec.language} maxLength={8} onChange={(event) => edit({ language: event.target.value })} />
         </label>
       </div>
-      <label className="agentField">
+      <label className="ui-field">
         <span>First message</span>
         <input type="text" value={spec.first_message} maxLength={400} onChange={(event) => edit({ first_message: event.target.value })} />
       </label>
-      <label className="agentField">
+      <label className="ui-field">
         <span>System prompt</span>
         <textarea value={spec.system_prompt} rows={14} maxLength={12000} onChange={(event) => edit({ system_prompt: event.target.value })} />
       </label>
@@ -342,11 +345,11 @@ function AgentReview({
       <TestsEditor items={spec.tests} onChange={(tests) => edit({ tests })} />
 
       <div className="agentFormGrid">
-        <label className="agentField">
+        <label className="ui-field">
           <span>Demo headline</span>
           <input type="text" value={spec.demo_headline} maxLength={160} onChange={(event) => edit({ demo_headline: event.target.value })} />
         </label>
-        <label className="agentField">
+        <label className="ui-field">
           <span>Things to try (one per line)</span>
           <textarea value={spec.demo_prompts.join("\n")} rows={3}
             onChange={(event) => edit({ demo_prompts: splitLines(event.target.value).slice(0, 4) })} />
@@ -354,7 +357,7 @@ function AgentReview({
       </div>
 
       <div className="agentActions">
-        <button type="button" className="agentActionButton" disabled={!dirty || busy !== ""} onClick={() => void save()}>
+        <button type="button" className="ui-btn" disabled={!dirty || busy !== ""} onClick={() => void save()}>
           {busy === "save" ? "Saving…" : "Save"}
         </button>
         {confirming === "deploy" ? (
@@ -364,23 +367,23 @@ function AgentReview({
               {spec.knowledge.length === 1 ? "document" : "documents"} and {spec.tests.length}{" "}
               {spec.tests.length === 1 ? "test" : "tests"} in your ElevenLabs account, then run the tests?
             </span>
-            <button type="button" className="agentActionButton isPrimary" onClick={() => void deploy()}>Deploy</button>
-            <button type="button" className="agentActionButton" onClick={() => setConfirming("")}>Not now</button>
+            <button type="button" className="ui-btn is-primary" onClick={() => void deploy()}>Deploy</button>
+            <button type="button" className="ui-btn" onClick={() => setConfirming("")}>Not now</button>
           </span>
         ) : (
-          <button type="button" className="agentActionButton isPrimary" disabled={busy !== ""} onClick={() => setConfirming("deploy")}>
+          <button type="button" className="ui-btn is-primary" disabled={busy !== ""} onClick={() => setConfirming("deploy")}>
             {busy === "deploy" ? "Deploying…" : deployed ? "Redeploy" : "Deploy to ElevenLabs"}
           </button>
         )}
         {deployed ? (
           <>
-            <a className="agentActionButton" href={agentDemoUrl(agent.id)} target="_blank" rel="noreferrer">
+            <a className="ui-btn" href={agentDemoUrl(agent.id)} target="_blank" rel="noreferrer">
               Open demo page
             </a>
-            <button type="button" className="agentActionButton" onClick={() => void copySnippet()}>
+            <button type="button" className="ui-btn" onClick={() => void copySnippet()}>
               {copied ? "Copied" : "Copy embed snippet"}
             </button>
-            <button type="button" className="agentActionButton" disabled={busy !== "" || agent.tests_stage === "running"}
+            <button type="button" className="ui-btn" disabled={busy !== "" || agent.tests_stage === "running"}
               onClick={() => void run("tests", () => runAgentTests(agent.id)).then((next) => next && onChange(next))}>
               Run tests
             </button>
@@ -389,11 +392,11 @@ function AgentReview({
         {confirming === "remove" ? (
           <span className="agentConfirm" role="group" aria-label="Confirm removal">
             <span>Remove this agent{deployed ? " and everything it created in ElevenLabs" : ""}?</span>
-            <button type="button" className="agentActionButton isStop" onClick={() => void remove()}>Remove</button>
-            <button type="button" className="agentActionButton" onClick={() => setConfirming("")}>Keep</button>
+            <button type="button" className="ui-btn is-danger" onClick={() => void remove()}>Remove</button>
+            <button type="button" className="ui-btn" onClick={() => setConfirming("")}>Keep</button>
           </span>
         ) : (
-          <button type="button" className="agentActionButton isStop" disabled={busy !== ""} onClick={() => setConfirming("remove")}>
+          <button type="button" className="ui-btn is-danger" disabled={busy !== ""} onClick={() => setConfirming("remove")}>
             {busy === "remove" ? "Removing…" : "Remove"}
           </button>
         )}
@@ -407,7 +410,7 @@ function AgentReview({
             <ul className="agentTestResults">
               {agent.tests.map((result) => (
                 <li key={result.name}>
-                  <i className={`agentStatusDot is-${result.status}`} aria-hidden="true" />
+                  <StatusDot state={testState(result.status)} />
                   <strong>{result.name}</strong>
                   {result.rationale ? <p>{result.rationale}</p> : null}
                 </li>
@@ -441,30 +444,30 @@ function KnowledgeEditor({
     <div className="agentListEditor">
       <div className="agentListEditorHead">
         <span className="eyebrow">Knowledge</span>
-        <button type="button" className="agentActionButton" onClick={() => add("url")}>+ Page</button>
-        <button type="button" className="agentActionButton" onClick={() => add("text")}>+ Text</button>
+        <button type="button" className="ui-btn" onClick={() => add("url")}>+ Page</button>
+        <button type="button" className="ui-btn" onClick={() => add("text")}>+ Text</button>
       </div>
       {items.map((item, index) => (
         <div className="agentListItemEditor" key={`${item.kind}-${index}`}>
           <div className="agentFormGrid">
-            <label className="agentField">
+            <label className="ui-field">
               <span>{item.kind === "url" ? "Page" : "Document"} name</span>
               <input type="text" value={item.name} maxLength={80} onChange={(event) => setItem(index, { name: event.target.value })} />
             </label>
             {item.kind === "url" ? (
-              <label className="agentField">
+              <label className="ui-field">
                 <span>Address</span>
                 <input type="url" value={item.url} maxLength={400} onChange={(event) => setItem(index, { url: event.target.value })} />
               </label>
             ) : null}
           </div>
           {item.kind === "text" ? (
-            <label className="agentField">
+            <label className="ui-field">
               <span>Text</span>
               <textarea value={item.text} rows={4} maxLength={8000} onChange={(event) => setItem(index, { text: event.target.value })} />
             </label>
           ) : null}
-          <button type="button" className="agentActionButton isStop" onClick={() => onChange(items.filter((_, at) => at !== index))}>
+          <button type="button" className="ui-btn is-danger" onClick={() => onChange(items.filter((_, at) => at !== index))}>
             Remove
           </button>
         </div>
@@ -486,7 +489,7 @@ function TestsEditor({
     <div className="agentListEditor">
       <div className="agentListEditorHead">
         <span className="eyebrow">Simulation tests</span>
-        <button type="button" className="agentActionButton"
+        <button type="button" className="ui-btn"
           onClick={() => onChange([...items, { name: "New test", scenario: "", success_conditions: [], max_turns: 6 }].slice(0, 6))}>
           + Test
         </button>
@@ -494,26 +497,26 @@ function TestsEditor({
       {items.map((item, index) => (
         <div className="agentListItemEditor" key={index}>
           <div className="agentFormGrid">
-            <label className="agentField">
+            <label className="ui-field">
               <span>Name</span>
               <input type="text" value={item.name} maxLength={80} onChange={(event) => setItem(index, { name: event.target.value })} />
             </label>
-            <label className="agentField">
+            <label className="ui-field">
               <span>Max turns</span>
               <input type="number" min={2} max={12} value={item.max_turns}
                 onChange={(event) => setItem(index, { max_turns: Math.min(12, Math.max(2, Number(event.target.value) || 6)) })} />
             </label>
           </div>
-          <label className="agentField">
+          <label className="ui-field">
             <span>Caller and scenario</span>
             <textarea value={item.scenario} rows={3} maxLength={2000} onChange={(event) => setItem(index, { scenario: event.target.value })} />
           </label>
-          <label className="agentField">
+          <label className="ui-field">
             <span>Passes when (one condition per line)</span>
             <textarea value={item.success_conditions.join("\n")} rows={3}
               onChange={(event) => setItem(index, { success_conditions: splitLines(event.target.value).slice(0, 5) })} />
           </label>
-          <button type="button" className="agentActionButton isStop" onClick={() => onChange(items.filter((_, at) => at !== index))}>
+          <button type="button" className="ui-btn is-danger" onClick={() => onChange(items.filter((_, at) => at !== index))}>
             Remove
           </button>
         </div>

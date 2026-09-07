@@ -3,6 +3,22 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import {
+  AudioLines,
+  BookOpen,
+  Bot,
+  Brain,
+  Gauge,
+  MessageCircleQuestion,
+  MessageSquare,
+  MessageSquareQuote,
+  Package,
+  Settings,
+  Sun,
+  Users,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { MetisCompanion } from "@/components/metis-companion";
@@ -93,55 +109,26 @@ function clampSidebarWidth(value: number): number {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, value));
 }
 
+// One icon set, one stroke weight, one optical size.
+const NAV_ICONS: Record<NavIconName, LucideIcon> = {
+  today: Sun,
+  chat: MessageSquare,
+  customers: Users,
+  assets: Package,
+  tools: Wrench,
+  meetings: AudioLines,
+  interviews: MessageCircleQuestion,
+  agents: Bot,
+  knowledge: BookOpen,
+  answers: MessageSquareQuote,
+  memory: Brain,
+  sizing: Gauge,
+  settings: Settings,
+};
+
 function NavIcon({ name }: { name: NavIconName }) {
-  const common = {
-    fill: "none",
-    stroke: "currentColor",
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    strokeWidth: 1.55,
-  };
-  if (name === "today") {
-    // A checklist: the page is a queue of decisions, not a destination.
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4.2 5.6 5.4 6.8l2.2-2.4M4.2 10.4l1.2 1.2 2.2-2.4M4.2 15.2l1.2 1.2 2.2-2.4M10.6 5.3h5.2M10.6 10.1h5.2M10.6 14.9h5.2" /></svg>;
-  }
-  if (name === "answers") {
-    // A speech mark: the bank holds things you have already said well.
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M7.4 8.6H5.2a1.4 1.4 0 0 1-1.4-1.4V5.8a1.4 1.4 0 0 1 1.4-1.4h2.2a1.4 1.4 0 0 1 1.4 1.4v3.9c0 2.1-1.2 3.6-3 4.1M16.2 8.6H14a1.4 1.4 0 0 1-1.4-1.4V5.8A1.4 1.4 0 0 1 14 4.4h2.2a1.4 1.4 0 0 1 1.4 1.4v3.9c0 2.1-1.2 3.6-3 4.1" /></svg>;
-  }
-  if (name === "chat") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4 4.7h12v8.1H9l-3.7 2.8v-2.8H4z" /></svg>;
-  }
-  if (name === "customers") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M6.6 9.4a2.7 2.7 0 1 0 0-5.4 2.7 2.7 0 0 0 0 5.4ZM2.8 16c.2-3 1.4-4.5 3.8-4.5s3.6 1.5 3.8 4.5M13 9a2.2 2.2 0 1 0 0-4.4M11.8 11.7c3.1-.5 4.8.9 5 4.3" /></svg>;
-  }
-  if (name === "assets") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M3.7 5.3 10 2.8l6.3 2.5L10 7.8zM3.7 9.1 10 11.6l6.3-2.5M3.7 12.9 10 15.4l6.3-2.5" /></svg>;
-  }
-  if (name === "tools") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="m11.7 4.1 4.2 4.2-7.6 7.6-4.2-4.2zM10.1 5.7l4.2 4.2M3.5 16.5l2.1-.6-1.5-1.5z" /></svg>;
-  }
-  if (name === "knowledge") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M3.7 4.3h4.1c1.2 0 2.2.8 2.2 1.8v9.3c0-1-1-1.8-2.2-1.8H3.7zM16.3 4.3h-4.1c-1.2 0-2.2.8-2.2 1.8v9.3c0-1 1-1.8 2.2-1.8h4.1z" /></svg>;
-  }
-  if (name === "meetings") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M10 3.2a2 2 0 0 1 2 2v4.4a2 2 0 1 1-4 0V5.2a2 2 0 0 1 2-2ZM5.4 9.2a4.6 4.6 0 0 0 9.2 0M10 13.8v3" /></svg>;
-  }
-  if (name === "interviews") {
-    // A question in a speech bubble: five of these, then the verdict.
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4.6 3.9h10.8a1.6 1.6 0 0 1 1.6 1.6v6a1.6 1.6 0 0 1-1.6 1.6H9.6l-3.2 3v-3H4.6A1.6 1.6 0 0 1 3 11.5v-6a1.6 1.6 0 0 1 1.6-1.6ZM8.3 6.9a1.7 1.7 0 1 1 2.5 1.9c-.6.35-.8.7-.8 1.3M10 11.4v.05" /></svg>;
-  }
-  if (name === "agents") {
-    // A microphone on a stand: an agent that speaks for someone else.
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M10 3.4a3.2 3.2 0 0 1 3.2 3.2v3a3.2 3.2 0 0 1-6.4 0v-3A3.2 3.2 0 0 1 10 3.4ZM5.2 9.6a4.8 4.8 0 0 0 9.6 0M10 14.4v2.2M7.4 16.6h5.2" /></svg>;
-  }
-  if (name === "memory") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M10 3.4a6.6 6.6 0 1 1-4.7 2M3.4 3.8v3h3M10 6.6v3.7l2.6 1.5" /></svg>;
-  }
-  if (name === "sizing") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M3.4 16.2V9.7h3.4v6.5zm5.1 0V4.5h3v11.7zm4.7 0v-8.4h3.4v8.4z" /></svg>;
-  }
-  return <svg viewBox="0 0 20 20" aria-hidden="true"><path {...common} d="M4 5.2h12M4 10h12M4 14.8h12M7 3.6v3.2M13 8.4v3.2M8.5 13.2v3.2" /></svg>;
+  const Icon = NAV_ICONS[name];
+  return <Icon size={18} strokeWidth={1.6} aria-hidden="true" />;
 }
 
 function groupLabel(timestamp?: string): string {

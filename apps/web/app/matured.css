@@ -5030,10 +5030,6 @@ select { border-radius: var(--m-r-field); }
 .agentListItem.selected { background: rgba(255, 119, 89, 0.07); border-color: var(--m-coral, #ff7759); }
 .agentListItem.isNew { color: var(--m-ink); font-size: var(--text-md); }
 
-.agentStatusDot { background: var(--m-ink-3); border-radius: 999px; display: inline-block; height: 7px; width: 7px; }
-.agentStatusDot.is-deployed, .agentStatusDot.is-passed { background: var(--m-green-ink, #00754e); }
-.agentStatusDot.is-failed { background: #9c3522; }
-.agentStatusDot.is-pending { background: var(--m-coral, #ff7759); }
 
 .agentPanel {
   background: var(--m-paper-lift);
@@ -5049,37 +5045,11 @@ select { border-radius: var(--m-r-field); }
 
 .agentFormGrid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
 @media (max-width: 700px) { .agentFormGrid { grid-template-columns: 1fr; } }
-.agentField { display: grid; gap: 6px; }
-.agentField > span {
-  color: var(--m-ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-.agentField input,
-.agentField select,
-.agentField textarea {
-  background: var(--m-paper);
-  border: 1px solid var(--m-line);
-  border-radius: var(--m-r-field, 12px);
-  color: var(--m-ink);
-  font: inherit;
-  font-size: var(--text-md);
-  padding: 9px 12px;
-  width: 100%;
-}
-.agentField textarea { line-height: 1.55; resize: vertical; }
-.agentField input:focus-visible,
-.agentField select:focus-visible,
-.agentField textarea:focus-visible,
-.agentActionButton:focus-visible,
-.agentListItem:focus-visible { outline: 2px solid var(--m-ink); outline-offset: 2px; }
-.agentFieldProblem { color: #9c3522; font-size: var(--text-sm); }
 
 .agentListEditor { display: grid; gap: 10px; }
 .agentListEditorHead { align-items: center; display: flex; gap: 8px; }
 .agentListEditorHead .eyebrow { margin-right: auto; }
+.agentListItem:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .agentListItemEditor {
   background: var(--m-surface);
   border-radius: var(--radius-card);
@@ -5087,31 +5057,9 @@ select { border-radius: var(--m-r-field); }
   gap: 10px;
   padding: 12px 14px;
 }
-.agentListItemEditor .agentActionButton { justify-self: start; }
-
+.agentListItemEditor 
 .agentActions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .agentActions .mutedMeta { font-family: inherit; font-size: var(--text-sm); letter-spacing: 0; line-height: 1.5; max-width: 48ch; text-transform: none; }
-.agentActionButton {
-  align-items: center;
-  background: #ffffff;
-  border: 1px solid var(--m-line);
-  border-radius: 999px;
-  color: var(--m-ink);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: var(--text-xs);
-  gap: 7px;
-  height: 34px;
-  padding: 0 14px;
-  text-decoration: none;
-  transition: border-color var(--motion-base) var(--m-ease), background var(--motion-base) var(--m-ease);
-}
-.agentActionButton:hover { border-color: var(--m-ink-3); }
-.agentActionButton:disabled { cursor: default; opacity: 0.55; }
-.agentActionButton.isPrimary { background: var(--m-ink); border-color: var(--m-ink); color: var(--m-paper); }
-.agentActionButton.isPrimary:hover:not(:disabled) { opacity: 0.9; }
-.agentActionButton.isStop { color: #9c3522; }
-.agentActionButton.isStop:hover { border-color: var(--m-coral-soft, #ffad9b); }
 
 /* The one loud thing: the approval, coral-edged, naming what it creates. */
 .agentConfirm {

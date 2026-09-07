@@ -2,12 +2,15 @@ import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 
 import { AppShell } from "@/components/app-shell";
+import { ToastProvider } from "@/components/ui/toast";
 import { PRODUCT_NAME } from "@/lib/product";
 // Tokens first: every colour, size, radius and duration the other two read.
 import "./tokens.css";
 import "./globals.css";
 // Loaded after globals so it wins on equal specificity.
 import "./matured.css";
+// The primitives, last: a primitive wins on equal specificity.
+import "./primitives.css";
 
 export const metadata: Metadata = {
   applicationName: PRODUCT_NAME,
@@ -35,7 +38,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en">
       <body>
         <Suspense fallback={<div className="appLoading">Preparing your private workspace…</div>}>
-          <AppShell>{children}</AppShell>
+          <ToastProvider>
+            <AppShell>{children}</AppShell>
+          </ToastProvider>
         </Suspense>
       </body>
     </html>
