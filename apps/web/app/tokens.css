@@ -1,0 +1,257 @@
+/* Metis design tokens — the one place a colour, size, radius, duration or
+   shadow is defined. Loaded first. Components read the canonical names in
+   the first block; the legacy names beneath are aliases kept so the older
+   stylesheets keep rendering exactly as before while they are migrated.
+   A legacy name with a literal value is one the canonical set has not
+   absorbed yet — retire it by pointing its users at a canonical token. */
+
+:root {
+  /* color */
+  --color-ground: #e8e6e1;
+  --color-pane: #f6f5f2;
+  --color-paper: #f7f4ef;
+  --color-paper-lift: #fcfaf6;
+  --color-surface: #ede9e1;
+  --color-ink: #211f1d;
+  --color-ink-2: #5e5a54;
+  --color-ink-3: #7b7789;
+  --color-line: #dfdacf;
+  --color-accent: #c29ce0;
+  --color-accent-ink: #7a54a8;
+  --color-accent-surface: #f0dff3;
+  --color-coral: #ff7759;
+  --color-coral-soft: #ffad9b;
+  --color-mint: #7be3d8;
+  --color-mint-surface: #e5f4ef;
+  --color-gold: #ffe08a;
+  --color-violet: #d18ee2;
+  --color-green-ink: #00754e;
+  --color-danger: #9c3522;
+  --color-rail: #1b1720;
+  --color-rail-ink: #fffaf3;
+  /* type */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font-serif: ui-serif, "New York", Georgia, "Times New Roman", serif;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-base: 14px;
+  --text-body: 15px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 20px;
+  --text-3xl: 24px;
+  --text-4xl: 28px;
+  --text-5xl: 40px;
+  --text-6xl: 56px;
+  /* shape */
+  --radius-control: 8px;
+  --radius-card: 14px;
+  --radius-pane: 24px;
+  --radius-pill: 999px;
+  /* space */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  /* motion */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* elevation */
+  --shadow-1: 0 1px 2px rgba(22, 23, 29, 0.035), 0 7px 18px rgba(22, 23, 29, 0.055);
+  --shadow-2: 0 1px 2px rgba(22, 23, 29, 0.04), 0 14px 34px rgba(22, 23, 29, 0.085);
+  --shadow-3: 0 24px 60px rgba(22, 23, 29, 0.13);
+  /* focus */
+  --focus-ring: 0 0 0 2px var(--color-pane), 0 0 0 4px var(--color-ink);
+}
+
+/* The dark set, defined now and switched on by the theme toggle later. */
+:root[data-theme="dark"] {
+  --color-ground: #121015;
+  --color-pane: #1a171e;
+  --color-paper: #1f1b24;
+  --color-paper-lift: #26212c;
+  --color-surface: #2c2733;
+  --color-ink: #ece8e1;
+  --color-ink-2: #c3bdc9;
+  --color-ink-3: #9d97a8;
+  --color-line: #3a3441;
+  --color-accent: #c9a6e4;
+  --color-accent-ink: #d9bdf0;
+  --color-accent-surface: #33273d;
+  --color-coral-soft: #7a3d2f;
+  --color-mint-surface: #1f3a30;
+  --color-green-ink: #7fd0a8;
+  --color-danger: #e58a78;
+  --color-rail: #0f0d12;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 7px 18px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 34px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+/* Legacy names, by the file that introduced them. */
+:root {
+  /* from globals.css */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --canvas: #f2f4f3;
+  --canvas-deep: #e3e7e5;
+  --panel: #f8faf9;
+  --paper: #ffffff;
+  --ink: #191a20;
+  --ink-soft: #4c4d57;
+  --muted: #777984;
+  --faint: #a7a8b0;
+  --line: rgba(25, 26, 32, 0.11);
+  --line-soft: rgba(25, 26, 32, 0.065);
+  --forest: #202229;
+  --forest-soft: #2d3038;
+  --sage: var(--success);
+  --sage-light: #e7f3ec;
+  --terracotta: #d24a27;
+  --terracotta-light: #ffe6de;
+  --gold: #b0781f;
+  --danger: #d0453a;
+  --danger-light: #fbe4e1;
+  --green: var(--success);
+  --green-strong: #267a55;
+  --green-ink: var(--success-ink);
+  --green-tint: var(--success-tint);
+  --green-glow: var(--success-glow);
+  --coral: #ff735c;
+  --coral-strong: #e95e49;
+  --coral-ink: #bd4938;
+  --coral-tint: rgba(255, 115, 92, 0.12);
+  --coral-glow: rgba(255, 116, 82, 0.28);
+  --lav: #b894d8;
+  --lav-tint: rgba(184, 148, 216, 0.14);
+  --blue: var(--accent);
+  --blue-tint: var(--accent-tint);
+  --gold-accent: #e4b756;
+  --gold-tint: rgba(228, 183, 86, 0.15);
+  --glass-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.68), rgba(235, 239, 237, 0.48));
+  --glass-bg-strong: linear-gradient(145deg, rgba(255, 255, 255, 0.84), rgba(239, 242, 240, 0.68));
+  --glass-border: rgba(255, 255, 255, 0.72);
+  --glass-blur: saturate(118%) blur(24px);
+  --glass-blur-strong: saturate(122%) blur(30px);
+  --glass-shadow: var(--shadow-2);
+  --glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --shadow-sm: var(--shadow-1);
+  --shadow-lg: var(--shadow-3);
+  --radius-sm: 10px;
+  --radius-md: var(--text-lg);
+  --radius-lg: var(--text-3xl);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --line-2: rgba(24, 26, 34, 0.14);
+  --accent: #5669df;
+  --accent-strong: #4355c9;
+  --accent-ink: #3546b4;
+  --accent-tint: rgba(86, 105, 223, 0.105);
+  --accent-glow: rgba(86, 105, 223, 0.24);
+  --fresh: #3b9768;
+  --fresh-ink: #28734e;
+  --fresh-tint: rgba(59, 151, 104, 0.115);
+  --fresh-glow: rgba(59, 151, 104, 0.22);
+  --success: #2e8a61;
+  --success-ink: #236c4c;
+  --success-tint: rgba(46, 138, 97, 0.12);
+  --success-glow: rgba(46, 138, 97, 0.24);
+  --metis-surface: rgba(255, 255, 255, 0.82);
+  --metis-surface-strong: rgba(255, 255, 255, 0.95);
+  --metis-border: rgba(29, 31, 38, 0.09);
+  --metis-shadow: 0 1px 2px rgba(20, 24, 22, 0.04), 0 12px 32px rgba(31, 36, 33, 0.075);
+  --metis-shadow-hover: 0 2px 5px rgba(20, 24, 22, 0.05), 0 20px 44px rgba(31, 36, 33, 0.11);
+  --metis-dot: rgba(56, 72, 64, 0.11);
+  --metis-radius: var(--text-xl);
+  --metis-blue: #6175e8;
+  --metis-lilac: #c28fe0;
+  --metis-coral: #ff7b61;
+  --metis-gold: #f0b64b;
+  --metis-green: #4b9b72;
+  --metis-glass: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(244, 246, 248, 0.56));
+  --metis-glass-border: rgba(255, 255, 255, 0.78);
+  --metis-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(96, 103, 126, 0.07), 0 12px 32px rgba(42, 45, 57, 0.09);
+  /* from matured.css */
+  --m-paper: var(--color-paper);
+  --m-paper-lift: var(--color-paper-lift);
+  --m-surface: var(--color-surface);
+  --m-ink: var(--color-ink);
+  --m-ink-btn: #1a1815;
+  --m-ink-2: var(--color-ink-2);
+  --m-ink-3: var(--color-ink-3);
+  --m-line: var(--color-line);
+  --m-purple: var(--color-accent);
+  --m-bloom: linear-gradient(270deg, #d18ee2, #ff7759);
+  --m-chrome: linear-gradient(146deg, #fffcf2 0%, #fffcf2 5%, #cfc7b0 9%, #6e6757 14%, #1b1a19 20%, #141312 25%, #efe8d4 31%, #fbf8ec 37%, #8a8271 42%, #2a2724 47%, #100f0e 54%, #d8d0bb 61%, #faf6e9 66%, #4a4640 72%, #1a1817 79%, #ede6d2 88%, #9a9280 94%, #232120 100%);
+  --m-fringe: conic-gradient(from 210deg, #ff7759, #7be3d8, #d18ee2, #ffe08a, #ff7759);
+  --m-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --m-r-pill: var(--radius-pill);
+  --m-r-field: var(--text-sm);
+  --m-mint: var(--color-mint);
+  --m-coral: var(--color-coral);
+  --m-violet: var(--color-violet);
+  --m-blue: #9cb8ec;
+  --m-gold: var(--color-gold);
+  --m-volcanic: #212121;
+  --m-forest: #39594d;
+  --m-coral-soft: var(--color-coral-soft);
+  --m-quartz: #75758a;
+  --m-lav-surface: var(--color-accent-surface);
+  --m-lav-edge: #e0c8ea;
+  --m-mint-surface: var(--color-mint-surface);
+  --m-mint-edge: #c6e3d6;
+  --m-green-ink: var(--color-green-ink);
+  --m-purple-quiet: #cdb6df;
+  --m-menu-surface: rgba(252, 250, 246, 0.985);
+  --m-menu-line: rgba(86, 73, 92, 0.18);
+  --m-menu-shadow: 0 24px 64px -24px rgba(53, 31, 64, 0.5), 0 8px 20px -14px rgba(53, 31, 64, 0.34);
+  --m-menu-ease: cubic-bezier(0.2, 0.82, 0.2, 1);
+  /* from ui-revision.css */
+  --ui-rail: #1e1e20;
+  --ui-rail-soft: #2a292d;
+  --ui-glass: rgba(249, 248, 245, 0.72);
+  --ui-glass-strong: rgba(252, 251, 248, 0.9);
+  --ui-glass-line: rgba(255, 255, 255, 0.72);
+  --ui-line: rgba(45, 41, 36, 0.1);
+  --ui-ink: #22211f;
+  --ui-muted: #77736d;
+  --ui-accent: #b893d5;
+  --ui-accent-soft: rgba(184, 147, 213, 0.16);
+  --ui-positive: #5da37d;
+  --ui-field: #19151f;
+  --ui-field-2: #292130;
+  --ui-field-3: #211a27;
+  --ui-spring: cubic-bezier(0.2, 0.82, 0.24, 1);
+  --ui-ease-out: var(--ease-out);
+  --ui-ease-standard: var(--ease-standard);
+  --ui-motion-fast: 140ms;
+  --ui-motion-base: 220ms;
+  --ui-motion-slow: 340ms;
+  --ui-radius: var(--text-3xl);
+  --ui-control-radius: var(--text-xs);
+  --ui-control-height: 38px;
+  --ui-surface: rgba(255, 255, 255, 0.62);
+  --ui-surface-hover: rgba(255, 255, 255, 0.88);
+  --ui-focus: rgba(157, 112, 189, 0.34);
+  /* from elevenlabs-studio.css */
+  --audio-ink: #17131c;
+  --audio-ink-2: #292230;
+  --audio-plum: #76538d;
+  --audio-plum-bright: #a77bc3;
+  --audio-coral: #ff8068;
+  --audio-mint: #77ded2;
+  --audio-gold: #f4cd6a;
+  --audio-paper: #fbf9f5;
+  --audio-cloud: #f2eef2;
+  --audio-line: rgba(39, 30, 45, 0.12);
+  --audio-shadow: 0 26px 70px rgba(46, 32, 55, 0.12);
+}

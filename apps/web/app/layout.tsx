@@ -3,12 +3,11 @@ import { Suspense } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { PRODUCT_NAME } from "@/lib/product";
+// Tokens first: every colour, size, radius and duration the other two read.
+import "./tokens.css";
 import "./globals.css";
-// Loaded after globals so it wins on equal specificity. Remove this one
-// import to drop the whole treatment.
+// Loaded after globals so it wins on equal specificity.
 import "./matured.css";
-import "./ui-revision.css";
-import "./elevenlabs-studio.css";
 
 export const metadata: Metadata = {
   applicationName: PRODUCT_NAME,

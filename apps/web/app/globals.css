@@ -1,67 +1,4 @@
-:root {
-  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
-  /* Neutrals — clean, luminous near-white (modern Cohere), cool charcoal ink */
-  --canvas: #f3f4ef;
-  --canvas-deep: #e7eaf1;
-  --panel: #fbfcfe;
-  --paper: #ffffff;
-  --ink: #1b1c22;
-  --ink-soft: #3a3d44;
-  --muted: #71747f;
-  --faint: #a3a6ae;
-  --line: rgba(24, 26, 34, 0.10);
-  --line-soft: rgba(24, 26, 34, 0.06);
-
-  /* Semantic accents (legible fills/text) — green leads the sovereign-local identity */
-  --forest: #0a6f2f;
-  --forest-soft: #0a5f28;
-  --sage: #0b7a32;
-  --sage-light: #dcefe2;
-  --terracotta: #d24a27;
-  --terracotta-light: #ffe6de;
-  --gold: #b0781f;
-  --danger: #d0453a;
-  --danger-light: #fbe4e1;
-
-  /* Vivid multicolor accents — green first (dots, tints, bubbles, ambient blooms) */
-  --green: #0a9e3e;
-  --green-strong: #0a8a37;
-  --green-ink: #0b7a32;
-  --green-tint: rgba(10, 158, 62, 0.13);
-  --green-glow: rgba(10, 158, 62, 0.26);
-  --coral: #ff7452;
-  --coral-strong: #ee4f2c;
-  --coral-ink: #cf4023;
-  --coral-tint: rgba(255, 116, 82, 0.13);
-  --coral-glow: rgba(255, 116, 82, 0.28);
-  --lav: #cf8fe0;
-  --lav-tint: rgba(207, 143, 224, 0.16);
-  --blue: #4c6ee6;
-  --blue-tint: rgba(76, 110, 230, 0.14);
-  --gold-accent: #f4b731;
-  --gold-tint: rgba(244, 183, 49, 0.18);
-
-  /* Liquid glass material — translucent white, backdrop blur, soft edge + sheen */
-  --glass-bg: linear-gradient(150deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.42));
-  --glass-bg-strong: linear-gradient(150deg, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0.66));
-  --glass-border: rgba(255, 255, 255, 0.70);
-  --glass-blur: saturate(178%) blur(22px);
-  --glass-blur-strong: saturate(185%) blur(30px);
-  --glass-shadow: 0 2px 6px rgba(24, 27, 22, 0.06), 0 14px 40px rgba(24, 27, 22, 0.11);
-  --glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.92), inset 0 -1px 1px rgba(255, 255, 255, 0.28);
-
-  --shadow-sm: 0 1px 2px rgba(24, 27, 22, 0.05), 0 6px 18px rgba(24, 27, 22, 0.07);
-  --shadow-lg: 0 30px 80px rgba(24, 27, 22, 0.16);
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 22px;
-
-  /* System font stack only — no serif, no web fonts (offline app) */
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --line-2: rgba(24, 26, 34, 0.14);
-}
+/* tokens live in tokens.css */
 
 /* Smoother, adjustable workspace panels. */
 .chatWorkspace {
@@ -9481,91 +9418,11 @@ to { opacity: 1; }
    re-skin. They sit at the end so they win the cascade exactly as they used to.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-:root {
-  --canvas: #f2f4f3;
-  --canvas-deep: #e3e7e5;
-  --panel: #f8faf9;
-  --paper: #ffffff;
-  --ink: #191a20;
-  --ink-soft: #4c4d57;
-  --muted: #777984;
-  --faint: #a7a8b0;
-  --line: rgba(25, 26, 32, 0.11);
-  --line-soft: rgba(25, 26, 32, 0.065);
+/* tokens live in tokens.css */
 
-  --accent: #5669df;
-  --accent-strong: #4355c9;
-  --accent-ink: #3546b4;
-  --accent-tint: rgba(86, 105, 223, 0.105);
-  --accent-glow: rgba(86, 105, 223, 0.24);
-  --fresh: #3b9768;
-  --fresh-ink: #28734e;
-  --fresh-tint: rgba(59, 151, 104, 0.115);
-  --fresh-glow: rgba(59, 151, 104, 0.22);
-  --success: #2e8a61;
-  --success-ink: #236c4c;
-  --success-tint: rgba(46, 138, 97, 0.12);
-  --success-glow: rgba(46, 138, 97, 0.24);
+/* tokens live in tokens.css */
 
-  /* Legacy semantic aliases retained for the functional status system. */
-  --forest: #202229;
-  --forest-soft: #2d3038;
-  --sage: var(--success);
-  --sage-light: #e7f3ec;
-  --green: var(--success);
-  --green-strong: #267a55;
-  --green-ink: var(--success-ink);
-  --green-tint: var(--success-tint);
-  --green-glow: var(--success-glow);
-  --coral: #ff735c;
-  --coral-strong: #e95e49;
-  --coral-ink: #bd4938;
-  --coral-tint: rgba(255, 115, 92, 0.12);
-  --lav: #b894d8;
-  --lav-tint: rgba(184, 148, 216, 0.14);
-  --blue: var(--accent);
-  --blue-tint: var(--accent-tint);
-  --gold-accent: #e4b756;
-  --gold-tint: rgba(228, 183, 86, 0.15);
-
-  --glass-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.68), rgba(235, 239, 237, 0.48));
-  --glass-bg-strong: linear-gradient(145deg, rgba(255, 255, 255, 0.84), rgba(239, 242, 240, 0.68));
-  --glass-border: rgba(255, 255, 255, 0.72);
-  --glass-blur: saturate(118%) blur(24px);
-  --glass-blur-strong: saturate(122%) blur(30px);
-  --glass-shadow: 0 1px 2px rgba(22, 23, 29, 0.04), 0 14px 34px rgba(22, 23, 29, 0.085);
-  --glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  --shadow-sm: 0 1px 2px rgba(22, 23, 29, 0.035), 0 7px 18px rgba(22, 23, 29, 0.055);
-  --shadow-lg: 0 24px 60px rgba(22, 23, 29, 0.13);
-  --radius-sm: 10px;
-  --radius-md: 16px;
-  --radius-lg: 24px;
-}
-
-:root {
-  --metis-surface: rgba(255, 255, 255, 0.82);
-  --metis-surface-strong: rgba(255, 255, 255, 0.95);
-  --metis-border: rgba(29, 31, 38, 0.09);
-  --metis-shadow: 0 1px 2px rgba(20, 24, 22, 0.04), 0 12px 32px rgba(31, 36, 33, 0.075);
-  --metis-shadow-hover: 0 2px 5px rgba(20, 24, 22, 0.05), 0 20px 44px rgba(31, 36, 33, 0.11);
-  --metis-dot: rgba(56, 72, 64, 0.11);
-  --metis-radius: 18px;
-}
-
-:root {
-  --metis-blue: #6175e8;
-  --metis-lilac: #c28fe0;
-  --metis-coral: #ff7b61;
-  --metis-gold: #f0b64b;
-  --metis-green: #4b9b72;
-  --metis-glass:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(244, 246, 248, 0.56));
-  --metis-glass-border: rgba(255, 255, 255, 0.78);
-  --metis-glass-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 0 -1px 0 rgba(96, 103, 126, 0.07),
-    0 12px 32px rgba(42, 45, 57, 0.09);
-}
+/* tokens live in tokens.css */
 
 body {
   background:
