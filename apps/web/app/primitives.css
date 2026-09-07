@@ -6,6 +6,9 @@
    equal specificity over the older stylesheets. */
 
 /* ── Button ────────────────────────────────────────────────────────────── */
+/* One pill. Secondary turns to ink on hover; primary is ink with the
+   lilac→coral bloom held tight behind it; quiet stays flat. Every one
+   lifts a pixel on hover and settles on press. */
 .ui-btn {
   align-items: center;
   appearance: none;
@@ -18,28 +21,48 @@
   font: 500 var(--text-md) / 1 var(--font-sans);
   gap: var(--space-2);
   height: 34px;
+  isolation: isolate;
   justify-content: center;
   padding: 0 14px;
+  position: relative;
   text-decoration: none;
   white-space: nowrap;
+  z-index: 0;
   transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    border-color var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard),
-    opacity var(--motion-fast) var(--ease-standard);
+    background-color var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    color var(--motion-base) var(--ease-standard),
+    opacity var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out);
 }
-.ui-btn:hover:not(:disabled) { background: #fff; border-color: var(--color-ink-3); }
-.ui-btn:disabled { cursor: default; opacity: 0.55; }
+.ui-btn:hover:not(:disabled) { background: var(--color-ink); border-color: var(--color-ink); color: var(--color-paper); transform: translateY(-1px); box-shadow: var(--shadow-1); }
+.ui-btn:active:not(:disabled) { transform: translateY(0) scale(0.97); box-shadow: none; transition-duration: 60ms; }
+.ui-btn:disabled { cursor: default; opacity: 0.5; }
 .ui-btn:focus-visible { box-shadow: var(--focus-ring); outline: none; }
-.ui-btn.is-primary { background: var(--color-ink); border-color: var(--color-ink); color: var(--color-paper); }
-.ui-btn.is-primary:hover:not(:disabled) { background: var(--color-ink-2); border-color: var(--color-ink-2); }
+.ui-btn::before {
+  background: var(--color-bloom);
+  border-radius: inherit;
+  content: "";
+  filter: blur(8px);
+  inset: -3px;
+  opacity: 0;
+  position: absolute;
+  transform: scale(0.92);
+  transition: opacity var(--motion-slow) var(--ease-standard), transform var(--motion-slow) var(--ease-out);
+  z-index: -1;
+}
+.ui-btn.is-primary { background: var(--color-ink); border-color: transparent; color: var(--color-paper); }
+.ui-btn.is-primary:hover:not(:disabled) { background: var(--color-ink); box-shadow: none; }
+.ui-btn.is-primary:hover:not(:disabled)::before { opacity: 0.85; transform: scale(1); }
 .ui-btn.is-quiet { background: transparent; border-color: transparent; }
-.ui-btn.is-quiet:hover:not(:disabled) { background: var(--color-surface); border-color: transparent; }
+.ui-btn.is-quiet:hover:not(:disabled) { background: var(--color-surface); border-color: transparent; color: var(--color-ink); transform: none; box-shadow: none; }
 .ui-btn.is-danger { color: var(--color-danger); }
-.ui-btn.is-danger:hover:not(:disabled) { border-color: var(--color-coral-soft); }
+.ui-btn.is-danger:hover:not(:disabled) { background: var(--color-danger); border-color: var(--color-danger); color: #fff; }
 .ui-btn.is-sm { font-size: var(--text-sm); height: 28px; padding: 0 10px; }
 .ui-btn.is-lg { font-size: var(--text-base); height: 40px; padding: 0 18px; }
-.ui-btn svg { height: 1em; width: 1em; }
+.ui-btn svg { height: 1em; width: 1em; transition: transform var(--motion-base) var(--ease-out); }
+.ui-btn:hover:not(:disabled) svg { transform: scale(1.1); }
 
 /* ── Chip ──────────────────────────────────────────────────────────────── */
 .ui-chip {
@@ -56,6 +79,10 @@
   white-space: nowrap;
 }
 .ui-chip.is-accent { background: var(--color-accent-surface); color: var(--color-accent-ink); }
+button.ui-chip { cursor: pointer; font: inherit; font-size: var(--text-sm); transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-out); }
+button.ui-chip:hover { background: var(--color-line); color: var(--color-ink); }
+button.ui-chip.is-accent:hover { background: var(--color-accent); color: var(--color-ink); }
+button.ui-chip:active { transform: scale(0.96); }
 .ui-chip.is-outline { background: transparent; border-color: var(--color-line); }
 .ui-chip small { color: var(--color-ink-3); font-size: var(--text-xs); }
 
@@ -191,4 +218,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ui-toast, .ui-skeleton { animation: none; }
+  .ui-btn, .ui-btn::before, .ui-btn svg, button.ui-chip { transition: none; transform: none; }
 }

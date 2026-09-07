@@ -53,7 +53,12 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
 @keyframes pane-in { from { opacity: 0.001; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ── Rail ──────────────────────────────────────────────────────────────── */
+/* Dark, warm, and lit from the top-left where the pearl sits. In the native
+   window the traffic lights own the first 40px. */
 .rail {
+  background:
+    radial-gradient(420px 260px at -40px -60px, rgba(209, 142, 226, 0.22), transparent 70%),
+    radial-gradient(360px 220px at 80% -80px, rgba(255, 119, 89, 0.12), transparent 70%);
   color: var(--color-rail-ink);
   display: flex;
   flex: 0 0 var(--rail-width);
@@ -63,23 +68,50 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
   overflow: hidden auto;
   padding: var(--space-3) var(--space-3) var(--space-2);
   scrollbar-width: none;
-  transition: flex-basis var(--motion-slow) var(--ease-out);
+  transition: flex-basis var(--motion-slow) var(--ease-out), padding var(--motion-slow) var(--ease-out);
   width: var(--rail-width);
 }
-.shell.is-collapsed .rail { flex-basis: var(--rail-collapsed); width: var(--rail-collapsed); }
+html.metisNativeWindow .rail { padding-top: 40px; }
+.shell.is-collapsed .rail { flex-basis: var(--rail-collapsed); padding-left: 10px; padding-right: 10px; width: var(--rail-collapsed); }
+
+.rail-top { align-items: center; display: flex; gap: var(--space-1); height: 40px; margin-bottom: var(--space-2); }
 .rail-brand {
   align-items: center;
   border-radius: var(--radius-control);
   color: inherit;
   display: flex;
+  flex: 1;
   gap: 10px;
-  height: 44px;
-  margin-bottom: var(--space-2);
+  height: 40px;
+  min-width: 0;
   padding: 0 4px;
   text-decoration: none;
 }
+.rail-brand .companion { flex: none; }
 .rail-brand strong { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; }
-.rail-brand .brandMark { display: inline-flex; flex: none; height: 30px; width: 30px; }
+.rail-brand:hover .pearlBody { animation-duration: 3s; }
+.rail-toggle {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--color-rail-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  height: 28px;
+  justify-content: center;
+  opacity: 0;
+  padding: 0;
+  transition: opacity var(--motion-base) var(--ease-standard), background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-out);
+  width: 28px;
+}
+.rail:hover .rail-toggle, .rail-toggle:focus-visible, .shell.is-collapsed .rail-toggle { opacity: 1; }
+.rail-toggle:hover { background: var(--color-rail-active); border-color: rgba(255, 255, 255, 0.12); color: var(--color-rail-ink); }
+.rail-toggle:active { transform: scale(0.92); }
+.rail-toggle svg { transition: transform var(--motion-base) var(--ease-out); }
+.rail-toggle:hover svg { transform: translateX(-1px); }
+.shell.is-collapsed .rail-toggle:hover svg { transform: translateX(1px); }
 
 .rail-new {
   align-items: center;
@@ -92,12 +124,30 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
   font: 500 var(--text-md) / 1 var(--font-sans);
   gap: var(--space-2);
   height: 36px;
+  isolation: isolate;
   justify-content: center;
   margin-bottom: var(--space-2);
   padding: 0 var(--space-3);
+  position: relative;
+  transition: transform var(--motion-fast) var(--ease-out), box-shadow var(--motion-base) var(--ease-out), background var(--motion-fast) var(--ease-standard);
   width: 100%;
+  z-index: 0;
 }
-.rail-new:hover { background: #fff; }
+.rail-new::before {
+  background: var(--color-bloom);
+  border-radius: inherit;
+  content: "";
+  filter: blur(8px);
+  inset: -3px;
+  opacity: 0;
+  position: absolute;
+  transform: scale(0.92);
+  transition: opacity var(--motion-slow) var(--ease-standard), transform var(--motion-slow) var(--ease-out);
+  z-index: -1;
+}
+.rail-new:hover { background: #fff; transform: translateY(-1px); }
+.rail-new:hover::before { opacity: 0.9; transform: scale(1); }
+.rail-new:active { transform: scale(0.97); }
 .rail-new kbd { color: var(--color-ink-3); font: 500 var(--text-xs) var(--font-mono); margin-left: auto; }
 
 .rail-group { display: grid; gap: 2px; }
@@ -118,7 +168,7 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
   text-transform: uppercase;
   width: 100%;
 }
-.rail-group-toggle { cursor: pointer; }
+.rail-group-toggle { border-radius: var(--radius-control); cursor: pointer; }
 .rail-group-toggle:hover { color: var(--color-rail-ink); }
 .rail-group-toggle svg { margin-left: auto; transition: transform var(--motion-base) var(--ease-out); }
 .rail-group-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
@@ -128,6 +178,7 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
 .rail-collapsible > div { display: grid; gap: 2px; min-height: 0; overflow: hidden; }
 
 .rail-nav { display: grid; gap: 2px; position: relative; }
+/* The active pill slides between entries and carries a coral tick. */
 .rail-pill {
   background: var(--color-rail-active);
   border-radius: var(--radius-control);
@@ -140,6 +191,7 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
   top: 0;
   transition: top var(--motion-base) var(--ease-out), opacity var(--motion-fast) var(--ease-standard);
 }
+.rail-pill::before { background: var(--color-coral); border-radius: var(--radius-pill); bottom: 10px; content: ""; left: 0; position: absolute; top: 10px; width: 3px; }
 .rail-pill.is-visible { opacity: 1; }
 .rail-link {
   align-items: center;
@@ -152,11 +204,14 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
   padding: 0 10px;
   position: relative;
   text-decoration: none;
+  transition: color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-out);
   white-space: nowrap;
 }
 .rail-link:hover { background: var(--color-rail-hover); color: var(--color-rail-ink); }
+.rail-link:active { transform: scale(0.98); }
 .rail-link.is-active { color: var(--color-rail-ink); }
-.rail-link svg { flex: none; }
+.rail-link svg { flex: none; transition: transform var(--motion-base) var(--ease-out); }
+.rail-link:hover svg { transform: translateY(-1px) scale(1.08); }
 .rail-link span { overflow: hidden; text-overflow: ellipsis; }
 .rail-badge {
   align-items: center;
@@ -175,12 +230,10 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
 .rail-foot { display: grid; gap: 2px; margin-top: auto; padding-top: var(--space-3); }
 .rail-status { align-items: center; color: var(--color-rail-muted); display: flex; font-size: var(--text-xs); gap: 8px; padding: 8px 10px; white-space: nowrap; }
 .rail-status .ui-dot { flex: none; }
-.rail-toggle { justify-content: flex-start; }
-.rail-toggle svg { transition: transform var(--motion-base) var(--ease-out); }
-.shell.is-collapsed .rail-toggle svg { transform: rotate(180deg); }
 
-/* Collapsed: icons only, labels in the tooltip. */
-.shell.is-collapsed .rail { padding-left: 10px; padding-right: 10px; }
+/* Collapsed: icons only, labels in the tooltip, the toggle under the pearl. */
+.shell.is-collapsed .rail-top { flex-direction: column; gap: var(--space-1); height: auto; }
+.shell.is-collapsed .rail-brand { justify-content: center; padding: 0; width: 100%; }
 .shell.is-collapsed .rail-brand strong,
 .shell.is-collapsed .rail-new span,
 .shell.is-collapsed .rail-new kbd,
@@ -188,7 +241,6 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
 .shell.is-collapsed .rail-group-toggle span,
 .shell.is-collapsed .rail-link span,
 .shell.is-collapsed .rail-status span { display: none; }
-.shell.is-collapsed .rail-brand { justify-content: center; padding: 0; }
 .shell.is-collapsed .rail-new { padding: 0; width: 44px; margin-left: auto; margin-right: auto; }
 .shell.is-collapsed .rail-group-toggle { justify-content: center; padding: 10px 0 4px; }
 .shell.is-collapsed .rail-group-toggle svg { margin: 0; }
@@ -197,23 +249,7 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
 .shell.is-collapsed .rail-status { justify-content: center; padding: 8px 0; }
 
 /* ── Drawer, below the narrow breakpoint ────────────────────────────────── */
-.shell-menu {
-  align-items: center;
-  background: var(--color-paper);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-control);
-  box-shadow: var(--shadow-1);
-  color: var(--color-ink);
-  cursor: pointer;
-  display: none;
-  height: 40px;
-  justify-content: center;
-  left: 12px;
-  position: fixed;
-  top: 12px;
-  width: 40px;
-  z-index: 45;
-}
+.shell-menu { display: none; left: 12px; position: fixed; top: 12px; width: 40px; height: 40px; padding: 0; z-index: 45; }
 .shell-scrim {
   background: rgba(0, 0, 0, 0.35);
   border: 0;
@@ -242,6 +278,9 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
   .shell.is-collapsed .rail { flex-basis: 260px; width: 260px; }
   .shell.is-drawer-open .rail { transform: none; }
   .shell.is-drawer-open .shell-scrim { opacity: 1; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail, .rail-toggle, .rail-new, .rail-new::before, .rail-link, .rail-link svg, .rail-pill { transition: none; }
 }
 
 /* ── Page header: the command strip ─────────────────────────────────────── */

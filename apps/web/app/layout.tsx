@@ -16,6 +16,7 @@ import "./primitives.css";
 import "./shell.css";
 import "./chat.css";
 import "./workbenches.css";
+import "./companion.css";
 
 export const metadata: Metadata = {
   applicationName: PRODUCT_NAME,

@@ -6,9 +6,6 @@
 .customers, .assets.has-drawer { position: relative; }
 .ui-btn.is-danger-text { color: var(--color-danger); }
 .ui-btn kbd { font: 500 var(--text-xs) var(--font-mono); color: var(--color-ink-3); margin-left: 4px; }
-button.ui-chip { cursor: pointer; font: inherit; font-size: var(--text-sm); transition: background var(--motion-fast), color var(--motion-fast); }
-button.ui-chip:hover { background: var(--color-line); }
-button.ui-chip.is-accent:hover { background: var(--color-accent-surface); }
 
 /* ── Today ──────────────────────────────────────────────────────────────── */
 

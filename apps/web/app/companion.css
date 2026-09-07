@@ -1,0 +1,375 @@
+/* The companion: the pearl in the rail and in Settings. An oil film turns
+   inside a lit body; the silhouette breathes; the highlight follows the
+   pointer. Moods and energies are attributes the component sets. */
+
+.companion { position: relative; display: block; --m-aura: 209, 142, 226; }
+.companion[data-mood="done"] { --m-aura: 123, 227, 216; }
+.companion[data-mood="trouble"] { --m-aura: 255, 119, 89; }
+
+/* The companion is the assistant mark now, so its slot is just a centred
+   holder — no disc, no ring behind the bead — sized to the 32px avatar column
+   and letting the streaming bead's morph spill past its box. */
+.messageAvatar.metisAvatar {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+}
+.companionDockLabel { color: var(--m-ink-2); }
+.welcomeState .companion { width: 78px; height: 78px; margin: 0; }
+/* ── The companion ──────────────────────────────────────────────────────
+   The pearl. It uses its own class names and its own rules; the original
+   "orb" and its globals.css styles are long gone. */
+.companion { position: relative; }
+.pearlBody {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* The film blends with `multiply`; without isolation its blend group is the
+     page, so it mixed with the purple field behind the bead instead of with
+     the bead's own body. */
+  isolation: isolate;
+  border-radius: 56% 44% 48% 52% / 47% 52% 48% 53%;
+  background: radial-gradient(112% 112% at 32% 24%, #fffdfe 0%, #f2eaf0 58%, #d6c8de 100%);
+  box-shadow:
+    inset -9px -11px 24px rgba(90, 58, 90, 0.3),
+    inset 7px 9px 20px rgba(255, 255, 255, 0.95),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+    0 20px 38px -16px rgba(50, 20, 70, 0.6);
+  animation: mPearlMorph 8s ease-in-out infinite;
+}
+/* The oil film turns inside the body, so the surface shifts hue as it
+   moves rather than showing gradient spokes. */
+/* The film is split in two — see the markup comment in metis-companion.tsx.
+   The outer half owns the mask and the blend; its mask fades out by 62% of
+   its own half-size, and at 148% of the body that is ~0.92 of the body's
+   radius: every pixel of colour dies inside the silhouette, with margin for
+   the morph animation pinching the boundary. The INNER half owns the warp
+   filter, the colours, and the spin, so nothing that promotes itself to a
+   compositor layer is ever the thing responsible for its own containment. */
+.pearlFilm {
+  position: absolute;
+  inset: -24%;
+  border-radius: 50%;
+  display: block;
+  mix-blend-mode: multiply;
+  opacity: 0.68;
+  overflow: hidden;
+  /* Fades out by 56% of the film's half-size (~41% of the body): tight enough
+     that the parallax shift below can never carry colour past the morph's
+     most pinched corner. */
+  -webkit-mask-image: radial-gradient(closest-side, #000 0 42%, rgba(0, 0, 0, 0.5) 50%, transparent 56%);
+  mask-image: radial-gradient(closest-side, #000 0 42%, rgba(0, 0, 0, 0.5) 50%, transparent 56%);
+  /* Percentages, not pixels: a fixed 9px was a third of the 34px dock bead,
+     which walked the whole film — mask and all — out of the silhouette. */
+  transform: translate(calc(var(--mx, 0) * -2.5%), calc(var(--my, 0) * -2%));
+  transition: transform 0.6s var(--ease-standard);
+}
+.pearlFilmInk {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  display: block;
+  filter: blur(6px) saturate(1.35);
+  background:
+    radial-gradient(38% 34% at 68% 24%, #ff7f5c 0%, rgba(255, 127, 92, 0) 66%),
+    radial-gradient(40% 36% at 78% 62%, #c77bee 0%, rgba(199, 123, 238, 0) 66%),
+    radial-gradient(42% 38% at 34% 72%, #4fd3e4 0%, rgba(79, 211, 228, 0) 66%),
+    radial-gradient(34% 32% at 26% 30%, #ffd25a 0%, rgba(255, 210, 90, 0) 66%),
+    radial-gradient(30% 28% at 52% 50%, #ff8fb4 0%, rgba(255, 143, 180, 0) 68%);
+  animation: mPearlSpin 14s linear infinite;
+}
+.pearlSpec {
+  position: absolute;
+  left: 20%;
+  top: 12%;
+  width: 30%;
+  height: 17%;
+  border-radius: 50%;
+  background: #fff;
+  filter: blur(5px);
+  opacity: 0.92;
+  /* Of the spec's own box (30% × 17% of the body), so the highlight travels
+     ~9% of the body at every size instead of 20px — which on the dock bead
+     was a white smear parked outside the blob. */
+  transform: translate(calc(var(--mx, 0) * 30%), calc(var(--my, 0) * 40%));
+  transition: transform var(--motion-slow) var(--ease-standard);
+}
+.pearlShadow {
+  position: absolute;
+  left: 50%;
+  bottom: -14px;
+  transform: translateX(-50%);
+  width: 56%;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(50, 20, 70, 0.34);
+  filter: blur(9px);
+  animation: mPearlContact 8s ease-in-out infinite;
+}
+@keyframes mPearlMorph {
+  0%, 100% { border-radius: 56% 44% 48% 52% / 47% 52% 48% 53%; transform: translateY(0) rotate(0deg); }
+  33% { border-radius: 44% 56% 60% 40% / 57% 42% 58% 43%; transform: translateY(-6px) rotate(2.5deg); }
+  66% { border-radius: 52% 48% 40% 60% / 41% 58% 42% 59%; transform: translateY(-2px) rotate(-2.5deg); }
+}
+@keyframes mPearlSpin { to { transform: rotate(360deg); } }
+@keyframes mPearlContact {
+  0%, 100% { opacity: 0.34; width: 56%; }
+  50% { opacity: 0.2; width: 44%; }
+}
+/* Moods, as the component already drives them. */
+.companion[data-mood="listening"] .pearlBody { animation-duration: 5s; }
+.companion[data-mood="thinking"] .pearlBody { animation-duration: 2s; }
+.companion[data-mood="thinking"] .pearlFilmInk { animation-duration: 5s; }
+.companion[data-mood="thinking"] .pearlFilm { opacity: 0.8; }
+.companion[data-mood="done"] .pearlFilmInk { filter: blur(6px) saturate(1.05) hue-rotate(82deg); }
+.companion[data-mood="done"] .pearlFilm { opacity: 0.52; }
+.companion[data-mood="trouble"] .pearlBody { animation: mPearlSlump 7s ease-in-out infinite; }
+@keyframes mPearlSlump {
+  0%, 100% { border-radius: 48% 52% 40% 60% / 34% 36% 64% 66%; transform: translateY(5px) scale(1.08, 0.84); }
+  50% { border-radius: 50% 50% 42% 58% / 36% 34% 66% 64%; transform: translateY(6px) scale(1.1, 0.82); }
+}
+.companion[data-mood="trouble"] .pearlFilmInk { filter: blur(11px) saturate(0.1); }
+.companion[data-mood="trouble"] .pearlFilm { opacity: 0.42; }
+/* Below 28px the morph reads as a wobble, so small beads sit still. */
+.companion.isSmall .pearlBody { animation: none; border-radius: 50%; }
+.companion.isSmall .pearlSpec { display: none; }
+/* ═══════════════════════════════════════════════════════════════════════
+   COLOUR — the bead's own palette, put to work.
+
+   The oil film on the companion runs coral → gold → teal → lavender, and
+   those four hues were doing nothing outside it. The asset library already
+   hashes every tag to one of five tones (`data-tone`), so the hook existed;
+   it was just pointing at the previous palette's greens. Tags now carry the
+   film's colours, and a monogram is a small piece of the film itself.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* tokens live in tokens.css */
+
+/* Tags: a wash of the hue with ink dark enough to read on it. */
+.assetTags > span[data-tone="mint"],
+.assetDrawerTags > span[data-tone="mint"] { background: #ddf3ee; border-color: #bfe5dc; color: #1d6b5c; }
+/* ═══════════════════════════════════════════════════════════════════════
+   THE MARK
+
+   It is the companion's bead now, so it animates the way the bead does:
+   the film turns inside a still body rather than the whole logo pulsing.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.metisMark { display: block; overflow: visible; }
+/* ── 2 · The companion perches ON the composer's corner ──────────────────
+   Not inside the box and not beside it: astride the top-right corner, half
+   in and half out, the way a creature sits on the edge of the desk you are
+   writing at. No halo, no plate, no background — the bead's own body and
+   shadow are the whole rendering, and the mood shows in its colour and
+   tempo, which is the point of having a creature instead of an icon. */
+.composer { position: relative; }
+.companionPerch {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  position: absolute;
+  right: -12px;
+  top: -16px;
+  z-index: 4;
+}
+.companionPerch .companion { flex: 0 0 38px; height: 38px; margin: 0; width: 38px; }
+/* Perched, it can afford to be livelier than the hero bead: a faster
+   breath, a faster film, and a settle-bob when its mood changes. */
+.companionPerch .pearlBody { animation-duration: 5.5s; }
+.companionPerch .pearlFilmInk { animation-duration: 9s; }
+.companionPerch .companion { animation: mPerchSettle 480ms var(--ease-standard); }
+/* The pearl replaces the hand-rolled blob: one creature everywhere in the
+   app, and its film is contained by its own mask — no halo spilling past
+   the silhouette, no colour wheel reading as a flash. The pearl is the only
+   living part of this row; nothing here may animate a background. */
+.compactActivityPearl {
+  align-self: center;
+  flex: 0 0 auto;
+  margin: 0 2px 3px 0;
+}
+.compactActivityPearl .pearlShadow { bottom: -7px; height: 8px; }
+/* ═══════════════════════════════════════════════════════════════════════
+   COMPANION EXPRESSION + PERSISTENT RUN SIGNALS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.companion { --m-aura: 194, 156, 224; isolation: isolate; }
+.pearlBody { z-index: 2; }
+.pearlShadow { z-index: 0; }
+.pearlAura {
+  position: absolute;
+  inset: -14%;
+  z-index: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--m-aura), .34), rgba(var(--m-aura), 0) 70%);
+  filter: blur(7px);
+  opacity: .52;
+  pointer-events: none;
+  animation: mAuraBreathe 3.8s ease-in-out infinite;
+}
+.pearlSpark {
+  position: absolute;
+  top: -6%;
+  left: 48%;
+  z-index: 3;
+  width: 7%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgba(255,255,255,.94);
+  box-shadow: 0 0 9px rgba(var(--m-aura), .95), 0 0 0 1px rgba(255,255,255,.68);
+  opacity: 0;
+  transform-origin: 50% 850%;
+  pointer-events: none;
+}
+.pearlSpark::after {
+  content: "";
+  position: absolute;
+  width: 72%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgba(var(--m-aura), .9);
+  transform: translate(220%, 370%);
+}
+.companion[data-mood="listening"] { --m-aura: 130, 178, 235; }
+.companion[data-mood="thinking"] { --m-aura: 209, 142, 226; }
+.companion[data-mood="done"] { --m-aura: 79, 194, 158; }
+.companion[data-mood="trouble"] { --m-aura: 255, 119, 89; }
+.companion[data-mood="done"] .pearlAura { animation: mAuraDone 1.5s var(--m-menu-ease) both; }
+.companion[data-mood="trouble"] .pearlAura { opacity: .7; animation-duration: 1.25s; }
+.companion[data-energy="expressive"][data-mood="listening"] .pearlSpark,
+.companion[data-energy="expressive"][data-mood="thinking"] .pearlSpark,
+.companion[data-energy="playful"] .pearlSpark { opacity: .9; animation: mSparkOrbit 4.2s linear infinite; }
+.companion[data-energy="calm"] .pearlAura { opacity: .28; animation-duration: 7s; }
+.companion[data-energy="calm"] .pearlBody { animation-duration: 12s; }
+.companion[data-energy="calm"] .pearlFilmInk { animation-duration: 22s; }
+.companion[data-energy="calm"] .pearlSpark { display: none; }
+.companion[data-energy="playful"] .pearlAura { inset: -24%; opacity: .72; animation-duration: 2.2s; }
+.companion[data-energy="playful"] .pearlBody { animation-duration: 3.5s; }
+.companion[data-energy="playful"] .pearlFilmInk { animation-duration: 6.5s; }
+.companion[data-energy="playful"][data-mood="thinking"] .pearlBody { animation-duration: 1.35s; }
+.companion.isSmall .pearlAura,
+.companion.isSmall .pearlSpark { display: none; }
+.companionEnergyGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.companionEnergyGrid > button {
+  position: relative;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 11px;
+  min-height: 82px;
+  padding: 12px;
+  border: 1px solid var(--m-line);
+  border-radius: var(--radius-card);
+  background: var(--m-paper-lift);
+  color: var(--m-ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--motion-base) ease, background-color var(--motion-base) ease, transform var(--motion-base) var(--m-menu-ease);
+}
+.companionEnergyGrid > button:hover { border-color: #c6b8d6; transform: translateY(-1px); }
+.companionEnergyGrid > button.selected { border-color: #9f80b3; background: rgba(194, 156, 224, .1); box-shadow: 0 0 0 3px rgba(194, 156, 224, .12); }
+.companionEnergyGrid > button > span:nth-child(2) { display: grid; gap: 4px; }
+.companionEnergyGrid strong { font-size: var(--text-sm); font-weight: 600; }
+.companionEnergyGrid small { color: var(--m-ink-2); font-size: var(--text-xs); line-height: 1.4; }
+.companionEnergyGrid > button > i { width: 12px; height: 12px; border: 1px solid #a59c90; border-radius: 50%; }
+.companionEnergyGrid > button.selected > i { border: 3px solid var(--m-paper-lift); background: #87659d; box-shadow: 0 0 0 1px #87659d; }
+.companionEnergyPreview { display: grid; place-items: center; min-height: 54px; }
+/* Audit repair: entrance animation is decorative, never a gate. In embedded
+   browsers or background tabs it may be throttled before its first frame; the
+   content must remain legible regardless. */
+.welcomeState > .companion,
+.welcomeState > .eyebrow,
+.welcomeState > h1,
+.welcomeState > p,
+.welcomeState > .customerSnippet,
+.welcomeState > .trustLine {
+  opacity: 1;
+  transform: none;
+  animation: none;
+}
+/* Chat is one continuous canvas. Metis colour now lives in the atmosphere and
+   companion instead of a separate purple header slab, giving the workspace
+   the quiet, seamless feel of a native coding conversation. */
+.chatWorkspace.isEmpty .conversationPane,
+.chatWorkspace:not(.isEmpty) .conversationPane {
+  background:
+    radial-gradient(76% 58% at 42% 8%, rgba(196, 163, 218, 0.14), transparent 70%),
+    radial-gradient(44% 45% at 100% 94%, rgba(255, 128, 104, 0.06), transparent 72%),
+    #f7f4f3;
+}
+
+@keyframes mAuraBreathe { 0%, 100% { opacity: .32; transform: scale(.88); } 50% { opacity: .66; transform: scale(1.08); } }
+@keyframes mAuraDone { 0% { opacity: .2; transform: scale(.8); } 45% { opacity: .85; transform: scale(1.3); } 100% { opacity: .42; transform: scale(1); } }
+@keyframes mSparkOrbit { to { transform: rotate(360deg); } }
+
+.companionEnergyGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.companionEnergyGrid > button {
+  position: relative;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 11px;
+  min-height: 82px;
+  padding: 12px;
+  border: 1px solid var(--m-line);
+  border-radius: var(--radius-card);
+  background: var(--m-paper-lift);
+  color: var(--m-ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--motion-base) ease, background-color var(--motion-base) ease, transform var(--motion-base) var(--m-menu-ease);
+}
+@keyframes mAuraDone { 0% { opacity: .2; transform: scale(.8); } 45% { opacity: .85; transform: scale(1.3); } 100% { opacity: .42; transform: scale(1); } }
+@keyframes mSparkOrbit { to { transform: rotate(360deg); } }
+
+.companionEnergyGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.companionEnergyGrid > button {
+  position: relative;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 11px;
+  min-height: 82px;
+  padding: 12px;
+  border: 1px solid var(--m-line);
+  border-radius: var(--radius-card);
+  background: var(--m-paper-lift);
+  color: var(--m-ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--motion-base) ease, background-color var(--motion-base) ease, transform var(--motion-base) var(--m-menu-ease);
+}
+@keyframes mSparkOrbit { to { transform: rotate(360deg); } }
+
+.companionEnergyGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.companionEnergyGrid > button {
+  position: relative;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 11px;
+  min-height: 82px;
+  padding: 12px;
+  border: 1px solid var(--m-line);
+  border-radius: var(--radius-card);
+  background: var(--m-paper-lift);
+  color: var(--m-ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--motion-base) ease, background-color var(--motion-base) ease, transform var(--motion-base) var(--m-menu-ease);
+}
+@keyframes mPerchSettle {
+  0% { transform: translateY(-4px) scale(0.94); }
+  60% { transform: translateY(1px) scale(1.03); }
+  100% { transform: translateY(0) scale(1); }
+}

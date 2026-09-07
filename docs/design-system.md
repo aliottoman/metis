@@ -102,8 +102,15 @@ page sits in, built from Phase 1 of the interface audit:
   `prefers-color-scheme` rule handles "system". A saved choice is applied by
   an inline script before first paint. The control is in Settings.
 - **Motion, once.** `--motion-*` and `--ease-*` drive every transition; the
-  page enters with one short rise; the old per-element stagger and the
-  global button press-scale are gone.
+  page enters with one short rise. Character lives in the primitives, not
+  in per-page rules: every `.ui-btn` lifts a pixel on hover and settles on
+  press, a secondary turns to ink, a primary carries the lilac→coral bloom
+  (`--color-bloom`) behind it, and rail links nudge their icon.
+- **The pearl.** `components/metis-companion.tsx` with `app/companion.css`
+  is the mark: it sits in the rail brand, breathes, and its oil film turns.
+  The fold toggle sits beside it and shows on hover. In the native window
+  (`html.metisNativeWindow`, set by the Mac app) the rail leaves 40px for
+  the traffic lights in both states.
 
 ## The chat page
 

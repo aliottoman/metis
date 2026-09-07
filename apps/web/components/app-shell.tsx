@@ -20,6 +20,7 @@ import {
   MessageSquareQuote,
   Package,
   PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings,
   Sun,
@@ -325,7 +326,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className={`shell${collapsed ? " is-collapsed" : ""}${drawerOpen ? " is-drawer-open" : ""}`}>
       <button
         ref={menuRef}
-        className="shell-menu"
+        className="ui-btn shell-menu"
         type="button"
         aria-label={drawerOpen ? "Close navigation" : "Open navigation"}
         aria-expanded={drawerOpen}
@@ -337,12 +338,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <button className="shell-scrim" type="button" tabIndex={-1} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
 
       <aside ref={railRef} id="metis-rail" className="rail" aria-label="Main navigation">
-        <Link href="/today" className="rail-brand" aria-label="Metis">
-          <span className="brandMark" aria-hidden="true">
-            <MetisCompanion size={30} energy="calm" />
-          </span>
-          <strong>Metis</strong>
-        </Link>
+        <div className="rail-top">
+          <Link href="/today" className="rail-brand" aria-label="Metis">
+            <MetisCompanion size={30} energy="expressive" />
+            <strong>Metis</strong>
+          </Link>
+          {!narrow ? (
+            <button
+              type="button"
+              className="rail-toggle"
+              onClick={toggleCollapsed}
+              aria-pressed={collapsedChoice}
+              aria-label={collapsed ? "Expand the sidebar" : "Fold the sidebar"}
+              title={collapsed ? "Expand the sidebar" : "Fold the sidebar"}
+            >
+              {collapsed ? <PanelLeftOpen size={16} strokeWidth={1.8} aria-hidden="true" /> : <PanelLeftClose size={16} strokeWidth={1.8} aria-hidden="true" />}
+            </button>
+          ) : null}
+        </div>
 
         <button
           className="rail-new"
@@ -394,18 +407,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <StatusDot state={connected ? "live" : "stopped"} />
             <span>{connected ? "Private by default" : "Offline"}</span>
           </span>
-          {!narrow ? (
-            <button
-              type="button"
-              className="rail-link rail-toggle"
-              onClick={toggleCollapsed}
-              aria-pressed={collapsedChoice}
-              title={collapsed ? "Expand the rail" : "Fold the rail"}
-            >
-              <PanelLeftClose size={18} strokeWidth={1.6} aria-hidden="true" />
-              <span>{collapsed ? "Expand" : "Fold rail"}</span>
-            </button>
-          ) : null}
         </div>
       </aside>
 
