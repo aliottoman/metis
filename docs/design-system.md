@@ -134,6 +134,27 @@ and four small views:
   said, titled by it, so an unused session leaves nothing behind. The list
   hides conversations nobody said anything in.
 
+## The workbenches
+
+`apps/web/app/workbenches.css` styles Today, Customers and Assets, Phase 3
+of the audit. Each page is a header strip, then the working surface:
+
+- **Today is one ranked list** (`components/today-view.tsx`): Start here,
+  then each kind of work in the queue's own order, then Deferred, then
+  what changed since yesterday. Arrow keys or j/k walk it, Enter opens,
+  L defers, X selects a batchable row, R brings a deferred one back. The
+  brief is a paragraph and a Listen button that becomes the shared player.
+- **Customers is master-detail** (`hooks/use-customers.ts`,
+  `components/customers/*`): accounts on the left with "Everything" pinned
+  at the top, the dashboard or the open account on the right. Every edit
+  goes through one `run()` (busy, error, toast, re-read). Sections keep
+  their own drafts and the detail remounts per account, so nothing carries
+  over. Dialogs share one `Modal`; the URL follows the selection.
+- **Assets is list-first** (`lib/assets.ts`, `components/assets/*`):
+  running first, then ready, then what needs something. Filters are chips
+  with counts, the settings drawer is fixed-width with its own env and log
+  state, and a running asset opens full-width.
+
 ## Icons
 
 `lucide-react`, 18px, stroke 1.6, through `NavIcon` in the shell. New icons

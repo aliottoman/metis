@@ -76,112 +76,6 @@ body { background: var(--m-paper); color: var(--m-ink); }
 .trustLine span:nth-child(2) i,
 .trustLine span:nth-child(3) i { background: var(--m-chrome); background-size: 100% 400%; }
 
-/* ── Customer intelligence: a quiet band, not a second hero ─────────────
-   It sits under the wordmark on the front door, so it has to report without
-   competing. One eyebrow row, one line of figures, one row of accounts. */
-.customerSnippet {
-  display: block;
-  margin-top: 20px;
-  padding: 15px 20px 16px;
-  background: rgba(252, 250, 246, 0.9);
-  border: 0;
-  border-radius: var(--radius-card);
-  box-shadow: 0 18px 40px -24px rgba(60, 30, 80, 0.55);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
-  transition: transform var(--motion-slow) var(--m-ease), box-shadow var(--motion-slow) var(--m-ease);
-}
-.customerSnippet:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 24px 48px -24px rgba(60, 30, 80, 0.6);
-}
-.customerSnippet > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.customerSnippet .eyebrow { margin: 0; font-size: var(--text-xs); color: var(--m-ink-3); }
-.customerSnippet > header a {
-  color: var(--m-ink);
-  font-size: var(--text-sm);
-  font-weight: 400;
-  white-space: nowrap;
-  text-decoration: none;
-  opacity: 0.8;
-  transition: opacity var(--motion-base) var(--m-ease);
-}
-.customerSnippet > header a:hover { opacity: 1; }
-
-.customerSnippetMetrics {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0;
-  margin-top: 9px;
-  padding: 0;
-  border: 0;
-}
-.customerSnippetMetrics > span {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 0 15px;
-  background: none;
-  border: 0;
-  border-left: 1px solid var(--m-line);
-  border-radius: 0;
-  box-shadow: none;
-  color: var(--m-ink-2);
-  font-size: var(--text-md);
-}
-.customerSnippetMetrics > span:first-child { padding-left: 0; border-left: 0; }
-.customerSnippetMetrics b {
-  color: var(--m-ink);
-  font-size: var(--text-2xl);
-  font-weight: 400;
-  letter-spacing: -0.022em;
-  font-variant-numeric: tabular-nums;
-}
-.customerSnippetMetrics .attention b { color: #c0492f; }
-
-/* The accounts you touched last, as chips rather than a list. */
-.customerSnippetRecent {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 13px;
-  padding-top: 12px;
-  border-top: 1px solid var(--m-line);
-}
-.customerSnippetRecent a {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  max-width: 210px;
-  padding: 4px 11px;
-  border-radius: 999px;
-  background: var(--m-surface);
-  color: var(--m-ink-2);
-  font-size: var(--text-xs);
-  text-decoration: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background-color var(--motion-base) var(--m-ease), color var(--motion-base) var(--m-ease);
-}
-.customerSnippetRecent a:hover { background: var(--m-ink-btn); color: #fbf8f2; }
-.customerSnippetRecent b {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-weight: 400;
-  opacity: 0.75;
-}
-.customerSnippet > p { margin: 11px 0 0; color: var(--m-ink-2); font-size: var(--text-sm); }
-
 /* globals hides the recent accounts, the empty-state line and the trust row
    below 760px of height, to keep the front door on one screen. The compact
    card is roughly half the height the old one was, so that budget is no
@@ -239,10 +133,7 @@ body { background: var(--m-paper); color: var(--m-ink); }
   text-transform: uppercase;
   color: var(--m-ink-3);
 }
-.eyebrow::before { display: none; }   /* the old gradient tick */
-
-/* Panels: greige, hairline, flat. The glass blur is retired here — it was
-   costing legibility on dense pages and buying atmosphere they don't need. */
+.eyebrow::before { display: none; }
 .toolCard,
 .memoryCard,
 .settingsSection,
@@ -252,8 +143,7 @@ body { background: var(--m-paper); color: var(--m-ink); }
 .emptyPanel,
 .modalCard,
 .notice,
-.sourceForm,
-.customerInlineForm {
+.sourceForm {
   background: var(--m-surface);
   border: 1px solid var(--m-line);
   border-radius: var(--radius-card);
@@ -450,47 +340,6 @@ select,
 }
 .selectLabel { color: var(--m-ink-3); }
 
-/* ── Assets: cards on greige, the green accent family retired ─────────── */
-.assetCard,
-.assetDrawer {
-  background: var(--m-surface);
-  border: 1px solid var(--m-line);
-  border-radius: var(--radius-card);
-  box-shadow: none;
-  backdrop-filter: none;
-}
-.assetCard:hover { border-color: #c6b8d6; box-shadow: none; transform: none; }
-.assetCatalogSummary { background: none; border: 0; box-shadow: none; }
-.assetTags > span,
-.assetDrawerTags > span {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  color: var(--m-ink-2);
-}
-.assetMonogram {
-  background: var(--m-ink-btn);
-  border: 0;
-  border-radius: var(--radius-card);
-  box-shadow: none;
-  color: #fbf8f2;
-}
-.assetCardFooter > span,
-.assetCardFooter > span:last-child { color: var(--m-ink); font-weight: 500; }
-.assetStatus.isReady { background: var(--m-paper-lift); color: var(--m-ink-2); }
-/* The drawer kept a green dot-field head and indigo section labels — the
-   last two accents from the generation before this one. */
-.assetDrawerHeader {
-  background: var(--m-surface);
-  border-bottom: 1px solid var(--m-line);
-}
-.assetDrawerKicker,
-.assetSectionLabel {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace);
-  letter-spacing: 0.02em;
-  color: var(--m-ink-3);
-}
-.assetDrawer .textButton { color: var(--m-ink); }
-
 /* ── Knowledge: inner cells join the greige system ────────────────────── */
 .knowledgeDashboardBar .knowledgeTabs,
 .knowledgeOverview {
@@ -584,49 +433,14 @@ select,
 .toolTrustBanner p { color: var(--m-ink-2); }
 .toolTrustMark { background: var(--m-ink-btn); border-radius: var(--radius-card); }
 .capabilityPanel { background: var(--m-paper-lift); border: 1px solid var(--m-line); }
-.customerWorkbenchBody {
-  background: var(--m-surface);
-  border: 1px solid var(--m-line);
-  box-shadow: none;
-}
-.customerAccounts { background: var(--m-paper); }
-.customerAccounts nav > button.active { background: var(--m-paper-lift); box-shadow: inset 0 0 0 1px var(--m-line); }
-.customerAccountFilters button {
-  border-radius: 999px;
-  border: 1px solid transparent;
-  color: var(--m-ink-2);
-}
-.customerAccountFilters button.active {
-  background: var(--m-ink-btn);
-  border-color: transparent;
-  color: #fbf8f2;
-}
-/* The win-category chips were the last of the green tints on this page. */
-.customerSummaryChips > b {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: 999px;
-  color: var(--m-ink-2);
-  font-weight: 400;
-}
-.customerSummaryChips > b > i {
-  background: var(--m-surface);
-  border-radius: 999px;
-  color: var(--m-ink);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-style: normal;
-}
 .modelControlTrigger,
 .primaryButton,
 .secondaryButton,
 .ghostButton,
 .dangerButton,
-.assetRefreshButton,
 .modelControlLaunch,
 .modelControlStop,
-.filterTabs button,
-.customerAccountFilters button { border-radius: var(--m-r-pill); }
+.filterTabs button { border-radius: var(--m-r-pill); }
 .selectTrigger,
 input[type="text"],
 input[type="search"],
@@ -645,8 +459,7 @@ select { border-radius: var(--m-r-field); }
 .ghostButton,
 .dangerButton,
 .iconButton,
-.filterTabs button,
-.customerAccountFilters button {
+.filterTabs button {
   transition:
     background-color 0.22s var(--m-ease),
     border-color 0.22s var(--m-ease),
@@ -735,41 +548,6 @@ select { border-radius: var(--m-r-field); }
   border: 1px solid var(--m-line);
   color: var(--m-ink-2);
 }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   COLOUR — the bead's own palette, put to work.
-
-   The oil film on the companion runs coral → gold → teal → lavender, and
-   those four hues were doing nothing outside it. The asset library already
-   hashes every tag to one of five tones (`data-tone`), so the hook existed;
-   it was just pointing at the previous palette's greens. Tags now carry the
-   film's colours, and a monogram is a small piece of the film itself.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-/* tokens live in tokens.css */
-
-/* Tags: a wash of the hue with ink dark enough to read on it. */
-.assetTags > span[data-tone="mint"],
-.assetDrawerTags > span[data-tone="mint"] { background: #ddf3ee; border-color: #bfe5dc; color: #1d6b5c; }
-.assetTags > span[data-tone="coral"],
-.assetDrawerTags > span[data-tone="coral"] { background: #ffe7de; border-color: #f7cdbe; color: #ab472a; }
-.assetTags > span[data-tone="violet"],
-.assetDrawerTags > span[data-tone="violet"] { background: #f2e4f8; border-color: #e2ccec; color: #773d92; }
-.assetTags > span[data-tone="blue"],
-.assetDrawerTags > span[data-tone="blue"] { background: #e2eafa; border-color: #c9d8f1; color: #33578c; }
-.assetTags > span[data-tone="gold"],
-.assetDrawerTags > span[data-tone="gold"] { background: #fdf1d4; border-color: #f0dcae; color: #83601a; }
-
-/* Monograms: a slice of the film, not a flat swatch. */
-.assetMonogram { color: #fff; border: 0; box-shadow: none; }
-.assetMonogram[data-tone="mint"] { background: linear-gradient(142deg, #8ae9df 0%, #3fa997 100%); }
-.assetMonogram[data-tone="coral"] { background: linear-gradient(142deg, #ffb094 0%, #ef6a46 100%); }
-.assetMonogram[data-tone="violet"] { background: linear-gradient(142deg, #e4b3f4 0%, #ac6ed2 100%); }
-.assetMonogram[data-tone="blue"] { background: linear-gradient(142deg, #b3c9f2 0%, #6285c9 100%); }
-.assetMonogram[data-tone="gold"] { background: linear-gradient(142deg, #ffe6a0 0%, #dfa73c 100%); }
-
-/* The card lifts toward the hue it carries rather than to a generic grey. */
-.assetCard:hover { border-color: #cdbcd9; box-shadow: 0 14px 30px -20px rgba(70, 40, 90, 0.45); }
 
 /* A few places elsewhere that were carrying weight in grey and can afford
    the palette: the knowledge counters, the registry icons, the tier badge. */
@@ -895,11 +673,6 @@ select { border-radius: var(--m-r-field); }
 .approvalCard.isInline .approvalTitle strong { font-size: var(--text-md); }
 .approvalCard.isInline > p { font-size: var(--text-sm); }
 
-/* Capture status on the account overview: coral while something still waits
-   for analysis, quiet ink once it has been analysed. */
-.customerSectionCard em.sourceWaiting { color: var(--m-coral); font-style: normal; }
-.customerSectionCard em.sourceSaved { color: var(--m-ink-3); font-style: normal; }
-
 /* A note/action opened from the Today queue flashes a soft ring when you land
    on it, so "open" points your eye at the exact item, not just the tab. */
 @keyframes mDeepLinkFlash {
@@ -911,90 +684,6 @@ select { border-radius: var(--m-r-field); }
 @media (prefers-reduced-motion: reduce) {
   .isDeepLinked { animation: none; }
 }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   Assets — the page fields and the detail drawer, brought onto the matured
-   surface. Two things were off: the search/select fields used a translucent
-   white that tinted against the dotted page (the "inner colour"), and the
-   drawer kept 8–10px "debug" type with a status chip so pale it read as blank.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-/* Page fields — a clean paper field, one hairline, a soft lilac focus. No
-   white translucency; the retired indigo accent is gone. */
-.assetFieldLabel { color: var(--m-ink-3); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.05em; }
-.assetSearchControl {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: var(--radius-card);
-  box-shadow: none;
-  min-height: 44px;
-}
-.assetSearchControl:focus-within {
-  background: var(--m-paper-lift);
-  border-color: #c6b8d6;
-  box-shadow: 0 0 0 3px rgba(194, 156, 224, 0.2);
-}
-.assetSearchControl > span { color: var(--m-ink-3); font-size: var(--text-body); }
-.assetSearchControl input { color: var(--m-ink); font-size: var(--text-md); }
-.assetSearchControl input::placeholder { color: var(--m-ink-3); }
-/* background-color only, so the select keeps its chevron background-images. */
-.assetSelectField select {
-  background-color: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: var(--radius-card);
-  color: var(--m-ink-2);
-  font-size: var(--text-md);
-  min-height: 44px;
-}
-.assetSelectField select:focus-visible { border-color: #c6b8d6; box-shadow: 0 0 0 3px rgba(194, 156, 224, 0.2); }
-
-/* Drawer — paper ground, reading-scale type, and a defined status row so the
-   status reads as its own section rather than a pale chip on blank space. */
-.assetDrawer { background: var(--m-paper); }
-.assetDrawerBody { padding: 22px 26px 40px; }
-.assetDrawerHeader p { color: var(--m-ink-2); font-size: var(--text-md); line-height: 1.6; margin-top: 10px; max-width: 60ch; }
-.assetDrawerKicker, .assetSectionLabel { font-size: var(--text-xs); }
-
-.assetRuntimeStrip {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: var(--radius-card);
-  margin-bottom: 16px;
-  padding: 11px 14px;
-}
-.assetRuntimeStrip > code { color: var(--m-ink-3); font-size: var(--text-xs); max-width: 60%; }
-
-/* Status chips — sized to read, coloured by state on the matured palette
-   (used on the cards and in the drawer alike). */
-.assetStatus { font-size: var(--text-xs); gap: 6px; letter-spacing: 0.045em; min-height: 24px; padding: 0 10px; }
-.assetStatus i { height: 6px; width: 6px; }
-.assetStatus.isRunning { background: var(--m-mint-surface, #e5f4ef); border-color: transparent; color: var(--m-green-ink, #00754e); }
-.assetStatus.isReady { background: var(--m-surface); border-color: transparent; color: var(--m-ink-2); }
-.assetStatus.isReview,
-.assetStatus.isTransitioning { background: #fbecc7; border-color: transparent; color: #856121; }
-.assetStatus.isError { background: var(--terracotta-light, #ffe6de); border-color: transparent; color: var(--coral-ink, #cf4023); }
-
-/* Recipe, trust and disclosure sections — reading scale, matured hairlines,
-   and env inputs that match the fields above. */
-.assetRecipeNotice p { color: var(--m-ink-2); font-size: var(--text-sm); line-height: 1.6; }
-.assetRecipeNotice code { font-size: var(--text-xs); }
-.assetTrustReview pre { font-size: var(--text-xs); line-height: 1.6; max-height: 160px; }
-.assetTrustApproved strong { font-size: var(--text-sm); }
-.assetTrustApproved small { font-size: var(--text-xs); }
-.assetDisclosure,
-.assetEnvSection.assetDisclosure,
-.assetLogsSection.assetDisclosure { border-bottom-color: var(--m-line); }
-.assetDisclosureSummary strong { font-family: inherit; font-size: var(--text-base); }
-.assetDisclosureSummary > span,
-.assetDisclosureSummary small { color: var(--m-ink-3); font-size: var(--text-xs); }
-.assetDisclosureSummary::after { color: var(--m-ink-3); }
-.assetDisclosureBody > p:first-child { color: var(--m-ink-2); font-size: var(--text-sm); line-height: 1.6; }
-.assetEnvControl input {
-  background: var(--m-paper-lift);
-  border: 1px solid var(--m-line);
-  border-radius: var(--radius-control);
-}
-.assetEnvField code { font-size: var(--text-sm); }
 
 /* ═══════════════════════════════════════════════════════════════════════
    INTERACTION REFINEMENT — controls become their menus
@@ -1011,16 +700,10 @@ select { border-radius: var(--m-r-field); }
 .selectMenu,
 .modelControl { isolation: isolate; }
 .selectMenu.isOpen { z-index: 210; }
-/* Several editorial panels use backdrop-filter, which makes each one a new
-   stacking context. Lift the containing panel while its menu is open so the
-   unfolded surface never disappears behind the cards that follow it. */
-.assetToolbar:has(.selectMenu.isOpen),
 .settingsSection:has(.selectMenu.isOpen),
 .knowledgeSection:has(.selectMenu.isOpen),
 .sourceForm:has(.selectMenu.isOpen),
 .sourceAddForm:has(.selectMenu.isOpen),
-.customerModal:has(.selectMenu.isOpen),
-.customerInlineForm:has(.selectMenu.isOpen),
 .dacControls:has(.selectMenu.isOpen) {
   position: relative;
   z-index: 90;
@@ -1232,11 +915,6 @@ select { border-radius: var(--m-r-field); }
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
-/* Form-specific sizing now that every former native select is the same
-   accessible component. */
-.assetSelectField .selectLabel { color: var(--m-ink-3); font-size: var(--text-xs); font-weight: 600; }
-.assetSelectField .selectTrigger { min-height: 44px; }
 .sourceAddForm .selectField { flex: 0 0 min(178px, 38%); }
 .memoryKind.selectField { min-width: min(220px, 100%); }
 .settingsSection .selectField { min-width: min(240px, 100%); }
@@ -2773,15 +2451,12 @@ button,
 }
 .modelControlPanel,
 .selectMenuPopover,
-.commandPicker,
-.todayBatchBar {
+.commandPicker {
   -webkit-backdrop-filter: saturate(165%) blur(24px);
   backdrop-filter: saturate(165%) blur(24px);
 }
 .modelControlTrigger,
-.workspacePage .secondaryButton,
-.todayRailChip,
-.todayArrow {
+.workspacePage .secondaryButton {
   background: rgba(255, 255, 255, 0.54);
   border-color: rgba(51, 46, 40, 0.1);
   box-shadow:
@@ -2789,9 +2464,7 @@ button,
     0 5px 15px rgba(45, 39, 34, 0.04);
 }
 .modelControlTrigger:hover,
-.workspacePage .secondaryButton:hover:not(:disabled),
-.todayRailChip:hover,
-.todayArrow:hover:not(:disabled) {
+.workspacePage .secondaryButton:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.84);
   border-color: rgba(51, 46, 40, 0.14);
   box-shadow:
@@ -2804,23 +2477,13 @@ button,
     radial-gradient(80% 70% at 0% 0%, rgba(199, 169, 221, 0.07), transparent 55%),
     linear-gradient(145deg, rgba(255, 255, 255, 0.42), transparent 42%);
 }
-
-.todaySlide,
 .workbenchPanel,
 .settingsCard,
 .memoryCard,
-.knowledgeCard,
-.assetCard {
+.knowledgeCard {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.58),
     0 12px 30px rgba(49, 42, 36, 0.055);
-}
-
-@media (max-width: 1080px) {
-
-  .todayGridPage {
-    padding-top: 68px;
-  }
 }
 
 @keyframes uiScrimIn {
@@ -2886,276 +2549,14 @@ a {
   }
 }
 
-/* ── 13 · Conversation studio (folded from elevenlabs-studio.css) ────────
-   One scoped visual language for the ElevenLabs surfaces. */
-/* tokens live in tokens.css */
-
-/* ── Today command field ───────────────────────────────────────────── */
-
-.todayStudioHero {
-  background:
-    radial-gradient(circle at 86% 8%, rgba(255, 128, 104, 0.18), transparent 23%),
-    radial-gradient(circle at 58% 114%, rgba(119, 222, 210, 0.12), transparent 28%),
-    linear-gradient(128deg, #19151f 0%, #292130 58%, #211a27 100%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-pane);
-  box-shadow: var(--audio-shadow);
-  display: grid;
-  flex: 0 0 auto;
-  gap: 20px;
-  overflow: hidden;
-  padding: clamp(28px, 3.6vw, 48px);
-  position: relative;
-  width: 100%;
-}
-
-.todayStudioHero::before {
-  background-image: radial-gradient(rgba(255, 255, 255, 0.19) 0.5px, transparent 0.5px);
-  background-size: 8px 8px;
-  content: "";
-  inset: 0 0 0 54%;
-  mask-image: linear-gradient(90deg, transparent, #000);
-  opacity: 0.17;
-  pointer-events: none;
-  position: absolute;
-}
-
-.todayStudioHero > * { position: relative; z-index: 1; }
-
-.todayStudioHero .todayTopbar { align-items: end; }
-.todayStudioHero .todayTopbar .eyebrow { color: rgba(255, 250, 243, 0.55); }
-
-.todayStudioHero .todayRefresh {
-  background: #fffaf3;
-  border-color: rgba(255, 255, 255, 0.74);
-  color: var(--audio-ink);
-  min-height: 44px;
-  padding-inline: 18px;
-}
-
-.todayStudioHero .todayRefresh:hover:not(:disabled) {
-  background: #fff;
-  border-color: #fff;
-  box-shadow: 0 13px 28px rgba(7, 5, 9, 0.22);
-  transform: translateY(-2px);
-}
-
-.todayStudioHero .dailyBriefPlayer {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.105);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05);
-  gap: 16px;
-  grid-template-columns: 1fr;
-}
-
-.todayStudioHero .dailyBriefIdentity strong { max-width: 84ch; }
-
-.todayStudioHero .todayRail {
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-}
-
-.todayStudioHero .todayRailChip {
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(255, 255, 255, 0.095);
-  box-shadow: none;
-  color: rgba(255, 250, 243, 0.76);
-  min-height: 42px;
-  transition:
-    background-color var(--motion-fast) var(--ease-standard),
-    border-color var(--motion-fast) var(--ease-standard),
-    color var(--motion-fast) var(--ease-standard),
-    box-shadow var(--motion-base) var(--ease-out),
-    transform var(--motion-base) var(--ease-out);
-}
-
-.todayStudioHero .todayRailChip .todayRailLabel { color: rgba(255, 250, 243, 0.56); }
-.todayStudioHero .todayRailChip:hover {
-  background: rgba(255, 255, 255, 0.095);
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #fffaf3;
-  transform: translateY(-2px);
-}
-
-.todayStudioHero .todayRailChip.isActive {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(219, 191, 220, 0.34);
-  box-shadow: 0 8px 22px rgba(7, 5, 9, 0.12), inset 0 0 0 1px rgba(255,255,255,.03);
-  color: #fffaf3;
-}
-
-.todayStudioHero .todayRailChip.isActive .todayRailLabel { color: rgba(255, 250, 243, 0.86); }
-
-/* ── Daily brief player ─────────────────────────────────────────────── */
-
-.dailyBriefPlayer {
-  align-items: center;
-  background:
-    radial-gradient(circle at 9% 25%, rgba(167, 123, 195, 0.28), transparent 26%),
-    radial-gradient(circle at 84% 4%, rgba(255, 128, 104, 0.18), transparent 25%),
-    linear-gradient(135deg, #19151f 0%, #292130 54%, #211b28 100%);
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: var(--radius-pane);
-  box-shadow: 0 18px 50px rgba(37, 27, 44, 0.19);
-  color: #fffaf3;
-  display: grid;
-  gap: 22px;
-  grid-template-columns: minmax(240px, 0.85fr) minmax(420px, 1.3fr);
-  overflow: hidden;
-  padding: 18px 20px;
-  position: relative;
-}
-
-.dailyBriefPlayer::after {
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent);
-  content: "";
-  height: 1px;
-  left: 0;
-  position: absolute;
-  right: 0;
-  top: 0;
-}
-
-.dailyBriefIdentity {
-  align-items: center;
-  display: flex;
-  gap: 13px;
-  min-width: 0;
-}
-
-.dailyBriefIdentity > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.dailyBriefIdentity .eyebrow {
-  color: rgba(255, 250, 243, 0.52);
-  font-size: var(--text-xs);
-}
-
-.dailyBriefIdentity strong {
-  color: #fffaf3;
-  font-size: var(--text-md);
-  font-weight: 440;
-  line-height: 1.45;
-}
-
-.dailyBriefRecommendation {
-  color: rgba(156, 231, 222, 0.78);
-  font-size: var(--text-xs);
-  line-height: 1.45;
-}
-
-.dailyBriefMark {
-  background: linear-gradient(145deg, rgba(255,255,255,.2), rgba(255,255,255,.04));
-  border: 1px solid rgba(255,255,255,.16);
-  border-radius: var(--radius-card);
-  box-shadow: inset 0 1px rgba(255,255,255,.14);
-  display: flex;
-  flex: 0 0 44px;
-  height: 44px;
-  justify-content: center;
-  gap: 3px;
-  align-items: center;
-}
-
-.dailyBriefMark i {
-  animation: dailyBriefBars 1.4s ease-in-out infinite alternate;
-  background: linear-gradient(to top, var(--audio-mint), #fff, var(--audio-coral));
-  border-radius: 99px;
-  height: 17px;
-  opacity: .9;
-  width: 3px;
-}
-
-.dailyBriefMark i:nth-child(2) { animation-delay: -.55s; height: 26px; }
-.dailyBriefMark i:nth-child(3) { animation-delay: -.9s; height: 12px; }
-.dailyBriefPlayer:not(.is-playing):not(.is-loading) .dailyBriefMark i { animation-play-state: paused; }
-
 @keyframes dailyBriefBars {
   to { transform: scaleY(.45); }
 }
-
-.dailyBriefTransport {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-}
-
-.dailyBriefPlay,
-.dailyBriefSkip,
-.dailyBriefSpeed,
-.dailyBriefStop {
-  align-items: center;
-  background: rgba(255,255,255,.08);
-  border: 1px solid rgba(255,255,255,.13);
-  color: rgba(255,250,243,.85);
-  display: inline-flex;
-  font: inherit;
-  justify-content: center;
-  transition: background var(--motion-base) ease, border-color var(--motion-base) ease, transform var(--motion-base) ease;
-}
-
-.dailyBriefPlay {
-  background: #fffaf3;
-  border: 0;
-  border-radius: 50%;
-  color: var(--audio-ink);
-  flex: 0 0 38px;
-  height: 38px;
-  padding-left: 2px;
-}
-
-.dailyBriefSkip,
-.dailyBriefSpeed {
-  border-radius: var(--radius-control);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  height: 30px;
-  padding: 0 8px;
-}
-
-.dailyBriefStop {
-  border-radius: var(--radius-control);
-  color: #ffb09f;
-  gap: 5px;
-  height: 32px;
-  padding: 0 10px;
-}
-
-.dailyBriefPlay:hover:not(:disabled) { transform: scale(1.03); }
-.dailyBriefSkip:hover:not(:disabled),
-.dailyBriefSpeed:hover:not(:disabled),
-.dailyBriefStop:hover:not(:disabled) { background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.25); }
-.dailyBriefTransport button:disabled { cursor: default; opacity: .38; }
-
-.dailyBriefTimeline {
-  display: grid;
-  flex: 1;
-  gap: 4px;
-  min-width: 120px;
-}
-
-.dailyBriefTimeline input,
-.dailyBriefVolume input,
 .meetingPlayerTimeline input {
   accent-color: var(--audio-coral);
   cursor: pointer;
   margin: 0;
 }
-
-.dailyBriefTimeline input {
-  background: linear-gradient(90deg, var(--audio-coral) var(--brief-progress), rgba(255,255,255,.16) var(--brief-progress));
-  border-radius: 999px;
-  height: 3px;
-  width: 100%;
-  -webkit-appearance: none;
-}
-
-.dailyBriefTimeline input::-webkit-slider-thumb,
 .meetingPlayerTimeline input::-webkit-slider-thumb {
   background: #fffaf3;
   border: 0;
@@ -3165,24 +2566,6 @@ a {
   width: 11px;
   -webkit-appearance: none;
 }
-
-.dailyBriefTimeline > span {
-  color: rgba(255,250,243,.48);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  justify-self: end;
-}
-
-.dailyBriefTimeline > span i { color: rgba(255,250,243,.2); font-style: normal; }
-
-.dailyBriefVolume {
-  align-items: center;
-  color: rgba(255,250,243,.5);
-  display: flex;
-  gap: 4px;
-}
-
-.dailyBriefVolume input { max-width: 54px; }
 
 /* ── Meetings studio ────────────────────────────────────────────────── */
 
@@ -3556,7 +2939,6 @@ a {
 .meetingEventTimeline small { color: #a29aa4; font-family: var(--font-mono); font-size: var(--text-xs); }
 
 @media (max-width: 1080px) {
-  .dailyBriefPlayer { grid-template-columns: 1fr; }
   .meetingStudioShell { grid-template-columns: 280px minmax(0, 1fr); }
   .meetingOverviewGrid { grid-template-columns: 1fr; }
   .meetingParticipantList { grid-template-columns: repeat(2, 1fr); }
@@ -3572,9 +2954,6 @@ a {
 }
 
 @media (max-width: 720px) {
-  .dailyBriefPlayer { border-radius: var(--radius-card); padding: 15px; }
-  .dailyBriefTransport { flex-wrap: wrap; }
-  .dailyBriefTimeline { min-width: 180px; order: 5; width: 100%; }
   .meetingPlayerStudio.meetingPlayerDock { flex-wrap: wrap; padding: 13px; }
   .meetingPlayerTimeline { min-width: calc(100% - 52px); }
   .meetingDetailTabs { overflow-x: auto; padding: 0 12px; }
@@ -3590,9 +2969,8 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dailyBriefMark i,
-  .meetingCaptureOrb.isBusy,
-  .meetingPipeline li.active span { animation: none !important; }
+.meetingCaptureOrb.isBusy,
+.meetingPipeline li.active span { animation: none !important; }
 }
 
 /* ── Interview launchpad + live room ────────────────────────────────── */
@@ -3926,16 +3304,8 @@ a {
   padding: 10px 12px;
 }
 .interviewScorecardToolbar .interviewExportStatus { margin-left: auto; }
-
-/* Touch targets and contrast across all audio controls. */
-.dailyBriefPlay { flex-basis: 44px; height: 44px; }
-.dailyBriefSkip,
-.dailyBriefSpeed,
-.dailyBriefStop,
 .meetingSkipButton,
 .meetingRateButton { min-height: 44px; }
-.dailyBriefSkip,
-.dailyBriefSpeed { min-width: 44px; }
 .meetingPlayerStudio .meetingPlayGlyph { flex-basis: 44px; height: 44px; width: 44px; }
 .meetingUtilityButton { min-height: 44px; }
 .meetingOverview .proposalAccept { min-height: 44px; }
@@ -3959,11 +3329,6 @@ a {
 }
 
 @media (max-width: 720px) {
-  .todayStudioHero { border-radius: var(--radius-pane); gap: 17px; padding: 24px 18px; }
-  .todayStudioHero .todayTopbar { align-items: stretch; flex-direction: column; }
-  .todayStudioHero .todayTopbarActions { width: 100%; }
-  .todayStudioHero .todayRefresh { justify-content: center; width: 100%; }
-  .todayStudioHero .todayRail { margin-inline: -2px; padding-bottom: 2px; }
   .interviewLaunchSection { padding: 21px 18px 24px; }
   .interviewSessionBrief { padding: 21px; }
   .interviewBriefFacts { grid-template-columns: 1fr; }
@@ -3976,8 +3341,6 @@ a {
   .interviewVolumeControl input { flex: 1; }
   .interviewEndConfirm { border-radius: var(--radius-card); width: 100%; }
   .interviewEndConfirm .interviewActionButton { flex: 1 1 145px; justify-content: center; }
-  .dailyBriefVolume { display: flex; flex: 1 1 150px; }
-  .dailyBriefVolume input { flex: 1; max-width: none; }
   .meetingSkipButton { display: inline-flex; }
 }
 
@@ -3987,21 +3350,6 @@ a {
   .interviewQuickFocusChip { min-height: 44px; }
   .interviewAudioControls { display: grid; grid-template-columns: 1fr 1fr; }
   .interviewLive .interviewActionButton { justify-content: center; }
-  .dailyBriefTransport {
-    display: grid;
-    grid-template-areas:
-      "play back forward speed"
-      "timeline timeline timeline timeline"
-      "volume volume volume stop";
-    grid-template-columns: 44px repeat(3, minmax(44px, 1fr));
-  }
-  .dailyBriefPlay { grid-area: play; }
-  .dailyBriefSkip.is-back { grid-area: back; }
-  .dailyBriefSkip.is-forward { grid-area: forward; }
-  .dailyBriefSpeed { grid-area: speed; }
-  .dailyBriefTimeline { grid-area: timeline; min-width: 0; }
-  .dailyBriefVolume { grid-area: volume; }
-  .dailyBriefStop { grid-area: stop; min-width: 44px; padding: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4537,44 +3885,8 @@ a {
 @media (max-width: 720px) {
   .audioProviderChoices { grid-template-columns: 1fr; }
 }
-
-/* ── 14 · Page rules restored from the old pane prefix ──────────────────
-   These styled page content but were written under the old .appMain
-   selector. Same declarations, without the prefix. */
-.todayGridPage h1 { font-size: clamp(24px, 2.6vw, 34px); line-height: 1.03; margin: 5px 0 0; }
-.todaySlide h2 { font-size: var(--text-lg); letter-spacing: -0.01em; margin: 0; }
-.todayEmpty h2 { font-size: var(--text-2xl); margin: 4px 0 0; }
-
-/* ── 14 · Page rules restored from the old pane prefix ──────────────────
-   These styled page content but were written under the old .appMain
-   selector. Same declarations, without the prefix. */
-.pageHeader h1,
-.customerWorkbenchHeader h1 {
+.pageHeader h1 {
   margin: 7px 0 0;
   color: #fff;
   line-height: 1.04;
-}
-.assetDrawerHeader h2 { font-size: var(--text-3xl); }
-.customerWorkbenchHeader h1 {
-  color: #fffaf3;
-  font-size: clamp(42px, 5vw, 67px);
-  font-weight: 470;
-  letter-spacing: -0.055em;
-  line-height: 0.96;
-}
-.todayGridPage .todayStudioHero h1 {
-  color: #fffaf3;
-  font-size: clamp(48px, 5.7vw, 78px);
-  font-weight: 470;
-  letter-spacing: -0.064em;
-  line-height: 0.93;
-  margin-top: 10px;
-}
-@media (max-width: 1100px) {
-.customerWorkbenchHeader h1 {
-    font-size: clamp(40px, 10vw, 56px);
-  }
-}
-@media (max-width: 720px) {
-.todayGridPage .todayStudioHero h1 { font-size: clamp(42px, 12vw, 58px); }
 }

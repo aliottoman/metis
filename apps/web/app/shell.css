@@ -303,7 +303,6 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
   flex-wrap: wrap;
   gap: var(--space-2);
 }
-.customerWorkbenchActions { flex-wrap: wrap; }
 
 /* ── Chat: the conversation list beside the workspace ───────────────────── */
 .chatLayout { display: flex; flex: 1 1 auto; min-height: 0; }

@@ -5,7 +5,7 @@ import { ConversationList } from "@/components/conversation-list";
 
 export default function HomePage() {
   return (
-    <Suspense fallback={<div className="contentLoading">Opening conversation…</div>}>
+    <Suspense fallback={<div className="chat" aria-busy="true">Opening conversation…</div>}>
       <div className="chatLayout">
         <ConversationList />
         <ChatWorkspace />

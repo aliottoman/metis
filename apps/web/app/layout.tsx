@@ -15,6 +15,7 @@ import "./primitives.css";
 // The shell: frame, rail, page header, chat layout, breakpoints, motion.
 import "./shell.css";
 import "./chat.css";
+import "./workbenches.css";
 
 export const metadata: Metadata = {
   applicationName: PRODUCT_NAME,

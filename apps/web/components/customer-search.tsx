@@ -112,12 +112,12 @@ export function CustomerSearch({ onOpen, onDismiss }: CustomerSearchProps) {
 
   return (
     <div
-      className="customerModalBackdrop"
+      className="modal-backdrop"
       role="presentation"
       onMouseDown={(event) => { if (event.target === event.currentTarget) onDismiss(); }}
     >
       <section
-        className="customerSearchPanel"
+        className="search"
         role="dialog"
         aria-modal="true"
         aria-label="Search all customer records"
@@ -134,23 +134,23 @@ export function CustomerSearch({ onOpen, onDismiss }: CustomerSearchProps) {
             spellCheck={false}
             autoComplete="off"
           />
-          <button type="button" onClick={onDismiss} aria-label="Close search">Esc</button>
+          <button type="button" onClick={onDismiss} aria-label="Close search" className="ui-btn is-quiet is-sm">Esc</button>
         </header>
 
-        <div className="customerSearchResults" ref={listRef}>
-          {error ? <p className="customerSearchNote" role="alert">{error}</p> : null}
+        <div className="search-results" ref={listRef}>
+          {error ? <p className="search-note" role="alert">{error}</p> : null}
           {!error && needle.length < 2 ? (
-            <p className="customerSearchNote">Type at least two characters. Every account, note, fact, action, win, and captured note is searched.</p>
+            <p className="search-note">Type at least two characters. Every account, note, fact, action, win, and captured note is searched.</p>
           ) : null}
           {!error && needle.length >= 2 && !hits.length && !searching ? (
-            <p className="customerSearchNote">Nothing anywhere mentions &ldquo;{needle}&rdquo;.</p>
+            <p className="search-note">Nothing anywhere mentions &ldquo;{needle}&rdquo;.</p>
           ) : null}
           {hits.map((hit, index) => (
             <button
               key={`${hit.kind}-${hit.id}`}
               type="button"
               data-index={index}
-              className={index === activeIndex ? "isActive" : ""}
+              className={`search-hit${index === activeIndex ? " is-active" : ""}`}
               onPointerEnter={() => setActiveIndex(index)}
               onClick={() => onOpen(hit)}
             >

@@ -4,7 +4,7 @@ import { CustomerWorkbench } from "@/components/customer-workbench";
 
 export default function CustomersPage() {
   return (
-    <Suspense fallback={<div className="contentLoading">Opening customer workbench…</div>}>
+    <Suspense fallback={<div className="customers" aria-busy="true" />}>
       <CustomerWorkbench />
     </Suspense>
   );
