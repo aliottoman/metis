@@ -462,6 +462,16 @@ class VoiceSessionService:
                     await on_spoken(attempt.rendition.spoken)
                 return attempt.rendition
 
+            async def speak(sentence: str) -> None:
+                # The browser sees each sentence as it is cleared to be said,
+                # so the written answer keeps pace with the spoken one.
+                await self._publish(
+                    session,
+                    {"type": "voice.spoken", "turn_id": attempt.turn_id, "text": sentence},
+                )
+                if on_spoken is not None:
+                    await on_spoken(sentence)
+
             if attempt is None:
                 session.turns += 1
                 attempt = _TurnAttempt(
@@ -485,7 +495,7 @@ class VoiceSessionService:
                     account_id=session.account_id,
                     history=tuple(history or session.history),
                 ),
-                on_spoken=on_spoken,
+                on_spoken=speak,
             )
             # Cache before the non-critical twin-write and live publication.
             # A retry after the provider received the answer must never run the

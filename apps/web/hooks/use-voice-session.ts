@@ -67,6 +67,9 @@ export function useVoiceSession(options: {
   const [elapsed, setElapsed] = useState(0);
   const [leaseSeconds, setLeaseSeconds] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState("");
+  // The answer as it is being said, one sentence at a time; cleared when the
+  // finished turn arrives with the same words and their sources.
+  const [spoken, setSpoken] = useState<string[]>([]);
   const [idleTimeoutSeconds, setIdleTimeoutSeconds] = useState(
     DEFAULT_VOICE_IDLE_TIMEOUT_SECONDS,
   );
@@ -205,6 +208,7 @@ export function useVoiceSession(options: {
         setLeaseSeconds(0);
         setIdleSecondsRemaining(0);
         setLiveTranscript("");
+        setSpoken([]);
         setEndReason(reason);
       }
     },
@@ -235,6 +239,7 @@ export function useVoiceSession(options: {
     setError(null);
     setEndReason(null);
     setTurns([]);
+    setSpoken([]);
     setState("connecting");
     try {
       const opened = await startVoiceSession();
@@ -264,18 +269,19 @@ export function useVoiceSession(options: {
       stream.onmessage = (event) => {
         if (!isCurrent() || sessionRef.current !== opened.session.id) return;
         try {
-          handleVoiceEvent(JSON.parse(event.data), setTurns, onHandoffRef.current);
+          handleVoiceEvent(JSON.parse(event.data), setTurns, setSpoken, onHandoffRef.current);
         } catch {
           // A malformed frame costs itself, not the conversation.
         }
       };
-      for (const type of ["voice.turn", "voice.build_deferred", "voice.refused"]) {
+      for (const type of ["voice.spoken", "voice.turn", "voice.build_deferred", "voice.refused"]) {
         stream.addEventListener(type, (event) => {
           if (!isCurrent() || sessionRef.current !== opened.session.id) return;
           try {
             handleVoiceEvent(
               JSON.parse((event as MessageEvent).data),
               setTurns,
+              setSpoken,
               onHandoffRef.current,
             );
           } catch {
@@ -397,6 +403,7 @@ export function useVoiceSession(options: {
     elapsed,
     leaseSeconds,
     liveTranscript,
+    spoken,
     idleTimeoutSeconds,
     idleSecondsRemaining,
     endReason,
@@ -427,12 +434,19 @@ export function useVoiceSession(options: {
 function handleVoiceEvent(
   event: Record<string, unknown>,
   setTurns: (update: (current: VoiceTurnRecord[]) => VoiceTurnRecord[]) => void,
+  setSpoken: (update: (current: string[]) => string[]) => void,
   onHandoff: ((handoff: VoiceHandoff) => void) | undefined,
 ): void {
   const type = String(event.type ?? "");
+  if (type === "voice.spoken") {
+    const text = String(event.text ?? "").trim();
+    if (text) setSpoken((current) => [...current, text]);
+    return;
+  }
   if (type === "voice.turn") {
     const rendition = event.rendition as VoiceRendition | undefined;
     if (!rendition) return;
+    setSpoken(() => []);
     setTurns((current) => [
       ...current,
       { id: rendition.turn_id, transcript: rendition.transcript, rendition },

@@ -63,7 +63,7 @@ export function AccountDetail({ c, detail, noteComposerOpen, setNoteComposerOpen
         </header>
       )}
 
-      <nav className="account-tabs" aria-label="Account sections">
+      <nav className="ui-tabs" aria-label="Account sections">
         {TABS.map(([value, label]) => (
           <button key={value} type="button" className={c.tab === value ? "is-active" : ""} aria-current={c.tab === value ? "page" : undefined} onClick={() => c.setTab(value)}>
             {label}{counts[value] ? <small>{counts[value]}</small> : null}

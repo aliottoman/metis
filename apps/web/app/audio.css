@@ -1,0 +1,223 @@
+/* The audio family: the stage, the transcript, voice mode, meetings,
+   interviews, and the audio settings. Tokens only. */
+
+/* ── Stage ──────────────────────────────────────────────────────────────── */
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+}
+.stage-orb { position: relative; width: 168px; height: 168px; transition: transform var(--motion-slow) var(--ease-out); }
+.stage.is-live .stage-orb { transform: scale(1.06); }
+.stage-orb-canvas, .stage-orb-canvas canvas { width: 100% !important; height: 100% !important; }
+.stage-orb-still { display: block; width: 100%; height: 100%; border-radius: 50%; background: radial-gradient(circle at 34% 30%, #fff 0, #f2e6f6 30%, #b98cd0 70%, #72528a 100%); }
+.stage[data-orb="talking"] .stage-orb-still { background: radial-gradient(circle at 34% 30%, #fff 0, #ffd9cc 30%, #ff7759 75%, #72528a 100%); }
+.stage-state { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.stage-label { display: inline-flex; align-items: center; gap: 8px; font: 500 var(--text-sm) var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-ink-2); }
+.stage-meters { display: flex; gap: var(--space-3); font: 500 var(--text-xs) var(--font-mono); color: var(--color-ink-3); font-variant-numeric: tabular-nums; }
+.stage-meters .is-ending { color: var(--color-danger); }
+.stage-hint { margin: 0; max-width: 52ch; color: var(--color-ink-2); font-size: var(--text-base); line-height: 1.5; }
+.stage-caption { max-width: 60ch; min-height: 24px; }
+.stage-caption p { margin: 0; font-size: var(--text-lg); line-height: 1.5; animation: audio-rise var(--motion-base) var(--ease-out) both; }
+.stage-caption small { display: block; margin-bottom: 2px; font: 500 var(--text-xs) var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-ink-3); }
+.voice-saying { color: var(--color-ink); }
+.voice-heard { color: var(--color-ink-2); font-style: italic; }
+.stage-controls { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.stage-volume { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--color-ink-3); font-size: var(--text-xs); }
+.stage-volume input { width: 96px; accent-color: var(--color-coral); }
+.stage-volume output { min-width: 3ch; font-variant-numeric: tabular-nums; }
+@keyframes audio-rise { from { opacity: 0; transform: translateY(4px); } }
+
+/* ── Transcript ─────────────────────────────────────────────────────────── */
+
+.transcript { border-top: 1px solid var(--color-line); padding-top: var(--space-2); }
+.transcript > summary { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) 0; font-weight: 600; cursor: pointer; list-style: none; }
+.transcript > summary::-webkit-details-marker { display: none; }
+.transcript > summary small { color: var(--color-ink-3); font-weight: 400; margin-left: 6px; }
+.transcript-actions { display: flex; gap: 2px; }
+.transcript-turns { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.transcript-turns li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-3); }
+.transcript-turns li > span { padding-top: 2px; font: 500 var(--text-xs) var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-ink-3); }
+.transcript-turns li > p { margin: 0; line-height: 1.55; }
+.transcript-turns li.is-user > p { color: var(--color-ink-2); }
+.transcript-turns li > :not(span):not(p) { grid-column: 2; }
+.voice-sources { margin: 4px 0 0; padding-left: 18px; font-size: var(--text-sm); color: var(--color-ink-2); }
+.voice-sources a { color: var(--color-accent-ink); }
+.receipt { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-card); background: var(--color-paper-lift); font-size: var(--text-sm); }
+.receipt p { flex: 1 1 24ch; margin: 0; }
+.receipt small { color: var(--color-ink-3); }
+.receipt.is-undone { opacity: 0.7; }
+
+/* ── Voice mode ─────────────────────────────────────────────────────────── */
+
+.voice { display: flex; flex-direction: column; gap: var(--space-4); width: min(100%, 760px); margin: 0 auto; }
+.voice-disclosure { max-width: 60ch; margin: 0; color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.55; }
+.voice-model { min-width: 200px; text-align: left; }
+.voice-try { margin: 0; text-align: center; color: var(--color-ink-3); font-size: var(--text-sm); }
+
+/* ── Meetings ───────────────────────────────────────────────────────────── */
+
+.meetings, .interviews { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-5) var(--space-6); flex: 1 1 auto; min-height: 0; position: relative; }
+.meetings-drop { position: absolute; inset: var(--space-3); z-index: 3; display: grid; place-content: center; border: 2px dashed var(--color-accent); border-radius: var(--radius-pane); background: color-mix(in srgb, var(--color-pane) 88%, transparent); color: var(--color-accent-ink); font-weight: 600; pointer-events: none; }
+.meetings-body { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-5); flex: 1 1 auto; min-height: 0; }
+.meeting { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.meeting-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.meeting-head > div { flex: 1 1 30ch; min-width: 0; }
+.meeting-head h2 { margin: 0; font-size: var(--text-xl); font-weight: 600; }
+.meeting-head p { margin: 2px 0 0; color: var(--color-ink-2); font-size: var(--text-sm); }
+.meeting-rename { border: 0; background: none; padding: 0; color: inherit; font: inherit; text-align: left; cursor: text; border-radius: var(--radius-control); }
+.meeting-rename:hover { background: var(--color-surface); box-shadow: 0 0 0 4px var(--color-surface); }
+.meeting-title { display: flex; flex: 1; gap: var(--space-1); }
+.meeting-title input { flex: 1; padding: 6px 10px; border: 1px solid var(--color-line); border-radius: var(--radius-control); background: var(--color-paper); font: inherit; font-size: var(--text-lg); color: inherit; }
+.meeting-actions { display: flex; gap: 2px; }
+.meeting-overview { display: flex; flex-direction: column; gap: var(--space-3); }
+.meeting-card { display: flex; flex-direction: column; gap: var(--space-2); }
+.meeting-card h3 { margin: 0; font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-ink-3); }
+.meeting-card h3 small { font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 6px; }
+.meeting-summary { margin: 0; font-size: var(--text-md); line-height: 1.6; max-width: 70ch; }
+.meeting-note { color: var(--color-danger); font-size: var(--text-sm); }
+.meeting-pipeline { display: flex; gap: var(--space-2); margin: 0; padding: 0; list-style: none; font-size: var(--text-sm); color: var(--color-ink-3); }
+.meeting-pipeline li { display: flex; align-items: center; gap: 6px; }
+.meeting-pipeline li::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--color-line); }
+.meeting-pipeline li.is-done { color: var(--color-ink-2); }
+.meeting-pipeline li.is-done::before { background: var(--color-green-ink); }
+.meeting-pipeline li.is-active { color: var(--color-ink); }
+.meeting-pipeline li.is-active::before { background: var(--color-coral); }
+.meeting-pipeline li.is-failed::before { background: var(--color-danger); }
+.meeting-proposal { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--color-line); }
+.meeting-proposal p { margin: 0; }
+.meeting-proposal > span:last-child { display: flex; gap: 2px; }
+.meeting-time { border: 0; background: none; padding: 0; color: var(--color-accent-ink); font: 500 var(--text-xs) var(--font-mono); cursor: pointer; }
+.meeting-time:hover { text-decoration: underline; }
+.meeting-reviewed summary, .meeting-log summary { cursor: pointer; font-size: var(--text-sm); color: var(--color-ink-2); }
+.meeting-reviewed p { margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--color-ink-2); }
+.meeting-speakers { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-2); }
+.meeting-log ol { margin: var(--space-2) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: var(--text-sm); }
+.meeting-log li { display: grid; grid-template-columns: 120px minmax(0, 1fr) auto; gap: var(--space-2); color: var(--color-ink-2); }
+.meeting-log li.is-failed strong { color: var(--color-danger); }
+.meeting-log time { color: var(--color-ink-3); font-size: var(--text-xs); }
+.meeting-transcript { display: flex; flex-direction: column; gap: var(--space-3); }
+.meeting-transcript-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; color: var(--color-ink-3); font-size: var(--text-sm); }
+.meeting-transcript-head input { padding: 6px 10px; border: 1px solid var(--color-line); border-radius: var(--radius-control); background: var(--color-paper-lift); font: inherit; font-size: var(--text-sm); color: inherit; }
+.meeting-turns { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.meeting-turns li { display: flex; flex-direction: column; gap: 4px; padding-left: var(--space-3); border-left: 2px solid var(--color-line); }
+.meeting-turns li.tone-0 { border-left-color: var(--color-accent); }
+.meeting-turns li.tone-1 { border-left-color: var(--color-coral); }
+.meeting-turns li.tone-2 { border-left-color: var(--color-mint); }
+.meeting-turns li.tone-3 { border-left-color: var(--color-gold); }
+.meeting-turns header { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+.meeting-turns header .ui-btn { margin-left: auto; opacity: 0; }
+.meeting-turns li:hover header .ui-btn, .meeting-turns li:focus-within header .ui-btn { opacity: 1; }
+.meeting-turns p { margin: 0; line-height: 1.6; }
+.meeting-turns p button { border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; border-radius: 3px; }
+.meeting-turns p button:hover { background: var(--color-surface); }
+.meeting-turns p button.is-spoken { background: var(--color-accent-surface); color: var(--color-accent-ink); }
+.meeting-correct { display: flex; flex-direction: column; gap: var(--space-1); }
+.meeting-correct textarea { min-height: 80px; padding: var(--space-2); border: 1px solid var(--color-line); border-radius: var(--radius-control); background: var(--color-paper); font: inherit; color: inherit; resize: vertical; }
+.meeting-correct span { display: flex; justify-content: flex-end; gap: var(--space-1); }
+.meeting-original summary { font-size: var(--text-xs); color: var(--color-ink-3); cursor: pointer; }
+.meeting-original p { color: var(--color-ink-3); font-size: var(--text-sm); }
+
+/* ── Interviews ─────────────────────────────────────────────────────────── */
+
+.interview-setup-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--space-5); align-items: start; }
+.interview-form { display: flex; flex-direction: column; gap: var(--space-5); }
+.interview-form section { display: flex; flex-direction: column; gap: var(--space-3); }
+.interview-form h2 { display: flex; align-items: baseline; gap: var(--space-2); margin: 0; font-size: var(--text-lg); font-weight: 600; }
+.interview-form h2 span { font: 500 var(--text-xs) var(--font-mono); color: var(--color-ink-3); }
+.interview-form h2 small { font-size: var(--text-sm); font-weight: 400; color: var(--color-ink-3); }
+.interview-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.interview-rounds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.interview-round { display: flex; flex-direction: column; gap: 4px; padding: var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-card); background: var(--color-paper-lift); cursor: pointer; transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast) var(--ease-out); }
+.interview-round:hover { transform: translateY(-1px); box-shadow: var(--shadow-1); }
+.interview-round.is-selected { border-color: var(--color-ink); box-shadow: 0 0 0 1px var(--color-ink); }
+.interview-round input { position: absolute; opacity: 0; pointer-events: none; }
+.interview-round span { color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.45; }
+.interview-quick { display: flex; flex-wrap: wrap; gap: 4px; }
+.interview-brief { position: sticky; top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-card); background: var(--color-paper-lift); }
+.interview-brief > strong { font-size: var(--text-lg); }
+.interview-brief > span { color: var(--color-ink-2); font-size: var(--text-sm); }
+.interview-brief dl { display: flex; flex-direction: column; gap: 4px; margin: var(--space-2) 0; font-size: var(--text-sm); }
+.interview-brief dl div { display: flex; justify-content: space-between; gap: var(--space-2); }
+.interview-brief dt { color: var(--color-ink-3); }
+.interview-brief dd { margin: 0; text-align: right; }
+.interview-brief-focus { display: flex; flex-wrap: wrap; gap: 4px; }
+.interview-brief blockquote { margin: 0; padding-left: var(--space-3); border-left: 2px solid var(--color-accent); color: var(--color-ink-2); font-size: var(--text-sm); }
+.interview-brief .ui-btn { margin-top: var(--space-2); }
+.interview-brief small { color: var(--color-ink-3); font-size: var(--text-xs); }
+
+.interview-live { display: flex; flex-direction: column; gap: var(--space-3); width: min(100%, 760px); margin: 0 auto; }
+.interview-live-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.interview-live-head > div { display: flex; flex-direction: column; gap: 4px; }
+.interview-progress { font: 500 var(--text-xs) var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-ink-3); white-space: nowrap; }
+.interview-end { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-1); }
+.interview-end small { flex-basis: 100%; color: var(--color-ink-2); }
+.interview-note { margin: 0; text-align: center; color: var(--color-ink-2); font-size: var(--text-sm); }
+.interview-question { padding: var(--space-3) var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-card); background: var(--color-paper-lift); }
+.interview-question p { margin: 4px 0 0; font-size: var(--text-md); line-height: 1.55; }
+.interview-typed { display: flex; gap: var(--space-1); }
+.interview-typed input { flex: 1; padding: 8px 12px; border: 1px solid var(--color-line); border-radius: var(--radius-pill); background: var(--color-paper-lift); font: inherit; color: inherit; }
+
+.interview-scorecard { display: flex; flex-direction: column; gap: var(--space-4); width: min(100%, 760px); margin: 0 auto; }
+.interview-scorecard h2 { margin: 0; font-size: var(--text-2xl); }
+.interview-score-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-4); align-items: start; }
+.interview-score-head > div:nth-child(2) { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.interview-dial { display: flex; align-items: baseline; gap: 4px; }
+.interview-dial strong { font-family: var(--font-display); font-size: var(--text-6xl); font-weight: 600; line-height: 1; letter-spacing: -0.03em; }
+.interview-dial span { color: var(--color-ink-3); }
+.interview-verdict { flex-basis: 100%; margin: var(--space-1) 0 0; font-size: var(--text-md); line-height: 1.55; }
+.interview-score-actions { display: flex; gap: 2px; }
+.ui-chip.is-advance { background: var(--color-mint-surface); color: var(--color-green-ink); }
+.ui-chip.is-borderline { background: var(--color-gold); color: var(--color-ink); }
+.ui-chip.is-do_not_advance { background: var(--color-coral-soft); color: var(--color-danger); }
+.interview-rubric { display: flex; flex-direction: column; gap: 6px; }
+.interview-rubric > div { display: grid; grid-template-columns: 160px minmax(0, 1fr) 24px; align-items: center; gap: var(--space-3); font-size: var(--text-sm); }
+.interview-rubric i { display: block; height: 6px; border-radius: 3px; background: var(--color-surface); overflow: hidden; }
+.interview-rubric b { display: block; height: 100%; background: var(--color-bloom); transition: width var(--motion-slow) var(--ease-out); }
+.interview-rubric strong { text-align: right; font-variant-numeric: tabular-nums; }
+.interview-block { display: flex; flex-direction: column; gap: var(--space-2); }
+.interview-block h3 { margin: 0; font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-ink-3); }
+.interview-block h3 small { font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 6px; }
+.interview-block p, .interview-block blockquote { margin: 0; line-height: 1.55; }
+.interview-block blockquote { padding-left: var(--space-3); border-left: 2px solid var(--color-accent); color: var(--color-ink-2); }
+.interview-block > small { color: var(--color-ink-3); font-size: var(--text-xs); }
+.interview-problems { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: var(--space-3); }
+.interview-problems li { display: flex; flex-direction: column; gap: 4px; }
+.interview-better { color: var(--color-green-ink); }
+.interview-delivery { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-2); }
+.interview-delivery > div { display: flex; flex-direction: column; padding: var(--space-3); border: 1px solid var(--color-line); border-radius: var(--radius-card); }
+.interview-delivery strong { font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 600; line-height: 1; }
+.interview-delivery span { color: var(--color-ink-2); font-size: var(--text-sm); margin-top: 4px; }
+.interview-delivery small { color: var(--color-ink-3); font-size: var(--text-xs); margin-top: 4px; }
+.interview-next { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+/* ── Settings ───────────────────────────────────────────────────────────── */
+
+.settings-audio { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-4); }
+.settings-audio-block { display: flex; flex-direction: column; gap: var(--space-2); }
+.settings-audio-block h3 { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.settings-audio-block > p { margin: 0; color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.5; }
+.settings-audio-missing { margin: 0; padding-left: 18px; color: var(--color-danger); font-size: var(--text-sm); }
+
+/* ── Small screens ──────────────────────────────────────────────────────── */
+
+@media (max-width: 1080px) {
+  .interview-setup-grid { grid-template-columns: 1fr; }
+  .interview-brief { position: static; }
+  .meetings-body { grid-template-columns: 240px minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
+  .meetings, .interviews { padding: var(--space-3); }
+  .meetings-body { grid-template-columns: 1fr; }
+  .interview-row, .interview-rounds { grid-template-columns: 1fr; }
+  .interview-score-head { grid-template-columns: 1fr; }
+  .stage-orb { width: 132px; height: 132px; }
+  .meeting-turns header .ui-btn { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stage-orb, .stage-caption p, .interview-round, .interview-rubric b { transition: none; animation: none; }
+}

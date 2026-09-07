@@ -171,6 +171,11 @@ a forgotten open tab cannot bill all afternoon.
 
 ## How a turn streams
 
+The browser hears each sentence too: the session publishes a
+`voice.spoken` event (`turn_id`, `text`) on the loopback stream as each
+sentence clears the gate, ahead of the `voice.turn` that carries the whole
+rendition with its citations.
+
 The voice model writes plain speech, and Metis does not wait for it to
 finish. Each sentence is split off as it arrives, normalized for the ear,
 checked against the retrieved evidence, and only then handed to the ingress,

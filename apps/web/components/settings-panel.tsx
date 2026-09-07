@@ -15,6 +15,8 @@ import { clinePassReady } from "@/lib/model-route";
 import { ThemeControl } from "@/components/ui/theme-control";
 import type { HealthSnapshot, ModelPreference, SpeechPreference, VoiceAvailability } from "@/lib/types";
 import { MetisCompanion } from "@/components/metis-companion";
+import { Notice } from "@/components/ui/notice";
+import { Status } from "@/components/ui/status";
 import { SelectMenu } from "@/components/select-menu";
 import {
   readCompanionEnergy,
@@ -175,7 +177,6 @@ export function SettingsPanel() {
           ? "Cloud · ClinePass"
           : "Local";
   const transcriber = speech?.stt_provider ?? "cohere";
-  const transcriberBadge = transcriber === "elevenlabs" ? "Cloud · Scribe" : "Cloud · Cohere Transcribe";
   const projectCoding = health?.project_coding_engine;
   const systemStatusTitle =
     health?.status === "ok"
@@ -223,12 +224,12 @@ export function SettingsPanel() {
         <ThemeControl />
       </section>
 
-      <section className="settingsSection companionSettings">
+      <section className="settingsSection">
         <div className="sectionTitle">
           <div><h2>Companion expression</h2><p>Choose how visibly the companion reacts. Mood color still communicates listening, working, done, and trouble in every mode.</p></div>
           <span className="sectionBadge">{companionEnergy}</span>
         </div>
-        <div className="companionEnergyGrid" role="radiogroup" aria-label="Companion expression">
+        <div className="companion-energy" role="radiogroup" aria-label="Companion expression">
           {([
             ["calm", "Calm", "Slow breathing and restrained color."],
             ["expressive", "Expressive", "Fluid motion and clear mood shifts."],
@@ -242,7 +243,7 @@ export function SettingsPanel() {
               key={value}
               onClick={() => { setCompanionEnergy(value); writeCompanionEnergy(value); }}
             >
-              <span className="companionEnergyPreview" data-preview-energy={value}>
+              <span className="companion-energy-preview" data-preview-energy={value}>
                 <MetisCompanion mood={value === "calm" ? "idle" : "thinking"} size={46} energy={value} />
               </span>
               <span><strong>{label}</strong><small>{description}</small></span>
@@ -275,24 +276,16 @@ export function SettingsPanel() {
         <p className="sectionLede">Metis tools remain available through the governed planner. Model calls made while a tool executes follow the same provider as the run, under each tool&apos;s per-run call budget and pinned prompts. Cloud service-side memory remains off.</p>
       </section>
 
-      <section className="settingsSection audioSettingsStudio">
-        <div className="audioSettingsHero">
-          <span className="audioSettingsMark" aria-hidden="true"><i /><i /><i /><i /></span>
-          <div>
-            <span className="eyebrow">Voice &amp; audio</span>
-            <h2>One control room for every spoken surface</h2>
-            <p>Choose who transcribes dictation, what reasons during a live conversation, and how carefully Metis confirms a spoken write.</p>
-          </div>
-          <div className="audioSettingsBadges">
-            <span>{transcriberBadge}</span>
-            <span className={voiceAvailability?.available ? "isReady" : "isSetup"}>{voiceAvailability?.available ? "Live voice ready" : "Live setup needed"}</span>
-          </div>
+      <section className="settingsSection">
+        <div className="sectionTitle">
+          <div><h2>Voice &amp; audio</h2><p>Who transcribes dictation, what reasons during a live conversation, and how carefully Metis confirms a spoken write.</p></div>
+          <Status state={voiceAvailability?.available ? "ready" : "stopped"} label={voiceAvailability?.available ? "Live voice ready" : "Live setup needed"} />
         </div>
-
-        <div className="audioSettingsGrid">
-          <article className="audioSettingsCard">
-            <header><span>01</span><div><h3>Composer dictation</h3><p>The transcript stays a draft until you choose Send.</p></div></header>
-            <div className="providerChoiceGrid audioProviderChoices">
+        <div className="settings-audio">
+          <div className="settings-audio-block">
+            <h3>Composer dictation</h3>
+            <p>The transcript stays a draft until you choose Send. Metis keeps no clip after transcription.</p>
+            <div className="providerChoiceGrid">
               <button type="button" aria-pressed={transcriber === "cohere"} className={`providerChoice ${transcriber === "cohere" ? "selected" : ""}`} onClick={() => void chooseTranscriber("cohere")} disabled={savingSpeech || !speech?.cohere_available}>
                 <span>Cohere</span><strong>Transcribe</strong><small>{speech?.cohere_available ? "Audio is converted to WAV locally before upload." : "Add WAQIL_COHERE_API_KEY to enable."}</small>
               </button>
@@ -300,49 +293,24 @@ export function SettingsPanel() {
                 <span>ElevenLabs</span><strong>Scribe</strong><small>{speech?.elevenlabs_available ? "Uses the browser recording without re-encoding it." : "Add WAQIL_ELEVENLABS_API_KEY to enable."}</small>
               </button>
             </div>
-            <p className="audioSettingsFoot">Metis does not retain the dictation clip after transcription. Provider handling follows the provider account and policy you configured.</p>
-          </article>
-
-          <article className="audioSettingsCard isLiveVoice">
-            <header><span>02</span><div><h3>Interactive voice</h3><p>ElevenLabs handles the live audio room; Metis controls retrieval and writes.</p></div></header>
-            {!voiceAvailability?.available ? (
-              <ol className="voiceSetupList">
-                {(voiceAvailability?.missing ?? []).map((reason) => <li key={reason}>{reason}</li>)}
-              </ol>
-            ) : null}
-            <label className="audioSettingsSelect">
+          </div>
+          <div className="settings-audio-block">
+            <h3>Live voice</h3>
+            <p>ElevenLabs runs the audio room; Metis controls retrieval and writes. Sessions end after two quiet minutes or when the tab leaves the foreground, and every spoken write gets a receipt with Undo.</p>
+            {!voiceAvailability?.available && voiceAvailability?.missing.length ? <ol className="settings-audio-missing">{voiceAvailability.missing.map((reason) => <li key={reason}>{reason}</li>)}</ol> : null}
+            <label className="ui-field">
               <span>Reasoning model</span>
-              <SelectMenu
-                className="settingsModelSelect"
-                hideLabel
-                label="Voice reasoning model"
-                value={speech?.voice_model ?? ""}
-                onChange={(model) => void saveVoiceSettings({ model })}
-                disabled={savingSpeech || !speech?.voice_models.length}
-                options={(speech?.voice_models ?? []).map((model) => ({ value: model, label: model }))}
-              />
+              <select value={speech?.voice_model ?? ""} onChange={(event) => void saveVoiceSettings({ model: event.target.value })} disabled={savingSpeech || !speech?.voice_models.length}>
+                {(speech?.voice_models ?? []).map((model) => <option key={model} value={model}>{model}</option>)}
+              </select>
             </label>
-            <label className="voiceConfirmationChoice audioConfirmationChoice">
-              <input
-                type="checkbox"
-                checked={speech?.spoken_confirmation ?? false}
-                onChange={(event) => void saveVoiceSettings({ spokenConfirmation: event.target.checked })}
-                disabled={savingSpeech || !speech}
-              />
-              <span><strong>Read back before writing</strong><small>Metis asks for a spoken confirmation before it adds the record.</small></span>
+            <label className="records-check">
+              <input type="checkbox" checked={speech?.spoken_confirmation ?? false} onChange={(event) => void saveVoiceSettings({ spokenConfirmation: event.target.checked })} disabled={savingSpeech || !speech} />
+              <span>Read back before writing: Metis asks for a spoken confirmation before it adds a record.</span>
             </label>
-          </article>
-
-          <aside className="audioGuardrailCard">
-            <span className="eyebrow">Built-in guardrails</span>
-            <ul>
-              <li><i aria-hidden="true">✓</i><span><strong>Two-minute quiet timeout</strong><small>Forgotten sessions end automatically.</small></span></li>
-              <li><i aria-hidden="true">✓</i><span><strong>Background-tab shutdown</strong><small>Leaving the tab closes live audio immediately.</small></span></li>
-              <li><i aria-hidden="true">✓</i><span><strong>Visible, undoable writes</strong><small>Every spoken addition gets an on-screen receipt.</small></span></li>
-            </ul>
-          </aside>
+          </div>
         </div>
-        {speechError ? <span className="mutedMeta" role="alert">{speechError}</span> : null}
+        {speechError ? <Notice kind="error">{speechError}</Notice> : null}
       </section>
 
       <section className="settingsSection">

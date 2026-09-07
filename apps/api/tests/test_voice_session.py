@@ -447,8 +447,12 @@ async def test_concurrent_custom_llm_retries_run_and_publish_only_once(
     assert first.turn_id == retry.turn_id
     assert len(graph.turns) == 1
     assert service._sessions[opened.session.id].turns == 1
-    assert events.qsize() == 1
-    assert (await events.get())["rendition"]["turn_id"] == first.turn_id
+    # One sentence and one turn: the retry published nothing of its own.
+    published = []
+    while not events.empty():
+        published.append(events.get_nowait())
+    assert [event["type"] for event in published] == ["voice.spoken", "voice.turn"]
+    assert published[-1]["rendition"]["turn_id"] == first.turn_id
     await service.shutdown()
 
 
@@ -588,6 +592,8 @@ async def test_the_browser_stream_carries_the_written_answer_and_the_handoff(
     await service.turn(provider_conversation_id="c", transcript="What's waiting?")
 
     event = await asyncio.wait_for(queue.get(), timeout=1)
+    while event["type"] == "voice.spoken":
+        event = await asyncio.wait_for(queue.get(), timeout=1)
     assert event["type"] == "voice.turn"
     assert event["rendition"]["written"] == "Three things are waiting."
     await service.shutdown()
@@ -789,6 +795,28 @@ async def test_the_first_thing_said_names_the_conversation(tmp_path) -> None:
         await service.shutdown()
     finally:
         await database.close()
+
+
+@pytest.mark.asyncio
+async def test_each_spoken_sentence_reaches_the_browser_before_the_turn(tmp_path) -> None:
+    """The live channel hears sentences as they clear the gate, then the turn."""
+    service, _ = _service(tmp_path)
+    opened = await service.start()
+    session = service._sessions[opened.session.id]
+    heard: asyncio.Queue = asyncio.Queue()
+    session.listeners.append(heard)
+
+    await service.turn(provider_conversation_id="conv_live", transcript="What's waiting?")
+
+    events = []
+    while not heard.empty():
+        events.append(heard.get_nowait())
+    types = [event["type"] for event in events]
+    assert types.index("voice.spoken") < types.index("voice.turn")
+    spoken = next(event for event in events if event["type"] == "voice.spoken")
+    assert spoken["text"] == "Three things are waiting."
+    assert spoken["turn_id"]
+    await service.shutdown()
 
 
 def test_the_locally_minted_secret_is_stable_and_kept_to_the_owner(tmp_path) -> None:

@@ -162,6 +162,28 @@ of the audit. Each page is a header strip, then the working surface:
   with counts, the settings drawer is fixed-width with its own env and log
   state, and a running asset opens full-width.
 
+## The audio family
+
+`apps/web/app/audio.css`, `components/audio/stage.tsx` and `lib/audio.ts`
+are Phase 4 of the audit. Voice, Interviews and Meetings share one language:
+
+- **One stage.** `Stage` is the orb (the only expressive element), a mono
+  state label under it, one line of hint, a caption line, and the
+  controls. `MicButton`, `VolumeControl` and `Transcript` (copy, export)
+  go with it. Voice mode and the live interview both stand on it.
+- **Sentences as they are spoken.** The backend publishes `voice.spoken`
+  to the browser for each sentence the moment it clears the claim gate;
+  the voice hook collects them into `spoken` and shows them under the orb,
+  then the finished `voice.turn` replaces them with the same words and
+  their sources.
+- **One player.** `AudioPlayer` gained ten-second skips, an `onTime`
+  callback and a `seek` handle, so Meetings highlights words and seeks
+  from the transcript through the same player Today uses for the brief.
+- **Meetings and Interviews** split into small views (`meetings/overview`,
+  `meetings/transcript`, `interviews/setup`, `interviews/live`,
+  `interviews/scorecard`) on primitives; the audio section of Settings
+  is on primitives too. 868 old rules left matured.css.
+
 ## Icons
 
 `lucide-react`, 18px, stroke 1.6, through `NavIcon` in the shell. New icons

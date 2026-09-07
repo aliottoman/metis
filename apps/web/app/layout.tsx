@@ -17,6 +17,7 @@ import "./shell.css";
 import "./chat.css";
 import "./workbenches.css";
 import "./companion.css";
+import "./audio.css";
 
 export const metadata: Metadata = {
   applicationName: PRODUCT_NAME,

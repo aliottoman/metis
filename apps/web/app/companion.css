@@ -373,3 +373,18 @@
   60% { transform: translateY(1px) scale(1.03); }
   100% { transform: translateY(0) scale(1); }
 }
+
+/* Choosing how visibly the companion reacts, in Settings. */
+.companion-energy { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-2); }
+.companion-energy > button {
+  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3);
+  border: 1px solid var(--color-line); border-radius: var(--radius-card); background: var(--color-paper-lift);
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-out);
+}
+.companion-energy > button:hover { transform: translateY(-1px); box-shadow: var(--shadow-1); }
+.companion-energy > button.selected { border-color: var(--color-ink); box-shadow: 0 0 0 1px var(--color-ink); }
+.companion-energy > button > span:last-of-type { display: flex; flex-direction: column; gap: 2px; }
+.companion-energy small { color: var(--color-ink-3); font-size: var(--text-sm); }
+.companion-energy i { display: none; }
+.companion-energy-preview { display: grid; place-items: center; flex: none; width: 56px; height: 56px; }
