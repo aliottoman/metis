@@ -47,13 +47,40 @@ function numText(value: unknown, fallback = "?"): string {
   return fallback;
 }
 
-export function runEventTitle(type: string): string {
+// The coarse step the control plane says it is on. The payload's `label`
+// (the summary line) says what it is doing right now; this names the step.
+const STAGE_TITLES: Record<string, string> = {
+  ingesting: "Reading the request",
+  retrieving: "Searching",
+  planning: "Planning",
+  synthesizing: "Writing the answer",
+  revising: "Revising",
+  reviewing: "Reviewing",
+  rendering: "Rendering",
+  authoring: "Writing the document",
+  designing: "Designing",
+  drafting: "Drafting a tool",
+  building: "Building a tool",
+  running: "Running a tool",
+  project_ask: "Question for you",
+  project_reasoning: "Working in the project",
+  project_check: "Checking the build",
+  project_tool: "Using a project tool",
+};
+
+function stageTitle(payload?: Record<string, unknown>): string {
+  const stage = payload ? getText(payload, "stage") : undefined;
+  if (!stage) return "Working";
+  return STAGE_TITLES[stage] ?? stage.replaceAll("_", " ").replace(/^\w/, (character) => character.toUpperCase());
+}
+
+export function runEventTitle(type: string, payload?: Record<string, unknown>): string {
+  if (type === "stage.entered") return stageTitle(payload);
   const exact: Record<string, string> = {
     "run.created": "Run started",
     "run.started": "Run started",
     "run.resumed": "Run resumed",
     "run.recovered": "Run recovered",
-    "stage.entered": "Working",
     "input.ingested": "Request read",
     "input.truncated": "Context trimmed to budget",
     "context.retrieved": "Context retrieved",
@@ -440,7 +467,7 @@ export function RunTimeline({
               <span className="tl-node" aria-hidden="true" />
               <div className="tl-body">
                 <div className="tl-title">
-                  <strong>{runEventTitle(event.type)}</strong>
+                  <strong>{runEventTitle(event.type, event.payload)}</strong>
                   <time>{index === 0 && event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : took}</time>
                 </div>
                 <p>{runEventSummary(event)}</p>

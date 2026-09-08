@@ -75,7 +75,7 @@ export function AgentFactory() {
   usePoll(readTests, 4000, testingId !== null);
 
   return (
-    <div className="workspacePage agentsPage">
+    <div className="agents">
       <PageHeader
         eyebrow="ElevenLabs"
         title="Agents"
@@ -88,30 +88,31 @@ export function AgentFactory() {
         </Notice>
       ) : null}
 
-      <div className="agentLayout">
-        <aside className="agentList ui-stagger" aria-label="Agents">
-          <button
-            type="button"
-            className={`agentListItem isNew ${selectedId === null ? "selected" : ""}`}
-            onClick={() => setSelectedId(null)}
-          >
-            + New agent
-          </button>
-          {!loaded ? <Skeleton rows={4} height={56} /> : null}
-          {agents.map((agent) => (
+      <div className="agents-body">
+        <aside className="accounts" aria-label="Agents">
+          <div className="accounts-list ui-stagger">
             <button
-              key={agent.id}
               type="button"
-              className={`agentListItem ${agent.id === selectedId ? "selected" : ""}`}
-              onClick={() => setSelectedId(agent.id)}
+              className={`accounts-row is-home${selectedId === null ? " is-selected" : ""}`}
+              aria-current={selectedId === null ? "page" : undefined}
+              onClick={() => setSelectedId(null)}
             >
-              <strong>{agent.spec.name}</strong>
-              <span>
-                <StatusDot state={agentState(agent.status)} />
-                {agent.company} · {statusLabel(agent.status)}
-              </span>
+              <span><strong>+ New agent</strong><small>A brief in, a deployed agent out</small></span>
             </button>
-          ))}
+            {!loaded ? <Skeleton rows={4} height={52} /> : null}
+            {agents.map((agent) => (
+              <button
+                key={agent.id}
+                type="button"
+                className={`accounts-row${agent.id === selectedId ? " is-selected" : ""}`}
+                aria-current={agent.id === selectedId ? "page" : undefined}
+                onClick={() => setSelectedId(agent.id)}
+              >
+                <span><strong>{agent.spec.name}</strong><small>{agent.company} · {statusLabel(agent.status)}</small></span>
+                <i className={`ui-dot is-${agentState(agent.status)}`} aria-hidden="true" />
+              </button>
+            ))}
+          </div>
         </aside>
 
         {selected ? (
@@ -174,7 +175,7 @@ function BriefForm({
   }
 
   return (
-    <section className="agentPanel" aria-label="New agent brief">
+    <section className="agent" aria-label="New agent brief">
       {blocked ? (
         <Notice kind="info" title="The factory isn't configured yet">
           <ul>
@@ -182,7 +183,7 @@ function BriefForm({
           </ul>
         </Notice>
       ) : null}
-      <div className="agentFormGrid">
+      <div className="agent-grid">
         <label className="ui-field">
           <span>Company</span>
           <input type="text" value={draft.company} maxLength={200} placeholder="Batelco"
@@ -207,11 +208,11 @@ function BriefForm({
           placeholder="Policies, product facts, an FAQ, a call transcript…"
           onChange={(event) => update("notes", event.target.value)} />
       </label>
-      <div className="agentActions">
+      <div className="agent-actions">
         <button type="button" className="ui-btn is-primary" disabled={!request || busy || blocked} onClick={() => void submit()}>
           {busy ? "Reading the material and drafting…" : "Draft the agent"}
         </button>
-        <span className="mutedMeta">Drafting reads the pages and asks your selected model. It creates nothing in ElevenLabs.</span>
+        <span className="agent-note">Drafting reads the pages and asks your selected model. It creates nothing in ElevenLabs.</span>
       </div>
     </section>
   );
@@ -297,12 +298,12 @@ function AgentReview({
   const deployed = agent.status === "deployed" && Boolean(agent.elevenlabs_agent_id);
 
   return (
-    <section className="agentPanel" aria-label={`Review ${spec.name}`}>
-      <header className="agentReviewHead">
+    <section className="agent" aria-label={`Review ${spec.name}`}>
+      <header className="agent-head">
         <div>
           <span className="eyebrow">{agent.company}</span>
           <h2>{spec.name}</h2>
-          <p className="mutedMeta">
+          <p className="agent-note">
             <StatusDot state={agentState(agent.status)} />
             {statusLabel(agent.status)}
             {agent.elevenlabs_agent_id ? ` · ${agent.elevenlabs_agent_id}` : ""}
@@ -312,7 +313,7 @@ function AgentReview({
       </header>
       {agent.error ? <Notice kind="error">{agent.error}</Notice> : null}
 
-      <div className="agentFormGrid">
+      <div className="agent-grid">
         <label className="ui-field">
           <span>Name</span>
           <input type="text" value={spec.name} maxLength={80} onChange={(event) => edit({ name: event.target.value })} />
@@ -346,7 +347,7 @@ function AgentReview({
       <KnowledgeEditor items={spec.knowledge} onChange={(knowledge) => edit({ knowledge })} />
       <TestsEditor items={spec.tests} onChange={(tests) => edit({ tests })} />
 
-      <div className="agentFormGrid">
+      <div className="agent-grid">
         <label className="ui-field">
           <span>Demo headline</span>
           <input type="text" value={spec.demo_headline} maxLength={160} onChange={(event) => edit({ demo_headline: event.target.value })} />
@@ -358,12 +359,12 @@ function AgentReview({
         </label>
       </div>
 
-      <div className="agentActions">
+      <div className="agent-actions">
         <button type="button" className="ui-btn" disabled={!dirty || busy !== ""} onClick={() => void save()}>
           {busy === "save" ? "Saving…" : "Save"}
         </button>
         {confirming === "deploy" ? (
-          <span className="agentConfirm" role="group" aria-label="Confirm the deploy">
+          <span className="agent-confirm" role="group" aria-label="Confirm the deploy">
             <span>
               {deployed ? `Update agent ${agent.elevenlabs_agent_id}` : "Create an agent"}, {spec.knowledge.length} knowledge{" "}
               {spec.knowledge.length === 1 ? "document" : "documents"} and {spec.tests.length}{" "}
@@ -392,7 +393,7 @@ function AgentReview({
           </>
         ) : null}
         {confirming === "remove" ? (
-          <span className="agentConfirm" role="group" aria-label="Confirm removal">
+          <span className="agent-confirm" role="group" aria-label="Confirm removal">
             <span>Remove this agent{deployed ? " and everything it created in ElevenLabs" : ""}?</span>
             <button type="button" className="ui-btn is-danger" onClick={() => void remove()}>Remove</button>
             <button type="button" className="ui-btn" onClick={() => setConfirming("")}>Keep</button>
@@ -405,11 +406,11 @@ function AgentReview({
       </div>
 
       {deployed ? (
-        <div className="agentResults">
+        <div className="agent-results">
           <div>
             <span className="eyebrow">Simulation tests</span>
-            <p className="mutedMeta">{testsSummary(agent)}</p>
-            <ul className="agentTestResults">
+            <p className="agent-note">{testsSummary(agent)}</p>
+            <ul className="agent-tests">
               {agent.tests.map((result) => (
                 <li key={result.name}>
                   <StatusDot state={testState(result.status)} />
@@ -421,7 +422,7 @@ function AgentReview({
           </div>
           <div>
             <span className="eyebrow">Embed anywhere</span>
-            <pre className="agentSnippet">{embedSnippet(agent.elevenlabs_agent_id)}</pre>
+            <pre className="agent-snippet">{embedSnippet(agent.elevenlabs_agent_id)}</pre>
           </div>
         </div>
       ) : null}
@@ -443,15 +444,15 @@ function KnowledgeEditor({
   const add = (kind: AgentKnowledge["kind"]) =>
     onChange([...items, { kind, name: kind === "url" ? "Page" : "Facts", url: "", text: "" }].slice(0, 8));
   return (
-    <div className="agentListEditor">
-      <div className="agentListEditorHead">
+    <div className="agent-editor">
+      <div className="agent-editor-head">
         <span className="eyebrow">Knowledge</span>
         <button type="button" className="ui-btn" onClick={() => add("url")}>+ Page</button>
         <button type="button" className="ui-btn" onClick={() => add("text")}>+ Text</button>
       </div>
       {items.map((item, index) => (
-        <div className="agentListItemEditor" key={`${item.kind}-${index}`}>
-          <div className="agentFormGrid">
+        <div className="agent-editor-item" key={`${item.kind}-${index}`}>
+          <div className="agent-grid">
             <label className="ui-field">
               <span>{item.kind === "url" ? "Page" : "Document"} name</span>
               <input type="text" value={item.name} maxLength={80} onChange={(event) => setItem(index, { name: event.target.value })} />
@@ -488,8 +489,8 @@ function TestsEditor({
   const setItem = (index: number, patch: Partial<AgentTest>) =>
     onChange(items.map((item, at) => (at === index ? { ...item, ...patch } : item)));
   return (
-    <div className="agentListEditor">
-      <div className="agentListEditorHead">
+    <div className="agent-editor">
+      <div className="agent-editor-head">
         <span className="eyebrow">Simulation tests</span>
         <button type="button" className="ui-btn"
           onClick={() => onChange([...items, { name: "New test", scenario: "", success_conditions: [], max_turns: 6 }].slice(0, 6))}>
@@ -497,8 +498,8 @@ function TestsEditor({
         </button>
       </div>
       {items.map((item, index) => (
-        <div className="agentListItemEditor" key={index}>
-          <div className="agentFormGrid">
+        <div className="agent-editor-item" key={index}>
+          <div className="agent-grid">
             <label className="ui-field">
               <span>Name</span>
               <input type="text" value={item.name} maxLength={80} onChange={(event) => setItem(index, { name: event.target.value })} />

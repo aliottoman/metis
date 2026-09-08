@@ -50,7 +50,7 @@ function stepsFrom(events: readonly RunEventV1[]): ActivityStep[] {
     .sort((a, b) => a.sequence - b.sequence);
   const steps: ActivityStep[] = [];
   for (const event of ordered) {
-    const title = runEventTitle(event.type);
+    const title = runEventTitle(event.type, event.payload);
     const summary = compactSummary(runEventSummary(event));
     const meta = [actorFor(event), modelFor(event)].filter(Boolean).join(" · ") || null;
     const prior = steps[steps.length - 1];
