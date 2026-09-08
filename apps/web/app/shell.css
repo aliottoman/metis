@@ -49,12 +49,11 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
 @keyframes pane-in { from { opacity: 0.001; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ── Rail ──────────────────────────────────────────────────────────────── */
-/* Dark, warm, and lit from the top-left where the pearl sits. In the native
-   window the traffic lights own the first 40px. */
+/* Dark and warm, lit evenly from above: one soft wash that fades out by the
+   first group, so nothing reads as a patch under the traffic lights. In the
+   native window those own the first 40px. */
 .rail {
-  background:
-    radial-gradient(420px 260px at -40px -60px, rgba(209, 142, 226, 0.22), transparent 70%),
-    radial-gradient(360px 220px at 80% -80px, rgba(255, 119, 89, 0.12), transparent 70%);
+  background: linear-gradient(180deg, rgba(209, 142, 226, 0.09), rgba(255, 119, 89, 0.03) 140px, transparent 260px);
   color: var(--color-rail-ink);
   display: flex;
   flex: 0 0 var(--rail-width);

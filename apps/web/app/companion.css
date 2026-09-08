@@ -388,3 +388,10 @@
 .companion-energy small { color: var(--color-ink-3); font-size: var(--text-sm); }
 .companion-energy i { display: none; }
 .companion-energy-preview { display: grid; place-items: center; flex: none; width: 56px; height: 56px; }
+
+/* ── The pearl in the rail ──────────────────────────────────────────────
+   At 30px on the dark rail, the film's multiply blend buys nothing the eye
+   can see, and WebKit's compositor paints a blended group as a faint
+   rectangle behind the bead. Blend normally there, a little quieter. */
+.rail-brand .pearlFilm { mix-blend-mode: normal; opacity: 0.5; }
+.rail-brand .companion, .rail-brand .pearlBody { isolation: auto; }
