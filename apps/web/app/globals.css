@@ -41,10 +41,6 @@ a {
 ::selection {
   background: rgba(47, 125, 85, 0.20);
 }
-:focus-visible {
-  outline: 3px solid var(--green-glow);
-  outline-offset: 2px;
-}
 .appLoading {
   align-items: center;
   background: var(--canvas);
@@ -185,29 +181,7 @@ kbd {
   line-height: 1;
   width: 35px;
 }
-.notice {
-  align-items: center;
-  border-radius: var(--radius-control);
-  display: flex;
-  font-size: var(--text-sm);
-  gap: 9px;
-  margin-bottom: 20px;
-  padding: 11px 14px;
-}
-.errorNotice {
-  background: var(--danger-light);
-  border: 1px solid #ebcfc8;
-  color: var(--danger);
-}
-.errorNotice span {
-  color: #78534d;
-}
-.successNotice {
-  background: #e7f1ea;
-  border: 1px solid #c7ddce;
-  color: #28553d;
-}
-.successNotice span { color: #4f6f5d; }
+
 .mono,
 code {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -393,40 +367,7 @@ code {
 100% { opacity: 0.25; transform: translateY(0); }
 40% { opacity: 1; transform: translateY(-2px); }
 }
-.composerError {
-  margin-left: auto;
-  margin-right: auto;
-  max-width: 1040px;
-}
-.composerError {
-  align-items: center;
-  background: var(--danger-light);
-  border: 1px solid #ebcbc3;
-  border-radius: var(--radius-control);
-  color: #7d433b;
-  display: flex;
-  font-size: var(--text-xs);
-  gap: 7px;
-  margin-bottom: 7px;
-  padding: 7px 9px;
-}
-.composerError > span {
-  align-items: center;
-  background: var(--danger);
-  border-radius: 50%;
-  color: white;
-  display: flex;
-  font-size: var(--text-xs);
-  height: 15px;
-  justify-content: center;
-  width: 15px;
-}
-.composerError button {
-  background: transparent;
-  border: 0;
-  color: inherit;
-  margin-left: auto;
-}
+
 .approvalCard {
   background: #fffaf0;
   border: 1px solid #e7d6b9;
@@ -966,15 +907,6 @@ code {
 }
 .cardActions > .textButton { margin-right: auto; }
 .cardActions > div { display: flex; gap: 6px; }
-.skeletonCard,
-.skeletonRow {
-  animation: shimmer 1.5s infinite linear;
-  background: linear-gradient(90deg, #e9e6df 25%, #f4f1eb 50%, #e9e6df 75%);
-  background-size: 200% 100%;
-  border-radius: var(--radius-md);
-}
-.skeletonCard { height: 315px; }
-.skeletonRow { height: 210px; }
 
 @keyframes shimmer {
 from { background-position: 200% 0; }
@@ -1024,12 +956,7 @@ to { background-position: -200% 0; }
 .activationBody {
   padding: 18px;
 }
-.activationError {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 12px;
-}
+
 .activationWarning {
   align-items: flex-start;
   background: #fff7e7;
@@ -2343,7 +2270,6 @@ body {
   background: var(--canvas);
 }
 ::selection { background: rgba(194, 92, 59, 0.19); }
-:focus-visible { outline-color: var(--accent-glow); }
 .brandRow { padding: 3px 7px 21px; }
 .brand { gap: 10px; }
 .brand strong {
@@ -2378,7 +2304,7 @@ body {
 .artifactTextPreview,
 .evidenceBody pre { background: #1b1d24; border-color: #2c2f39; }
 .previewLoading span { background: var(--accent); }
-.composerError { max-width: 840px; }
+
 /* Shared editorial pages and controls. */
 .workspacePage { padding-top: 58px; }
 .primaryButton { background: var(--accent); border-color: var(--accent); box-shadow: 0 5px 12px rgba(169, 78, 47, 0.17); }
@@ -2503,42 +2429,6 @@ body {
 .statStrip > div:nth-child(-n+2) { border-bottom-color: var(--line-soft); }
 }
 /* Error recovery is explicit: dismiss the notice or start with a clean canvas. */
-.composerError {
-  align-items: center;
-  border-radius: var(--radius-card);
-  gap: 10px;
-  padding: 9px 9px 9px 11px;
-}
-.composerError > span {
-  flex: 0 0 22px;
-  height: 22px;
-  width: 22px;
-}
-.composerError p {
-  flex: 1;
-  line-height: 1.45;
-  margin: 0;
-  min-width: 0;
-}
-.composerError p strong {
-  color: #6d3932;
-  display: block;
-  font-size: var(--text-xs);
-}
-.composerError .errorDismiss {
-  align-items: center;
-  border-radius: 50%;
-  display: inline-flex;
-  flex: 0 0 28px;
-  font-size: var(--text-lg);
-  height: 28px;
-  justify-content: center;
-  margin-left: 0;
-  padding: 0;
-}
-.composerError .errorDismiss:hover {
-  background: rgba(191, 61, 49, 0.09);
-}
 
 @keyframes markBreathe {
 0%,
@@ -2546,15 +2436,6 @@ body {
 50% { opacity: 0.55; transform: scale(0.94); }
 }
 
-@media (max-width: 720px) {
-.composerError {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-.composerError p {
-    flex-basis: calc(100% - 66px);
-  }
-}
 /* ═══════════════════════════════════════════════════════════════════════════
    Tool Factory v2 — declarative registry, capability panels, and gate inboxes.
    Additive, glass-native, and reusing the existing status/card primitives.

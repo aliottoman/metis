@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { Notice } from "@/components/ui/notice";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/toast";
+
 import {
   activateToolVersion,
   ApiError,
@@ -54,6 +58,7 @@ function runtimeAllowlistLabel(allowlists: CapabilityProfile["runtime_allowlists
 }
 
 export function ToolWorkshop() {
+  const toast = useToast();
   const [tools, setTools] = useState<ToolRecord[]>([]);
   const [definitions, setDefinitions] = useState<ToolDefinitionRecord[]>([]);
   const [definitionProposals, setDefinitionProposals] = useState<ToolDefinitionProposal[]>([]);
@@ -88,7 +93,6 @@ export function ToolWorkshop() {
     idempotencyKey: string;
   } | null>(null);
   const [decisionBusy, setDecisionBusy] = useState(false);
-  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -235,7 +239,7 @@ export function ToolWorkshop() {
         decisionTarget.reason.trim(),
         decisionTarget.targetVersionId,
       );
-      setDecisionNotice(
+      toast(
         result.outcome === "revision_queued"
           ? "Correction approved. A governed revision request was queued; the active version was not changed."
           : result.outcome === "revision_activated"
@@ -317,8 +321,11 @@ export function ToolWorkshop() {
         ))}
       </div>
 
-      {error ? <div className="notice errorNotice" role="alert"><strong>Workshop unavailable</strong><span>{error}</span></div> : null}
-      {decisionNotice ? <div className="notice successNotice" role="status"><strong>Decision recorded</strong><span>{decisionNotice}</span></div> : null}
+      {error ? (
+        <Notice kind="error" title="Workshop unavailable" action="Retry" onAction={() => void load()} onDismiss={() => setError(null)}>
+          <p>{error}</p>
+        </Notice>
+      ) : null}
 
       <section className="improvementSection" aria-labelledby="improvement-title">
         <header>
@@ -479,8 +486,8 @@ export function ToolWorkshop() {
         ) : null}
       </section>
 
-      <div className="toolGrid" aria-live="polite">
-        {loading && !tools.length ? Array.from({ length: 3 }).map((_, index) => <div className="skeletonCard" key={index} />) : null}
+      <div className="toolGrid ui-stagger" aria-live="polite">
+        {loading && !tools.length ? Array.from({ length: 3 }, (_, index) => <Skeleton key={index} rows={1} height={280} />) : null}
         {!loading && !visibleTools.length ? (
           <div className="emptyPanel">
             <span className="emptyGlyph">◇</span>
@@ -592,7 +599,7 @@ export function ToolWorkshop() {
               <button className="iconButton" type="button" aria-label="Close" disabled={activationBusy} onClick={() => setActivationTarget(null)}>×</button>
             </header>
             <div className="activationBody">
-              {activationError ? <div className="notice errorNotice activationError" role="alert"><strong>Activation blocked</strong><span>{activationError}</span></div> : null}
+              {activationError ? <Notice kind="error" title="Activation blocked"><p>{activationError}</p></Notice> : null}
               <div className="activationWarning">
                 <span>!</span>
                 <p>This switches <strong>{activationTarget.tool.name}</strong> from its current version to an older immutable version. The current version remains available for rollback.</p>

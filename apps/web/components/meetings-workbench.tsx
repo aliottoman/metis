@@ -11,11 +11,13 @@ import { MeetingTranscript } from "@/components/meetings/transcript";
 import { AudioPlayer, type AudioPlayerHandle } from "@/components/ui/audio-player";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Status, type StatusState } from "@/components/ui/status";
 import { useToast } from "@/components/ui/toast";
 import { correctMeetingTurn, decideMeetingProposal, deleteMeeting, getMeeting, listMeetings, meetingAudioUrl, nameMeetingSpeaker, renameMeeting, retryMeeting, uploadMeeting } from "@/lib/api";
 import { clock, downloadText, safeFilePart, transcriptText } from "@/lib/audio";
 import type { Meeting, MeetingDetail, MeetingProposal, MeetingStage, MeetingTurn } from "@/lib/types";
+import { usePoll } from "@/hooks/use-poll";
 
 const WORKING = new Set<MeetingStage>(["uploaded", "isolating", "transcribing", "analyzing"]);
 const POLL_MS = 3_000;
@@ -39,6 +41,7 @@ function plainTranscript(detail: MeetingDetail): string {
 export function MeetingsWorkbench() {
   const toast = useToast();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +64,8 @@ export function MeetingsWorkbench() {
       setSelected((current) => (current && rows.some((meeting) => meeting.id === current) ? current : rows[0]?.id ?? null));
     } catch (listError) {
       setError(listError instanceof Error ? listError.message : "Could not read meetings.");
+    } finally {
+      setLoaded(true);
     }
   }, []);
   const refreshDetail = useCallback(async (id: string) => {
@@ -84,11 +89,12 @@ export function MeetingsWorkbench() {
 
   // Poll only while something is moving; a ready meeting is a document.
   const stage = detail?.meeting.stage;
-  useEffect(() => {
-    if (!selected || !stage || !WORKING.has(stage)) return;
-    const timer = window.setInterval(() => { void refreshDetail(selected); void refreshList(); }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [refreshDetail, refreshList, selected, stage]);
+  const moving = Boolean(selected && stage && WORKING.has(stage));
+  const refreshBoth = useCallback(() => {
+    if (selected) void refreshDetail(selected);
+    void refreshList();
+  }, [refreshDetail, refreshList, selected]);
+  usePoll(refreshBoth, POLL_MS, moving);
 
   const names = useMemo(() => new Map(detail?.speakers.map((speaker) => [speaker.speaker_id, speaker.display_name]) ?? []), [detail]);
 
@@ -160,14 +166,15 @@ export function MeetingsWorkbench() {
           <div className="accounts-filters" role="group" aria-label="Filter recordings">
             {FILTERS.map(([value, label]) => <button key={value} type="button" className={`ui-chip${filter === value ? " is-accent" : ""}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}
           </div>
-          <div className="accounts-list">
+          <div className="accounts-list ui-stagger">
+            {!loaded ? <Skeleton rows={5} height={52} /> : null}
             {visible.map((item) => (
               <button key={item.id} type="button" className={`accounts-row${selected === item.id ? " is-selected" : ""}`} aria-current={selected === item.id ? "page" : undefined} onClick={() => setSelected(item.id)}>
                 <span><strong>{item.title || item.audio_filename}</strong><small>{meetingDate(item.created_at)} · {item.stage === "ready" ? clock(item.duration_seconds) : STAGE_LABEL[item.stage]}</small></span>
                 <i className={`ui-dot is-${stageStatus(item.stage)}`} aria-hidden="true" />
               </button>
             ))}
-            {!visible.length ? <p className="accounts-empty">{meetings.length ? "No recordings match." : "Drop a recording anywhere on this page, or add one above."}</p> : null}
+            {loaded && !visible.length ? <p className="accounts-empty">{meetings.length ? "No recordings match." : "Drop a recording anywhere on this page, or add one above."}</p> : null}
           </div>
         </aside>
 

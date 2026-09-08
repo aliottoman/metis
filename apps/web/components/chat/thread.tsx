@@ -5,7 +5,7 @@
 // waiting on you docked at the foot. Streaming follows only while you are
 // already at the bottom.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { ApplyCard } from "@/components/apply-card";
 import { ApprovalCard } from "@/components/approval-card";
@@ -32,6 +32,11 @@ function clock(timestamp?: string): string {
 
 export function Thread({ chat }: { chat: Chat }) {
   const viewport = useRef<HTMLDivElement>(null);
+  // Rows act through the latest chat, so a memoised row never holds a stale handler.
+  const latest = useRef(chat);
+  useEffect(() => {
+    latest.current = chat;
+  });
   const end = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [dragging, setDragging] = useState(false);
@@ -86,7 +91,7 @@ export function Thread({ chat }: { chat: Chat }) {
       ) : (
         <div className="thread-list">
           {chat.loadingConversation ? <div className="thread-loading" aria-label="Opening"><span /><span /><span /></div> : null}
-          {chat.messages.map((message) => <Message key={message.id} message={message} chat={chat} />)}
+          {chat.messages.map((message) => <Message key={message.id} message={message} chat={chat} latest={latest} />)}
           {chat.activeRunId && chat.events.length > 0 && !chat.messages.some((message) => messageBelongsToRun(message, chat.activeRunId)) ? (
             <ProjectActivity events={chat.events} live={chat.runActive && !chat.pendingApproval && !chat.pendingElicitation} attention={Boolean(chat.pendingApproval || chat.pendingElicitation)} stageLabel={chat.stageLabel} projectName={chat.selectedProject?.name} />
           ) : null}
@@ -118,7 +123,37 @@ export function Thread({ chat }: { chat: Chat }) {
   );
 }
 
-function Message({ message, chat }: { message: ChatMessage; chat: Chat }) {
+interface MessageProps {
+  message: ChatMessage;
+  chat: Chat;
+  latest: RefObject<Chat>;
+}
+
+// A row that is being edited, belongs to the active run, or is the newest
+// answer reads live state; every other row shows only its own message.
+function liveIn(chat: Chat, message: ChatMessage): boolean {
+  return chat.editingMessageId === message.id
+    || messageBelongsToRun(message, chat.activeRunId)
+    || chat.latestAssistant?.id === message.id;
+}
+
+function sameRow(prev: MessageProps, next: MessageProps): boolean {
+  const { message } = next;
+  if (prev.message !== message || message.streaming || message.failed) return false;
+  if (liveIn(prev.chat, message) || liveIn(next.chat, message)) return false;
+  const p = prev.chat;
+  const n = next.chat;
+  return p.rewinding === n.rewinding
+    && p.runActive === n.runActive
+    && p.selectedCustomer === n.selectedCustomer
+    && (p.copiedMessageId === message.id) === (n.copiedMessageId === message.id)
+    && (p.savingToAccount === message.id) === (n.savingToAccount === message.id)
+    && p.savedToAccount.has(message.id) === n.savedToAccount.has(message.id);
+}
+
+// Memoised on what the row shows: typing in the composer re-renders the
+// thread, but a settled row outside the active run does not repaint.
+const Message = memo(function Message({ message, chat, latest }: MessageProps) {
   const editing = chat.editingMessageId === message.id;
   const inRun = messageBelongsToRun(message, chat.activeRunId);
   const isLatest = message.id === chat.latestAssistant?.id;
@@ -149,18 +184,18 @@ function Message({ message, chat }: { message: ChatMessage; chat: Chat }) {
           <textarea
             ref={editBox}
             value={chat.editDraft}
-            onChange={(event) => chat.setEditDraft(event.target.value)}
+            onChange={(event) => latest.current.setEditDraft(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Escape") { event.preventDefault(); chat.cancelEditing(); }
-              if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void chat.submitEdit(message); }
+              if (event.key === "Escape") { event.preventDefault(); latest.current.cancelEditing(); }
+              if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void latest.current.submitEdit(message); }
             }}
             aria-label="Edit your message"
             maxLength={20000}
           />
           <div className="msg-editor-bar">
             <small>Everything after this message is removed.</small>
-            <button type="button" className="ui-btn is-quiet is-sm" onClick={chat.cancelEditing} disabled={chat.rewinding}>Cancel</button>
-            <button type="button" className="ui-btn is-primary is-sm" disabled={chat.rewinding || !chat.editDraft.trim()} onClick={() => void chat.submitEdit(message)}>{chat.rewinding ? "Rewinding…" : "Send"}</button>
+            <button type="button" className="ui-btn is-quiet is-sm" onClick={latest.current.cancelEditing} disabled={chat.rewinding}>Cancel</button>
+            <button type="button" className="ui-btn is-primary is-sm" disabled={chat.rewinding || !chat.editDraft.trim()} onClick={() => void latest.current.submitEdit(message)}>{chat.rewinding ? "Rewinding…" : "Send"}</button>
           </div>
         </div>
       ) : message.content ? (
@@ -176,8 +211,8 @@ function Message({ message, chat }: { message: ChatMessage; chat: Chat }) {
 
       {message.failed ? (
         <div className="msg-actions is-visible">
-          <button type="button" className="ui-btn is-sm" onClick={() => chat.clearFailedResponse(message, true)}>Edit & retry</button>
-          <button type="button" className="ui-btn is-quiet is-sm" onClick={() => chat.clearFailedResponse(message, false)}>Clear</button>
+          <button type="button" className="ui-btn is-sm" onClick={() => latest.current.clearFailedResponse(message, true)}>Edit & retry</button>
+          <button type="button" className="ui-btn is-quiet is-sm" onClick={() => latest.current.clearFailedResponse(message, false)}>Clear</button>
         </div>
       ) : null}
 
@@ -187,17 +222,17 @@ function Message({ message, chat }: { message: ChatMessage; chat: Chat }) {
             <span className="msg-grounded">Grounded in {chat.groundedSources} {chat.groundedSources === 1 ? "source" : "sources"}</span>
           ) : null}
           <div className="msg-actions">
-            <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void chat.copyMessage(message)}>{chat.copiedMessageId === message.id ? "Copied" : "Copy"}</button>
+            <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.copyMessage(message)}>{chat.copiedMessageId === message.id ? "Copied" : "Copy"}</button>
             {message.role === "user" ? (
-              <button type="button" className="ui-btn is-quiet is-sm" onClick={() => chat.startEditing(message)} disabled={chat.runActive || chat.rewinding || !isPersisted(message)} title="Edit and rewind the conversation to here">Edit</button>
+              <button type="button" className="ui-btn is-quiet is-sm" onClick={() => latest.current.startEditing(message)} disabled={chat.runActive || chat.rewinding || !isPersisted(message)} title="Edit and rewind the conversation to here">Edit</button>
             ) : message.kind === "tracker" ? null : (
               <>
-                <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void chat.retryAnswer(message)} disabled={chat.runActive || chat.rewinding} title="Ask again, for example after changing the model">{chat.rewinding ? "Retrying…" : "Retry"}</button>
+                <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.retryAnswer(message)} disabled={chat.runActive || chat.rewinding} title="Ask again, for example after changing the model">{chat.rewinding ? "Retrying…" : "Retry"}</button>
                 {inRun ? (
                   <>
-                    <button type="button" className="ui-btn is-quiet is-sm" disabled={chat.sending || chat.uploading || chat.runActive} title="Turn this repeatable process into a governed tool" onClick={() => void chat.submit(TOOL_BUILD_PROMPT)}>Make a tool</button>
+                    <button type="button" className="ui-btn is-quiet is-sm" disabled={chat.sending || chat.uploading || chat.runActive} title="Turn this repeatable process into a governed tool" onClick={() => void latest.current.submit(TOOL_BUILD_PROMPT)}>Make a tool</button>
                     {chat.selectedCustomer ? (
-                      <button type="button" className="ui-btn is-quiet is-sm" disabled={chat.savingToAccount === message.id || chat.savedToAccount.has(message.id)} onClick={() => void chat.saveToAccount(message)}>
+                      <button type="button" className="ui-btn is-quiet is-sm" disabled={chat.savingToAccount === message.id || chat.savedToAccount.has(message.id)} onClick={() => void latest.current.saveToAccount(message)}>
                         {chat.savedToAccount.has(message.id) ? `Saved to ${chat.selectedCustomer.name}` : chat.savingToAccount === message.id ? "Saving…" : `Save to ${chat.selectedCustomer.name}`}
                       </button>
                     ) : null}
@@ -205,8 +240,8 @@ function Message({ message, chat }: { message: ChatMessage; chat: Chat }) {
                       <span className="msg-rated">Feedback recorded</span>
                     ) : (
                       <>
-                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void chat.rate("positive")} disabled={chat.feedback.busy} title="This was useful">👍</button>
-                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void chat.rate("negative")} disabled={chat.feedback.busy} title="Needs a correction">👎</button>
+                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.rate("positive")} disabled={chat.feedback.busy} title="This was useful">👍</button>
+                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.rate("negative")} disabled={chat.feedback.busy} title="Needs a correction">👎</button>
                       </>
                     )}
                   </>
@@ -216,10 +251,10 @@ function Message({ message, chat }: { message: ChatMessage; chat: Chat }) {
           </div>
           {inRun && chat.feedback.mode === "correcting" ? (
             <div className="msg-correction">
-              <textarea value={chat.feedback.correction} onChange={(event) => chat.setCorrection(event.target.value)} maxLength={20000} placeholder="What should Metis learn or correct? It becomes a memory proposal for you to review." aria-label="Correction" />
+              <textarea value={chat.feedback.correction} onChange={(event) => latest.current.setCorrection(event.target.value)} maxLength={20000} placeholder="What should Metis learn or correct? It becomes a memory proposal for you to review." aria-label="Correction" />
               <div className="msg-editor-bar">
-                <button type="button" className="ui-btn is-quiet is-sm" onClick={chat.cancelCorrection}>Cancel</button>
-                <button type="button" className="ui-btn is-primary is-sm" disabled={!chat.feedback.correction.trim() || chat.feedback.busy} onClick={() => void chat.rate("negative")}>{chat.feedback.busy ? "Recording…" : "Submit correction"}</button>
+                <button type="button" className="ui-btn is-quiet is-sm" onClick={latest.current.cancelCorrection}>Cancel</button>
+                <button type="button" className="ui-btn is-primary is-sm" disabled={!chat.feedback.correction.trim() || chat.feedback.busy} onClick={() => void latest.current.rate("negative")}>{chat.feedback.busy ? "Recording…" : "Submit correction"}</button>
               </div>
             </div>
           ) : null}
@@ -227,4 +262,4 @@ function Message({ message, chat }: { message: ChatMessage; chat: Chat }) {
       ) : null}
     </article>
   );
-}
+}, sameRow);

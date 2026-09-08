@@ -15,6 +15,7 @@ import { useToast } from "@/components/ui/toast";
 import { approveAsset, generateAssetRecipe, listAssets, revokeAssetApproval, scanAssets, startAsset, stopAsset } from "@/lib/api";
 import { isActive, isFailed, mergeAsset, sortAssets, type AssetAction } from "@/lib/assets";
 import type { AssetV1 } from "@/lib/types";
+import { usePoll } from "@/hooks/use-poll";
 
 const CATALOG_POLL_MS = 3_000;
 
@@ -64,12 +65,13 @@ export function AssetLibrary() {
     }
   }, []);
 
-  // Runtime state overlays the saved catalog; discovery itself stays manual.
   useEffect(() => {
     void load();
-    const poll = window.setInterval(() => void load(true), CATALOG_POLL_MS);
-    return () => window.clearInterval(poll);
   }, [load]);
+  // Runtime state overlays the saved catalog, and it only moves while an
+  // asset is running or on its way there; that is the only time to look.
+  const moving = useMemo(() => assets.some(isActive), [assets]);
+  usePoll(() => load(true), CATALOG_POLL_MS, moving);
 
   // ?player= opens the preview; a standalone tab gets the library behind it so Back works.
   useEffect(() => {

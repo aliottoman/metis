@@ -22,10 +22,6 @@ button, a {
     opacity var(--motion-fast) var(--ease-standard),
     box-shadow var(--motion-base) var(--ease-out);
 }
-button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
-  box-shadow: var(--focus-ring);
-  outline: none;
-}
 
 /* ── Frame ─────────────────────────────────────────────────────────────── */
 html, body { height: 100%; }
@@ -454,4 +450,44 @@ html.metisNativeWindow .rail { padding-top: 40px; }
 
 @media (prefers-reduced-motion: reduce) {
   .pane-view, .rail, .rail-pill, .rail-collapsible, .chatHistory, .shell-scrim { animation: none; transition: none; }
+}
+
+/* ── Route transitions ────────────────────────────────────────────────── */
+/* The rail is named so it stays put; the page is the only thing that moves.
+   The root's default crossfade is switched off so nothing fades twice. */
+.rail { view-transition-name: rail; }
+.pane-view { view-transition-name: page; }
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+::view-transition-old(rail), ::view-transition-new(rail) { animation: none; }
+::view-transition-old(page) { animation: page-out var(--motion-fast) var(--ease-standard) both; }
+::view-transition-new(page) { animation: page-in var(--motion-base) var(--ease-out) both; }
+@keyframes page-out { to { opacity: 0; } }
+@keyframes page-in { from { opacity: 0; transform: translateY(6px); } }
+/* While the transition runs, the pane's own entrance would double the motion. */
+html.is-routing .pane-view { animation: none; }
+
+/* ── Shortcuts ────────────────────────────────────────────────────────── */
+.rail-help {
+  align-items: center; background: none; border: 0; border-radius: var(--radius-control); color: var(--color-rail-muted);
+  cursor: pointer; display: flex; font: inherit; font-size: var(--text-xs); gap: 8px; padding: 6px 10px; text-align: left; width: 100%;
+}
+.rail-help:hover { color: var(--color-rail-ink); }
+.rail-help kbd {
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: 5px; display: inline-grid; font: 500 11px/1 var(--font-mono);
+  height: 18px; place-items: center; width: 18px;
+}
+.shell.is-collapsed .rail-help { justify-content: center; padding: 6px 0; }
+.shell.is-collapsed .rail-help span { display: none; }
+.shortcuts { width: min(100%, 640px); }
+.shortcuts-head { align-items: center; border-bottom: 1px solid var(--color-line); display: flex; justify-content: space-between; padding: var(--space-4) var(--space-5) var(--space-3); }
+.shortcuts-head h2 { font-size: var(--text-lg); margin: 0; }
+.shortcuts-body { display: grid; gap: var(--space-4) var(--space-6); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); overflow: auto; padding: var(--space-4) var(--space-5) var(--space-5); }
+.shortcuts-body h3 { color: var(--color-ink-3); font-size: var(--text-xs); letter-spacing: 0.06em; margin: 0 0 var(--space-2); text-transform: uppercase; }
+.shortcuts-body dl { display: grid; gap: var(--space-2); margin: 0; }
+.shortcuts-body dl > div { align-items: center; display: grid; gap: var(--space-3); grid-template-columns: 96px minmax(0, 1fr); }
+.shortcuts-body dt, .shortcuts-body dd { margin: 0; }
+.shortcuts-body dd { color: var(--color-ink-2); font-size: var(--text-sm); }
+.shortcuts-body kbd {
+  background: var(--color-paper-lift); border: 1px solid var(--color-line); border-bottom-width: 2px; border-radius: var(--radius-control);
+  color: var(--color-ink); display: inline-block; font: 500 var(--text-xs)/1.4 var(--font-mono); padding: 2px 6px; white-space: nowrap;
 }

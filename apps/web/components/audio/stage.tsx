@@ -44,7 +44,7 @@ export function Stage({ orb, live, label, hint, caption, meters, children, getIn
   return (
     <section className={`stage${live ? " is-live" : ""}`} data-orb={orb ?? "idle"}>
       <div className="stage-orb" aria-hidden="true">
-        {reduced ? <span className="stage-orb-still" /> : <ElevenLabsOrb className="stage-orb-canvas" colors={ORB_COLORS} agentState={orb} getInputVolume={getInputVolume} getOutputVolume={getOutputVolume} />}
+        {reduced || !orb ? <span className="stage-orb-still" /> : <ElevenLabsOrb className="stage-orb-canvas" colors={ORB_COLORS} agentState={orb} getInputVolume={getInputVolume} getOutputVolume={getOutputVolume} />}
       </div>
       <div className="stage-state" role="status" aria-live="polite" aria-atomic="true">
         <span className="stage-label">{live ? <i className="ui-dot is-live" aria-hidden="true" /> : null}{label}</span>

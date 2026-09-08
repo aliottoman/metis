@@ -11,6 +11,7 @@ import { PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FOCUS_SEARCH_EVENT } from "@/components/app-shell";
+import { Skeleton } from "@/components/ui/skeleton";
 import { deleteConversation, listConversations } from "@/lib/api";
 import {
   CONVERSATIONS_CHANGED_EVENT,
@@ -52,6 +53,7 @@ export function ConversationList() {
   const active = searchParams.get("conversation");
   const [open, setOpen] = useState(true);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -71,7 +73,8 @@ export function ConversationList() {
     const load = () =>
       listConversations()
         .then((items) => mounted && setConversations(items.length ? items : readRecentConversations()))
-        .catch(() => mounted && setConversations(readRecentConversations()));
+        .catch(() => mounted && setConversations(readRecentConversations()))
+        .finally(() => mounted && setLoaded(true));
     void load();
     const onChanged = () => void load();
     window.addEventListener(CONVERSATIONS_CHANGED_EVENT, onChanged);
@@ -177,7 +180,7 @@ export function ConversationList() {
 
       <div className="chatHistoryList">
         {Object.entries(grouped).map(([label, items]) => (
-          <section key={label}>
+          <section key={label} className="ui-stagger">
             <h2>{label}</h2>
             {items.map((conversation) => {
               const indicator = indicators[conversation.id];
@@ -217,7 +220,8 @@ export function ConversationList() {
             {expanded ? "Show recent only" : `Show all ${filtered.length}`}
           </button>
         ) : null}
-        {!filtered.length ? (
+        {!loaded && !filtered.length ? <Skeleton rows={6} height={30} /> : null}
+        {loaded && !filtered.length ? (
           <p className="chatHistoryEmpty">{query ? "No matching conversations." : "Your conversations will appear here."}</p>
         ) : null}
       </div>

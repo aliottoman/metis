@@ -4,7 +4,7 @@
 // stop, and the process output. Mount it with key={asset.id} so every draft
 // and log belongs to the asset shown.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
 import { Notice } from "@/components/ui/notice";
@@ -12,6 +12,7 @@ import { Status } from "@/components/ui/status";
 import { getAssetLogs, saveAssetEnv } from "@/lib/api";
 import { commandLabel, isActive, isFailed, normalizedStatus, statusOf, tagsOf, type AssetAction } from "@/lib/assets";
 import type { AssetV1 } from "@/lib/types";
+import { usePoll } from "@/hooks/use-poll";
 
 const LOG_POLL_MS = 3_000;
 
@@ -41,16 +42,11 @@ export function AssetDrawer({ asset, busy, onAction, onUpdated, onClose }: {
   }, [onClose]);
 
   // Logs load once opened and keep refreshing while the process is alive.
-  useEffect(() => {
-    if (!logsOpen) return;
-    let mounted = true;
-    const load = () => getAssetLogs(asset.id)
-      .then((result) => { if (mounted) { setLogs(result.logs); setLogsError(null); } })
-      .catch((error) => { if (mounted) setLogsError(error instanceof Error ? error.message : "Runtime output is not available yet."); });
-    void load();
-    const poll = active ? window.setInterval(() => void load(), LOG_POLL_MS) : null;
-    return () => { mounted = false; if (poll) window.clearInterval(poll); };
-  }, [active, asset.id, logsOpen]);
+  const loadLogs = useCallback(() => getAssetLogs(asset.id)
+    .then((result) => { setLogs(result.logs); setLogsError(null); })
+    .catch((error) => setLogsError(error instanceof Error ? error.message : "Runtime output is not available yet.")), [asset.id]);
+  useEffect(() => { if (logsOpen) void loadLogs(); }, [loadLogs, logsOpen]);
+  usePoll(loadLogs, LOG_POLL_MS, logsOpen && active);
 
   // Only typed values are sent: a blank field means "keep what is on disk".
   const pending = Object.fromEntries(Object.entries(env).filter(([, value]) => value.length > 0));

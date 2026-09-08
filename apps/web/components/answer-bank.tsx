@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { Notice } from "@/components/ui/notice";
+import { Skeleton } from "@/components/ui/skeleton";
+
 import {
   decideAnswer,
   getAnswerConflicts,
@@ -133,7 +136,11 @@ export function AnswerBank() {
         </button>
       </header>
 
-      {error ? <div className="composerError" role="alert"><span>!</span><p>{error}</p></div> : null}
+      {error ? (
+        <Notice kind="error" title="Couldn't read the answer bank" action="Retry" onAction={() => void refresh(tab)} onDismiss={() => setError(null)}>
+          <p>{error}</p>
+        </Notice>
+      ) : null}
 
       <div className="answerTabs" role="tablist">
         {(Object.keys(TAB_LABEL) as Tab[]).map((name) => (
@@ -179,6 +186,8 @@ export function AnswerBank() {
           </p>
         </section>
       ) : null}
+
+      {loading && !visible.length ? <Skeleton rows={3} height={150} /> : null}
 
       {visible.map((atom) => {
         // Dedupe: a source cited twice in one run should show once, and it

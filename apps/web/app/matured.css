@@ -122,7 +122,6 @@ body { background: var(--m-paper); color: var(--m-ink); }
 .knowledgeSection,
 .emptyPanel,
 .modalCard,
-.notice,
 .sourceForm {
   background: var(--m-surface);
   border: 1px solid var(--m-line);
@@ -445,15 +444,6 @@ select { border-radius: var(--m-r-field); }
     border-color 0.22s var(--m-ease),
     color 0.22s var(--m-ease),
     box-shadow 0.22s var(--m-ease);
-}
-.modelControlTrigger:focus-visible,
-.primaryButton:focus-visible,
-.secondaryButton:focus-visible,
-.ghostButton:focus-visible,
-.dangerButton:focus-visible,
-.iconButton:focus-visible {
-  outline: 2px solid var(--m-purple);
-  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1219,7 +1209,7 @@ select { border-radius: var(--m-r-field); }
   gap: 16px;
   padding: 20px 22px;
 }
-.agentPanel .notice ul { color: var(--m-ink-2); font-size: var(--text-sm); margin: 6px 0 0; padding-left: 18px; }
+
 .agentReviewHead h2 { font-family: ui-serif, "New York", Georgia, serif; font-size: var(--text-2xl); font-weight: 500; margin: 2px 0 4px; }
 .agentReviewHead .mutedMeta { align-items: center; display: inline-flex; gap: 6px; text-transform: none; letter-spacing: 0; font-family: inherit; font-size: var(--text-sm); }
 
@@ -1229,7 +1219,6 @@ select { border-radius: var(--m-r-field); }
 .agentListEditor { display: grid; gap: 10px; }
 .agentListEditorHead { align-items: center; display: flex; gap: 8px; }
 .agentListEditorHead .eyebrow { margin-right: auto; }
-.agentListItem:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .agentListItemEditor {
   background: var(--m-surface);
   border-radius: var(--radius-card);

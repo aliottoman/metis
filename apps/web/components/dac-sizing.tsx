@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SelectMenu, type SelectOption } from "@/components/select-menu";
+import { Notice } from "@/components/ui/notice";
+import { Skeleton } from "@/components/ui/skeleton";
 import { estimateDac, getDacCatalog, optimizeDac, recommendDac } from "@/lib/api";
 import type {
   DacCatalog,
@@ -325,10 +327,9 @@ export function DacSizing() {
       </header>
 
       {error ? (
-        <div className="notice errorNotice" role="alert">
-          <strong>Sizing unavailable</strong>
-          <span>{error}</span>
-        </div>
+        <Notice kind="error" title="Sizing unavailable" onDismiss={() => setError(null)}>
+          <p>{error}</p>
+        </Notice>
       ) : null}
 
       <section className="dacRecommend" aria-labelledby="dac-recommend-title">
@@ -523,10 +524,9 @@ export function DacSizing() {
           </p>
         ) : null}
         {selected && !selected.supported ? (
-          <div className="notice" role="status">
-            <strong>Not modelled</strong>
-            <span>{selected.unsupported_reason}</span>
-          </div>
+          <Notice kind="info" title="Not modelled">
+            <p>{selected.unsupported_reason}</p>
+          </Notice>
         ) : null}
       </section>
 
@@ -746,7 +746,7 @@ export function DacSizing() {
         </section>
       ) : null}
 
-      {loading ? <div className="skeletonRow" /> : null}
+      {loading ? <Skeleton rows={4} height={44} /> : null}
     </div>
   );
 }

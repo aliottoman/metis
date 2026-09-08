@@ -31,16 +31,19 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { MetisCompanion } from "@/components/metis-companion";
+import { ShortcutsSheet, isTyping } from "@/components/shortcuts-sheet";
 import { StatusDot } from "@/components/ui/status";
-import { getRunRecord, listConversations } from "@/lib/api";
+import { listConversations } from "@/lib/api";
 import { freshToken } from "@/lib/token";
+import { usePoll } from "@/hooks/use-poll";
+import { useRouteTransitions } from "@/lib/route-transition";
+import { watchRun } from "@/lib/run-watch";
 import {
   RUN_INDICATORS_CHANGED_EVENT,
   acknowledgeConversationRun,
   readRunIndicators,
   updateConversationRun,
   type ConversationRunIndicator,
-  type ConversationRunState,
 } from "@/lib/run-indicators";
 
 interface Destination {
@@ -141,6 +144,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [connected, setConnected] = useState(true);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
+  useRouteTransitions();
   const [indicators, setIndicators] = useState<Record<string, ConversationRunIndicator>>({});
   const [pill, setPill] = useState<{ top: number; visible: boolean }>({ top: 0, visible: false });
   const navRef = useRef<HTMLElement>(null);
@@ -219,58 +225,66 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       window.removeEventListener("storage", sync);
     };
   }, []);
+  // Every pending run is followed through the API's event stream: the badge
+  // changes the moment the run finishes or waits on you, and nothing is asked
+  // in between. Where you are reading decides whether the outcome is unread.
+  const here = useRef({ pathname, activeConversation });
   useEffect(() => {
-    let stopped = false;
-    const poll = async () => {
+    here.current = { pathname, activeConversation };
+  }, [activeConversation, pathname]);
+  useEffect(() => {
+    const watched = new Map<string, () => void>();
+    const sync = () => {
       const pending = Object.values(readRunIndicators()).filter(
         (item) => item.state === "working" || item.state === "attention",
       );
-      await Promise.all(
-        pending.map(async (item) => {
-          try {
-            const run = await getRunRecord(item.runId);
-            if (stopped) return;
-            const state: ConversationRunState =
-              run.status === "completed" ? "done"
-                : run.status === "failed" ? "failed"
-                  : run.status === "cancelled" ? "cancelled"
-                    : run.status === "awaiting_approval" || run.status === "awaiting_input" ? "attention"
-                      : "working";
+      const wanted = new Set(pending.map((item) => item.runId));
+      for (const [runId, stop] of watched) {
+        if (!wanted.has(runId)) {
+          stop();
+          watched.delete(runId);
+        }
+      }
+      for (const item of pending) {
+        if (watched.has(item.runId)) continue;
+        watched.set(
+          item.runId,
+          watchRun(item.runId, (state) => {
+            const current = readRunIndicators()[item.conversationId];
+            if (!current || current.runId !== item.runId) return;
             const visibleHere =
-              pathname === "/" && activeConversation === item.conversationId && document.visibilityState === "visible";
+              here.current.pathname === "/"
+              && here.current.activeConversation === item.conversationId
+              && document.visibilityState === "visible";
             const unread = state === "working" ? false : !visibleHere;
-            if (state !== item.state || unread !== item.unread) updateConversationRun(item.runId, state, unread);
-          } catch {
-            // A badge is advisory; a brief API blip must not flash failure.
-          }
-        }),
-      );
+            if (state !== current.state || unread !== current.unread) updateConversationRun(item.runId, state, unread);
+          }),
+        );
+      }
     };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 2500);
+    sync();
+    window.addEventListener(RUN_INDICATORS_CHANGED_EVENT, sync);
+    window.addEventListener("storage", sync);
     return () => {
-      stopped = true;
-      window.clearInterval(timer);
+      window.removeEventListener(RUN_INDICATORS_CHANGED_EVENT, sync);
+      window.removeEventListener("storage", sync);
+      for (const stop of watched.values()) stop();
     };
-  }, [activeConversation, pathname]);
+  }, []);
   useEffect(() => {
     if (pathname === "/" && activeConversation) acknowledgeConversationRun(activeConversation);
   }, [activeConversation, pathname]);
 
-  // Connection status for the rail foot: one cheap call, then every half minute.
+  // Connection status for the rail foot: one cheap call, then every half
+  // minute while the window is on screen.
+  const checkConnection = useCallback(
+    () => listConversations().then(() => setConnected(true)).catch(() => setConnected(false)),
+    [],
+  );
   useEffect(() => {
-    let stopped = false;
-    const check = () =>
-      listConversations()
-        .then(() => !stopped && setConnected(true))
-        .catch(() => !stopped && setConnected(false));
-    void check();
-    const timer = window.setInterval(() => void check(), 30_000);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, []);
+    void checkConnection();
+  }, [checkConnection]);
+  usePoll(checkConnection, 30_000);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -283,6 +297,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       } else if (meta && event.key.toLowerCase() === "n") {
         event.preventDefault();
         router.push(`/?new=${freshToken()}`);
+      } else if (event.key === "?" && !meta && !isTyping(event.target)) {
+        event.preventDefault();
+        setShortcutsOpen((value) => !value);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -399,6 +416,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <div className="rail-foot">
           {link(SETTINGS)}
+          <button type="button" className="rail-help" onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts (?)">
+            <kbd aria-hidden="true">?</kbd>
+            <span>Shortcuts</span>
+          </button>
           <span
             className="rail-status"
             role="status"
@@ -415,6 +436,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
+      <ShortcutsSheet open={shortcutsOpen} onClose={closeShortcuts} />
     </div>
   );
 }

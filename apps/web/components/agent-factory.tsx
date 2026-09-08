@@ -31,6 +31,7 @@ import {
 } from "@/lib/agents";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status";
 import { useToast } from "@/components/ui/toast";
 import type {
@@ -40,6 +41,7 @@ import type {
   AgentTest,
   VoiceAgent,
 } from "@/lib/types";
+import { usePoll } from "@/hooks/use-poll";
 
 // Named platform models the review screen offers; empty is the platform default.
 const LLM_OPTIONS = ["", "gemini-2.5-flash", "gpt-4.1-mini", "claude-sonnet-4-5"];
@@ -47,6 +49,7 @@ const LLM_OPTIONS = ["", "gemini-2.5-flash", "gpt-4.1-mini", "claude-sonnet-4-5"
 export function AgentFactory() {
   const [availability, setAvailability] = useState<AgentFactoryAvailability | null>(null);
   const [agents, setAgents] = useState<VoiceAgent[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
@@ -61,17 +64,15 @@ export function AgentFactory() {
 
   useEffect(() => {
     void getAgentAvailability().then(setAvailability).catch(() => setAvailability(null));
-    void listAgents().then(setAgents).catch((loadError: Error) => setError(loadError.message));
+    void listAgents().then(setAgents).catch((loadError: Error) => setError(loadError.message)).finally(() => setLoaded(true));
   }, []);
 
   // A test run is a background job on the platform; read it back until it settles.
-  useEffect(() => {
-    if (!selected || selected.tests_stage !== "running") return;
-    const timer = window.setInterval(() => {
-      void getAgent(selected.id).then(replace).catch(() => undefined);
-    }, 4000);
-    return () => window.clearInterval(timer);
-  }, [selected, replace]);
+  const testingId = selected?.tests_stage === "running" ? selected.id : null;
+  const readTests = useCallback(() => {
+    if (testingId) void getAgent(testingId).then(replace).catch(() => undefined);
+  }, [replace, testingId]);
+  usePoll(readTests, 4000, testingId !== null);
 
   return (
     <div className="workspacePage agentsPage">
@@ -88,7 +89,7 @@ export function AgentFactory() {
       ) : null}
 
       <div className="agentLayout">
-        <aside className="agentList" aria-label="Agents">
+        <aside className="agentList ui-stagger" aria-label="Agents">
           <button
             type="button"
             className={`agentListItem isNew ${selectedId === null ? "selected" : ""}`}
@@ -96,6 +97,7 @@ export function AgentFactory() {
           >
             + New agent
           </button>
+          {!loaded ? <Skeleton rows={4} height={56} /> : null}
           {agents.map((agent) => (
             <button
               key={agent.id}

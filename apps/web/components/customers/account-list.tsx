@@ -39,7 +39,7 @@ export function AccountList({ c }: { c: Customers }) {
           <button key={value} type="button" className={`ui-chip${c.filter === value ? " is-accent" : ""}`} aria-pressed={c.filter === value} onClick={() => c.setFilter(value)}>{label}</button>
         ))}
       </div>
-      <div className="accounts-list" onKeyDown={onKeyDown}>
+      <div className="accounts-list ui-stagger" onKeyDown={onKeyDown}>
         <button type="button" data-account="" className={`accounts-row is-home${c.selectedId === null ? " is-selected" : ""}`} aria-current={c.selectedId === null ? "page" : undefined} onClick={() => c.select(null)}>
           <span><strong>Everything</strong><small>All accounts, wins and open work</small></span>
           {total ? <b className={c.dashboard?.overdue_actions ? "is-alert" : ""}>{total}</b> : null}

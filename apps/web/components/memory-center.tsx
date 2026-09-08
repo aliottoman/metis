@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { SelectMenu } from "@/components/select-menu";
+import { Notice } from "@/components/ui/notice";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import {
   createMemoryProposal,
@@ -180,10 +182,14 @@ export function MemoryCenter() {
         ))}
       </div>
 
-      {error ? <div className="notice errorNotice" role="alert"><strong>Memory unavailable</strong><span>{error}</span></div> : null}
+      {error ? (
+        <Notice kind="error" title="Memory unavailable" action="Retry" onAction={() => void load()} onDismiss={() => setError(null)}>
+          <p>{error}</p>
+        </Notice>
+      ) : null}
 
-      <div className="memoryList" aria-live="polite">
-        {loading && !proposals.length ? Array.from({ length: 3 }).map((_, index) => <div className="skeletonRow" key={index} />) : null}
+      <div className="memoryList ui-stagger" aria-live="polite">
+        {loading && !proposals.length ? <Skeleton rows={3} height={110} /> : null}
         {!loading && !visible.length ? (
           <div className="emptyPanel">
             <span className="emptyGlyph">◎</span>

@@ -36,7 +36,7 @@ export function AssetList({ assets, busyId, onOpen, onSettings, onStop }: {
   };
 
   return (
-    <div className="asset-rows" role="list" tabIndex={0} onKeyDown={onKeyDown} aria-label="Asset catalog">
+    <div className="asset-rows ui-stagger" role="list" tabIndex={0} onKeyDown={onKeyDown} aria-label="Asset catalog">
       {assets.map((asset, index) => {
         const active = isActive(asset);
         const status = statusOf(asset);

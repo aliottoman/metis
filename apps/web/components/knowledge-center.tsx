@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 import { SelectMenu } from "@/components/select-menu";
+import { Notice } from "@/components/ui/notice";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import {
   createCorpusSource,
@@ -323,10 +325,9 @@ export function KnowledgeCenter() {
       </header>
 
       {error ? (
-        <div className="notice errorNotice" role="alert">
-          <strong>Something went wrong</strong>
-          <span>{error}</span>
-        </div>
+        <Notice kind="error" title="Couldn't reach your knowledge" action="Retry" onAction={() => void load()} onDismiss={() => setError(null)}>
+          <p>{error}</p>
+        </Notice>
       ) : null}
 
       {cloudOff ? (
@@ -540,9 +541,9 @@ export function KnowledgeCenter() {
           </button>
         </form>
 
-        <div className="sourceList sourceGrid" aria-live="polite">
+        <div className="sourceList sourceGrid ui-stagger" aria-live="polite">
           {loading && !localSources.length
-            ? Array.from({ length: 2 }).map((_, index) => <div className="skeletonRow" key={index} />)
+            ? Array.from({ length: 2 }, (_, index) => <Skeleton key={index} rows={1} height={150} />)
             : null}
           {!loading && !localSources.length ? (
             <div className="emptyPanel">

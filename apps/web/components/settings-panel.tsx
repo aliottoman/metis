@@ -17,6 +17,7 @@ import type { HealthSnapshot, ModelPreference, SpeechPreference, VoiceAvailabili
 import { MetisCompanion } from "@/components/metis-companion";
 import { Notice } from "@/components/ui/notice";
 import { Status } from "@/components/ui/status";
+import { usePoll } from "@/hooks/use-poll";
 import { SelectMenu } from "@/components/select-menu";
 import {
   readCompanionEnergy,
@@ -157,9 +158,9 @@ export function SettingsPanel() {
     void loadPreference();
     void loadSpeech();
     void getVoiceAvailability().then(setVoiceAvailability).catch(() => setVoiceAvailability(null));
-    const timer = window.setInterval(() => void refresh(), 15_000);
-    return () => window.clearInterval(timer);
   }, [refresh, loadPreference, loadSpeech]);
+  // Health moves on its own; re-read it while the page is on screen.
+  usePoll(refresh, 15_000);
 
   const isPinned = preference?.mode === "pinned";
   const provider = preference?.provider ?? "local";
