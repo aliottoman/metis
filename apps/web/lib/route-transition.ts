@@ -17,6 +17,8 @@ const SETTLE_TIMEOUT_MS = 800;
 function supported(): boolean {
   return typeof document !== "undefined"
     && typeof document.startViewTransition === "function"
+    // A hidden document cannot run a transition; it would only abort.
+    && document.visibilityState === "visible"
     && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
@@ -49,7 +51,9 @@ export function transitionTo(navigate: () => void): void {
         window.setTimeout(resolve, SETTLE_TIMEOUT_MS);
       }),
   );
-  void transition.finished.finally(() => root.classList.remove("is-routing"));
+  // A skipped transition rejects these; the navigation itself still happened.
+  transition.ready.catch(() => undefined);
+  transition.finished.catch(() => undefined).finally(() => root.classList.remove("is-routing"));
 }
 
 /**
