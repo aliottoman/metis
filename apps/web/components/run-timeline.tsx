@@ -52,6 +52,8 @@ function numText(value: unknown, fallback = "?"): string {
 const STAGE_TITLES: Record<string, string> = {
   ingesting: "Reading the request",
   retrieving: "Searching",
+  embedding: "Embedding the question",
+  reranking: "Reranking the matches",
   planning: "Planning",
   synthesizing: "Writing the answer",
   revising: "Revising",
