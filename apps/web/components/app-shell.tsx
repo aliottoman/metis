@@ -28,7 +28,7 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { MetisCompanion } from "@/components/metis-companion";
 import { ShortcutsSheet, isTyping } from "@/components/shortcuts-sheet";
@@ -120,16 +120,43 @@ function writeFlag(key: string, value: boolean): void {
   }
 }
 
+// Preferences and media queries are read on the first render, not in an
+// effect after it, so a folded rail is folded in the first frame instead of
+// opening and closing again on every launch. The server has neither, and
+// says false; the shell only ever mounts on the client anyway.
+const flagListeners = new Set<() => void>();
+
+function subscribeFlags(notify: () => void): () => void {
+  flagListeners.add(notify);
+  window.addEventListener("storage", notify);
+  return () => {
+    flagListeners.delete(notify);
+    window.removeEventListener("storage", notify);
+  };
+}
+
+function useStoredFlag(key: string, fallback: boolean): [boolean, (value: boolean) => void] {
+  const value = useSyncExternalStore(subscribeFlags, () => readFlag(key, fallback), () => fallback);
+  const set = useCallback(
+    (next: boolean) => {
+      writeFlag(key, next);
+      for (const notify of flagListeners) notify();
+    },
+    [key],
+  );
+  return [value, set];
+}
+
 function useMedia(query: string): boolean {
-  const [matches, setMatches] = useState(false);
-  useEffect(() => {
-    const media = window.matchMedia(query);
-    const sync = () => setMatches(media.matches);
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
-  }, [query]);
-  return matches;
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      const media = window.matchMedia(query);
+      media.addEventListener("change", notify);
+      return () => media.removeEventListener("change", notify);
+    },
+    [query],
+  );
+  return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches, () => false);
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -140,8 +167,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const narrow = useMedia("(max-width: 720px)");
   const medium = useMedia("(max-width: 1080px)");
 
-  const [collapsedChoice, setCollapsedChoice] = useState(false);
-  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [collapsedChoice, setCollapsedChoice] = useStoredFlag("metis.railCollapsed", false);
+  const [libraryOpen, setLibraryOpen] = useStoredFlag("metis.libraryOpen", false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [connected, setConnected] = useState(true);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -156,11 +183,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Folded by choice on a wide screen, by necessity on a medium one, and
   // never on a phone, where the rail is a drawer instead.
   const collapsed = !narrow && (medium || collapsedChoice);
-
-  useEffect(() => {
-    setCollapsedChoice(readFlag("metis.railCollapsed", false));
-    setLibraryOpen(readFlag("metis.libraryOpen", false));
-  }, []);
 
   // The active pill slides to whichever link is current. Measured after
   // layout so it follows the rail folding and the Library opening too.
@@ -190,7 +212,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // A page inside the Library opens the group so the current page is visible.
   useEffect(() => {
     if (GROUPS[2].items.some((item) => isActive(item.href, pathname))) setLibraryOpen(true);
-  }, [pathname]);
+  }, [pathname, setLibraryOpen]);
 
   useEffect(() => setDrawerOpen(false), [pathname, activeConversation]);
 
@@ -308,16 +330,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const unread = useMemo(() => Object.values(indicators).filter((item) => item.unread).length, [indicators]);
 
-  const toggleCollapsed = () => {
-    const next = !collapsedChoice;
-    setCollapsedChoice(next);
-    writeFlag("metis.railCollapsed", next);
-  };
-  const toggleLibrary = () => {
-    const next = !libraryOpen;
-    setLibraryOpen(next);
-    writeFlag("metis.libraryOpen", next);
-  };
+  const toggleCollapsed = () => setCollapsedChoice(!collapsedChoice);
+  const toggleLibrary = () => setLibraryOpen(!libraryOpen);
 
   const link = (item: Destination) => {
     const active = isActive(item.href, pathname);
