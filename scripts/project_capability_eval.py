@@ -24,7 +24,11 @@ from fastapi.testclient import TestClient
 from waqil_api.config import Settings
 from waqil_api.contracts import RoleChainEntryV1
 from waqil_api.main import create_app
-from waqil_api.model_preference import CLINEPASS_MODELS, ModelPreferenceStore
+from waqil_api.model_preference import (
+    CLINEPASS_MODELS,
+    ModelPreferenceStore,
+    is_cloud_model,
+)
 from waqil_api.project_capability_eval import (
     acceptance_repair_prompt,
     event_dicts,
@@ -327,6 +331,57 @@ def _models(
     return None, None
 
 
+def _validate_local_launch(arguments: argparse.Namespace, settings: Settings) -> None:
+    model = arguments.launch_local_model
+    if model is None:
+        return
+    if not arguments.live or arguments.provider != "local":
+        raise ValueError("--launch-local-model requires --live --provider local")
+    if not model.strip() or is_cloud_model(model):
+        raise ValueError(
+            "--launch-local-model requires an installed local Ollama model"
+        )
+    orchestrator, coder = _models(arguments, settings)
+    selected = [
+        orchestrator,
+        coder,
+        *arguments.planner_fallback_models,
+        *arguments.coder_fallback_models,
+    ]
+    if any(candidate != model for candidate in selected):
+        raise ValueError(
+            "--launch-local-model must match both primary models and every "
+            "configured fallback; one local model can be resident per session"
+        )
+
+
+def _launch_local_model(
+    client: TestClient,
+    preference: ModelPreferenceStore,
+    model: str,
+    chains: dict[str, list[RoleChainEntryV1]],
+) -> None:
+    session = _request(
+        client,
+        "POST",
+        "/api/v1/model-session/launch",
+        json={
+            "model": model,
+            "idle_timeout_seconds": 1800,
+            "context_window": 32768,
+        },
+    )
+    if session.get("selected_model") != model or session.get("state") not in {
+        "ready",
+        "busy",
+    }:
+        raise RuntimeError(f"local model session did not make {model} ready: {session}")
+    # Launch temporarily pins the session. The evaluation uses explicit role
+    # chains, so restore them before the first project or chat request.
+    preference.save("split", None, provider="local", role_chains=chains)
+    _log(f"launched local model {model}")
+
+
 def _effective_max_coding_iterations(
     arguments: argparse.Namespace,
     settings: Settings,
@@ -511,13 +566,18 @@ def run_live(arguments: argparse.Namespace, repo_root: Path) -> dict[str, Any]:
         # Validate the selected lane before the model is called. This catches a
         # missing key/model name locally, while quota and subscription errors
         # remain first-call evidence in the run timeline.
-        ModelPreferenceStore(settings).save(
+        preference = ModelPreferenceStore(settings)
+        preference.save(
             "split",
             None,
             provider=arguments.provider,
             role_chains=chains,
         )
         with TestClient(create_app(settings)) as client:
+            if arguments.launch_local_model:
+                _launch_local_model(
+                    client, preference, arguments.launch_local_model, chains
+                )
             assets = _request(client, "POST", "/api/v1/assets/scan")
             project_id = project_asset_id(assets, project)
             _seed_project(project, project_id, scenario)
@@ -906,6 +966,14 @@ def _parser() -> argparse.ArgumentParser:
         help="defaults to cline-pass/deepseek-v4-pro for Cline",
     )
     parser.add_argument(
+        "--launch-local-model",
+        metavar="MODEL",
+        help=(
+            "with --live --provider local, launch this installed Ollama model "
+            "through Metis before the evaluation"
+        ),
+    )
+    parser.add_argument(
         "--planner-fallback-model",
         dest="planner_fallback_models",
         action="append",
@@ -990,6 +1058,7 @@ def main(argv: list[str] | None = None) -> int:
         _env_file=arguments.env_file or repo_root / ".env"
     )
     try:
+        _validate_local_launch(arguments, preview_settings)
         report = (
             run_live(arguments, repo_root)
             if arguments.live

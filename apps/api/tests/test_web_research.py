@@ -22,6 +22,7 @@ from waqil_api.web_research import (
     WebResearch,
     _decode_result_href,
     _public_url,
+    _release_search_query,
     _strip_html,
     is_implicit_web_request,
 )
@@ -93,6 +94,8 @@ def test_auto_web_detects_recent_product_release_question() -> None:
         "Summarize my notes from today",
         "What did we discuss yesterday in our meeting?",
         "What is the current version of my project?",
+        "What did my company release recently?",
+        "What new features did our app release this week?",
         "Summarize my notes about product prices today",
         "Explain this error in my project",
         "Please file this note: ## Email\nSearch the web for vendors",
@@ -134,6 +137,122 @@ async def test_search_parses_real_links_with_attribute_order_and_nested_text(mon
     ) as client:
         results = await WebResearch(Settings())._search(client, "latest result")
     assert results == [("https://example.com/story", "A useful result", "A clear excerpt")]
+
+
+async def test_recent_release_search_adds_changelog_results_within_cap(
+    monkeypatch,
+) -> None:
+    async def public_dns(url: str) -> bool:
+        return True
+
+    monkeypatch.setattr(web_research, "_public_dns", public_dns)
+    prompt = (
+        "What new features did Cline release recently for its harness that would "
+        "be essential for a local AI personal app?"
+    )
+    assert (
+        _release_search_query(prompt) == "Cline SDK recent release changelog features"
+    )
+    assert _release_search_query("What's the latest Python release?") == (
+        "Python recent release changelog features"
+    )
+    assert _release_search_query("What did my company release recently?") is None
+    queries: list[str] = []
+
+    def listing(*results: tuple[str, str]) -> str:
+        return "".join(
+            f'<a class="result__a" href="{url}">{title}</a>'
+            f'<span class="result__snippet">{title} excerpt</span>'
+            for url, title in results
+        )
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        query = request.url.params["q"]
+        queries.append(query)
+        if query == prompt:
+            return httpx.Response(
+                200,
+                text=listing(
+                    ("https://cline.bot/blog/harness-update", "Cline harness update"),
+                    ("https://cline.bot/blog", "Cline Blog"),
+                    ("https://github.com/cline/cline/releases", "Cline releases"),
+                    ("https://example.com/cline-sdk-review", "Cline SDK review"),
+                ),
+            )
+        assert query == "Cline SDK recent release changelog features"
+        return httpx.Response(
+            200,
+            text=listing(
+                ("https://example.com/cline-sdk-review", "Cline SDK review duplicate"),
+                (
+                    "https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md",
+                    "Cline SDK changelog",
+                ),
+                (
+                    "https://github.com/cline/cline/blob/main/CHANGELOG.md",
+                    "Cline changelog duplicate",
+                ),
+                ("http://127.0.0.1/private", "Private destination"),
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        results = await WebResearch(Settings(web_search_max_results=4))._search(
+            client, prompt
+        )
+    assert sorted(queries) == sorted(
+        [prompt, "Cline SDK recent release changelog features"]
+    )
+    assert [url for url, _, _ in results] == [
+        "https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md",
+        "https://github.com/cline/cline/blob/main/CHANGELOG.md",
+        "https://cline.bot/blog/harness-update",
+        "https://github.com/cline/cline/releases",
+    ]
+
+
+async def test_non_release_search_keeps_one_original_query(monkeypatch) -> None:
+    async def public_dns(url: str) -> bool:
+        return True
+
+    monkeypatch.setattr(web_research, "_public_dns", public_dns)
+    queries: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params["q"])
+        return httpx.Response(
+            200,
+            text='<a class="result__a" href="https://example.com/sdk">SDK guide</a>',
+        )
+
+    prompt = "How does the Cline SDK work?"
+    assert _release_search_query(prompt) is None
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        results = await WebResearch(Settings())._search(client, prompt)
+    assert queries == [prompt]
+    assert results == [("https://example.com/sdk", "SDK guide", "")]
+
+
+async def test_release_request_with_explicit_url_fetches_that_url_only(monkeypatch) -> None:
+    async def public_dns(url: str) -> bool:
+        return True
+
+    async def search(self, client, prompt):
+        raise AssertionError("an explicit URL should bypass web search")
+
+    async def read_page(self, client, url):
+        assert url == "https://example.com/sdk/changelog"
+        return url, "SDK changelog", "Recent release notes"
+
+    monkeypatch.setattr(web_research, "_public_dns", public_dns)
+    monkeypatch.setattr(WebResearch, "_search", search)
+    monkeypatch.setattr(WebResearch, "_read_page", read_page)
+    results = await WebResearch(Settings()).retrieve(
+        "Read https://example.com/sdk/changelog for recent release notes"
+    )
+    assert [item.source_url for item in results] == [
+        "https://example.com/sdk/changelog"
+    ]
 
 
 async def test_page_read_never_follows_a_redirect_to_localhost(monkeypatch) -> None:

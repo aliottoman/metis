@@ -6,6 +6,7 @@ import ast
 import hashlib
 import json
 import os
+import runpy
 import sqlite3
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 import waqil_api.project_capability_eval as capability_eval
+from waqil_api.config import Settings
 from waqil_api.model_preference import CLINEPASS_MODELS
 from waqil_api.project_capability_eval import (
     combined_observed_tokens,
@@ -146,6 +148,126 @@ def test_cli_threshold_is_not_satisfied_by_a_non_live_preview() -> None:
     )
 
     assert result.returncode == 1
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        (
+            ["--launch-local-model", "qwen3-coder:30b"],
+            "requires --live --provider local",
+        ),
+        (
+            ["--live", "--launch-local-model", "qwen3-coder:30b"],
+            "requires --live --provider local",
+        ),
+        (
+            ["--live", "--provider", "local", "--launch-local-model", "glm-5.2:cloud"],
+            "requires an installed local Ollama model",
+        ),
+        (
+            [
+                "--live",
+                "--provider",
+                "local",
+                "--orchestrator-model",
+                "qwen3-coder:30b",
+                "--coder-model",
+                "other:7b",
+                "--launch-local-model",
+                "qwen3-coder:30b",
+            ],
+            "must match both primary models",
+        ),
+    ],
+)
+def test_local_eval_launch_flag_rejects_invalid_routes_before_a_run(
+    tmp_path: Path, arguments: list[str], expected: str
+) -> None:
+    repo = Path(__file__).resolve().parents[3]
+    env_file = tmp_path / "empty.env"
+    env_file.write_text("", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo / "scripts" / "project_capability_eval.py"),
+            "--env-file",
+            str(env_file),
+            *arguments,
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert expected in result.stderr
+
+
+def test_local_eval_launch_restores_split_roles_only_after_ready() -> None:
+    repo = Path(__file__).resolve().parents[3]
+    script = runpy.run_path(str(repo / "scripts" / "project_capability_eval.py"))
+    arguments = script["_parser"]().parse_args(
+        [
+            "--scenario",
+            "fastapi-repair",
+            "--live",
+            "--provider",
+            "local",
+            "--orchestrator-model",
+            "qwen3-coder:30b",
+            "--coder-model",
+            "qwen3-coder:30b",
+            "--launch-local-model",
+            "qwen3-coder:30b",
+        ]
+    )
+    script["_validate_local_launch"](arguments, Settings(_env_file=None))
+    launch = script["_launch_local_model"]
+    calls: list[tuple[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, state: str) -> None:
+            self.state = state
+
+        def request(self, method: str, path: str, **kwargs: object) -> object:
+            calls.append(("request", (method, path, kwargs)))
+            return types.SimpleNamespace(
+                status_code=200,
+                json=lambda: {
+                    "selected_model": "qwen3-coder:30b",
+                    "state": self.state,
+                },
+            )
+
+    class FakePreference:
+        def save(self, *args: object, **kwargs: object) -> None:
+            calls.append(("save", (args, kwargs)))
+
+    chains: dict[str, list[object]] = {"planner": [], "coder": [], "quality": []}
+    launch(FakeClient("ready"), FakePreference(), "qwen3-coder:30b", chains)
+    assert calls == [
+        (
+            "request",
+            (
+                "POST",
+                "/api/v1/model-session/launch",
+                {
+                    "json": {
+                        "model": "qwen3-coder:30b",
+                        "idle_timeout_seconds": 1800,
+                        "context_window": 32768,
+                    }
+                },
+            ),
+        ),
+        ("save", (("split", None), {"provider": "local", "role_chains": chains})),
+    ]
+
+    calls.clear()
+    with pytest.raises(RuntimeError, match="did not make qwen3-coder:30b ready"):
+        launch(FakeClient("error"), FakePreference(), "qwen3-coder:30b", chains)
+    assert [name for name, _ in calls] == ["request"]
 
 
 def test_live_evaluation_seed_is_visible_to_project_discovery(tmp_path: Path) -> None:

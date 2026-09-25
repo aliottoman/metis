@@ -526,6 +526,19 @@ weaken a test. When they are fixed, run a check again and continue.
         else ""
     )
     check_names = ", ".join(checks) if checks else "(no checks are offered)"
+    file_inventory = (
+        f"""FILES THAT ALREADY EXIST (read them before you change them)
+{_bullets(existing, "(No existing-file hints were supplied.)")}
+
+FILES YOU MUST CREATE (they do not exist yet -- create them directly with the
+editor; do NOT call read_files on any path in this list first)
+{_bullets(fresh, "(No new-file hints were supplied.)")}"""
+        if existing or fresh
+        else """FILE INVENTORY
+No host file manifest was supplied for this direct task. Inspect the actual
+project tree before editing. An empty host list does not mean the project has
+no files: read existing target files and create only paths the task asks for."""
+    )
     return f"""You are the implementation agent for one Metis project task.
 
 You own this task end to end: inspect the project, decide the order of work,
@@ -544,12 +557,7 @@ send is executed as one. Metis runs the named check in its own networkless
 verifier against your current files and returns the findings to you.
 Run a check after a meaningful edit rather than after every line.
 
-FILES THAT ALREADY EXIST (read them before you change them)
-{_bullets(existing, "(none)")}
-
-FILES YOU MUST CREATE (they do not exist yet -- create them directly with the
-editor; do NOT call read_files on any path in this list first)
-{_bullets(fresh, "(none)")}
+{file_inventory}
 
 PROTECTED FILES (read them freely to understand the interfaces; you may never
 change them, and an attempt will be refused)
@@ -565,6 +573,9 @@ HARD BOUNDARIES
 - Do not edit appkit/; it is framework-owned and supplied by Metis.
 - Do not delete or rename files. Preserve existing public behaviour unless the
   task changes it.
+- Do not create scratch, debug, or probe files in the workspace unless the task
+  explicitly asks for them. Put requested tests in the task-requested paths and
+  use run_check when offered to verify your edits.
 - Implement real behaviour and real tests. No TODOs, stubs, or fake success.
 
 USER TASK

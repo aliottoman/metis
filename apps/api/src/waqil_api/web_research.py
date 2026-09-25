@@ -41,7 +41,8 @@ _TAG = re.compile(r"<[^>]+>")
 _PROMPT_URL = re.compile(r"https?://[^\s<>\"')\]]+", re.IGNORECASE)
 _PRIVATE_CONTEXT = re.compile(
     r"\b(?:my|our|this)\s+(?:notes?|meetings?|conversations?|projects?|"
-    r"workspace|customers?|accounts?|tasks?|calendar|documents?|files?)\b",
+    r"workspace|customers?|accounts?|tasks?|calendar|documents?|files?|"
+    r"company|business|organization|team|apps?)\b",
     re.IGNORECASE,
 )
 _FRESHNESS = re.compile(
@@ -75,6 +76,31 @@ _EXPLICIT_WEB = (
         r"\b(?:google|research\s+online|search\s+online|look\s+online)\b", re.IGNORECASE
     ),
 )
+_RELEASE_SUBJECT = (
+    re.compile(
+        r"\b(?:did|has)\s+([a-z][\w.+-]*(?:\s+[a-z][\w.+-]*){0,2})"
+        r"\s+(?:release|ship|announce)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:latest|newest|recent)\s+"
+        r"([a-z][\w.+-]*(?:\s+[a-z][\w.+-]*){0,2})\s+"
+        r"(?:release|version|update|changelog)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b([a-z][\w.+-]*(?:\s+[a-z][\w.+-]*){0,2})\s+"
+        r"(?:latest|newest|recent)\s+(?:release|version|update|changelog)\b",
+        re.IGNORECASE,
+    ),
+)
+_RELEASE_WORD = re.compile(
+    r"\b(?:releases?|released|versions?|updates?|changelog)\b", re.IGNORECASE
+)
+_RELEASE_DOCUMENT = re.compile(r"\b(?:changelog|release[-_/ ]?notes?)\b", re.IGNORECASE)
+_RELEASE_LOW_SIGNAL = re.compile(r"\b(?:reviews?|social)\b", re.IGNORECASE)
+_SOCIAL_HOSTS = {"x.com", "twitter.com", "reddit.com", "facebook.com", "linkedin.com"}
+_RELEASE_GENERIC_SUBJECT = {"it", "they", "we", "you", "this", "that", "a", "the"}
 
 
 def is_explicit_web_request(prompt: str) -> bool:
@@ -99,6 +125,36 @@ def is_implicit_web_request(prompt: str) -> bool:
         or _PUBLIC_LOOKUP.search(instruction)
         or _SHOPPING_OR_TRAVEL.search(instruction)
     )
+
+
+def _release_search_query(prompt: str) -> str | None:
+    """Add one focused query for clearly named, recent public releases."""
+    if _PROMPT_URL.search(prompt) or _PRIVATE_CONTEXT.search(prompt):
+        return None
+    if not _FRESHNESS.search(prompt) or not _RELEASE_WORD.search(prompt):
+        return None
+    for pattern in _RELEASE_SUBJECT:
+        match = pattern.search(prompt)
+        if match is None:
+            continue
+        subject = " ".join(match.group(1).split())
+        if subject.casefold() in _RELEASE_GENERIC_SUBJECT or subject.split()[0].casefold() in {
+            "my",
+            "our",
+            "your",
+            "this",
+            "that",
+            "the",
+        }:
+            continue
+        qualifier = (
+            "SDK "
+            if re.search(r"\b(?:sdk|harness)\b", prompt, re.IGNORECASE)
+            and not re.search(r"\bsdk\b", subject, re.IGNORECASE)
+            else ""
+        )
+        return f"{subject} {qualifier}recent release changelog features"
+    return None
 
 
 def _strip_html(fragment: str) -> str:
@@ -298,6 +354,80 @@ class WebResearch:
         raise ValueError("too many redirects")
 
     async def _search(
+        self, client: httpx.AsyncClient, prompt: str
+    ) -> list[tuple[str, str, str]]:
+        supplemental = _release_search_query(prompt)
+        if (
+            supplemental is None
+            or supplemental.casefold() == " ".join(prompt.split()).casefold()
+        ):
+            return await self._search_query(client, prompt)
+
+        async def focused_search() -> list[tuple[str, str, str]]:
+            try:
+                return await self._search_query(client, supplemental)
+            except (httpx.HTTPError, OSError, TimeoutError, ValueError):
+                return []
+
+        primary, focused = await asyncio.gather(
+            self._search_query(client, prompt), focused_search()
+        )
+        wants_sdk = bool(re.search(r"\b(?:sdk|harness)\b", prompt, re.IGNORECASE))
+
+        def label(item: tuple[str, str, str]) -> str:
+            return f"{urlsplit(item[0]).path} {item[1]}"
+
+        def low_signal(item: tuple[str, str, str]) -> bool:
+            parsed = urlsplit(item[0])
+            host = (parsed.hostname or "").casefold()
+            index_page = parsed.path.casefold().rstrip("/") in {"/blog", "/news"}
+            return index_page or bool(_RELEASE_LOW_SIGNAL.search(label(item))) or any(
+                host == social or host.endswith(f".{social}") for social in _SOCIAL_HOSTS
+            )
+
+        # A focused query can surface a release document below generic links.
+        # Put citable changelogs/notes first, especially SDK documentation when
+        # the user asks about an SDK or harness. Preserve broad result order for
+        # the remaining sources while leaving reviews/social links until last.
+        documents = [
+            (item, source, index)
+            for source, results in ((0, focused), (1, primary))
+            for index, item in enumerate(results)
+            if _RELEASE_DOCUMENT.search(label(item)) and not low_signal(item)
+        ]
+        documents.sort(
+            key=lambda entry: (
+                0
+                if wants_sdk
+                and re.search(r"\bsdk\b", label(entry[0]), re.IGNORECASE)
+                else 1,
+                entry[1],
+                entry[2],
+            )
+        )
+        remainder = [
+            item
+            for results in (primary, focused)
+            for item in results
+            if not (_RELEASE_DOCUMENT.search(label(item)) and not low_signal(item))
+        ]
+        ordered = (
+            [item for item, _, _ in documents]
+            + [item for item in remainder if not low_signal(item)]
+            + [item for item in remainder if low_signal(item)]
+        )
+        merged: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for item in ordered:
+            if item[0] in seen:
+                continue
+            seen.add(item[0])
+            merged.append(item)
+            if len(merged) >= self.settings.web_search_max_results:
+                break
+        return merged
+
+    async def _search_query(
         self, client: httpx.AsyncClient, prompt: str
     ) -> list[tuple[str, str, str]]:
         query = quote_plus(" ".join(prompt.split())[:300])

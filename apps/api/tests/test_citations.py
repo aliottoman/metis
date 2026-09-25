@@ -183,3 +183,61 @@ def test_real_and_invented_markers_in_one_answer() -> None:
     assert "Herman is the ACE [1], and the deadline is Friday." in answer
     assert dropped == [7]
     assert "**Sources**\n[1] Notion — [SR - Volvo › Prep meeting](" in answer
+
+
+def test_grouped_web_citations_link_every_referenced_source_once() -> None:
+    sources = [
+        {
+            "source_label": f"Page {number}",
+            "provider": "web",
+            "rel_path": f"https://example.com/{number}",
+        }
+        for number in range(1, 5)
+    ]
+    answer, dropped = _append_cited_sources(
+        "The first point [1, 2] and the second [1, 3] are supported.", sources
+    )
+    assert dropped == []
+    assert "The first point [1, 2] and the second [1, 3]" in answer
+    assert answer.count("**Sources**") == 1
+    for number in (1, 2, 3):
+        assert (
+            f"[{number}] Page {number} — [example.com](https://example.com/{number})"
+            in answer
+        )
+    assert "[4] Page 4" not in answer
+
+
+def test_invalid_numbers_inside_groups_are_removed_individually() -> None:
+    sources = [_notion_snippet(), _local_snippet()]
+    answer, dropped = _append_cited_sources(
+        "Supported [1, 9, 2], unsupported [0, 7].", sources
+    )
+    assert answer.startswith("Supported [1, 2], unsupported.")
+    assert dropped == [9, 0, 7]
+    assert "[1] Notion" in answer
+    assert "[2] proj" in answer
+
+
+def test_code_indices_fences_inline_code_and_markdown_links_are_not_sources() -> None:
+    original = (
+        "Use rows[1] and items()[2]. See [1, 2](https://example.com/reference) "
+        "or [1][reference]. Read `rows[1]` and `sources[1, 2]`.\n"
+        "```python\nrows[1] = values[2]\n# [1, 2]\n```"
+    )
+    answer, dropped = _append_cited_sources(
+        original, [_notion_snippet(), _local_snippet()]
+    )
+    assert answer == original
+    assert dropped == []
+
+
+def test_real_citation_after_code_is_still_linked() -> None:
+    answer, dropped = _append_cited_sources(
+        "Read `rows[1]`; the explanation follows [1, 2].",
+        [_notion_snippet(), _local_snippet()],
+    )
+    assert dropped == []
+    assert "Read `rows[1]`; the explanation follows [1, 2]." in answer
+    assert "**Sources**\n[1] Notion" in answer
+    assert "\n[2] proj" in answer

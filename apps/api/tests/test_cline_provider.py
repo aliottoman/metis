@@ -112,6 +112,39 @@ async def test_the_reply_is_unwrapped_from_its_data_envelope() -> None:
 
 
 @pytest.mark.asyncio
+async def test_general_chat_prompt_allows_stable_knowledge_but_bounds_personal_and_current_claims() -> None:
+    chat = _Client(
+        _Response(200, {"data": {"choices": [{"message": {"content": "answer"}}]}})
+    )
+    await _provider(chat).generate(
+        ModelRequestV1(
+            role="planner",
+            system_prompt="Be concise.",
+            user_prompt="Explain a stable concept.",
+        )
+    )
+    system = chat.sent[0]["messages"][0]["content"]
+    assert "general, stable knowledge directly" in system
+    assert "Ground claims about the user's" in system
+    assert "Ground current or changing claims" in system
+    assert "retrieved web evidence" in system
+    assert "Never claim to have browsed" in system
+    assert system.endswith("Be concise.")
+    assert "Answer only from the bounded context" not in system
+
+    project = _Client(
+        _tool_reply(
+            "return_projectdirectionv1",
+            '{"path":"app/main.py","instruction":"write it"}',
+        )
+    )
+    await _provider(project).project_direction({"planned_files": ["app/main.py"]})
+    assert "Answer only from the bounded context" in project.sent[0]["messages"][0][
+        "content"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_emits_each_delta_before_the_reply_finishes() -> None:
     emitted: list[str] = []
     requests: list[dict[str, Any]] = []

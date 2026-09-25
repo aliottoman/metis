@@ -4704,6 +4704,16 @@ CLINE_PREAMBLE = """You are a cloud reasoning provider for Metis, a local-first
 assistant. Answer only from the bounded context on this request. Never invent a
 fact about the user's project, files or data that the context does not contain."""
 
+CLINE_CHAT_PREAMBLE = """You are a cloud reasoning provider for Metis, a
+local-first assistant. Answer questions about general, stable knowledge directly,
+even when no retrieved snippets are supplied. Ground claims about the user's
+projects, files, data, and decisions in the context supplied with this request;
+say when that context is insufficient. Ground current or changing claims in
+retrieved web evidence supplied with this request. If none is supplied, do not
+present the latest state as verified; give stable background when useful and say
+that current details need checking. Never claim to have browsed, read a source,
+or accessed the user's system unless that evidence is supplied here."""
+
 
 class ClineModelProvider:
     """The Cline gateway: one key, two seats, an OpenAI-compatible endpoint.
@@ -5182,7 +5192,7 @@ class ClineModelProvider:
             "messages": [
                 {
                     "role": "system",
-                    "content": f"{CLINE_PREAMBLE}\n\n{request.system_prompt}",
+                    "content": f"{CLINE_CHAT_PREAMBLE}\n\n{request.system_prompt}",
                 },
                 {"role": "user", "content": request.user_prompt},
             ],
