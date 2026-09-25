@@ -119,7 +119,7 @@ def test_prompt_side_knowledge_block_carries_no_url() -> None:
     # A URL in the prompt is a URL the model can paste into prose, where nothing
     # checks it points at the passage being described.
     block = _format_knowledge([_notion_snippet()])
-    assert block.startswith("[1] Notion — SR - Volvo › Prep meeting\n")
+    assert block.startswith("[1] Notion (notion) — SR - Volvo › Prep meeting\n")
     assert "notion.so" not in block
 
 

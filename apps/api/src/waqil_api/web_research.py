@@ -31,6 +31,8 @@ _HEADERS = {
 }
 _MAX_DOWNLOAD_BYTES = 900_000
 _MAX_REDIRECTS = 3
+_MAX_SEARCH_QUERIES = 3
+_MAX_FOCUS_TERMS = 8
 _TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.DOTALL | re.IGNORECASE)
 _MAIN = re.compile(r"<(?:main|article)\b[^>]*>(.*?)</(?:main|article)>", re.DOTALL | re.IGNORECASE)
 _DROP_BLOCKS = re.compile(
@@ -98,9 +100,33 @@ _RELEASE_WORD = re.compile(
     r"\b(?:releases?|released|versions?|updates?|changelog)\b", re.IGNORECASE
 )
 _RELEASE_DOCUMENT = re.compile(r"\b(?:changelog|release[-_/ ]?notes?)\b", re.IGNORECASE)
+_RELEASES_PATH = re.compile(r"(?:^|/)releases?(?:/|$)", re.IGNORECASE)
+_MODEL_RELEASE_INTENT = re.compile(
+    r"\b(?:changelog|latest|newest|recent|releases?|shipped|since|versions?|updates?)\b",
+    re.IGNORECASE,
+)
+_GENERIC_QUERY_WORDS = {
+    "about", "changes", "docs", "features", "github", "harness", "latest",
+    "native", "new", "notes", "official", "recent", "release", "releases", "search",
+    "sdk", "shipped", "tool", "tools", "update", "updates", "version", "web",
+}
 _RELEASE_LOW_SIGNAL = re.compile(r"\b(?:reviews?|social)\b", re.IGNORECASE)
 _SOCIAL_HOSTS = {"x.com", "twitter.com", "reddit.com", "facebook.com", "linkedin.com"}
 _RELEASE_GENERIC_SUBJECT = {"it", "they", "we", "you", "this", "that", "a", "the"}
+_VERSION = re.compile(r"(?<![\w.])v?\d{1,4}\.\d{1,3}(?:\.\d{1,3})?(?![\w.])", re.IGNORECASE)
+_MARKDOWN_VERSION_HEADING = re.compile(
+    r"^##\s+\[?(v?\d+(?:\.\d+){1,3})\]?[^\n]*$", re.MULTILINE | re.IGNORECASE
+)
+_CAPABILITY_WORDS = re.compile(
+    r"\b(?:agent|compaction|connector|context|mcp|model|plugin|provider|"
+    r"retry|search|session|stream|tool)s?\b",
+    re.IGNORECASE,
+)
+_NEW_CAPABILITY = re.compile(
+    r"\b(?:added|adds|enabled by default|introduces|new|now (?:allows|enabled|supports)|support for)\b",
+    re.IGNORECASE,
+)
+_LOW_SIGNAL_FOCUS = {"change", "changes", "feature", "features", "latest", "new", "recent", "release", "releases", "update", "updates"}
 
 
 def is_explicit_web_request(prompt: str) -> bool:
@@ -162,6 +188,216 @@ def _strip_html(fragment: str) -> str:
     text = _TAG.sub(" ", text)
     text = html_module.unescape(text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _github_raw_markdown_url(url: str) -> str | None:
+    """Map a public GitHub Markdown blob to its raw text, without URL tricks."""
+    if not _public_url(url):
+        return None
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname != "github.com":
+        return None
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) < 5 or parts[2] != "blob" or not parts[-1].casefold().endswith(".md"):
+        return None
+    if any(
+        part in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", part)
+        for part in parts
+    ):
+        return None
+    return "https://raw.githubusercontent.com/" + "/".join(
+        [parts[0], parts[1], parts[3], *parts[4:]]
+    )
+
+
+def _compact_markdown_changelog(
+    text: str, *, focus_terms: list[str] | None, limit: int
+) -> str | None:
+    """Give several recent versions room, selecting substantive release bullets."""
+    all_headings = list(_MARKDOWN_VERSION_HEADING.finditer(text))
+    if not all_headings:
+        return None
+    count = min(len(all_headings), max(2, min(4, limit // 650)))
+    headings = all_headings[:count]
+    title_match = re.search(r"^#\s+([^\n]+)", text, re.MULTILINE)
+    title = title_match.group(0)[:120] if title_match else ""
+    title_words = set(re.findall(r"[a-z0-9]+", title.casefold()))
+    section_budget = max(120, (limit - len(title) - 2 * count) // count)
+    useful_focus = [
+        " ".join(term.split()).casefold()
+        for term in focus_terms or []
+        if isinstance(term, str) and len(term.strip()) >= 4
+        and not all(
+            word in title_words
+            for word in re.findall(r"[a-z0-9]+", term.casefold())
+        )
+        and term.casefold() not in {"new features", "recent features", "changelog"}
+    ][:_MAX_FOCUS_TERMS]
+    sections: list[str] = []
+    for index, heading in enumerate(headings):
+        next_start = (
+            all_headings[index + 1].start()
+            if index + 1 < len(all_headings)
+            else len(text)
+        )
+        body = text[heading.end() : next_start]
+        bullets: list[tuple[int, str, float]] = []
+        for bullet_index, line in enumerate(body.splitlines()):
+            match = re.match(r"^\s*[-*]\s+(.+)", line)
+            if not match:
+                continue
+            content = " ".join(match.group(1).split())
+            lowered = content.casefold()
+            score = min(4, len(_CAPABILITY_WORDS.findall(content))) * 3
+            score += sum(12 for term in useful_focus if term in lowered)
+            score += 6 if _NEW_CAPABILITY.search(content) else 0
+            score += 4 if not bullets else 0
+            score -= 5 if "refreshed the model catalog" in lowered else 0
+            bullets.append((bullet_index, content, score))
+
+        heading_text = heading.group(0).strip()
+        remaining = section_budget - len(heading_text) - 1
+        chosen: list[tuple[int, str]] = []
+        max_bullet = min(260, max(110, remaining // 2))
+        for bullet_index, content, _ in sorted(
+            bullets, key=lambda item: (-item[2], item[0])
+        ):
+            clipped = content[:max_bullet].rsplit(" ", 1)[0] if len(content) > max_bullet else content
+            line = f"- {clipped}"
+            if len(line) + 1 > remaining:
+                continue
+            chosen.append((bullet_index, line))
+            remaining -= len(line) + 1
+            if len(chosen) >= 4:
+                break
+        if not chosen and remaining > 10:
+            fallback = " ".join(body.split())[:remaining]
+            if fallback:
+                chosen.append((0, fallback))
+        section = "\n".join(
+            [heading_text, *(line for _, line in sorted(chosen))]
+        )
+        sections.append(section)
+    result = "\n\n".join(([title] if title else []) + sections)
+    return result[:limit]
+
+
+def _page_excerpt(
+    text: str,
+    *,
+    url: str,
+    title: str,
+    focus_terms: list[str] | None,
+    limit: int,
+) -> str:
+    """Keep relevant passages from a long page, including older release notes.
+
+    A changelog's first few thousand characters often describe only its newest
+    release. Extract short, separated windows so an older item found by a
+    focused query can still be cited within the same bounded prompt budget.
+    """
+    if len(text) <= limit:
+        return text
+
+    if _RELEASE_DOCUMENT.search(f"{urlsplit(url).path} {title}") and "\n## " in text:
+        compact = _compact_markdown_changelog(
+            text, focus_terms=focus_terms, limit=limit
+        )
+        if compact:
+            return compact
+
+    folded = text.casefold()
+    terms: list[str] = []
+    for raw in focus_terms or []:
+        if not isinstance(raw, str):
+            continue
+        term = " ".join(raw.split())[:80].casefold()
+        if len(term) < 4 or term in _LOW_SIGNAL_FOCUS or term in terms:
+            continue
+        terms.append(term)
+        if len(terms) >= _MAX_FOCUS_TERMS:
+            break
+
+    changelog = bool(_RELEASE_DOCUMENT.search(f"{urlsplit(url).path} {title}"))
+    window_size = max(320, min(780, (limit - 320) // 4))
+    candidates: list[tuple[float, int, int]] = []
+    for term in terms:
+        positions: list[int] = []
+        cursor = 0
+        while len(positions) < 40:
+            position = folded.find(term, cursor)
+            if position < 0:
+                break
+            positions.append(position)
+            cursor = position + len(term)
+        rarity = 60 / (1 + len(positions))
+        for position in positions:
+            start = max(0, position - min(210, window_size // 3))
+            end = min(len(text), start + window_size)
+            coverage = sum(other in folded[start:end] for other in terms)
+            candidates.append((rarity + coverage * 8, start, end))
+
+    if changelog:
+        # Include several distinct release sections even when the model did
+        # not provide a focus term. Version markers are positional hints, not
+        # a claim that a particular release exists.
+        for index, match in enumerate(_VERSION.finditer(text)):
+            if index >= 12:
+                break
+            start = match.start()
+            candidates.append((20 - index, start, min(len(text), start + window_size)))
+
+    if not candidates:
+        return text[:limit]
+
+    selected: list[tuple[int, int]] = []
+    budget = limit - min(300, limit // 6)
+    for _, start, end in sorted(candidates, key=lambda item: (-item[0], item[1])):
+        if any(start < chosen_end and end > chosen_start for chosen_start, chosen_end in selected):
+            continue
+        if end - start > budget:
+            continue
+        selected.append((start, end))
+        budget -= end - start + 5
+        if len(selected) >= 4 or budget < 320:
+            break
+
+    if not selected:
+        return text[:limit]
+    intro = text[: min(300, limit // 6)].rstrip()
+    passages = [intro] if all(start >= len(intro) for start, _ in selected) else []
+    passages.extend(text[start:end].strip() for start, end in sorted(selected))
+    return " … ".join(passage for passage in passages if passage)[:limit]
+
+
+def _model_result_priority(
+    item: tuple[str, str, str], *, query_subjects: set[str], wants_sdk: bool
+) -> tuple[int, int]:
+    """Prefer first-party release records over articles for release research."""
+    url, title, _ = item
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").casefold()
+    path = parsed.path.casefold()
+    label = f"{path} {title}"
+    low_signal = (
+        path.rstrip("/") in {"/blog", "/news"}
+        or bool(_RELEASE_LOW_SIGNAL.search(label))
+        or any(host == social or host.endswith(f".{social}") for social in _SOCIAL_HOSTS)
+    )
+    if low_signal:
+        return (3, 0)
+    release_document = bool(_RELEASE_DOCUMENT.search(label) or _RELEASES_PATH.search(path))
+    if not release_document:
+        return (2, 0)
+    host_parts = host.split(".")
+    # Match the registrable-looking domain label, not an arbitrary brand
+    # subdomain such as "cline.evil.example".
+    domain_word = host_parts[-2] if len(host_parts) >= 2 else ""
+    path_parts = [part for part in path.strip("/").split("/") if part]
+    repository_owner = path_parts[0] if host == "github.com" and path_parts else ""
+    first_party = bool(query_subjects & {domain_word, repository_owner})
+    sdk_match = wants_sdk and "sdk" in label
+    return (0 if first_party else 1, 0 if sdk_match else 1)
 
 
 def _decode_result_href(href: str) -> str:
@@ -282,9 +518,30 @@ class WebResearch:
     def available(self) -> bool:
         return self.settings.web_research_enabled
 
-    async def retrieve(self, prompt: str) -> list[KnowledgeSnippetV1]:
+    async def retrieve(
+        self,
+        prompt: str,
+        *,
+        queries: list[str] | None = None,
+        focus_terms: list[str] | None = None,
+        include_prompt_urls: bool = True,
+    ) -> list[KnowledgeSnippetV1]:
+        """Return public evidence for a turn.
+
+        ``queries=None`` keeps the legacy user-prompt search for an explicit
+        Web request. Supplying queries, including an empty list, opts out of
+        that fallback. User URLs take precedence over search on the first pass;
+        a later coverage check may search separately with
+        ``include_prompt_urls=False`` and explicit queries.
+        """
+        if not include_prompt_urls and queries is None:
+            raise ValueError("explicit queries are required when skipping prompt URLs")
         instruction = user_instruction(prompt)
-        urls = [url.rstrip(".,;:") for url in _PROMPT_URL.findall(instruction)]
+        urls = (
+            [url.rstrip(".,;:") for url in _PROMPT_URL.findall(instruction)]
+            if include_prompt_urls
+            else []
+        )
         urls = urls[: self.settings.web_search_max_results]
         async with httpx.AsyncClient(
             headers=_HEADERS,
@@ -292,7 +549,24 @@ class WebResearch:
             trust_env=False,
             timeout=self.settings.web_fetch_timeout_seconds,
         ) as client:
-            found = [(url, "", "") for url in urls] if urls else await self._search(client, instruction)
+            found = [(url, "", "") for url in urls]
+            if not urls:
+                if queries is not None:
+                    # An explicit empty list means no search. Never fall back
+                    # to sending the user's full prompt to the public engine.
+                    found.extend(await self._search_queries(client, queries))
+                else:
+                    found = await self._search(client, instruction)
+            unique: list[tuple[str, str, str]] = []
+            seen: set[str] = set()
+            for item in found:
+                if item[0] in seen:
+                    continue
+                seen.add(item[0])
+                unique.append(item)
+                if len(unique) >= self.settings.web_search_max_results:
+                    break
+            found = unique
             # Do not keep even a search-result blurb when the destination
             # resolves to a private host; failed page reads may use that blurb.
             allowed = await asyncio.gather(*(_public_dns(url) for url, _, _ in found))
@@ -308,6 +582,13 @@ class WebResearch:
             if not text:
                 continue
             label = title or page_title or urlsplit(final_url).netloc
+            text = _page_excerpt(
+                text,
+                url=final_url,
+                title=label,
+                focus_terms=focus_terms,
+                limit=self.settings.web_page_max_chars,
+            )
             snippets.append(
                 KnowledgeSnippetV1(
                     source_label=label[:200],
@@ -316,11 +597,65 @@ class WebResearch:
                     source_url=final_url,
                     symbol=None,
                     start_line=None,
-                    text=text[: self.settings.web_page_max_chars],
+                    text=text,
                     score=round(0.95 - rank * 0.05, 2),
                 )
             )
         return snippets
+
+    async def _search_queries(
+        self, client: httpx.AsyncClient, queries: list[str]
+    ) -> list[tuple[str, str, str]]:
+        """Run a few independent, model-written public queries concurrently."""
+        normalized: list[str] = []
+        seen_queries: set[str] = set()
+        for raw in queries:
+            if not isinstance(raw, str):
+                continue
+            query = " ".join(raw.split())[:300]
+            if query and query.casefold() not in seen_queries:
+                normalized.append(query)
+                seen_queries.add(query.casefold())
+            if len(normalized) >= _MAX_SEARCH_QUERIES:
+                break
+        if not normalized:
+            return []
+        batches = await asyncio.gather(
+            *(self._search_query(client, query) for query in normalized),
+            return_exceptions=True,
+        )
+        successful: list[list[tuple[str, str, str]]] = []
+        for batch in batches:
+            if isinstance(batch, BaseException):
+                if isinstance(batch, asyncio.CancelledError):
+                    raise batch
+                continue
+            successful.append(batch)
+        results: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for rank in range(max((len(batch) for batch in successful), default=0)):
+            for batch in successful:
+                if rank >= len(batch):
+                    continue
+                item = batch[rank]
+                if item[0] in seen:
+                    continue
+                seen.add(item[0])
+                results.append(item)
+        query_text = " ".join(normalized)
+        if _MODEL_RELEASE_INTENT.search(query_text) or _VERSION.search(query_text):
+            query_subjects = {
+                token
+                for token in re.findall(r"[a-z0-9]+", query_text.casefold())
+                if len(token) >= 3 and token not in _GENERIC_QUERY_WORDS
+            }
+            wants_sdk = bool(re.search(r"\bsdk\b", query_text, re.IGNORECASE))
+            results.sort(
+                key=lambda item: _model_result_priority(
+                    item, query_subjects=query_subjects, wants_sdk=wants_sdk
+                )
+            )
+        return results[: self.settings.web_search_max_results]
 
     async def _download(
         self, client: httpx.AsyncClient, url: str
@@ -450,10 +785,21 @@ class WebResearch:
         return results
 
     async def _read_page(self, client: httpx.AsyncClient, url: str) -> tuple[str, str, str]:
+        raw_markdown_url = _github_raw_markdown_url(url)
         try:
-            final_url, content_type, document = await self._download(client, url)
+            final_url, content_type, document = await self._download(
+                client, raw_markdown_url or url
+            )
         except (httpx.HTTPError, OSError, TimeoutError, ValueError):
             return url, "", ""
+        if raw_markdown_url:
+            # The raw host is validated by _download at every redirect. Keep
+            # the normal GitHub page as the user-facing citation URL.
+            if "html" in content_type:
+                return url, "", ""
+            title_match = re.search(r"^#\s+([^\n]+)", document, re.MULTILINE)
+            title = title_match.group(1).strip() if title_match else ""
+            return url, title, document.strip()
         if "html" not in content_type and "text" not in content_type:
             return final_url, "", ""
         title_match = _TITLE.search(document)

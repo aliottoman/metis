@@ -4,6 +4,12 @@ This review follows the reported Cline release question through Metis's actual
 chat path. It separates changes shipped in this branch from capabilities that
 still require implementation or live qualification.
 
+**Update:** The later [evidence routing evaluation](chat-evidence-routing-evaluation-2026-09-26.md)
+documents the structured Auto source planner, mixed public/private retrieval,
+bounded coverage search, and newer measurements. The heuristic Auto route and
+one-shot research limits described below are a record of the earlier branch
+state, not its current implementation.
+
 ## What happened in the reported run
 
 Run `run_a1f45f0589144d5da6289ab17dd49f63` took about 66 seconds. The
