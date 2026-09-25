@@ -5,7 +5,7 @@
 // waiting on you docked at the foot. Streaming follows only while you are
 // already at the bottom.
 
-import { memo, useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 import { ApplyCard } from "@/components/apply-card";
 import { ApprovalCard } from "@/components/approval-card";
@@ -37,32 +37,74 @@ export function Thread({ chat }: { chat: Chat }) {
   useEffect(() => {
     latest.current = chat;
   });
-  const end = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const following = useRef(true);
+  const lastScrollTop = useRef(0);
   const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
   const [droppedFolders, setDroppedFolders] = useState<FileSystemDirectoryEntry[]>([]);
+
+  useLayoutEffect(() => {
+    following.current = true;
+    const element = viewport.current;
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+      lastScrollTop.current = element.scrollTop;
+    }
+    setAtBottom(true);
+  }, [chat.conversationId]);
+
+  useEffect(() => {
+    dragDepth.current = 0;
+    setDragging(false);
+    setDroppedFolders([]);
+  }, [chat.conversationId]);
 
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
-    const sync = () => setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM);
-    sync();
+    const sync = () => {
+      const top = element.scrollTop;
+      const distance = element.scrollHeight - top - element.clientHeight;
+      // Content can grow without the reader scrolling. Only an upward scroll
+      // releases the thread; reaching the bottom resumes following.
+      if (top < lastScrollTop.current - 1) following.current = false;
+      else if (distance <= BOTTOM) following.current = true;
+      lastScrollTop.current = top;
+      setAtBottom(following.current);
+    };
+    const keepPosition = () => {
+      if (following.current) {
+        element.scrollTop = element.scrollHeight;
+        lastScrollTop.current = element.scrollTop;
+      }
+      sync();
+    };
+    const observer = new ResizeObserver(keepPosition);
+    observer.observe(element);
+    const list = element.querySelector(".thread-list");
+    if (list) observer.observe(list);
     element.addEventListener("scroll", sync, { passive: true });
-    return () => element.removeEventListener("scroll", sync);
-  }, [chat.hasMessages]);
+    keepPosition();
+    return () => {
+      observer.disconnect();
+      element.removeEventListener("scroll", sync);
+    };
+  }, [chat.conversationId, chat.hasMessages]);
 
-  useEffect(() => {
-    if (!atBottom) return;
-    const frame = requestAnimationFrame(() => {
-      const streaming = chat.messages.some((message) => message.streaming);
-      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      end.current?.scrollIntoView({ behavior: streaming || reduced ? "auto" : "smooth", block: "end" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [atBottom, chat.messages]);
+  useLayoutEffect(() => {
+    const element = viewport.current;
+    if (!element || !following.current) return;
+    element.scrollTop = element.scrollHeight;
+    lastScrollTop.current = element.scrollTop;
+  }, [chat.messages, chat.hasMessages]);
 
   const jump = useCallback(() => {
-    end.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const element = viewport.current;
+    if (!element) return;
+    following.current = true;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    element.scrollTo({ top: element.scrollHeight, behavior: reduced || latest.current.runActive ? "auto" : "smooth" });
     setAtBottom(true);
   }, []);
 
@@ -70,11 +112,25 @@ export function Thread({ chat }: { chat: Chat }) {
     <div
       ref={viewport}
       className={`thread${dragging ? " is-dragging" : ""}`}
-      onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
-      onDragOver={(event) => event.preventDefault()}
-      onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }}
-      onDrop={(event) => {
+      aria-label="Conversation messages"
+      onDragEnter={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
+        dragDepth.current += 1;
+        setDragging(true);
+      }}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+      }}
+      onDragLeave={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragging(false);
+      }}
+      onDrop={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        dragDepth.current = 0;
         setDragging(false);
         // The entries are neutered once this handler returns; claim them first.
         const directories = droppedDirectories(event.dataTransfer.items);
@@ -90,7 +146,7 @@ export function Thread({ chat }: { chat: Chat }) {
         <Welcome chat={chat} />
       ) : (
         <div className="thread-list">
-          {chat.loadingConversation ? <div className="thread-loading" aria-label="Opening"><span /><span /><span /></div> : null}
+          {chat.loadingConversation ? <div className="thread-loading" role="status" aria-label="Opening conversation"><span /><span /><span /></div> : null}
           {chat.messages.map((message) => <Message key={message.id} message={message} chat={chat} latest={latest} />)}
           {chat.activeRunId && chat.events.length > 0 && !chat.messages.some((message) => messageBelongsToRun(message, chat.activeRunId)) ? (
             <ProjectActivity events={chat.events} live={chat.runActive && !chat.pendingApproval && !chat.pendingElicitation} attention={Boolean(chat.pendingApproval || chat.pendingElicitation)} stageLabel={chat.stageLabel} projectName={chat.selectedProject?.name} />
@@ -110,7 +166,6 @@ export function Thread({ chat }: { chat: Chat }) {
               <ApplyCard suggestion={chat.pendingSuggestion} state={chat.suggestionState} onApply={chat.applyProposal} onDismiss={chat.dismissProposal} />
             </div>
           ) : null}
-          <div ref={end} />
         </div>
       )}
 
@@ -164,10 +219,10 @@ const Message = memo(function Message({ message, chat, latest }: MessageProps) {
   }, [editing]);
 
   return (
-    <article className={`msg is-${message.role}${message.failed ? " is-failed" : ""}${editing ? " is-editing" : ""}`}>
+    <article className={`msg is-${message.role}${message.failed ? " is-failed" : ""}${editing ? " is-editing" : ""}${message.streaming ? " is-streaming" : ""}`}>
       <header className="msg-head">
         <span>{message.role === "user" ? "You" : "Metis"}</span>
-        <time>{clock(message.created_at)}</time>
+        <time dateTime={message.created_at}>{clock(message.created_at)}</time>
       </header>
 
       {inRun && (message.streaming || chat.events.length) ? (
@@ -186,10 +241,12 @@ const Message = memo(function Message({ message, chat, latest }: MessageProps) {
             value={chat.editDraft}
             onChange={(event) => latest.current.setEditDraft(event.target.value)}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || chat.rewinding) return;
               if (event.key === "Escape") { event.preventDefault(); latest.current.cancelEditing(); }
               if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void latest.current.submitEdit(message); }
             }}
             aria-label="Edit your message"
+            disabled={chat.rewinding}
             maxLength={20000}
           />
           <div className="msg-editor-bar">
@@ -240,8 +297,8 @@ const Message = memo(function Message({ message, chat, latest }: MessageProps) {
                       <span className="msg-rated">Feedback recorded</span>
                     ) : (
                       <>
-                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.rate("positive")} disabled={chat.feedback.busy} title="This was useful">👍</button>
-                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.rate("negative")} disabled={chat.feedback.busy} title="Needs a correction">👎</button>
+                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.rate("positive")} disabled={chat.feedback.busy} aria-label="This was useful" title="This was useful">👍</button>
+                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.rate("negative")} disabled={chat.feedback.busy} aria-label="Needs a correction" title="Needs a correction">👎</button>
                       </>
                     )}
                   </>

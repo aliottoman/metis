@@ -71,7 +71,7 @@ from . import (
 )
 from .database import Database
 from . import customer_tools, document_factory, queue_update
-from .web_research import is_explicit_web_request
+from .web_research import is_explicit_web_request, is_implicit_web_request
 from .diagram_source import (
     canonical_architecture_spec,
     canonical_diagram_source_for,
@@ -2797,10 +2797,14 @@ class ControlPlane:
         knowledge_scope = model_aliases.get("_knowledge_scope", "auto")
         has_attachments = bool(state.get("attachment_text", "").strip())
         notion_scope = knowledge_scope == "notion"
-        # The Web scope is one form of consent; asking for the web inside the
-        # prompt ("research online…") is the other, honored from Auto.
+        # Web scope always researches. Auto researches when the instruction
+        # asks for the web or clearly needs fresh public facts.
         wants_web = knowledge_scope == "web" or (
-            knowledge_scope == "auto" and is_explicit_web_request(state["prompt"])
+            knowledge_scope == "auto"
+            and (
+                is_explicit_web_request(state["prompt"])
+                or is_implicit_web_request(state["prompt"])
+            )
         )
         await self._stage(
             state,
@@ -3037,6 +3041,10 @@ class ControlPlane:
                 "recent_message_count": len(recent_messages),
                 "summary_characters": len(summary),
                 "knowledge_snippet_count": len(knowledge_snippets),
+                "web_requested": wants_web,
+                "web_source_count": sum(
+                    item.get("provider") == "web" for item in knowledge_snippets
+                ),
                 "knowledge_gated_out": gated_out,
                 "knowledge_scope": knowledge_scope,
                 "profile_characters": len(personal_profile),
@@ -9937,8 +9945,15 @@ class ControlPlane:
                 ),
                 "artifacts": [],
             }
-        if knowledge_scope == "web" and not knowledge:
-            # Answering anyway would present model recall as web research.
+        wants_web = knowledge_scope == "web" or (
+            knowledge_scope == "auto"
+            and (
+                is_explicit_web_request(state["prompt"])
+                or is_implicit_web_request(state["prompt"])
+            )
+        )
+        if wants_web and not any(item.get("provider") == "web" for item in knowledge):
+            # Local evidence cannot turn a failed live lookup into a web answer.
             return {
                 "response_text": (
                     "I couldn't get usable web results for that just now. Try "

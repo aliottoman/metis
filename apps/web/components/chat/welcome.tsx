@@ -4,6 +4,7 @@
 // you as things to say, and where you were last.
 
 import Link from "next/link";
+import { FileText, Hammer, ListChecks } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { Chat } from "@/hooks/use-chat";
@@ -46,6 +47,26 @@ export function Welcome({ chat }: { chat: Chat }) {
     <div className="welcome">
       <span className="ui-eyebrow">{chat.selectedCustomer ? `Scoped to ${chat.selectedCustomer.name}` : "New conversation"}</span>
       <h1>What are we working on?</h1>
+      <p className="welcome-intro">Bring a question, a document, or an idea. We&rsquo;ll take it from here.</p>
+      {!waiting.length ? (
+        <div className="welcome-starters" aria-label="Start a conversation">
+          <button type="button" className="welcome-starter" onClick={() => start("Help me analyze a document. Summarize the key points, highlight anything that needs attention, and suggest next steps.")}>
+            <FileText size={20} aria-hidden="true" />
+            <strong>Make sense of a document</strong>
+            <span>Find the key points and what matters.</span>
+          </button>
+          <button type="button" className="welcome-starter" onClick={() => start("Help me plan the next step. Ask what I want to achieve, then turn it into a clear, practical plan.")}>
+            <ListChecks size={20} aria-hidden="true" />
+            <strong>Plan the next step</strong>
+            <span>Turn an open question into a clear plan.</span>
+          </button>
+          <button type="button" className="welcome-starter" onClick={() => start("Help me build something. Start by understanding the idea, who it is for, and what a useful first version should do.")}>
+            <Hammer size={20} aria-hidden="true" />
+            <strong>Bring an idea to life</strong>
+            <span>Shape a project and start making progress.</span>
+          </button>
+        </div>
+      ) : null}
       {waiting.length ? (
         <section className="welcome-group" aria-label="Waiting on you">
           <h2>Waiting on you</h2>
@@ -68,9 +89,6 @@ export function Welcome({ chat }: { chat: Chat }) {
             </Link>
           ))}
         </section>
-      ) : null}
-      {!waiting.length && !recent.length ? (
-        <p className="welcome-empty">Ask about an account, drop in a document, or open a project. Everything stays on this machine.</p>
       ) : null}
     </div>
   );

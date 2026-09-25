@@ -13,6 +13,22 @@ export function messageBelongsToRun(message: ChatMessage, runId: string | null):
   return message.run_id === runId || message.id === `assistant-${runId}`;
 }
 
+/** A conversation snapshot can arrive after the live stream has already begun.
+ * Keep that live reply until the server has persisted its canonical version. */
+export function mergeHydratedConversationMessages(
+  hydrated: readonly ChatMessage[],
+  current: readonly ChatMessage[],
+  activeRunId: string | null,
+): ChatMessage[] {
+  if (!activeRunId || hydrated.some((message) => messageBelongsToRun(message, activeRunId))) {
+    return [...hydrated];
+  }
+  return [
+    ...hydrated,
+    ...current.filter((message) => messageBelongsToRun(message, activeRunId)),
+  ];
+}
+
 /**
  * Append a thinking delta to the run's assistant message. Reasoning arrives on
  * its own event type and is kept in its own field, so it can be read alongside
@@ -55,7 +71,7 @@ export function mergeAssistantRunEvent(
   const existing = existingIndex >= 0 ? messages[existingIndex] : undefined;
   const isHydratedFinal = Boolean(existing && !existing.streaming && existing.content);
 
-  if (type.includes("delta") && text) {
+  if (["message.delta", "assistant.delta", "response.delta", "model.delta"].includes(type) && text) {
     if (isHydratedFinal) return [...messages];
     if (!existing) {
       return [...messages, {
@@ -87,7 +103,7 @@ export function mergeAssistantRunEvent(
       : message);
   }
 
-  if (type.includes("failed")) {
+  if (type === "run.failed" || type === "failed") {
     const failure = text ?? "The run stopped before it could finish.";
     if (!existing) {
       return [...messages, {
@@ -99,7 +115,14 @@ export function mergeAssistantRunEvent(
       }];
     }
     return messages.map((message, index) => index === existingIndex
-      ? { ...message, run_id: event.run_id, content: failure, streaming: false, failed: true }
+      ? { ...message, run_id: event.run_id, content: message.content || failure, streaming: false, failed: true }
+      : message);
+  }
+
+  if (type === "run.cancelled" || type === "cancelled") {
+    if (!existing) return [...messages];
+    return messages.map((message, index) => index === existingIndex
+      ? { ...message, run_id: event.run_id, content: message.content || "Response stopped.", streaming: false }
       : message);
   }
 

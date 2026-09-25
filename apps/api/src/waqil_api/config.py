@@ -493,9 +493,9 @@ class Settings(BaseSettings):
     corpus_graph_enabled: bool = True
     corpus_graph_expand: bool = True
 
-    # Web research: search + page reading for messages sent with the Web
-    # scope. Never runs in Auto — reaching the open internet is a per-message
-    # user choice, the same consent posture cloud embedding takes.
+    # Web research: search + page reading for Web scope and public questions in
+    # Auto that clearly need current information. Private-context questions
+    # stay local in Auto unless the user explicitly asks for the web.
     web_research_enabled: bool = True
     web_search_max_results: int = Field(default=4, ge=1, le=8)
     web_fetch_timeout_seconds: float = Field(default=8.0, ge=2.0, le=30.0)

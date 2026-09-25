@@ -228,6 +228,15 @@ run ends. Copy and Retry sit on every settled message, and a streaming answer
 only follows the scroll when you are already at the foot of the thread, so
 scrolling up to re-read is never undone by the next token.
 
+The **Sources** menu offers Auto, Notion, and Web. Auto searches the live web
+when a question clearly needs current public information, asks to browse, or
+includes a public URL; private workspace questions use local sources. Web
+always searches, and Notion limits the answer to synced Notion evidence. Web
+answers cite numbered sources, with inline citations linking to the clickable
+source list. Search currently uses a keyless DuckDuckGo HTML endpoint, which
+can fail when its markup or availability changes; a supported search API is
+the next step for production reliability.
+
 The activity drawer is opened by you and stays closed otherwise; a run started
 from the composer does not open it, while a link into a run awaiting approval
 does.

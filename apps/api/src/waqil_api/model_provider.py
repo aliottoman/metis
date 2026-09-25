@@ -52,7 +52,7 @@ from .document_factory import is_explicit_document_request
 from .model_preference import is_cloud_model
 from .prompt_scope import user_instruction
 from .queue_update import is_queue_update_request
-from .web_research import is_explicit_web_request
+from .web_research import is_explicit_web_request, is_implicit_web_request
 from .project_tools import (
     directed_project_tools,
     FINISH_TOOL_NAME,
@@ -830,7 +830,9 @@ def normalize_plan_semantics(
     # Every registered tool runs sandboxed with network:none, so a prompt that
     # explicitly asks for the web cannot be honored by any of them — routing
     # it to one turns "research online" into confident recall.
-    web_intent = is_explicit_web_request(request.prompt)
+    web_intent = is_explicit_web_request(request.prompt) or is_implicit_web_request(
+        request.prompt
+    )
     # An ask_user plan carries no tool — the contract says so and validation
     # enforces it — so a slug arriving beside one is noise, not a selection.
     # Honouring it sent "build me a tool that summarises things" to build a
