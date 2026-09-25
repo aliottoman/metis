@@ -4606,6 +4606,46 @@ class ClineModelProvider:
             await self._client_instance.aclose()
             self._client_instance = None
 
+    def _check_chat_status(
+        self, status_code: int, detail: str, payload: dict[str, Any], *, last: bool
+    ) -> bool:
+        """Return whether a transient Cline HTTP failure should be retried."""
+        if status_code == 429:
+            error = f"Cline returned HTTP 429: {detail[:400]}"
+            if (
+                classify_backend_unavailable(ModelProviderError(error))
+                == "provider_exhausted"
+            ):
+                self._remember_provider_exhaustion(error)
+                raise PermanentModelError(error, reason="provider_exhausted")
+        if status_code in (429, 500, 502, 503, 504) and not last:
+            return True
+        if status_code == 402:
+            raise PermanentModelError(
+                f"Cline has no credits left for {payload.get('model')}. The "
+                "ClinePass subscription covers the cline-pass/* models; "
+                "Anthropic and xAI models bill against credits, which are "
+                "spent. Top up at https://app.cline.bot/credits, or move "
+                "this role to a cline-pass/* model.",
+                reason="out_of_credits",
+            )
+        if status_code == 403:
+            raise PermanentModelError(
+                f"Cline refused {payload.get('model')}: the subscription does "
+                "not cover this model (HTTP 403)",
+                reason="not_subscribed",
+            )
+        if status_code == 401:
+            raise PermanentModelError(
+                "Cline rejected the API key (HTTP 401) — check WAQIL_CLINE_API_KEY",
+                reason="bad_credentials",
+            )
+        if status_code >= 400:
+            raise ModelProviderError(
+                f"Cline returned HTTP {status_code}: {detail[:400]}"
+            )
+        return False
+
     async def _chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         """One chat-completions call, unwrapped, with bounded retries.
 
@@ -4624,7 +4664,9 @@ class ClineModelProvider:
             last = attempt == attempts - 1
             try:
                 async with asyncio.timeout(self.settings.model_call_timeout_seconds):
-                    response = await client.post("/chat/completions", json=payload)
+                    response = await client.post(
+                        "/chat/completions", json={**payload, "stream": False}
+                    )
             except TimeoutError as exc:
                 raise ModelProviderError(
                     "Cline call timed out after "
@@ -4634,47 +4676,11 @@ class ClineModelProvider:
                 raise ModelProviderError(
                     f"Cline call failed: {str(exc)[:400]}"
                 ) from exc
-            if response.status_code == 429:
-                detail = f"Cline returned HTTP 429: {response.text[:400]}"
-                if (
-                    classify_backend_unavailable(ModelProviderError(detail))
-                    == "provider_exhausted"
-                ):
-                    self._remember_provider_exhaustion(detail)
-                    raise PermanentModelError(detail, reason="provider_exhausted")
-            if response.status_code in (429, 500, 502, 503, 504) and not last:
+            if self._check_chat_status(
+                response.status_code, response.text, payload, last=last
+            ):
                 await asyncio.sleep(1.0 + attempt * 2)
                 continue
-            if response.status_code == 402:
-                # The distinction that matters, and the one a live run turned
-                # into a silent stall: the ClinePass subscription covers the
-                # `cline-pass/*` models, while the Anthropic and xAI models
-                # behind the same key bill against pay-as-you-go credits. An
-                # empty balance is not a model failing, and saying "HTTP 402"
-                # would leave the user to work that out from a status code.
-                raise PermanentModelError(
-                    f"Cline has no credits left for {payload.get('model')}. The "
-                    "ClinePass subscription covers the cline-pass/* models; "
-                    "Anthropic and xAI models bill against credits, which are "
-                    "spent. Top up at https://app.cline.bot/credits, or move "
-                    "this role to a cline-pass/* model.",
-                    reason="out_of_credits",
-                )
-            if response.status_code == 403:
-                raise PermanentModelError(
-                    f"Cline refused {payload.get('model')}: the subscription does "
-                    "not cover this model (HTTP 403)",
-                    reason="not_subscribed",
-                )
-            if response.status_code == 401:
-                raise PermanentModelError(
-                    "Cline rejected the API key (HTTP 401) — check WAQIL_CLINE_API_KEY",
-                    reason="bad_credentials",
-                )
-            if response.status_code >= 400:
-                raise ModelProviderError(
-                    f"Cline returned HTTP {response.status_code}: {response.text[:400]}"
-                )
             try:
                 body = response.json()
             except ValueError as exc:
@@ -4695,6 +4701,151 @@ class ClineModelProvider:
             self.last_usage = _openai_usage(reply)
             return reply
         raise ModelProviderError(f"Cline kept failing after {attempts} attempts")
+
+    async def _stream_chat(
+        self, payload: dict[str, Any], on_token: Callable[[str], Awaitable[None]]
+    ) -> str:
+        """Read OpenAI-style SSE deltas, including Cline's optional data wrapper.
+
+        The first chunk uses the ordinary call timeout. Once the gateway begins
+        producing an answer, each meaningful chunk resets the stall clock.
+        HTTP failures can be retried before text is emitted; a broken partial
+        answer must fail instead of replaying its opening words.
+        """
+        exhausted = self._active_provider_exhaustion()
+        if exhausted:
+            raise PermanentModelError(exhausted, reason="provider_exhausted")
+        client = await self._client()
+        stream_payload = {**payload, "stream": True}
+        self.last_usage = {}
+
+        finish_seen = False
+
+        async def emit_event(raw: str, parts: list[str]) -> bool:
+            nonlocal finish_seen
+            if raw == "[DONE]":
+                return True
+            try:
+                item = json.loads(raw)
+            except ValueError as exc:
+                raise ModelProviderError(
+                    "Cline returned an invalid stream event"
+                ) from exc
+            if not isinstance(item, dict):
+                raise ModelProviderError("Cline returned an invalid stream event")
+            chunk = item.get("data") if isinstance(item.get("data"), dict) else item
+            if chunk.get("error"):
+                raise ModelProviderError(
+                    f"Cline stream failed: {str(chunk['error'])[:400]}"
+                )
+            usage = _openai_usage(chunk)
+            if usage:
+                self.last_usage = usage
+            choices = chunk.get("choices") or []
+            choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+            finish_reason = choice.get("finish_reason")
+            if finish_reason == "error":
+                raise ModelProviderError("Cline stream reported a generation error")
+            if finish_reason is not None and finish_reason != "stop":
+                raise ModelProviderError(
+                    f"Cline stream ended with {str(finish_reason)[:80]}"
+                )
+            delta = choice.get("delta") or {}
+            content = (
+                _message_text(delta.get("content")) if isinstance(delta, dict) else ""
+            )
+            if content:
+                parts.append(content)
+                await on_token(content)
+            if finish_reason == "stop":
+                finish_seen = True
+            return False
+
+        for attempt in range(3):
+            last = attempt == 2
+            parts: list[str] = []
+            terminal = False
+            finish_seen = False
+            data_lines: list[str] = []
+            try:
+                import httpx
+
+                loop = asyncio.get_running_loop()
+                async with asyncio.timeout(
+                    self.settings.model_call_timeout_seconds
+                ) as deadline:
+                    async with client.stream(
+                        "POST", "/chat/completions", json=stream_payload
+                    ) as response:
+                        if response.status_code >= 400:
+                            await response.aread()
+                            if self._check_chat_status(
+                                response.status_code,
+                                response.text,
+                                stream_payload,
+                                last=last,
+                            ):
+                                await asyncio.sleep(1.0 + attempt * 2)
+                                continue
+                        if (
+                            "text/event-stream"
+                            not in response.headers.get("content-type", "").lower()
+                        ):
+                            # A gateway that ignores stream=true may still return
+                            # its ordinary JSON envelope. Keep that reply usable.
+                            await response.aread()
+                            try:
+                                body = response.json()
+                            except ValueError as exc:
+                                raise ModelProviderError(
+                                    "Cline returned a non-JSON reply"
+                                ) from exc
+                            reply = body.get("data") if isinstance(body, dict) else None
+                            reply = reply if isinstance(reply, dict) else body
+                            if not isinstance(reply, dict):
+                                raise ModelProviderError(
+                                    "Cline returned an invalid reply"
+                                )
+                            self.last_usage = _openai_usage(reply)
+                            content = str(self._message(reply).get("content") or "")
+                            if content:
+                                await on_token(content)
+                            return content
+                        async for line in response.aiter_lines():
+                            if line == "":
+                                if data_lines:
+                                    terminal = (
+                                        await emit_event("\n".join(data_lines), parts)
+                                        or terminal
+                                    )
+                                    data_lines.clear()
+                                if terminal:
+                                    break
+                                continue
+                            if line.startswith("data:"):
+                                data_lines.append(line[5:].lstrip(" "))
+                            if data_lines:
+                                deadline.reschedule(
+                                    loop.time()
+                                    + self.settings.model_stall_timeout_seconds
+                                )
+                        if data_lines and not terminal:
+                            terminal = await emit_event("\n".join(data_lines), parts)
+                        if not finish_seen:
+                            raise ModelProviderError(
+                                "Cline stream ended before completion"
+                            )
+                        return "".join(parts)
+            except TimeoutError as exc:
+                raise ModelProviderError(
+                    "Cline call timed out after "
+                    f"{self.settings.model_call_timeout_seconds:g} seconds"
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ModelProviderError(
+                    f"Cline call failed: {str(exc)[:400]}"
+                ) from exc
+        raise ModelProviderError("Cline kept failing after 3 attempts")
 
     def _message(self, reply: dict[str, Any]) -> dict[str, Any]:
         choices = reply.get("choices") or []
@@ -4807,22 +4958,22 @@ class ClineModelProvider:
         model_aliases=None,
         on_reasoning=None,
     ) -> ModelResultV1:
-        reply = await self._chat(
-            {
-                "model": self._model_for(request.role, model_aliases),
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": f"{CLINE_PREAMBLE}\n\n{request.system_prompt}",
-                    },
-                    {"role": "user", "content": request.user_prompt},
-                ],
-                "max_completion_tokens": self.settings.cline_max_output_tokens,
-            }
-        )
-        content = str(self._message(reply).get("content") or "")
-        if on_token is not None and content:
-            await on_token(content)
+        payload = {
+            "model": self._model_for(request.role, model_aliases),
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"{CLINE_PREAMBLE}\n\n{request.system_prompt}",
+                },
+                {"role": "user", "content": request.user_prompt},
+            ],
+            "max_completion_tokens": self.settings.cline_max_output_tokens,
+        }
+        if on_token is None:
+            reply = await self._chat(payload)
+            content = str(self._message(reply).get("content") or "")
+        else:
+            content = await self._stream_chat(payload, on_token)
         return ModelResultV1(
             content=content, model=self._model_for(request.role, model_aliases)
         )

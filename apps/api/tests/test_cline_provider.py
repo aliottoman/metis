@@ -7,9 +7,11 @@ model rather than a bad client.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
+import httpx
 import pytest
 
 from waqil_api.config import Settings
@@ -106,6 +108,174 @@ async def test_the_reply_is_unwrapped_from_its_data_envelope() -> None:
         ModelRequestV1(role="planner", system_prompt="s", user_prompt="u")
     )
     assert result.content == "hello"
+    assert client.sent[0]["stream"] is False
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_each_delta_before_the_reply_finishes() -> None:
+    emitted: list[str] = []
+    requests: list[dict[str, Any]] = []
+
+    class Chunks(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"data":{"choices":[{"delta":{"content":"Hel"}}]}}\n\n'
+            assert emitted == ["Hel"]
+            yield b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+            assert emitted == ["Hel", "lo"]
+            yield b'data: {"data":{"choices":[{"finish_reason":"stop"}]}}\n\n'
+            yield b'data: {"data":{"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}}\n\n'
+            yield b"data: [DONE]\n\n"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=Chunks()
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://example.test", transport=httpx.MockTransport(respond)
+    )
+    provider = _provider(client)  # type: ignore[arg-type]
+    try:
+        result = await provider.generate(
+            ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+            on_token=lambda delta: _collect(emitted, delta),
+        )
+    finally:
+        await client.aclose()
+    assert result.content == "Hello"
+    assert emitted == ["Hel", "lo"]
+    assert requests[0]["stream"] is True
+    assert provider.last_usage == {
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 5,
+    }
+
+
+async def _collect(sink: list[str], delta: str) -> None:
+    sink.append(delta)
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_rejects_a_truncated_reply_after_emitting_text() -> None:
+    emitted: list[str] = []
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text='data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+            )
+        ),
+    )
+    try:
+        with pytest.raises(ModelProviderError, match="ended before completion"):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect(emitted, delta),
+            )
+    finally:
+        await client.aclose()
+    assert emitted == ["partial"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_rejects_a_midstream_generation_error() -> None:
+    emitted: list[str] = []
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=(
+                    'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+                    'data: {"choices":[{"finish_reason":"error"}]}\n\n'
+                    "data: [DONE]\n\n"
+                ),
+            )
+        ),
+    )
+    try:
+        with pytest.raises(ModelProviderError, match="generation error"):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect(emitted, delta),
+            )
+    finally:
+        await client.aclose()
+    assert emitted == ["partial"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_rejects_a_length_limited_reply() -> None:
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=(
+                    'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\n\n'
+                    "data: [DONE]\n\n"
+                ),
+            )
+        ),
+    )
+    try:
+        with pytest.raises(ModelProviderError, match="ended with length"):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect([], delta),
+            )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_permanent_http_errors() -> None:
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(401, json={"error": "bad key"})
+        ),
+    )
+    try:
+        with pytest.raises(ModelProviderError, match="WAQIL_CLINE_API_KEY"):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect([], delta),
+            )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_preserves_cancellation() -> None:
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text='data: {"choices":[{"delta":{"content":"first"}}]}\n\n',
+            )
+        ),
+    )
+
+    async def cancel(_: str) -> None:
+        raise asyncio.CancelledError()
+
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=cancel,
+            )
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio
