@@ -104,7 +104,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     onShutdown: () => {
       server.close();
       process.stdin.pause();
-      // ClineCore 0.0.72 can retain a referenced editor timeout after the
+      // ClineCore can retain a referenced editor timeout after the
       // operation has completed. JsonlRpcServer has already flushed the
       // shutdown response, so this child can now terminate deterministically.
       process.exit(0);

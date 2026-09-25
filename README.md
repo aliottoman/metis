@@ -238,10 +238,10 @@ can fail when its markup or availability changes; a supported search API is
 the next step for production reliability.
 
 The current ClineCore sidecar is limited to project coding and does not power
-chat web retrieval. Metis pins Cline SDK 0.0.72, which predates Cline's native
-model-directed web search; its URL fetch tool is disabled in coding sessions.
-Newer Cline search can be evaluated for supported model routes, but it is not
-used by the Auto or Web source options today.
+chat web retrieval. Metis pins Cline SDK 0.0.86. Native provider web search is
+explicitly disabled before coding sessions start, and the SDK's URL fetch tool
+is also disabled. The Auto and Web source options use Metis's own retrieval
+path, which works across chat model routes.
 
 The activity drawer is opened by you and stays closed otherwise; a run started
 from the composer does not open it, while a link into a run awaiting approval

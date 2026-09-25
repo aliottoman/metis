@@ -28,12 +28,12 @@ def test_sidecar_contract_requires_exact_sdk_and_compiler_versions() -> None:
     )
     contract = offline_bundle._sidecar_contract_from_package(package)
 
-    assert contract["sdk_version"] == "0.0.72"
+    assert contract["sdk_version"] == "0.0.86"
     assert contract["typescript_version"] == "6.0.2"
     assert contract["compiled_entrypoint"] == ("apps/cline-sidecar/dist/src/index.js")
     assert contract["offline_compile_verified"] is True
 
-    for dependency, version in (("@cline/sdk", "^0.0.72"), ("typescript", "latest")):
+    for dependency, version in (("@cline/sdk", "^0.0.86"), ("typescript", "latest")):
         floating = deepcopy(package)
         section = "dependencies" if dependency == "@cline/sdk" else "devDependencies"
         floating[section][dependency] = version
@@ -84,7 +84,7 @@ def test_archived_sidecar_contract_must_match_its_package(tmp_path: Path) -> Non
         offline_bundle._verify_sidecar_contract(archive, manifest)
         manifest["coding_sidecar"] = {
             **manifest["coding_sidecar"],
-            "sdk_version": "0.0.71",
+            "sdk_version": "0.0.85",
         }
         with pytest.raises(offline_bundle.BundleError, match="does not match"):
             offline_bundle._verify_sidecar_contract(archive, manifest)

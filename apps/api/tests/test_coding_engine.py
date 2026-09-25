@@ -57,7 +57,7 @@ for line in sys.stdin:
             "version": "1", "id": request_id,
             "result": {
                 "protocolVersion": "1", "engine": "clinecore", "runtime": "fake",
-                "sdkVersion": "0.0.72", "policyVersion": "1",
+                "sdkVersion": "0.0.86", "policyVersion": "1",
                 "allowedTools": ["editor", "read_files", "run_check", "search_codebase"],
             },
         })
@@ -169,7 +169,7 @@ for line in sys.stdin:
             "version": "1", "id": request["id"],
             "result": {
                 "protocolVersion": "1", "engine": "clinecore", "runtime": "fake",
-                "sdkVersion": "0.0.72", "policyVersion": "1",
+                "sdkVersion": "0.0.86", "policyVersion": "1",
                 "allowedTools": ["editor", "read_files", "run_check", "search_codebase"],
             },
         }), flush=True)
@@ -208,7 +208,7 @@ print(json.dumps({
     "version": "1", "id": handshake["id"],
     "result": {
         "protocolVersion": "1", "engine": "clinecore", "runtime": "fake",
-        "sdkVersion": "0.0.72", "policyVersion": "1",
+        "sdkVersion": "0.0.86", "policyVersion": "1",
         "allowedTools": ["editor", "read_files", "run_check", "search_codebase"],
     },
 }), flush=True)

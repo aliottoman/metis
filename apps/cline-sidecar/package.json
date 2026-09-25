@@ -31,7 +31,7 @@
     "test": "pnpm run build && node --test dist/tests/*.test.js"
   },
   "dependencies": {
-    "@cline/sdk": "0.0.72"
+    "@cline/sdk": "0.0.86"
   },
   "devDependencies": {
     "@types/node": "24.10.6",

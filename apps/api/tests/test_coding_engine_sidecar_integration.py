@@ -63,7 +63,7 @@ async def test_python_client_drives_compiled_fake_sidecar_lifecycle(
         assert info.protocol_version == "1"
         assert info.engine == "clinecore"
         assert info.runtime == "fake"
-        assert info.sdk_version == "0.0.72"
+        assert info.sdk_version == "0.0.86"
         assert set(info.allowed_tools) == {
             "read_files",
             "search_codebase",

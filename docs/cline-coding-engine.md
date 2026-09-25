@@ -12,7 +12,7 @@ Metis still owns request/specification handling, model routing, repository map,
 the durable write/protection contract, verification, approval, and final writes
 to the user's project. It creates or rebases a private disposable mirror and
 supervises a local Node child over stdin/stdout. The child embeds the exactly
-pinned `@cline/sdk` `0.0.72` and owns the causal read/edit/repair conversation.
+pinned `@cline/sdk` `0.0.86` and owns the causal read/edit/repair conversation.
 The default path does not spend a planner request or fabricate a file manifest;
 the exact changed paths come from Metis's independent mirror diff.
 
@@ -87,9 +87,9 @@ For ClinePass also set `WAQIL_CLINE_API_KEY` and keep qualified
 the local daemon; cloud model tags still travel through that explicit Ollama
 endpoint. The default sidecar entrypoint is
 `apps/cline-sidecar/dist/src/index.js`. At startup Metis requires a local
-protocol handshake proving ClineCore, protocol v1, SDK `0.0.72`, policy v1, and
-the exact `read_files`/`search_codebase`/`editor` allowlist. If the service is
-missing or mismatched, the rest of
+protocol handshake proving ClineCore, protocol v1, SDK `0.0.86`, policy v1, and
+the exact `read_files`/`search_codebase`/`editor`/`run_check` allowlist. If the
+service is missing or mismatched, the rest of
 Metis stays available with degraded health while project coding fails closed;
 it never silently falls back to the legacy coding loop.
 
