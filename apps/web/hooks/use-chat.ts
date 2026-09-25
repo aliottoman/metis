@@ -863,18 +863,6 @@ export function useChat() {
     }
   };
 
-  // How many sources grounded the current run's answer, for the reply's footer.
-  const groundedSources = useMemo(() => {
-    let count = 0;
-    for (const event of events) {
-      if (event.type === "context.retrieved") {
-        const value = Number(event.payload.knowledge_snippet_count ?? 0);
-        if (Number.isFinite(value)) count = Math.max(count, value);
-      }
-    }
-    return count;
-  }, [events]);
-
   return {
     // conversation
     conversationId, conversationTitle, messages, loadingConversation, hasMessages, error, setError, startFresh,
@@ -882,7 +870,7 @@ export function useChat() {
     draft, setDraft, attachments, addFiles, removeAttachment, uploading, sending, submit, queued, unqueue, knowledgeAdds, addToKnowledge, composerRef, focusComposer,
     // run
     activeRunId, runActive, events, executionEvents, connection, streamError, stageLabel, artifacts, stop, recoverableRuns, timelineOpen, setTimelineOpen,
-    pendingApproval, pendingElicitation, pendingSuggestion, suggestionState, approveLabel, decide, decidedApprovals, decisionBusy, answer, answeredElicitations, answerBusy, applyProposal, dismissProposal, groundedSources,
+    pendingApproval, pendingElicitation, pendingSuggestion, suggestionState, approveLabel, decide, decidedApprovals, decisionBusy, answer, answeredElicitations, answerBusy, applyProposal, dismissProposal,
     // message actions
     editingMessageId, editDraft, setEditDraft, startEditing, cancelEditing, submitEdit, retryAnswer, rewinding, copyMessage, copiedMessageId, clearFailedResponse,
     feedback, rate, setCorrection, cancelCorrection, saveToAccount, savedToAccount, savingToAccount, trackerUpdate, trackerBusy, latestAssistant,

@@ -45,8 +45,10 @@ _PRIVATE_CONTEXT = re.compile(
     re.IGNORECASE,
 )
 _FRESHNESS = re.compile(
-    r"\b(?:latest|newest|recent|breaking|up[ -]to[ -]date|today|tonight|"
-    r"yesterday|tomorrow|this week|this month|this year|as of now)\b",
+    r"\b(?:latest|newest|recent(?:ly)?|breaking|up[ -]to[ -]date|today|tonight|"
+    r"yesterday|tomorrow|this week|this month|this year|as of now|"
+    r"new(?:ly)? (?:[\w-]+ ){0,3}(?:features?|versions?|releases?|updates?)|"
+    r"(?:released|announced|updated) (?:recently|lately)|changelog)\b",
     re.IGNORECASE,
 )
 _PUBLIC_LOOKUP = re.compile(

@@ -99,7 +99,7 @@ export function runEventTitle(type: string, payload?: Record<string, unknown>): 
     "model.response": "Model finished",
     "model.started": "Model working",
     "model.completed": "Model finished",
-    "answer.grounding_reviewed": "Grounding checked",
+    "answer.grounding_reviewed": "Source review",
     "architecture.spec_created": "Architecture drafted",
     "diagram.code_created": "Diagram code ready",
     "tool.proposed": "New tool proposed",
@@ -231,11 +231,11 @@ export function runEventSummary(event: RunEventV1): string {
   }
   if (event.type === "answer.grounding_reviewed") {
     if (payload.revision)
-      return "Retrieved sources went uncited — sending one revision to ground the answer.";
+      return "Retrieved sources went uncited — asking for a revision with relevant citations.";
     if (payload.has_attachments)
-      return "Answered from the attached document — kept as written.";
+      return "An attached document was available — kept the answer as written.";
     if (payload.strong_retrieval)
-      return "Answer is grounded in the retrieved sources.";
+      return "Source review completed without a further revision.";
     return "No strongly-relevant sources to ground against.";
   }
   if (event.type === "context.knowledge_error") {

@@ -12900,6 +12900,21 @@ def _direct_fast_path_reason(state: AgentState) -> str:
     )
     if any(cue in instruction for cue in unsafe_routing_cues):
         return ""
+    # Plain factual questions do not need a separate model call to decide
+    # whether to answer. Keep action requests on the planner path even when
+    # they begin with a question ("What can you add to my notes? Please add it").
+    action_request = re.search(
+        r"(?:^|[.!?;,]\s*|\b(?:please|also|then|now|and|can you|"
+        r"could you|would you)\s+)"
+        r"(?:add|save|send|post|publish|delete|remove|install|apply|"
+        r"schedule|book|file|update|run)\b",
+        instruction,
+    )
+    if action_request:
+        return ""
+    factual_question = re.match(r"^(?:what|who|when|where|why|which)\b", instruction)
+    if factual_question:
+        return "Answer this factual question directly."
     direct_cues = (
         "rewrite",
         "rephrase",

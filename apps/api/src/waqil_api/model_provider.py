@@ -3160,6 +3160,72 @@ class OCIResponsesModelProvider:
                 f"OCI Responses call failed: {str(exc)[:500]}"
             ) from exc
 
+    async def _stream_response(
+        self,
+        on_token: Callable[[str], Awaitable[None]],
+        **kwargs: Any,
+    ) -> tuple[str, Any]:
+        """Stream only user-facing prose; require a terminal success event.
+
+        The installed OpenAI SDK returns an async stream from ``create`` when
+        ``stream=True``. OCI's Responses endpoint uses the same event format.
+        A partial reply is never retried, since replay would duplicate text the
+        caller has already published.
+        """
+        client = await self._client()
+        parts: list[str] = []
+        final_response: Any = None
+        try:
+            loop = asyncio.get_running_loop()
+            async with asyncio.timeout(
+                self.settings.model_call_timeout_seconds
+            ) as deadline:
+                stream = await client.responses.create(**kwargs, stream=True)
+                async with stream:
+                    async for event in stream:
+                        event_type = str(getattr(event, "type", ""))
+                        if event_type == "response.output_text.delta":
+                            delta = getattr(event, "delta", "")
+                            if isinstance(delta, str) and delta:
+                                parts.append(delta)
+                                await on_token(delta)
+                        elif event_type == "response.completed":
+                            final_response = getattr(event, "response", None)
+                            break
+                        elif event_type in {
+                            "response.failed",
+                            "response.incomplete",
+                            "response.cancelled",
+                            "error",
+                        }:
+                            response = getattr(event, "response", None)
+                            detail = getattr(event, "message", "") or getattr(
+                                getattr(response, "error", None), "message", ""
+                            )
+                            raise ModelProviderError(
+                                f"OCI Grok stream {event_type.removeprefix('response.')}: "
+                                f"{str(detail or 'generation did not complete')[:400]}"
+                            )
+                        deadline.reschedule(
+                            loop.time() + self.settings.model_stall_timeout_seconds
+                        )
+        except TimeoutError as exc:
+            raise ModelProviderError(
+                "OCI Grok stream timed out while waiting for a response"
+            ) from exc
+        except ModelProviderError:
+            raise
+        except Exception as exc:
+            raise ModelProviderError(
+                f"OCI Responses stream failed: {str(exc)[:500]}"
+            ) from exc
+        if final_response is None:
+            raise ModelProviderError("OCI Grok stream ended before completion")
+        content = str(getattr(final_response, "output_text", "") or "") or "".join(parts)
+        if not parts and content:
+            await on_token(content)
+        return content, final_response
+
     async def _structured(
         self,
         schema: type[SchemaT],
@@ -3230,17 +3296,19 @@ class OCIResponsesModelProvider:
         # The Responses API returns no separable reasoning channel, so the
         # callback is accepted for the shared signature and never invoked.
         tools = self._native_tools(request.role, model_aliases)
-        response = await self._create_response(
-            model=self.settings.oci_grok_model,
-            instructions=f"{OCI_GROK_PREAMBLE}\n\n{request.system_prompt}",
-            input=request.user_prompt,
-            max_output_tokens=self.settings.oci_responses_max_output_tokens,
-            store=False,
+        kwargs = {
+            "model": self.settings.oci_grok_model,
+            "instructions": f"{OCI_GROK_PREAMBLE}\n\n{request.system_prompt}",
+            "input": request.user_prompt,
+            "max_output_tokens": self.settings.oci_responses_max_output_tokens,
+            "store": False,
             **({"tools": tools, "tool_choice": "auto"} if tools else {}),
-        )
-        content = str(getattr(response, "output_text", "") or "")
-        if on_token is not None and content:
-            await on_token(content)
+        }
+        if on_token is None:
+            response = await self._create_response(**kwargs)
+            content = str(getattr(response, "output_text", "") or "")
+        else:
+            content, response = await self._stream_response(on_token, **kwargs)
         return ModelResultV1(
             model=str(getattr(response, "model", "") or self.settings.oci_grok_model),
             content=content,
@@ -3570,6 +3638,38 @@ def _strip_cohere_citations(text: str) -> str:
     return _COHERE_CITATION.sub("", text)
 
 
+def _cohere_stream_text(pending: str, chunk: str, *, final: bool = False) -> tuple[str, str]:
+    """Strip citation tags across chunk boundaries without rescanning the reply."""
+    data = pending + chunk
+    visible: list[str] = []
+    while data:
+        marker = data.find("<")
+        if marker < 0:
+            visible.append(data)
+            data = ""
+            break
+        if marker:
+            visible.append(data[:marker])
+            data = data[marker:]
+        if data.startswith("<co>"):
+            data = data[4:]
+            continue
+        if data.startswith("</co:"):
+            end = data.find(">")
+            if end < 0:
+                break
+            data = data[end + 1 :]
+            continue
+        if not final and any(tag.startswith(data) for tag in ("<co>", "</co:")):
+            break
+        visible.append("<")
+        data = data[1:]
+    if final and data:
+        visible.append(data)
+        data = ""
+    return "".join(visible), data
+
+
 def _clean_cohere_payload(value: Any) -> Any:
     """Strip citation markup from every string in a decoded tool payload.
 
@@ -3752,6 +3852,130 @@ class CohereModelProvider:
                 raise ModelProviderError("Cohere returned a non-JSON reply") from exc
         raise ModelProviderError(f"Cohere kept failing after {attempts} attempts")
 
+    async def _stream_chat(
+        self,
+        payload: dict[str, Any],
+        on_token: Callable[[str], Awaitable[None]] | None,
+        on_reasoning: Callable[[str], Awaitable[None]] | None,
+    ) -> tuple[str, str]:
+        """Consume Cohere v2 chat SSE and emit answer and thinking separately."""
+        import httpx
+
+        client = await self._client()
+        body = {"model": self.settings.cohere_model, **payload, "stream": True}
+        for attempt in range(3):
+            last = attempt == 2
+            retry_delay: float | None = None
+            pending_text = ""
+            visible_parts: list[str] = []
+            response_id = ""
+            finished = False
+            event_name = ""
+            data_lines: list[str] = []
+
+            async def publish(chunk: str, *, final: bool = False) -> None:
+                nonlocal pending_text
+                visible, pending_text = _cohere_stream_text(
+                    pending_text, chunk, final=final
+                )
+                if visible:
+                    visible_parts.append(visible)
+                    if on_token is not None:
+                        await on_token(visible)
+
+            async def consume(raw: str, name: str) -> None:
+                nonlocal response_id, finished
+                try:
+                    item = json.loads(raw)
+                except ValueError as exc:
+                    raise ModelProviderError("Cohere returned an invalid stream event") from exc
+                if not isinstance(item, dict):
+                    raise ModelProviderError("Cohere returned an invalid stream event")
+                kind = str(item.get("type") or name)
+                if kind == "error":
+                    raise ModelProviderError(
+                        f"Cohere stream failed: {str(item.get('message') or item.get('error') or 'unknown error')[:400]}"
+                    )
+                if kind == "message-start":
+                    response_id = str(item.get("id") or "")
+                elif kind == "content-delta":
+                    delta = item.get("delta")
+                    message = delta.get("message") if isinstance(delta, dict) else None
+                    content = message.get("content") if isinstance(message, dict) else None
+                    if isinstance(content, dict):
+                        thinking = content.get("thinking")
+                        if isinstance(thinking, str) and thinking and on_reasoning is not None:
+                            await on_reasoning(thinking)
+                        text = content.get("text")
+                        if isinstance(text, str) and text:
+                            await publish(text)
+                elif kind == "message-end":
+                    delta = item.get("delta")
+                    reason = str(delta.get("finish_reason") or "") if isinstance(delta, dict) else ""
+                    if reason not in {"COMPLETE", "STOP_SEQUENCE"}:
+                        raise ModelProviderError(
+                            f"Cohere stream ended with {reason or 'no finish reason'}"
+                        )
+                    finished = True
+                    await publish("", final=True)
+
+            try:
+                loop = asyncio.get_running_loop()
+                async with asyncio.timeout(
+                    self.settings.model_call_timeout_seconds
+                ) as deadline:
+                    async with client.stream("POST", "/v2/chat", json=body) as response:
+                        if response.status_code >= 400:
+                            await response.aread()
+                            if response.status_code == 429 and not last:
+                                try:
+                                    delay = float(response.headers.get("retry-after", "6"))
+                                except ValueError:
+                                    delay = 6.0
+                                retry_delay = min(max(delay, 1.0), 20.0)
+                            elif not last and self._is_transient(response):
+                                retry_delay = 1.0 + attempt
+                            else:
+                                raise ModelProviderError(
+                                    f"Cohere returned HTTP {response.status_code}: "
+                                    f"{response.text[:400]}"
+                                )
+                        else:
+                            if "text/event-stream" not in response.headers.get("content-type", "").lower():
+                                raise ModelProviderError("Cohere returned a non-streaming reply")
+                            async for line in response.aiter_lines():
+                                if line == "":
+                                    if data_lines:
+                                        await consume("\n".join(data_lines), event_name)
+                                        data_lines.clear()
+                                        event_name = ""
+                                        deadline.reschedule(
+                                            loop.time() + self.settings.model_stall_timeout_seconds
+                                        )
+                                        if finished:
+                                            break
+                                    continue
+                                if line.startswith("event:"):
+                                    event_name = line[6:].strip()
+                                elif line.startswith("data:"):
+                                    data_lines.append(line[5:].lstrip(" "))
+                            if data_lines:
+                                await consume("\n".join(data_lines), event_name)
+                            if not finished:
+                                raise ModelProviderError("Cohere stream ended before completion")
+                            return "".join(visible_parts), response_id
+            except TimeoutError as exc:
+                raise ModelProviderError(
+                    "Cohere stream timed out while waiting for a response"
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ModelProviderError(
+                    f"Cohere stream failed: {str(exc)[:400]}"
+                ) from exc
+            if retry_delay is not None:
+                await asyncio.sleep(retry_delay)
+        raise ModelProviderError("Cohere kept failing after 3 attempts")
+
     async def transcribe(
         self, audio: bytes, filename: str, media_type: str, *, language: str = ""
     ) -> str:
@@ -3918,32 +4142,27 @@ class CohereModelProvider:
             raise ModelProviderError(
                 "arbitrary runtime schemas are not accepted; use a registered typed method"
             )
-        reply = await self._chat(
-            {
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": f"{COHERE_PREAMBLE}\n\n{request.system_prompt}",
-                    },
-                    {"role": "user", "content": request.user_prompt},
-                ],
-                "max_tokens": self.settings.cohere_max_output_tokens,
-            }
-        )
-        message = reply.get("message") or {}
-        content = _cohere_message_text(message)
-        # Reasoning first, so the panel fills before the answer lands — the
-        # same order the streaming local lane produces it in.
-        if on_reasoning is not None:
-            thinking = _cohere_thinking_text(message)
-            if thinking:
-                await on_reasoning(thinking)
-        if on_token is not None and content:
-            await on_token(content)
+        payload = {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"{COHERE_PREAMBLE}\n\n{request.system_prompt}",
+                },
+                {"role": "user", "content": request.user_prompt},
+            ],
+            "max_tokens": self.settings.cohere_max_output_tokens,
+        }
+        if on_token is not None or on_reasoning is not None:
+            content, response_id = await self._stream_chat(payload, on_token, on_reasoning)
+        else:
+            reply = await self._chat(payload)
+            message = reply.get("message") or {}
+            content = _cohere_message_text(message)
+            response_id = str(reply.get("id", ""))
         return ModelResultV1(
             model=self.settings.cohere_model,
             content=content,
-            structured={"provider": self.name, "response_id": str(reply.get("id", ""))},
+            structured={"provider": self.name, "response_id": response_id},
         )
 
     async def plan(

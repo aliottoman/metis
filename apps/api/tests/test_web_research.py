@@ -5,11 +5,19 @@ correct forever is how Metis decodes DuckDuckGo's redirect wrapping, drops ad
 slots, and flattens HTML into promptable text.
 """
 
+import json
+import re
+import time
+
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from waqil_api.config import Settings
 from waqil_api import web_research
+from waqil_api.contracts import KnowledgeSnippetV1, ModelResultV1
+from waqil_api.main import create_app
+from waqil_api.model_provider import DeterministicModelProvider
 from waqil_api.web_research import (
     WebResearch,
     _decode_result_href,
@@ -69,6 +77,14 @@ def test_explicit_web_request_detection() -> None:
 )
 def test_auto_web_detects_public_freshness_and_links(prompt: str) -> None:
     assert is_implicit_web_request(prompt)
+
+
+def test_auto_web_detects_recent_product_release_question() -> None:
+    assert is_implicit_web_request(
+        "What new features did cline release recently for its harness that would "
+        "be essential and ahuge improvement for a local AI personal app?"
+    )
+    assert is_implicit_web_request("What new Cline SDK features are available?")
 
 
 @pytest.mark.parametrize(
@@ -194,3 +210,106 @@ def test_substantive_prompt_walks_past_bare_retries() -> None:
     assert _substantive_prompt(state) == "Research the benchmarks of model X"
     state["prompt"] = "Compare model X and model Y"
     assert _substantive_prompt(state) == "Compare model X and model Y"
+
+
+def test_recent_release_question_uses_web_and_skips_corpus_and_planner(settings) -> None:
+    question = (
+        "What new features did cline release recently for its harness that would "
+        "be essential and ahuge improvement for a local AI personal app?"
+    )
+
+    class WebOnlyModel(DeterministicModelProvider):
+        def __init__(self) -> None:
+            self.generate_calls = 0
+
+        async def plan(self, *args, **kwargs):
+            raise AssertionError("A factual question should not call the planner")
+
+        async def generate(
+            self, request, on_token=None, *, model_aliases=None, on_reasoning=None
+        ):
+            self.generate_calls += 1
+            content = "Cline added native web search in its recent SDK release [1]."
+            if on_token is not None:
+                await on_token(content)
+            return ModelResultV1(model="scripted", content=content, fallback=False)
+
+    class StubWeb:
+        def available(self):
+            return True
+
+        async def retrieve(self, prompt):
+            assert prompt == question
+            return [
+                KnowledgeSnippetV1(
+                    source_label="Cline SDK changelog",
+                    provider="web",
+                    rel_path="https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md",
+                    source_url="https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md",
+                    symbol=None,
+                    start_line=None,
+                    text="Cline SDK added native web search.",
+                    score=0.95,
+                )
+            ]
+
+    class ForbiddenCorpus:
+        def available(self):
+            return True
+
+        async def retrieve(self, *args, **kwargs):
+            raise AssertionError("A public release question should not embed or rerank private notes")
+
+    model = WebOnlyModel()
+    with TestClient(create_app(settings)) as client:
+        runtime = client.app.state.runtime
+        runtime.control_plane.web = StubWeb()
+        runtime.control_plane.corpus = ForbiddenCorpus()
+        runtime.control_plane.model = model
+        conversation = client.post("/api/v1/conversations", json={}).json()
+        accepted = client.post(
+            f"/api/v1/conversations/{conversation['id']}/messages",
+            json={"content": question, "attachment_ids": [], "knowledge_scope": "auto"},
+        ).json()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            run = client.get(f"/api/v1/runs/{accepted['run_id']}").json()
+            if run["status"] in {"completed", "failed"}:
+                break
+            time.sleep(0.02)
+        assert run["status"] == "completed", run
+        events = client.get(f"/api/v1/runs/{accepted['run_id']}/events?after=0").text
+        messages = client.get(f"/api/v1/conversations/{conversation['id']}/messages").json()
+
+    retrieved = re.search(r"event: context.retrieved\ndata: (.+)", events)
+    assert retrieved is not None
+    payload = json.loads(retrieved.group(1))["payload"]
+    assert payload["web_requested"] is True
+    assert payload["web_source_count"] == 1
+    assert "event: context.knowledge_error" not in events
+    assert "Embedding your question" not in events
+    assert "Reranking the best matches" not in events
+    assert model.generate_calls == 1
+    assert "https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md" in messages[-1][
+        "content"
+    ]
+
+
+def test_factual_fast_path_keeps_mutation_requests_on_planner() -> None:
+    from waqil_api.control_plane import _direct_fast_path_reason
+
+    assert _direct_fast_path_reason(
+        {"prompt": "What new features did Cline release recently?", "model_aliases": {}}
+    )
+    assert _direct_fast_path_reason(
+        {"prompt": "What does this file do?", "model_aliases": {}}
+    )
+    assert not _direct_fast_path_reason(
+        {
+            "prompt": "What new features did Cline release? Please install them in my project.",
+            "model_aliases": {},
+        }
+    )
+    assert not _direct_fast_path_reason(
+        {"prompt": "What is this package? Install it now.", "model_aliases": {}}
+    )

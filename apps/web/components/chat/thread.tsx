@@ -18,6 +18,7 @@ import { ProjectActivity } from "@/components/project-activity";
 import { isPersisted, TOOL_BUILD_PROMPT, type Chat } from "@/hooks/use-chat";
 import { attachmentBadge } from "@/lib/attachments";
 import { droppedDirectories, looseFiles } from "@/lib/folder-drop";
+import { splitCitedSources } from "@/lib/markdown-links";
 import { messageBelongsToRun } from "@/lib/run-history";
 import type { ChatMessage } from "@/lib/types";
 
@@ -213,6 +214,7 @@ const Message = memo(function Message({ message, chat, latest }: MessageProps) {
   const inRun = messageBelongsToRun(message, chat.activeRunId);
   const isLatest = message.id === chat.latestAssistant?.id;
   const settled = !message.streaming && !message.failed && Boolean(message.content) && !editing;
+  const citedSources = settled && message.role === "assistant" ? splitCitedSources(message.content).sources.length : 0;
   const editBox = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (editing) editBox.current?.focus();
@@ -275,8 +277,8 @@ const Message = memo(function Message({ message, chat, latest }: MessageProps) {
 
       {settled ? (
         <footer className="msg-foot">
-          {message.role === "assistant" && inRun && chat.groundedSources > 0 ? (
-            <span className="msg-grounded">Grounded in {chat.groundedSources} {chat.groundedSources === 1 ? "source" : "sources"}</span>
+          {citedSources > 0 ? (
+            <span className="msg-grounded">{citedSources} {citedSources === 1 ? "source" : "sources"} cited</span>
           ) : null}
           <div className="msg-actions">
             <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.copyMessage(message)}>{chat.copiedMessageId === message.id ? "Copied" : "Copy"}</button>
