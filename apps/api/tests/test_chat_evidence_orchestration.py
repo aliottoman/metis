@@ -373,6 +373,64 @@ def test_official_changelog_skips_slow_review_and_drops_aggregators(settings) ->
     assert _payload(events, "context.retrieved")["web_source_count"] == 2
 
 
+def test_lossy_official_changelog_is_reviewed_with_older_entries(settings) -> None:
+    late_feature = (
+        "Provider-native web search is enabled by default for supported models."
+    )
+
+    class _LongOfficialWeb(_Web):
+        async def retrieve(self, prompt, **kwargs):
+            result = await super().retrieve(prompt, **kwargs)
+            result[0].source_url = (
+                "https://github.com/example/sdk/blob/main/sdk/CHANGELOG.md"
+            )
+            result[0].rel_path = result[0].source_url
+            result[0].text = (
+                "# Example SDK Changelog\n## 0.0.86\n"
+                + "- New agent session capability.\n" * 45
+                + "## 0.0.83\n- "
+                + late_feature
+                + "\n[18 other release entries omitted from this excerpt]"
+            )
+            return result
+
+    class _CaptureReview(_Model):
+        reviewed_sources = ""
+        answer_prompt = ""
+
+        async def _structured(self, schema, **kwargs):
+            if schema is EvidenceReviewV1:
+                self.reviewed_sources = kwargs["user_prompt"]
+            return await super()._structured(schema, **kwargs)
+
+        async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+            self.answer_prompt = request.user_prompt
+            return await super().generate(
+                request, on_token, model_aliases=model_aliases,
+                on_reasoning=on_reasoning,
+            )
+
+    model = _CaptureReview(
+        sources=["web"],
+        queries=["Example SDK changelog"],
+        focus_terms=["example", "sdk"],
+        verify=True,
+    )
+    web, corpus = _LongOfficialWeb(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _, events = _turn(
+            client, model, web, corpus,
+            "What new Example SDK features were released recently?",
+        )
+    reviewed = _payload(events, "evidence.reviewed")
+    assert reviewed["method"] == "model"
+    assert reviewed["review_calls"] == 1
+    assert late_feature in model.reviewed_sources
+    assert late_feature in model.answer_prompt
+    assert "Scan all release sections" in model.answer_prompt
+    assert corpus.calls == []
+
+
 def test_user_supplied_public_url_is_opened_even_if_model_misses_web(settings) -> None:
     model = _Model(sources=[])
     web, corpus = _Web(), _Corpus()
@@ -682,7 +740,9 @@ def test_model_response_event_exposes_only_safe_latency_metrics(settings) -> Non
                 "response_headers_seconds": 0.25,
                 "first_event_seconds": 0.5,
                 "first_text_seconds": 0.75,
+                "first_reasoning_seconds": 0.6,
                 "input_characters": 100,
+                "reasoning_characters": 120,
                 "output_characters": 20,
                 "max_completion_tokens": 512,
                 "streamed": True,
@@ -702,7 +762,9 @@ def test_model_response_event_exposes_only_safe_latency_metrics(settings) -> Non
         "response_headers_seconds": 0.25,
         "first_event_seconds": 0.5,
         "first_text_seconds": 0.75,
+        "first_reasoning_seconds": 0.6,
         "input_characters": 100,
+        "reasoning_characters": 120,
         "output_characters": 20,
         "max_completion_tokens": 512,
         "streamed": True,

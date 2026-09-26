@@ -454,6 +454,39 @@ def test_changelog_excerpt_samples_release_sections_without_focus_terms() -> Non
     assert all(version in excerpt for version in ("0.0.86", "0.0.85", "0.0.84", "0.0.83"))
 
 
+def test_changelog_compaction_keeps_distinct_late_capability() -> None:
+    filler = " Detailed implementation notes for host integrations." * 12
+    page = "# Example SDK Changelog\n"
+    for version in ("0.0.86", "0.0.85", "0.0.84"):
+        page += (
+            f"## {version}\n"
+            f"- New agent context tools can update model sessions.{filler}\n"
+            f"- Refreshed the model catalog for providers.{filler}\n"
+        )
+    page += "## 0.0.83\n"
+    for number in range(8):
+        page += (
+            "- New agent tool provider context session model plugin capability "
+            f"{number} is enabled for the runtime.{filler}\n"
+        )
+    page += (
+        "- Provider-native web search is now enabled by default on supported "
+        "provider/model combinations.\n"
+    )
+    assert len(page) > 3_500
+    excerpt = _page_excerpt(
+        page,
+        url="https://github.com/example/sdk/blob/main/sdk/CHANGELOG.md",
+        title="Example SDK changelog",
+        focus_terms=["Example", "harness", "local app"],
+        limit=3_500,
+    )
+    assert len(excerpt) <= 3_500
+    assert all(f"## {version}" in excerpt for version in ("0.0.86", "0.0.85", "0.0.84", "0.0.83"))
+    assert "Provider-native web search is now enabled by default" in excerpt
+    assert "other release entries omitted" in excerpt
+
+
 async def test_retrieve_uses_focus_terms_before_bounding_the_page(monkeypatch) -> None:
     async def public_dns(url: str) -> bool:
         return True

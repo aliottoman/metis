@@ -207,6 +207,97 @@ async def _collect(sink: list[str], delta: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("done_marker", [True, False])
+async def test_cline_reasoning_is_batched_separately_from_answer_text(
+    done_marker: bool,
+) -> None:
+    answer: list[str] = []
+    reasoning: list[str] = []
+    first = "a" * 90
+    second = "b" * 90
+    trailing = "c" * 30
+    after_stop = "d" * 20
+
+    class Chunks(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield f'data: {{"choices":[{{"delta":{{"reasoning":"{first}"}}}}]}}\n\n'.encode()
+            assert reasoning == []
+            yield f'data: {{"choices":[{{"delta":{{"reasoning_content":"{second}"}}}}]}}\n\n'.encode()
+            assert reasoning == [first + second]
+            assert answer == []
+            yield b'data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n'
+            assert answer == ["Answer"]
+            yield f'data: {{"choices":[{{"delta":{{"reasoning":"{trailing}"}}}}]}}\n\n'.encode()
+            assert reasoning == [first + second]
+            yield b'data: {"choices":[{"finish_reason":"stop"}]}\n\n'
+            assert reasoning == [first + second, trailing]
+            yield f'data: {{"choices":[{{"delta":{{"reasoning":"{after_stop}"}}}}]}}\n\n'.encode()
+            assert reasoning == [first + second, trailing]
+            if done_marker:
+                yield b"data: [DONE]\n\n"
+
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, stream=Chunks()
+            )
+        ),
+    )
+    try:
+        result = await _provider(client).generate(  # type: ignore[arg-type]
+            ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+            on_token=lambda delta: _collect(answer, delta),
+            on_reasoning=lambda delta: _collect(reasoning, delta),
+        )
+    finally:
+        await client.aclose()
+    assert result.content == "Answer"
+    assert reasoning == [first + second, trailing, after_stop]
+    assert result.structured is not None
+    assert result.structured["reasoning_characters"] == 230
+    assert result.structured["first_reasoning_seconds"] <= result.structured[
+        "first_reasoning_visible_seconds"
+    ]
+    assert result.structured["first_reasoning_visible_seconds"] <= result.structured[
+        "first_text_seconds"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cline_reasoning_callback_preserves_cancellation() -> None:
+    thought = "x" * 180
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=(
+                    f'data: {{"choices":[{{"delta":{{"reasoning":"{thought}"}}}}]}}\n\n'
+                    'data: {"choices":[{"delta":{"content":"unseen"},"finish_reason":"stop"}]}\n\n'
+                ),
+            )
+        ),
+    )
+
+    async def cancel(_: str) -> None:
+        raise asyncio.CancelledError()
+
+    answer: list[str] = []
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect(answer, delta),
+                on_reasoning=cancel,
+            )
+    finally:
+        await client.aclose()
+    assert answer == []
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_rejects_a_truncated_reply_after_emitting_text() -> None:
     emitted: list[str] = []
     client = httpx.AsyncClient(

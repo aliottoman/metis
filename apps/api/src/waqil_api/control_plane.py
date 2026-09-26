@@ -922,6 +922,7 @@ def _safe_model_response_metrics(structured: dict[str, Any] | None) -> dict[str,
         "response_headers_seconds",
         "first_event_seconds",
         "first_text_seconds",
+        "first_reasoning_seconds",
     ):
         value = structured.get(key)
         if (
@@ -930,7 +931,10 @@ def _safe_model_response_metrics(structured: dict[str, Any] | None) -> dict[str,
             and 0 <= value <= 3600
         ):
             metrics[key] = round(float(value), 3)
-    for key in ("input_characters", "output_characters", "max_completion_tokens"):
+    for key in (
+        "input_characters", "output_characters", "reasoning_characters",
+        "max_completion_tokens",
+    ):
         value = structured.get(key)
         if type(value) is int and 0 <= value <= 10_000_000:
             metrics[key] = value
@@ -10435,9 +10439,14 @@ class ControlPlane:
                 "about recent releases, prioritize first-party changelogs and "
                 "release notes over reviews or general product articles. Name "
                 "the relevant version and release date when the sources give "
-                "them, and explain specific changes from that version. Answer "
+                "them, and explain specific changes from that version. Distinguish "
+                "a feature's introduction from a later change to its default, "
+                "availability, or reliability. Answer "
                 "about the named component (for example an SDK or runtime) "
-                "before adjacent desktop or editor changes. When asked what to "
+                "before adjacent desktop or editor changes. Scan all release "
+                "sections in each numbered passage, including later bullets, "
+                "before choosing highlights. Treat an omitted-entry notice as "
+                "a limit on completeness. When asked what to "
                 "adopt, rank the evidenced capabilities for the user's stated "
                 "app and give a concise reason; state assumptions briefly. An "
                 "upstream SDK capability is not proof this app currently enables "
