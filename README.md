@@ -237,9 +237,11 @@ Context for linked, extracted web passages. Without a key, search uses the
 keyless DuckDuckGo HTML endpoint, whose markup and availability can change.
 For current public questions, Metis checks whether the passages actually cover
 the claim. If they do not, it can search again or open a previously found public
-page. That refinement has two rounds and a 20-second budget; an applicable
-first-party component changelog skips the extra model review. Run events record
-source coverage and response timings so a slow or weak answer can be traced.
+page. That refinement has two rounds and a 20-second budget; a sufficiently
+complete first-party component changelog can skip the extra model review.
+Run events record source coverage and response timings so a slow or weak answer
+can be traced. When ClinePass streams reasoning before answer text, Metis shows
+it in the collapsed activity view in batches rather than as answer text.
 
 The current ClineCore sidecar is limited to project coding and does not power
 chat web retrieval. Metis pins Cline SDK 0.0.86. Native provider web search is

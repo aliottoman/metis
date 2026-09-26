@@ -4936,8 +4936,9 @@ class ClineModelProvider:
         payload: dict[str, Any],
         on_token: Callable[[str], Awaitable[None]],
         *,
+        on_reasoning: Callable[[str], Awaitable[None]] | None = None,
         started_at: float | None = None,
-        timings: dict[str, float] | None = None,
+        timings: dict[str, float | int] | None = None,
     ) -> str:
         """Read OpenAI-style SSE deltas, including Cline's optional data wrapper.
 
@@ -4954,10 +4955,25 @@ class ClineModelProvider:
         self.last_usage = {}
 
         finish_seen = False
+        reasoning_pending: list[str] = []
+        reasoning_characters = 0
+
+        async def flush_reasoning() -> None:
+            nonlocal reasoning_characters
+            if reasoning_pending and on_reasoning is not None:
+                if timings is not None and started_at is not None:
+                    timings.setdefault(
+                        "first_reasoning_visible_seconds",
+                        round(time.monotonic() - started_at, 3),
+                    )
+                await on_reasoning("".join(reasoning_pending))
+            reasoning_pending.clear()
+            reasoning_characters = 0
 
         async def emit_event(raw: str, parts: list[str]) -> bool:
-            nonlocal finish_seen
+            nonlocal finish_seen, reasoning_characters
             if raw == "[DONE]":
+                await flush_reasoning()
                 return True
             if timings is not None and started_at is not None:
                 timings.setdefault(
@@ -4989,13 +5005,36 @@ class ClineModelProvider:
                     f"Cline stream ended with {str(finish_reason)[:80]}"
                 )
             delta = choice.get("delta") or {}
+            reasoning = (
+                _message_text(
+                    delta.get("reasoning") or delta.get("reasoning_content")
+                )
+                if isinstance(delta, dict)
+                else ""
+            )
+            if reasoning:
+                if timings is not None and started_at is not None:
+                    timings.setdefault(
+                        "first_reasoning_seconds",
+                        round(time.monotonic() - started_at, 3),
+                    )
+                    timings["reasoning_characters"] = int(
+                        timings.get("reasoning_characters", 0)
+                    ) + len(reasoning)
+                if on_reasoning is not None:
+                    reasoning_pending.append(reasoning)
+                    reasoning_characters += len(reasoning)
+                    if reasoning_characters >= 160:
+                        await flush_reasoning()
             content = (
                 _message_text(delta.get("content")) if isinstance(delta, dict) else ""
             )
             if content:
+                await flush_reasoning()
                 parts.append(content)
                 await on_token(content)
             if finish_reason == "stop":
+                await flush_reasoning()
                 finish_seen = True
             return False
 
@@ -5004,6 +5043,8 @@ class ClineModelProvider:
             parts: list[str] = []
             terminal = False
             finish_seen = False
+            reasoning_pending.clear()
+            reasoning_characters = 0
             data_lines: list[str] = []
             try:
                 import httpx
@@ -5079,6 +5120,7 @@ class ClineModelProvider:
                             raise ModelProviderError(
                                 "Cline stream ended before completion"
                             )
+                        await flush_reasoning()
                         return "".join(parts)
             except TimeoutError as exc:
                 raise ModelProviderError(
@@ -5203,7 +5245,7 @@ class ClineModelProvider:
         on_reasoning=None,
     ) -> ModelResultV1:
         started_at = time.monotonic()
-        stream_timings: dict[str, float] = {}
+        stream_timings: dict[str, float | int] = {}
         first_text_seconds: float | None = None
         selected_model = self._model_for(request.role, model_aliases)
         payload = {
@@ -5232,6 +5274,7 @@ class ClineModelProvider:
             content = await self._stream_chat(
                 payload,
                 timed_on_token,
+                on_reasoning=on_reasoning,
                 started_at=started_at,
                 timings=stream_timings,
             )

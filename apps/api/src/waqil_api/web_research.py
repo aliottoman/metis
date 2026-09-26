@@ -214,7 +214,13 @@ def _github_raw_markdown_url(url: str) -> str | None:
 def _compact_markdown_changelog(
     text: str, *, focus_terms: list[str] | None, limit: int
 ) -> str | None:
-    """Give several recent versions room, selecting substantive release bullets."""
+    """Keep a diverse set of substantive bullets across recent versions.
+
+    Long release sections can contain dozens of entries. Taking only the
+    highest-scoring four from each section repeatedly hides a distinct
+    capability that appears later. A small diversity bonus keeps different
+    capabilities visible without expanding the answer's context budget.
+    """
     all_headings = list(_MARKDOWN_VERSION_HEADING.finditer(text))
     if not all_headings:
         return None
@@ -242,43 +248,67 @@ def _compact_markdown_changelog(
             else len(text)
         )
         body = text[heading.end() : next_start]
-        bullets: list[tuple[int, str, float]] = []
+        bullets: list[tuple[int, str, float, set[str]]] = []
         for bullet_index, line in enumerate(body.splitlines()):
             match = re.match(r"^\s*[-*]\s+(.+)", line)
             if not match:
                 continue
             content = " ".join(match.group(1).split())
             lowered = content.casefold()
+            capability_terms = {
+                item.group().casefold().rstrip("s")
+                for item in _CAPABILITY_WORDS.finditer(content)
+            }
             score = min(4, len(_CAPABILITY_WORDS.findall(content))) * 3
             score += sum(12 for term in useful_focus if term in lowered)
-            score += 6 if _NEW_CAPABILITY.search(content) else 0
+            score += 12 if _NEW_CAPABILITY.search(content) else 0
             score += 4 if not bullets else 0
-            score -= 5 if "refreshed the model catalog" in lowered else 0
-            bullets.append((bullet_index, content, score))
+            score -= 12 if "refreshed the model catalog" in lowered else 0
+            bullets.append((bullet_index, content, score, capability_terms))
 
         heading_text = heading.group(0).strip()
         remaining = section_budget - len(heading_text) - 1
         chosen: list[tuple[int, str]] = []
-        max_bullet = min(260, max(110, remaining // 2))
-        for bullet_index, content, _ in sorted(
-            bullets, key=lambda item: (-item[2], item[0])
-        ):
-            clipped = content[:max_bullet].rsplit(" ", 1)[0] if len(content) > max_bullet else content
+        seen_capabilities: set[str] = set()
+        available = list(bullets)
+        # Short lead phrases allow more distinct entries in the same space.
+        # Reserve a small explicit omission notice when the section is longer.
+        max_bullet = min(150, max(90, section_budget // 7))
+        omission_reserve = (
+            len(f"[{len(available)} other release entries omitted from this excerpt]") + 1
+            if len(available) > 6 else 0
+        )
+        while available and len(chosen) < 7:
+            candidate = max(
+                available,
+                key=lambda item: (
+                    item[2] + 14 * len(item[3] - seen_capabilities),
+                    -item[0],
+                ),
+            )
+            available.remove(candidate)
+            bullet_index, content, _, terms = candidate
+            clipped = (
+                content[:max_bullet].rsplit(" ", 1)[0]
+                if len(content) > max_bullet
+                else content
+            )
             line = f"- {clipped}"
-            if len(line) + 1 > remaining:
+            if len(line) + 1 > remaining - omission_reserve:
                 continue
             chosen.append((bullet_index, line))
+            seen_capabilities.update(terms)
             remaining -= len(line) + 1
-            if len(chosen) >= 4:
-                break
         if not chosen and remaining > 10:
             fallback = " ".join(body.split())[:remaining]
             if fallback:
                 chosen.append((0, fallback))
-        section = "\n".join(
-            [heading_text, *(line for _, line in sorted(chosen))]
-        )
-        sections.append(section)
+        omitted = len(bullets) - len(chosen)
+        lines = [heading_text, *(line for _, line in sorted(chosen))]
+        omission_note = f"[{omitted} other release entries omitted from this excerpt]"
+        if omitted and remaining >= len(omission_note) + 1:
+            lines.append(omission_note)
+        sections.append("\n".join(lines))
     result = "\n\n".join(([title] if title else []) + sections)
     return result[:limit]
 
