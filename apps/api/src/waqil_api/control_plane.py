@@ -73,11 +73,11 @@ from .database import Database
 from . import customer_tools, document_factory, queue_update
 from .evidence_routing import (
     EvidencePlanV1,
-    EvidenceReviewV1,
     official_release_source_url,
     plan_evidence,
     planner_failure_plan,
     review_web_evidence,
+    safe_public_open_urls,
     scope_plan,
 )
 from .diagram_source import (
@@ -902,6 +902,59 @@ def _repeated_project_call(
 # resume safely, so reconcile_startup fails them instead. Version 8 adds a
 # source-planning node before retrieval and a guarded project web-failure branch.
 GRAPH_SCHEMA_VERSION = "8"
+
+# Refinement begins after the first search. These limits cap extra model and
+# public-web work, so a weak search cannot turn a simple chat into a long run.
+_WEB_RESEARCH_MAX_ROUNDS = 2
+_WEB_RESEARCH_MAX_OPENS = 2
+_WEB_RESEARCH_INITIAL_SECONDS = 20.0
+_WEB_RESEARCH_REFINEMENT_SECONDS = 20.0
+_WEB_RESEARCH_REVIEW_SECONDS = 8.0
+
+
+def _safe_model_response_metrics(structured: dict[str, Any] | None) -> dict[str, Any]:
+    """Expose only bounded timing and size measurements in public run events."""
+    if not isinstance(structured, dict):
+        return {}
+    metrics: dict[str, Any] = {}
+    for key in (
+        "generation_seconds",
+        "response_headers_seconds",
+        "first_event_seconds",
+        "first_text_seconds",
+    ):
+        value = structured.get(key)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and 0 <= value <= 3600
+        ):
+            metrics[key] = round(float(value), 3)
+    for key in ("input_characters", "output_characters", "max_completion_tokens"):
+        value = structured.get(key)
+        if type(value) is int and 0 <= value <= 10_000_000:
+            metrics[key] = value
+    if type(structured.get("streamed")) is bool:
+        metrics["streamed"] = structured["streamed"]
+    return metrics
+
+
+def _official_release_snippets(
+    snippets: list[dict[str, Any]], official_url: str
+) -> list[dict[str, Any]]:
+    """Keep the covered component changelog and nearby repository evidence."""
+    repository_path = "/".join(urlparse(official_url).path.split("/")[:3])
+    private_items = [item for item in snippets if item.get("provider") != "web"]
+    same_repo = [
+        item for item in snippets
+        if item.get("provider") == "web"
+        and urlparse(str(item.get("source_url") or "")).hostname == "github.com"
+        and urlparse(str(item.get("source_url") or "")).path.startswith(
+            repository_path + "/"
+        )
+    ]
+    same_repo.sort(key=lambda item: item.get("source_url") != official_url)
+    return private_items + same_repo[:2]
 
 
 def _extract_python_source(raw: str) -> str:
@@ -2889,6 +2942,188 @@ class ControlPlane:
             "evidence_method": method,
         }
 
+    async def _review_public_evidence(
+        self,
+        state: AgentState,
+        evidence: EvidencePlanV1,
+        snippets: list[dict[str, Any]],
+        model_aliases: dict[str, str],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Refine public sources with a bounded, read-only coverage loop.
+
+        The model can ask for public queries or to open a URL returned by the
+        search. The host validates both, and the web adapter enforces public
+        DNS and redirect rules. No local or write tools are exposed here.
+        """
+        official_url = official_release_source_url(
+            state["prompt"], snippets, evidence.focus_terms
+        )
+        if official_url is not None:
+            # A substantive component changelog avoids an extra model call.
+            # Keep its repository sources in front of unrelated summaries.
+            status = {
+                "adequate": True,
+                "initial_adequate": True,
+                "followup_source_count": 0,
+                "review_calls": 0,
+                "followup_search_calls": 0,
+                "opened_url_count": 0,
+                "timed_out": False,
+                "method": "official_changelog",
+            }
+            return _official_release_snippets(snippets, official_url), status
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _WEB_RESEARCH_REFINEMENT_SECONDS
+        seen_queries = {query.casefold() for query in evidence.public_queries}
+        opened_urls: set[str] = set()
+        review_calls = 0
+        search_calls = 0
+        open_calls = 0
+        followup_count = 0
+        initial_adequate: bool | None = None
+        adequate: bool | None = None
+        timed_out = False
+        for _ in range(_WEB_RESEARCH_MAX_ROUNDS):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                review = await asyncio.wait_for(
+                    review_web_evidence(
+                        self.model,
+                        prompt=state["prompt"],
+                        snippets=snippets,
+                        model_aliases=model_aliases,
+                    ),
+                    timeout=min(_WEB_RESEARCH_REVIEW_SECONDS, remaining),
+                )
+            except TimeoutError:
+                timed_out = True
+                break
+            except Exception as error:  # noqa: BLE001 - a review cannot erase sources
+                await self.events.emit(
+                    state["run_id"], state["conversation_id"],
+                    "evidence.review_error", {"error_type": type(error).__name__},
+                )
+                break
+            if review is None:
+                break
+            review_calls += 1
+            if initial_adequate is None:
+                initial_adequate = review.adequate
+            adequate = review.adequate
+            if review.adequate:
+                break
+
+            queries = [
+                query for query in review.followup_queries
+                if query.casefold() not in seen_queries
+            ][:2]
+            for query in queries:
+                seen_queries.add(query.casefold())
+            allowed_opens = safe_public_open_urls(review.open_urls, snippets)
+            opens = [
+                url for url in allowed_opens if url not in opened_urls
+            ][: max(0, _WEB_RESEARCH_MAX_OPENS - open_calls)]
+            opened_urls.update(opens)
+            if not queries and not opens:
+                break
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                timed_out = True
+                break
+            actions: list[tuple[str, Any]] = []
+            if queries:
+                search_calls += 1
+                actions.append((
+                    "search",
+                    self.web.retrieve(
+                        state["prompt"], queries=queries,
+                        focus_terms=review.focus_terms or evidence.focus_terms,
+                        include_prompt_urls=False,
+                    ),
+                ))
+            for url in opens:
+                open_calls += 1
+                actions.append((
+                    "open",
+                    self.web.retrieve(
+                        f"Read {url}", queries=[],
+                        focus_terms=review.focus_terms or evidence.focus_terms,
+                        include_prompt_urls=True,
+                    ),
+                ))
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*(action for _, action in actions), return_exceptions=True),
+                    timeout=remaining,
+                )
+            except TimeoutError:
+                timed_out = True
+                break
+            opened_web: list[dict[str, Any]] = []
+            searched_web: list[dict[str, Any]] = []
+            for (kind, _), result in zip(actions, results):
+                if isinstance(result, BaseException):
+                    await self.events.emit(
+                        state["run_id"], state["conversation_id"],
+                        "evidence.research_error",
+                        {"action": kind, "error_type": type(result).__name__},
+                    )
+                    continue
+                followup_count += len(result)
+                destination = opened_web if kind == "open" else searched_web
+                destination.extend(
+                    item.model_dump(mode="json") for item in result
+                    if item.provider == "web" and item.source_url
+                )
+            # An opened page is usually fuller than a search excerpt for the
+            # same URL, so it wins when we merge the returned passages.
+            followup_web = opened_web + searched_web
+            previous = {
+                (str(item.get("source_url") or ""), str(item.get("text") or ""))
+                for item in snippets if item.get("provider") == "web"
+            }
+            if not any(
+                (str(item.get("source_url") or ""), str(item.get("text") or ""))
+                not in previous for item in followup_web
+            ):
+                break
+            private_items = [item for item in snippets if item.get("provider") != "web"]
+            initial_web = [item for item in snippets if item.get("provider") == "web"]
+            ordered_web: list[dict[str, Any]] = []
+            seen_urls: set[str] = set()
+            for item in followup_web + initial_web:
+                url = str(item.get("source_url") or "")
+                if not url or url in seen_urls or not str(item.get("text") or "").strip():
+                    continue
+                seen_urls.add(url)
+                ordered_web.append(item)
+            snippets = private_items + ordered_web[: self.settings.web_search_max_results + 1]
+            # New passages may close the gap. A second coverage review checks
+            # that; after the final round, synthesis must evaluate them itself.
+            adequate = None
+            official_url = official_release_source_url(
+                state["prompt"], snippets, evidence.focus_terms
+            )
+            if official_url is not None:
+                snippets = _official_release_snippets(snippets, official_url)
+                adequate = True
+                break
+        status = {
+            "adequate": adequate,
+            "initial_adequate": initial_adequate,
+            "followup_source_count": followup_count,
+            "review_calls": review_calls,
+            "followup_search_calls": search_calls,
+            "opened_url_count": open_calls,
+            "timed_out": timed_out,
+            "method": "model",
+        }
+        return snippets, status
+
     async def _retrieve(self, state: AgentState) -> dict[str, Any]:
         await self._guard(state)
         model_aliases = state.get("model_aliases", {})
@@ -3105,111 +3340,22 @@ class ControlPlane:
         review_status: dict[str, Any] = {}
         if web_task is not None:
             try:
-                retrieved_web = await web_task
+                retrieved_web = await asyncio.wait_for(
+                    web_task, timeout=_WEB_RESEARCH_INITIAL_SECONDS
+                )
                 knowledge_snippets.extend(
                     item.model_dump(mode="json") for item in retrieved_web
                 )
                 if evidence.needs_verification:
-                    official_url = official_release_source_url(
-                        state["prompt"], knowledge_snippets, evidence.focus_terms
+                    knowledge_snippets, review_status = await self._review_public_evidence(
+                        state, evidence, knowledge_snippets, model_aliases
                     )
-                    official_coverage = official_url is not None
-                    if official_url is not None:
-                        # A substantive first-party changelog already covers
-                        # the requested release track. Keep its own repository
-                        # evidence, rather than making the answer prefill on
-                        # unrelated aggregator copies of the same release.
-                        repository_path = "/".join(urlparse(official_url).path.split("/")[:3])
-                        private_items = [
-                            item for item in knowledge_snippets
-                            if item.get("provider") != "web"
-                        ]
-                        same_repo = [
-                            item for item in knowledge_snippets
-                            if item.get("provider") == "web"
-                            and urlparse(str(item.get("source_url") or "")).hostname == "github.com"
-                            and urlparse(str(item.get("source_url") or "")).path.startswith(
-                                repository_path + "/"
-                            )
-                        ]
-                        same_repo.sort(
-                            key=lambda item: item.get("source_url") != official_url
-                        )
-                        knowledge_snippets = private_items + same_repo[:2]
-                    try:
-                        review = (
-                            EvidenceReviewV1(adequate=True)
-                            if official_coverage
-                            else await review_web_evidence(
-                                self.model,
-                                prompt=state["prompt"],
-                                snippets=knowledge_snippets,
-                                model_aliases=model_aliases,
-                            )
-                        )
-                    except Exception as error:  # noqa: BLE001 - a review cannot erase sources
-                        review = None
-                        await self.events.emit(
-                            state["run_id"],
-                            state["conversation_id"],
-                            "evidence.review_error",
-                            {"error_type": type(error).__name__},
-                        )
-                    if review is not None:
-                        followup_count = 0
-                        if not review.adequate and review.followup_queries:
-                            extra = await self.web.retrieve(
-                                state["prompt"],
-                                queries=review.followup_queries,
-                                focus_terms=review.focus_terms or evidence.focus_terms,
-                                include_prompt_urls=False,
-                            )
-                            followup_count = len(extra)
-                            if extra:
-                                # The follow-up was requested to repair a
-                                # specific gap. Put its substantive pages
-                                # ahead of the broad first search and avoid
-                                # filling the answer context with duplicate
-                                # or title-only results.
-                                private_items = [
-                                    item for item in knowledge_snippets
-                                    if item.get("provider") != "web"
-                                ]
-                                initial_web = [
-                                    item for item in knowledge_snippets
-                                    if item.get("provider") == "web"
-                                ]
-                                followup_web = [
-                                    item.model_dump(mode="json") for item in extra
-                                ]
-                                ordered_web: list[dict[str, Any]] = []
-                                seen_urls: set[str] = set()
-                                for item in followup_web + initial_web:
-                                    url = str(item.get("source_url") or item.get("rel_path") or "")
-                                    if url in seen_urls or len(str(item.get("text") or "").strip()) < 120:
-                                        continue
-                                    seen_urls.add(url)
-                                    ordered_web.append(item)
-                                knowledge_snippets = private_items + ordered_web[
-                                    : self.settings.web_search_max_results + 1
-                                ]
-                        review_status = {
-                            # A first search marked inadequate does not prove
-                            # the follow-up is still inadequate. The answer
-                            # must inspect the now-combined evidence itself.
-                            "adequate": None if followup_count else review.adequate,
-                            "initial_adequate": review.adequate,
-                            "followup_source_count": followup_count,
-                            "method": (
-                                "official_changelog" if official_coverage else "model"
-                            ),
-                        }
-                        await self.events.emit(
-                            state["run_id"],
-                            state["conversation_id"],
-                            "evidence.reviewed",
-                            review_status,
-                        )
+                    await self.events.emit(
+                        state["run_id"],
+                        state["conversation_id"],
+                        "evidence.reviewed",
+                        review_status,
+                    )
             except Exception as error:  # noqa: BLE001 - retrieval errors stay bounded
                 await self.events.emit(
                     state["run_id"],
@@ -10442,6 +10588,7 @@ class ControlPlane:
                 ),
                 "native_tools": (result.structured or {}).get("native_tools", []),
                 "service_memory": (result.structured or {}).get("service_memory"),
+                "timings": _safe_model_response_metrics(result.structured),
             },
         )
         response_text, dropped_markers = _append_cited_sources(result.content, sources)

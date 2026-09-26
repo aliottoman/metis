@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { markdownHref, splitCitedSources } from "../lib/markdown-links.ts";
+import { MARKDOWN_LINK_TOKEN_SOURCE, markdownHref, markdownLinkParts, splitCitedSources } from "../lib/markdown-links.ts";
 
 test("attached-document citations open on the configured API origin", () => {
   const path = `/api/v1/uploads/upl_${"a".repeat(20)}`;
@@ -43,4 +43,13 @@ test("ordinary text and incomplete source sections stay in the answer", () => {
   ]) {
     assert.deepEqual(splitCitedSources(value), { body: value, sources: [] });
   }
+});
+
+test("source links keep parentheses inside page URLs", () => {
+  const token = "[Wikipedia](https://en.wikipedia.org/wiki/Example_(film))";
+  assert.deepEqual(("Source " + token + ".").match(new RegExp(MARKDOWN_LINK_TOKEN_SOURCE, "g")), [token]);
+  assert.deepEqual(markdownLinkParts(token), {
+    label: "Wikipedia",
+    target: "https://en.wikipedia.org/wiki/Example_(film)",
+  });
 });

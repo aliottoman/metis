@@ -109,6 +109,14 @@ async def test_the_reply_is_unwrapped_from_its_data_envelope() -> None:
     )
     assert result.content == "hello"
     assert client.sent[0]["stream"] is False
+    assert result.structured is not None
+    assert result.structured["provider"] == "cline"
+    assert result.structured["streamed"] is False
+    assert result.structured["first_text_seconds"] is None
+    assert result.structured["generation_seconds"] >= 0
+    assert result.structured["input_characters"] > len("u")
+    assert result.structured["output_characters"] == len("hello")
+    assert "response_headers_seconds" not in result.structured
 
 
 @pytest.mark.asyncio
@@ -179,6 +187,14 @@ async def test_chat_stream_emits_each_delta_before_the_reply_finishes() -> None:
     assert result.content == "Hello"
     assert emitted == ["Hel", "lo"]
     assert requests[0]["stream"] is True
+    assert result.structured is not None
+    timing = result.structured
+    assert timing["provider"] == "cline"
+    assert timing["streamed"] is True
+    assert timing["output_characters"] == 5
+    assert 0 <= timing["response_headers_seconds"] <= timing["first_event_seconds"]
+    assert timing["first_event_seconds"] <= timing["first_text_seconds"]
+    assert timing["first_text_seconds"] <= timing["generation_seconds"]
     assert provider.last_usage == {
         "prompt_tokens": 2,
         "completion_tokens": 3,
@@ -324,6 +340,21 @@ async def test_the_budget_is_sent_as_max_completion_tokens() -> None:
     )
     assert "max_completion_tokens" in client.sent[0]
     assert "max_tokens" not in client.sent[0]
+
+    limited = _Client(
+        _Response(200, {"data": {"choices": [{"message": {"content": "x"}}]}})
+    )
+    result = await _provider(limited).generate(
+        ModelRequestV1(
+            role="planner",
+            system_prompt="s",
+            user_prompt="u",
+            max_output_tokens=512,
+        )
+    )
+    assert limited.sent[0]["max_completion_tokens"] == 512
+    assert result.structured is not None
+    assert result.structured["max_completion_tokens"] == 512
 
 
 @pytest.mark.asyncio

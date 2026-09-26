@@ -58,6 +58,16 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
     observer.observe(parent);
     return () => observer.disconnect();
   }, [resizeComposer, textarea]);
+  useEffect(() => {
+    // Mobile keyboards can change the visual viewport without changing the
+    // composer's width. Recalculate the textarea's scrollability at that size.
+    window.addEventListener("resize", resizeComposer);
+    window.visualViewport?.addEventListener("resize", resizeComposer);
+    return () => {
+      window.removeEventListener("resize", resizeComposer);
+      window.visualViewport?.removeEventListener("resize", resizeComposer);
+    };
+  }, [resizeComposer]);
 
   // After a programmatic edit (list continuation) put the caret back.
   useLayoutEffect(() => {

@@ -18,12 +18,10 @@ import { ProjectActivity } from "@/components/project-activity";
 import { isPersisted, TOOL_BUILD_PROMPT, type Chat } from "@/hooks/use-chat";
 import { attachmentBadge } from "@/lib/attachments";
 import { droppedDirectories, looseFiles } from "@/lib/folder-drop";
+import { nextThreadFollowing } from "@/lib/chat-scroll";
 import { splitCitedSources } from "@/lib/markdown-links";
 import { messageBelongsToRun } from "@/lib/run-history";
 import type { ChatMessage } from "@/lib/types";
-
-// Within this of the foot counts as reading the newest message.
-const BOTTOM = 96;
 
 function clock(timestamp?: string): string {
   if (!timestamp) return "";
@@ -67,10 +65,7 @@ export function Thread({ chat }: { chat: Chat }) {
     const sync = () => {
       const top = element.scrollTop;
       const distance = element.scrollHeight - top - element.clientHeight;
-      // Content can grow without the reader scrolling. Only an upward scroll
-      // releases the thread; reaching the bottom resumes following.
-      if (top < lastScrollTop.current - 1) following.current = false;
-      else if (distance <= BOTTOM) following.current = true;
+      following.current = nextThreadFollowing(following.current, lastScrollTop.current, top, distance, "scroll");
       lastScrollTop.current = top;
       setAtBottom(following.current);
     };
@@ -79,7 +74,10 @@ export function Thread({ chat }: { chat: Chat }) {
         element.scrollTop = element.scrollHeight;
         lastScrollTop.current = element.scrollTop;
       }
-      sync();
+      // A resize only changes geometry. It must not undo the reader's upward
+      // scroll just because they paused close to the end.
+      following.current = nextThreadFollowing(following.current, lastScrollTop.current, element.scrollTop, element.scrollHeight - element.scrollTop - element.clientHeight, "resize");
+      setAtBottom(following.current);
     };
     const observer = new ResizeObserver(keepPosition);
     observer.observe(element);

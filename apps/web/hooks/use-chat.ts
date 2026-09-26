@@ -152,6 +152,7 @@ export function useChat() {
   const [uploading, setUploading] = useState(false);
   const uploadsInFlight = useRef(0);
   const [sending, setSending] = useState(false);
+  const stopInFlight = useRef(false);
   const [queued, setQueued] = useState<{ content: string; attachments: AttachmentRef[] } | null>(null);
   const [knowledgeAdds, setKnowledgeAdds] = useState<Record<string, "adding" | "added" | "error">>({});
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -702,11 +703,17 @@ export function useChat() {
   const dismissProposal = (proposalId: string) => setDismissedProposals((current) => new Set(current).add(proposalId));
 
   const stop = async () => {
-    if (!activeRunId) return;
+    if (!activeRunId || stopInFlight.current) return;
+    stopInFlight.current = true;
+    // A queued follow-up belongs back in the composer when the user stops
+    // the current run. Otherwise it would auto-send on the cancel event.
+    if (queued) unqueue();
     try {
       await cancelRun(activeRunId);
     } catch (cancelError) {
       setError(cancelError instanceof Error ? cancelError.message : "The run could not be cancelled.");
+    } finally {
+      stopInFlight.current = false;
     }
   };
 

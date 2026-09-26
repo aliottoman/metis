@@ -235,6 +235,11 @@ evidence. Web answers cite numbered sources, with inline citations linking to
 the clickable source list. Set `WAQIL_BRAVE_SEARCH_API_KEY` to use Brave LLM
 Context for linked, extracted web passages. Without a key, search uses the
 keyless DuckDuckGo HTML endpoint, whose markup and availability can change.
+For current public questions, Metis checks whether the passages actually cover
+the claim. If they do not, it can search again or open a previously found public
+page. That refinement has two rounds and a 20-second budget; an applicable
+first-party component changelog skips the extra model review. Run events record
+source coverage and response timings so a slow or weak answer can be traced.
 
 The current ClineCore sidecar is limited to project coding and does not power
 chat web retrieval. Metis pins Cline SDK 0.0.86. Native provider web search is
