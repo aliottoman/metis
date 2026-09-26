@@ -52,7 +52,7 @@ from .document_factory import is_explicit_document_request
 from .model_preference import is_cloud_model
 from .prompt_scope import user_instruction
 from .queue_update import is_queue_update_request
-from .web_research import is_explicit_web_request
+from .web_research import is_explicit_web_request, is_implicit_web_request
 from .project_tools import (
     directed_project_tools,
     FINISH_TOOL_NAME,
@@ -830,7 +830,9 @@ def normalize_plan_semantics(
     # Every registered tool runs sandboxed with network:none, so a prompt that
     # explicitly asks for the web cannot be honored by any of them — routing
     # it to one turns "research online" into confident recall.
-    web_intent = is_explicit_web_request(request.prompt)
+    web_intent = is_explicit_web_request(request.prompt) or is_implicit_web_request(
+        request.prompt
+    )
     # An ask_user plan carries no tool — the contract says so and validation
     # enforces it — so a slug arriving beside one is noise, not a selection.
     # Honouring it sent "build me a tool that summarises things" to build a
@@ -3158,6 +3160,72 @@ class OCIResponsesModelProvider:
                 f"OCI Responses call failed: {str(exc)[:500]}"
             ) from exc
 
+    async def _stream_response(
+        self,
+        on_token: Callable[[str], Awaitable[None]],
+        **kwargs: Any,
+    ) -> tuple[str, Any]:
+        """Stream only user-facing prose; require a terminal success event.
+
+        The installed OpenAI SDK returns an async stream from ``create`` when
+        ``stream=True``. OCI's Responses endpoint uses the same event format.
+        A partial reply is never retried, since replay would duplicate text the
+        caller has already published.
+        """
+        client = await self._client()
+        parts: list[str] = []
+        final_response: Any = None
+        try:
+            loop = asyncio.get_running_loop()
+            async with asyncio.timeout(
+                self.settings.model_call_timeout_seconds
+            ) as deadline:
+                stream = await client.responses.create(**kwargs, stream=True)
+                async with stream:
+                    async for event in stream:
+                        event_type = str(getattr(event, "type", ""))
+                        if event_type == "response.output_text.delta":
+                            delta = getattr(event, "delta", "")
+                            if isinstance(delta, str) and delta:
+                                parts.append(delta)
+                                await on_token(delta)
+                        elif event_type == "response.completed":
+                            final_response = getattr(event, "response", None)
+                            break
+                        elif event_type in {
+                            "response.failed",
+                            "response.incomplete",
+                            "response.cancelled",
+                            "error",
+                        }:
+                            response = getattr(event, "response", None)
+                            detail = getattr(event, "message", "") or getattr(
+                                getattr(response, "error", None), "message", ""
+                            )
+                            raise ModelProviderError(
+                                f"OCI Grok stream {event_type.removeprefix('response.')}: "
+                                f"{str(detail or 'generation did not complete')[:400]}"
+                            )
+                        deadline.reschedule(
+                            loop.time() + self.settings.model_stall_timeout_seconds
+                        )
+        except TimeoutError as exc:
+            raise ModelProviderError(
+                "OCI Grok stream timed out while waiting for a response"
+            ) from exc
+        except ModelProviderError:
+            raise
+        except Exception as exc:
+            raise ModelProviderError(
+                f"OCI Responses stream failed: {str(exc)[:500]}"
+            ) from exc
+        if final_response is None:
+            raise ModelProviderError("OCI Grok stream ended before completion")
+        content = str(getattr(final_response, "output_text", "") or "") or "".join(parts)
+        if not parts and content:
+            await on_token(content)
+        return content, final_response
+
     async def _structured(
         self,
         schema: type[SchemaT],
@@ -3228,17 +3296,19 @@ class OCIResponsesModelProvider:
         # The Responses API returns no separable reasoning channel, so the
         # callback is accepted for the shared signature and never invoked.
         tools = self._native_tools(request.role, model_aliases)
-        response = await self._create_response(
-            model=self.settings.oci_grok_model,
-            instructions=f"{OCI_GROK_PREAMBLE}\n\n{request.system_prompt}",
-            input=request.user_prompt,
-            max_output_tokens=self.settings.oci_responses_max_output_tokens,
-            store=False,
+        kwargs = {
+            "model": self.settings.oci_grok_model,
+            "instructions": f"{OCI_GROK_PREAMBLE}\n\n{request.system_prompt}",
+            "input": request.user_prompt,
+            "max_output_tokens": self.settings.oci_responses_max_output_tokens,
+            "store": False,
             **({"tools": tools, "tool_choice": "auto"} if tools else {}),
-        )
-        content = str(getattr(response, "output_text", "") or "")
-        if on_token is not None and content:
-            await on_token(content)
+        }
+        if on_token is None:
+            response = await self._create_response(**kwargs)
+            content = str(getattr(response, "output_text", "") or "")
+        else:
+            content, response = await self._stream_response(on_token, **kwargs)
         return ModelResultV1(
             model=str(getattr(response, "model", "") or self.settings.oci_grok_model),
             content=content,
@@ -3568,6 +3638,38 @@ def _strip_cohere_citations(text: str) -> str:
     return _COHERE_CITATION.sub("", text)
 
 
+def _cohere_stream_text(pending: str, chunk: str, *, final: bool = False) -> tuple[str, str]:
+    """Strip citation tags across chunk boundaries without rescanning the reply."""
+    data = pending + chunk
+    visible: list[str] = []
+    while data:
+        marker = data.find("<")
+        if marker < 0:
+            visible.append(data)
+            data = ""
+            break
+        if marker:
+            visible.append(data[:marker])
+            data = data[marker:]
+        if data.startswith("<co>"):
+            data = data[4:]
+            continue
+        if data.startswith("</co:"):
+            end = data.find(">")
+            if end < 0:
+                break
+            data = data[end + 1 :]
+            continue
+        if not final and any(tag.startswith(data) for tag in ("<co>", "</co:")):
+            break
+        visible.append("<")
+        data = data[1:]
+    if final and data:
+        visible.append(data)
+        data = ""
+    return "".join(visible), data
+
+
 def _clean_cohere_payload(value: Any) -> Any:
     """Strip citation markup from every string in a decoded tool payload.
 
@@ -3750,6 +3852,130 @@ class CohereModelProvider:
                 raise ModelProviderError("Cohere returned a non-JSON reply") from exc
         raise ModelProviderError(f"Cohere kept failing after {attempts} attempts")
 
+    async def _stream_chat(
+        self,
+        payload: dict[str, Any],
+        on_token: Callable[[str], Awaitable[None]] | None,
+        on_reasoning: Callable[[str], Awaitable[None]] | None,
+    ) -> tuple[str, str]:
+        """Consume Cohere v2 chat SSE and emit answer and thinking separately."""
+        import httpx
+
+        client = await self._client()
+        body = {"model": self.settings.cohere_model, **payload, "stream": True}
+        for attempt in range(3):
+            last = attempt == 2
+            retry_delay: float | None = None
+            pending_text = ""
+            visible_parts: list[str] = []
+            response_id = ""
+            finished = False
+            event_name = ""
+            data_lines: list[str] = []
+
+            async def publish(chunk: str, *, final: bool = False) -> None:
+                nonlocal pending_text
+                visible, pending_text = _cohere_stream_text(
+                    pending_text, chunk, final=final
+                )
+                if visible:
+                    visible_parts.append(visible)
+                    if on_token is not None:
+                        await on_token(visible)
+
+            async def consume(raw: str, name: str) -> None:
+                nonlocal response_id, finished
+                try:
+                    item = json.loads(raw)
+                except ValueError as exc:
+                    raise ModelProviderError("Cohere returned an invalid stream event") from exc
+                if not isinstance(item, dict):
+                    raise ModelProviderError("Cohere returned an invalid stream event")
+                kind = str(item.get("type") or name)
+                if kind == "error":
+                    raise ModelProviderError(
+                        f"Cohere stream failed: {str(item.get('message') or item.get('error') or 'unknown error')[:400]}"
+                    )
+                if kind == "message-start":
+                    response_id = str(item.get("id") or "")
+                elif kind == "content-delta":
+                    delta = item.get("delta")
+                    message = delta.get("message") if isinstance(delta, dict) else None
+                    content = message.get("content") if isinstance(message, dict) else None
+                    if isinstance(content, dict):
+                        thinking = content.get("thinking")
+                        if isinstance(thinking, str) and thinking and on_reasoning is not None:
+                            await on_reasoning(thinking)
+                        text = content.get("text")
+                        if isinstance(text, str) and text:
+                            await publish(text)
+                elif kind == "message-end":
+                    delta = item.get("delta")
+                    reason = str(delta.get("finish_reason") or "") if isinstance(delta, dict) else ""
+                    if reason not in {"COMPLETE", "STOP_SEQUENCE"}:
+                        raise ModelProviderError(
+                            f"Cohere stream ended with {reason or 'no finish reason'}"
+                        )
+                    finished = True
+                    await publish("", final=True)
+
+            try:
+                loop = asyncio.get_running_loop()
+                async with asyncio.timeout(
+                    self.settings.model_call_timeout_seconds
+                ) as deadline:
+                    async with client.stream("POST", "/v2/chat", json=body) as response:
+                        if response.status_code >= 400:
+                            await response.aread()
+                            if response.status_code == 429 and not last:
+                                try:
+                                    delay = float(response.headers.get("retry-after", "6"))
+                                except ValueError:
+                                    delay = 6.0
+                                retry_delay = min(max(delay, 1.0), 20.0)
+                            elif not last and self._is_transient(response):
+                                retry_delay = 1.0 + attempt
+                            else:
+                                raise ModelProviderError(
+                                    f"Cohere returned HTTP {response.status_code}: "
+                                    f"{response.text[:400]}"
+                                )
+                        else:
+                            if "text/event-stream" not in response.headers.get("content-type", "").lower():
+                                raise ModelProviderError("Cohere returned a non-streaming reply")
+                            async for line in response.aiter_lines():
+                                if line == "":
+                                    if data_lines:
+                                        await consume("\n".join(data_lines), event_name)
+                                        data_lines.clear()
+                                        event_name = ""
+                                        deadline.reschedule(
+                                            loop.time() + self.settings.model_stall_timeout_seconds
+                                        )
+                                        if finished:
+                                            break
+                                    continue
+                                if line.startswith("event:"):
+                                    event_name = line[6:].strip()
+                                elif line.startswith("data:"):
+                                    data_lines.append(line[5:].lstrip(" "))
+                            if data_lines:
+                                await consume("\n".join(data_lines), event_name)
+                            if not finished:
+                                raise ModelProviderError("Cohere stream ended before completion")
+                            return "".join(visible_parts), response_id
+            except TimeoutError as exc:
+                raise ModelProviderError(
+                    "Cohere stream timed out while waiting for a response"
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ModelProviderError(
+                    f"Cohere stream failed: {str(exc)[:400]}"
+                ) from exc
+            if retry_delay is not None:
+                await asyncio.sleep(retry_delay)
+        raise ModelProviderError("Cohere kept failing after 3 attempts")
+
     async def transcribe(
         self, audio: bytes, filename: str, media_type: str, *, language: str = ""
     ) -> str:
@@ -3916,32 +4142,27 @@ class CohereModelProvider:
             raise ModelProviderError(
                 "arbitrary runtime schemas are not accepted; use a registered typed method"
             )
-        reply = await self._chat(
-            {
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": f"{COHERE_PREAMBLE}\n\n{request.system_prompt}",
-                    },
-                    {"role": "user", "content": request.user_prompt},
-                ],
-                "max_tokens": self.settings.cohere_max_output_tokens,
-            }
-        )
-        message = reply.get("message") or {}
-        content = _cohere_message_text(message)
-        # Reasoning first, so the panel fills before the answer lands — the
-        # same order the streaming local lane produces it in.
-        if on_reasoning is not None:
-            thinking = _cohere_thinking_text(message)
-            if thinking:
-                await on_reasoning(thinking)
-        if on_token is not None and content:
-            await on_token(content)
+        payload = {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"{COHERE_PREAMBLE}\n\n{request.system_prompt}",
+                },
+                {"role": "user", "content": request.user_prompt},
+            ],
+            "max_tokens": self.settings.cohere_max_output_tokens,
+        }
+        if on_token is not None or on_reasoning is not None:
+            content, response_id = await self._stream_chat(payload, on_token, on_reasoning)
+        else:
+            reply = await self._chat(payload)
+            message = reply.get("message") or {}
+            content = _cohere_message_text(message)
+            response_id = str(reply.get("id", ""))
         return ModelResultV1(
             model=self.settings.cohere_model,
             content=content,
-            structured={"provider": self.name, "response_id": str(reply.get("id", ""))},
+            structured={"provider": self.name, "response_id": response_id},
         )
 
     async def plan(
@@ -4483,6 +4704,16 @@ CLINE_PREAMBLE = """You are a cloud reasoning provider for Metis, a local-first
 assistant. Answer only from the bounded context on this request. Never invent a
 fact about the user's project, files or data that the context does not contain."""
 
+CLINE_CHAT_PREAMBLE = """You are a cloud reasoning provider for Metis, a
+local-first assistant. Answer questions about general, stable knowledge directly,
+even when no retrieved snippets are supplied. Ground claims about the user's
+projects, files, data, and decisions in the context supplied with this request;
+say when that context is insufficient. Ground current or changing claims in
+retrieved web evidence supplied with this request. If none is supplied, do not
+present the latest state as verified; give stable background when useful and say
+that current details need checking. Never claim to have browsed, read a source,
+or accessed the user's system unless that evidence is supplied here."""
+
 
 class ClineModelProvider:
     """The Cline gateway: one key, two seats, an OpenAI-compatible endpoint.
@@ -4604,6 +4835,46 @@ class ClineModelProvider:
             await self._client_instance.aclose()
             self._client_instance = None
 
+    def _check_chat_status(
+        self, status_code: int, detail: str, payload: dict[str, Any], *, last: bool
+    ) -> bool:
+        """Return whether a transient Cline HTTP failure should be retried."""
+        if status_code == 429:
+            error = f"Cline returned HTTP 429: {detail[:400]}"
+            if (
+                classify_backend_unavailable(ModelProviderError(error))
+                == "provider_exhausted"
+            ):
+                self._remember_provider_exhaustion(error)
+                raise PermanentModelError(error, reason="provider_exhausted")
+        if status_code in (429, 500, 502, 503, 504) and not last:
+            return True
+        if status_code == 402:
+            raise PermanentModelError(
+                f"Cline has no credits left for {payload.get('model')}. The "
+                "ClinePass subscription covers the cline-pass/* models; "
+                "Anthropic and xAI models bill against credits, which are "
+                "spent. Top up at https://app.cline.bot/credits, or move "
+                "this role to a cline-pass/* model.",
+                reason="out_of_credits",
+            )
+        if status_code == 403:
+            raise PermanentModelError(
+                f"Cline refused {payload.get('model')}: the subscription does "
+                "not cover this model (HTTP 403)",
+                reason="not_subscribed",
+            )
+        if status_code == 401:
+            raise PermanentModelError(
+                "Cline rejected the API key (HTTP 401) — check WAQIL_CLINE_API_KEY",
+                reason="bad_credentials",
+            )
+        if status_code >= 400:
+            raise ModelProviderError(
+                f"Cline returned HTTP {status_code}: {detail[:400]}"
+            )
+        return False
+
     async def _chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         """One chat-completions call, unwrapped, with bounded retries.
 
@@ -4622,7 +4893,9 @@ class ClineModelProvider:
             last = attempt == attempts - 1
             try:
                 async with asyncio.timeout(self.settings.model_call_timeout_seconds):
-                    response = await client.post("/chat/completions", json=payload)
+                    response = await client.post(
+                        "/chat/completions", json={**payload, "stream": False}
+                    )
             except TimeoutError as exc:
                 raise ModelProviderError(
                     "Cline call timed out after "
@@ -4632,47 +4905,11 @@ class ClineModelProvider:
                 raise ModelProviderError(
                     f"Cline call failed: {str(exc)[:400]}"
                 ) from exc
-            if response.status_code == 429:
-                detail = f"Cline returned HTTP 429: {response.text[:400]}"
-                if (
-                    classify_backend_unavailable(ModelProviderError(detail))
-                    == "provider_exhausted"
-                ):
-                    self._remember_provider_exhaustion(detail)
-                    raise PermanentModelError(detail, reason="provider_exhausted")
-            if response.status_code in (429, 500, 502, 503, 504) and not last:
+            if self._check_chat_status(
+                response.status_code, response.text, payload, last=last
+            ):
                 await asyncio.sleep(1.0 + attempt * 2)
                 continue
-            if response.status_code == 402:
-                # The distinction that matters, and the one a live run turned
-                # into a silent stall: the ClinePass subscription covers the
-                # `cline-pass/*` models, while the Anthropic and xAI models
-                # behind the same key bill against pay-as-you-go credits. An
-                # empty balance is not a model failing, and saying "HTTP 402"
-                # would leave the user to work that out from a status code.
-                raise PermanentModelError(
-                    f"Cline has no credits left for {payload.get('model')}. The "
-                    "ClinePass subscription covers the cline-pass/* models; "
-                    "Anthropic and xAI models bill against credits, which are "
-                    "spent. Top up at https://app.cline.bot/credits, or move "
-                    "this role to a cline-pass/* model.",
-                    reason="out_of_credits",
-                )
-            if response.status_code == 403:
-                raise PermanentModelError(
-                    f"Cline refused {payload.get('model')}: the subscription does "
-                    "not cover this model (HTTP 403)",
-                    reason="not_subscribed",
-                )
-            if response.status_code == 401:
-                raise PermanentModelError(
-                    "Cline rejected the API key (HTTP 401) — check WAQIL_CLINE_API_KEY",
-                    reason="bad_credentials",
-                )
-            if response.status_code >= 400:
-                raise ModelProviderError(
-                    f"Cline returned HTTP {response.status_code}: {response.text[:400]}"
-                )
             try:
                 body = response.json()
             except ValueError as exc:
@@ -4693,6 +4930,208 @@ class ClineModelProvider:
             self.last_usage = _openai_usage(reply)
             return reply
         raise ModelProviderError(f"Cline kept failing after {attempts} attempts")
+
+    async def _stream_chat(
+        self,
+        payload: dict[str, Any],
+        on_token: Callable[[str], Awaitable[None]],
+        *,
+        on_reasoning: Callable[[str], Awaitable[None]] | None = None,
+        started_at: float | None = None,
+        timings: dict[str, float | int] | None = None,
+    ) -> str:
+        """Read OpenAI-style SSE deltas, including Cline's optional data wrapper.
+
+        The first chunk uses the ordinary call timeout. Once the gateway begins
+        producing an answer, each meaningful chunk resets the stall clock.
+        HTTP failures can be retried before text is emitted; a broken partial
+        answer must fail instead of replaying its opening words.
+        """
+        exhausted = self._active_provider_exhaustion()
+        if exhausted:
+            raise PermanentModelError(exhausted, reason="provider_exhausted")
+        client = await self._client()
+        stream_payload = {**payload, "stream": True}
+        self.last_usage = {}
+
+        finish_seen = False
+        reasoning_pending: list[str] = []
+        reasoning_characters = 0
+
+        async def flush_reasoning() -> None:
+            nonlocal reasoning_characters
+            if reasoning_pending and on_reasoning is not None:
+                if timings is not None and started_at is not None:
+                    timings.setdefault(
+                        "first_reasoning_visible_seconds",
+                        round(time.monotonic() - started_at, 3),
+                    )
+                await on_reasoning("".join(reasoning_pending))
+            reasoning_pending.clear()
+            reasoning_characters = 0
+
+        async def emit_event(raw: str, parts: list[str]) -> bool:
+            nonlocal finish_seen, reasoning_characters
+            if raw == "[DONE]":
+                await flush_reasoning()
+                return True
+            if timings is not None and started_at is not None:
+                timings.setdefault(
+                    "first_event_seconds", round(time.monotonic() - started_at, 3)
+                )
+            try:
+                item = json.loads(raw)
+            except ValueError as exc:
+                raise ModelProviderError(
+                    "Cline returned an invalid stream event"
+                ) from exc
+            if not isinstance(item, dict):
+                raise ModelProviderError("Cline returned an invalid stream event")
+            chunk = item.get("data") if isinstance(item.get("data"), dict) else item
+            if chunk.get("error"):
+                raise ModelProviderError(
+                    f"Cline stream failed: {str(chunk['error'])[:400]}"
+                )
+            usage = _openai_usage(chunk)
+            if usage:
+                self.last_usage = usage
+            choices = chunk.get("choices") or []
+            choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+            finish_reason = choice.get("finish_reason")
+            if finish_reason == "error":
+                raise ModelProviderError("Cline stream reported a generation error")
+            if finish_reason is not None and finish_reason != "stop":
+                raise ModelProviderError(
+                    f"Cline stream ended with {str(finish_reason)[:80]}"
+                )
+            delta = choice.get("delta") or {}
+            reasoning = (
+                _message_text(
+                    delta.get("reasoning") or delta.get("reasoning_content")
+                )
+                if isinstance(delta, dict)
+                else ""
+            )
+            if reasoning:
+                if timings is not None and started_at is not None:
+                    timings.setdefault(
+                        "first_reasoning_seconds",
+                        round(time.monotonic() - started_at, 3),
+                    )
+                    timings["reasoning_characters"] = int(
+                        timings.get("reasoning_characters", 0)
+                    ) + len(reasoning)
+                if on_reasoning is not None:
+                    reasoning_pending.append(reasoning)
+                    reasoning_characters += len(reasoning)
+                    if reasoning_characters >= 160:
+                        await flush_reasoning()
+            content = (
+                _message_text(delta.get("content")) if isinstance(delta, dict) else ""
+            )
+            if content:
+                await flush_reasoning()
+                parts.append(content)
+                await on_token(content)
+            if finish_reason == "stop":
+                await flush_reasoning()
+                finish_seen = True
+            return False
+
+        for attempt in range(3):
+            last = attempt == 2
+            parts: list[str] = []
+            terminal = False
+            finish_seen = False
+            reasoning_pending.clear()
+            reasoning_characters = 0
+            data_lines: list[str] = []
+            try:
+                import httpx
+
+                loop = asyncio.get_running_loop()
+                async with asyncio.timeout(
+                    self.settings.model_call_timeout_seconds
+                ) as deadline:
+                    async with client.stream(
+                        "POST", "/chat/completions", json=stream_payload
+                    ) as response:
+                        if response.status_code >= 400:
+                            await response.aread()
+                            if self._check_chat_status(
+                                response.status_code,
+                                response.text,
+                                stream_payload,
+                                last=last,
+                            ):
+                                await asyncio.sleep(1.0 + attempt * 2)
+                                continue
+                        if timings is not None and started_at is not None:
+                            # A retried 429/5xx must not masquerade as the
+                            # successful response's header time.
+                            timings["response_headers_seconds"] = round(
+                                time.monotonic() - started_at, 3
+                            )
+                        if (
+                            "text/event-stream"
+                            not in response.headers.get("content-type", "").lower()
+                        ):
+                            # A gateway that ignores stream=true may still return
+                            # its ordinary JSON envelope. Keep that reply usable.
+                            await response.aread()
+                            try:
+                                body = response.json()
+                            except ValueError as exc:
+                                raise ModelProviderError(
+                                    "Cline returned a non-JSON reply"
+                                ) from exc
+                            reply = body.get("data") if isinstance(body, dict) else None
+                            reply = reply if isinstance(reply, dict) else body
+                            if not isinstance(reply, dict):
+                                raise ModelProviderError(
+                                    "Cline returned an invalid reply"
+                                )
+                            self.last_usage = _openai_usage(reply)
+                            content = str(self._message(reply).get("content") or "")
+                            if content:
+                                await on_token(content)
+                            return content
+                        async for line in response.aiter_lines():
+                            if line == "":
+                                if data_lines:
+                                    terminal = (
+                                        await emit_event("\n".join(data_lines), parts)
+                                        or terminal
+                                    )
+                                    data_lines.clear()
+                                if terminal:
+                                    break
+                                continue
+                            if line.startswith("data:"):
+                                data_lines.append(line[5:].lstrip(" "))
+                            if data_lines:
+                                deadline.reschedule(
+                                    loop.time()
+                                    + self.settings.model_stall_timeout_seconds
+                                )
+                        if data_lines and not terminal:
+                            terminal = await emit_event("\n".join(data_lines), parts)
+                        if not finish_seen:
+                            raise ModelProviderError(
+                                "Cline stream ended before completion"
+                            )
+                        await flush_reasoning()
+                        return "".join(parts)
+            except TimeoutError as exc:
+                raise ModelProviderError(
+                    "Cline call timed out after "
+                    f"{self.settings.model_call_timeout_seconds:g} seconds"
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ModelProviderError(
+                    f"Cline call failed: {str(exc)[:400]}"
+                ) from exc
+        raise ModelProviderError("Cline kept failing after 3 attempts")
 
     def _message(self, reply: dict[str, Any]) -> dict[str, Any]:
         choices = reply.get("choices") or []
@@ -4805,24 +5244,55 @@ class ClineModelProvider:
         model_aliases=None,
         on_reasoning=None,
     ) -> ModelResultV1:
-        reply = await self._chat(
-            {
-                "model": self._model_for(request.role, model_aliases),
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": f"{CLINE_PREAMBLE}\n\n{request.system_prompt}",
-                    },
-                    {"role": "user", "content": request.user_prompt},
-                ],
-                "max_completion_tokens": self.settings.cline_max_output_tokens,
-            }
-        )
-        content = str(self._message(reply).get("content") or "")
-        if on_token is not None and content:
-            await on_token(content)
+        started_at = time.monotonic()
+        stream_timings: dict[str, float | int] = {}
+        first_text_seconds: float | None = None
+        selected_model = self._model_for(request.role, model_aliases)
+        payload = {
+            "model": selected_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"{CLINE_CHAT_PREAMBLE}\n\n{request.system_prompt}",
+                },
+                {"role": "user", "content": request.user_prompt},
+            ],
+            "max_completion_tokens": (
+                request.max_output_tokens or self.settings.cline_max_output_tokens
+            ),
+        }
+        if on_token is None:
+            reply = await self._chat(payload)
+            content = str(self._message(reply).get("content") or "")
+        else:
+            async def timed_on_token(delta: str) -> None:
+                nonlocal first_text_seconds
+                if delta and first_text_seconds is None:
+                    first_text_seconds = round(time.monotonic() - started_at, 3)
+                await on_token(delta)
+
+            content = await self._stream_chat(
+                payload,
+                timed_on_token,
+                on_reasoning=on_reasoning,
+                started_at=started_at,
+                timings=stream_timings,
+            )
         return ModelResultV1(
-            content=content, model=self._model_for(request.role, model_aliases)
+            content=content,
+            model=selected_model,
+            structured={
+                "provider": "cline",
+                "generation_seconds": round(time.monotonic() - started_at, 3),
+                "first_text_seconds": first_text_seconds,
+                "streamed": on_token is not None,
+                "input_characters": sum(
+                    len(str(message["content"])) for message in payload["messages"]
+                ),
+                "output_characters": len(content),
+                "max_completion_tokens": payload["max_completion_tokens"],
+                **stream_timings,
+            },
         )
 
     async def project_step(

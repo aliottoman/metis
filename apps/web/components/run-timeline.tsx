@@ -28,6 +28,8 @@ interface RunTimelineProps {
   decidedApprovals: ReadonlySet<string>;
   decisionBusy?: string | null;
   approveLabel?: string;
+  /** The execution overview owns pending decisions when the timeline is nested. */
+  showDecisions?: boolean;
 }
 
 function getText(
@@ -97,7 +99,7 @@ export function runEventTitle(type: string, payload?: Record<string, unknown>): 
     "model.response": "Model finished",
     "model.started": "Model working",
     "model.completed": "Model finished",
-    "answer.grounding_reviewed": "Grounding checked",
+    "answer.grounding_reviewed": "Source review",
     "architecture.spec_created": "Architecture drafted",
     "diagram.code_created": "Diagram code ready",
     "tool.proposed": "New tool proposed",
@@ -131,6 +133,10 @@ export function runEventTitle(type: string, payload?: Record<string, unknown>): 
     "approval.applied": "Approval recorded",
     "run.awaiting_approval": "Waiting for approval",
     "run.interrupted": "Waiting for approval",
+    "run.awaiting_input": "Waiting for your answer",
+    "elicitation.requested": "Question for you",
+    "elicitation.answered": "Answer received",
+    "approval.decided": "Decision recorded",
     "artifact.created": "Artifact created",
     "message.created": "Reply delivered",
     "run.completed": "Run complete",
@@ -211,16 +217,25 @@ export function runEventTone(event: RunEventV1): string {
 
 export function runEventSummary(event: RunEventV1): string {
   const payload = event.payload;
+  if (event.type === "plan.created") return getText(payload, "summary") ?? "The task plan is ready.";
+  if (event.type === "elicitation.requested") return getText(payload, "question") ?? "A question needs your answer.";
+  if (event.type === "elicitation.answered") return getText(payload, "option", "text") ?? "Your answer was recorded and the task can continue.";
+  if (event.type === "approval.applied" || event.type === "approval.decided") {
+    const status = getText(payload, "status", "decision");
+    return status ? `Decision: ${status.replaceAll("_", " ")}` : "The approval decision was recorded.";
+  }
+  if (event.type === "run.cancelled" || event.type === "cancelled") return "The task was stopped. Available outputs have been kept.";
+  if (event.type === "run.completed" || event.type === "completed") return getText(payload, "summary") ?? "The task finished. Its response and outputs are available in this conversation.";
   if (event.type === "stage.entered") {
     return getText(payload, "label") ?? "Working…";
   }
   if (event.type === "answer.grounding_reviewed") {
     if (payload.revision)
-      return "Retrieved sources went uncited — sending one revision to ground the answer.";
+      return "Retrieved sources went uncited — asking for a revision with relevant citations.";
     if (payload.has_attachments)
-      return "Answered from the attached document — kept as written.";
+      return "An attached document was available — kept the answer as written.";
     if (payload.strong_retrieval)
-      return "Answer is grounded in the retrieved sources.";
+      return "Source review completed without a further revision.";
     return "No strongly-relevant sources to ground against.";
   }
   if (event.type === "context.knowledge_error") {
@@ -440,6 +455,7 @@ export function RunTimeline({
   decidedApprovals,
   decisionBusy,
   approveLabel = "Approve once",
+  showDecisions = true,
 }: RunTimelineProps) {
   const [showRoutine, setShowRoutine] = useState(false);
   const ordered = useMemo(() => [...events].sort((a, b) => a.sequence - b.sequence), [events]);
@@ -473,7 +489,7 @@ export function RunTimeline({
                   <time>{index === 0 && event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : took}</time>
                 </div>
                 <p>{runEventSummary(event)}</p>
-                {approval ? <ApprovalCard approval={approval} decided={decided} decisionBusy={decisionBusy} onDecision={onDecision} approveLabel={approveLabel} /> : null}
+                {approval && showDecisions ? <ApprovalCard approval={approval} decided={decided} decisionBusy={decisionBusy} onDecision={onDecision} approveLabel={approveLabel} /> : null}
               </div>
             </article>
           );

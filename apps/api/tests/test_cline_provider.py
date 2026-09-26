@@ -7,9 +7,11 @@ model rather than a bad client.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
+import httpx
 import pytest
 
 from waqil_api.config import Settings
@@ -106,6 +108,314 @@ async def test_the_reply_is_unwrapped_from_its_data_envelope() -> None:
         ModelRequestV1(role="planner", system_prompt="s", user_prompt="u")
     )
     assert result.content == "hello"
+    assert client.sent[0]["stream"] is False
+    assert result.structured is not None
+    assert result.structured["provider"] == "cline"
+    assert result.structured["streamed"] is False
+    assert result.structured["first_text_seconds"] is None
+    assert result.structured["generation_seconds"] >= 0
+    assert result.structured["input_characters"] > len("u")
+    assert result.structured["output_characters"] == len("hello")
+    assert "response_headers_seconds" not in result.structured
+
+
+@pytest.mark.asyncio
+async def test_general_chat_prompt_allows_stable_knowledge_but_bounds_personal_and_current_claims() -> None:
+    chat = _Client(
+        _Response(200, {"data": {"choices": [{"message": {"content": "answer"}}]}})
+    )
+    await _provider(chat).generate(
+        ModelRequestV1(
+            role="planner",
+            system_prompt="Be concise.",
+            user_prompt="Explain a stable concept.",
+        )
+    )
+    system = chat.sent[0]["messages"][0]["content"]
+    assert "general, stable knowledge directly" in system
+    assert "Ground claims about the user's" in system
+    assert "Ground current or changing claims" in system
+    assert "retrieved web evidence" in system
+    assert "Never claim to have browsed" in system
+    assert system.endswith("Be concise.")
+    assert "Answer only from the bounded context" not in system
+
+    project = _Client(
+        _tool_reply(
+            "return_projectdirectionv1",
+            '{"path":"app/main.py","instruction":"write it"}',
+        )
+    )
+    await _provider(project).project_direction({"planned_files": ["app/main.py"]})
+    assert "Answer only from the bounded context" in project.sent[0]["messages"][0][
+        "content"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_each_delta_before_the_reply_finishes() -> None:
+    emitted: list[str] = []
+    requests: list[dict[str, Any]] = []
+
+    class Chunks(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"data":{"choices":[{"delta":{"content":"Hel"}}]}}\n\n'
+            assert emitted == ["Hel"]
+            yield b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+            assert emitted == ["Hel", "lo"]
+            yield b'data: {"data":{"choices":[{"finish_reason":"stop"}]}}\n\n'
+            yield b'data: {"data":{"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}}\n\n'
+            yield b"data: [DONE]\n\n"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=Chunks()
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://example.test", transport=httpx.MockTransport(respond)
+    )
+    provider = _provider(client)  # type: ignore[arg-type]
+    try:
+        result = await provider.generate(
+            ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+            on_token=lambda delta: _collect(emitted, delta),
+        )
+    finally:
+        await client.aclose()
+    assert result.content == "Hello"
+    assert emitted == ["Hel", "lo"]
+    assert requests[0]["stream"] is True
+    assert result.structured is not None
+    timing = result.structured
+    assert timing["provider"] == "cline"
+    assert timing["streamed"] is True
+    assert timing["output_characters"] == 5
+    assert 0 <= timing["response_headers_seconds"] <= timing["first_event_seconds"]
+    assert timing["first_event_seconds"] <= timing["first_text_seconds"]
+    assert timing["first_text_seconds"] <= timing["generation_seconds"]
+    assert provider.last_usage == {
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 5,
+    }
+
+
+async def _collect(sink: list[str], delta: str) -> None:
+    sink.append(delta)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("done_marker", [True, False])
+async def test_cline_reasoning_is_batched_separately_from_answer_text(
+    done_marker: bool,
+) -> None:
+    answer: list[str] = []
+    reasoning: list[str] = []
+    first = "a" * 90
+    second = "b" * 90
+    trailing = "c" * 30
+    after_stop = "d" * 20
+
+    class Chunks(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield f'data: {{"choices":[{{"delta":{{"reasoning":"{first}"}}}}]}}\n\n'.encode()
+            assert reasoning == []
+            yield f'data: {{"choices":[{{"delta":{{"reasoning_content":"{second}"}}}}]}}\n\n'.encode()
+            assert reasoning == [first + second]
+            assert answer == []
+            yield b'data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n'
+            assert answer == ["Answer"]
+            yield f'data: {{"choices":[{{"delta":{{"reasoning":"{trailing}"}}}}]}}\n\n'.encode()
+            assert reasoning == [first + second]
+            yield b'data: {"choices":[{"finish_reason":"stop"}]}\n\n'
+            assert reasoning == [first + second, trailing]
+            yield f'data: {{"choices":[{{"delta":{{"reasoning":"{after_stop}"}}}}]}}\n\n'.encode()
+            assert reasoning == [first + second, trailing]
+            if done_marker:
+                yield b"data: [DONE]\n\n"
+
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, stream=Chunks()
+            )
+        ),
+    )
+    try:
+        result = await _provider(client).generate(  # type: ignore[arg-type]
+            ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+            on_token=lambda delta: _collect(answer, delta),
+            on_reasoning=lambda delta: _collect(reasoning, delta),
+        )
+    finally:
+        await client.aclose()
+    assert result.content == "Answer"
+    assert reasoning == [first + second, trailing, after_stop]
+    assert result.structured is not None
+    assert result.structured["reasoning_characters"] == 230
+    assert result.structured["first_reasoning_seconds"] <= result.structured[
+        "first_reasoning_visible_seconds"
+    ]
+    assert result.structured["first_reasoning_visible_seconds"] <= result.structured[
+        "first_text_seconds"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cline_reasoning_callback_preserves_cancellation() -> None:
+    thought = "x" * 180
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=(
+                    f'data: {{"choices":[{{"delta":{{"reasoning":"{thought}"}}}}]}}\n\n'
+                    'data: {"choices":[{"delta":{"content":"unseen"},"finish_reason":"stop"}]}\n\n'
+                ),
+            )
+        ),
+    )
+
+    async def cancel(_: str) -> None:
+        raise asyncio.CancelledError()
+
+    answer: list[str] = []
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect(answer, delta),
+                on_reasoning=cancel,
+            )
+    finally:
+        await client.aclose()
+    assert answer == []
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_rejects_a_truncated_reply_after_emitting_text() -> None:
+    emitted: list[str] = []
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text='data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+            )
+        ),
+    )
+    try:
+        with pytest.raises(ModelProviderError, match="ended before completion"):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect(emitted, delta),
+            )
+    finally:
+        await client.aclose()
+    assert emitted == ["partial"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_rejects_a_midstream_generation_error() -> None:
+    emitted: list[str] = []
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=(
+                    'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+                    'data: {"choices":[{"finish_reason":"error"}]}\n\n'
+                    "data: [DONE]\n\n"
+                ),
+            )
+        ),
+    )
+    try:
+        with pytest.raises(ModelProviderError, match="generation error"):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect(emitted, delta),
+            )
+    finally:
+        await client.aclose()
+    assert emitted == ["partial"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_rejects_a_length_limited_reply() -> None:
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=(
+                    'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":"length"}]}\n\n'
+                    "data: [DONE]\n\n"
+                ),
+            )
+        ),
+    )
+    try:
+        with pytest.raises(ModelProviderError, match="ended with length"):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect([], delta),
+            )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_permanent_http_errors() -> None:
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(401, json={"error": "bad key"})
+        ),
+    )
+    try:
+        with pytest.raises(ModelProviderError, match="WAQIL_CLINE_API_KEY"):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect([], delta),
+            )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_preserves_cancellation() -> None:
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text='data: {"choices":[{"delta":{"content":"first"}}]}\n\n',
+            )
+        ),
+    )
+
+    async def cancel(_: str) -> None:
+        raise asyncio.CancelledError()
+
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await _provider(client).generate(  # type: ignore[arg-type]
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=cancel,
+            )
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -121,6 +431,21 @@ async def test_the_budget_is_sent_as_max_completion_tokens() -> None:
     )
     assert "max_completion_tokens" in client.sent[0]
     assert "max_tokens" not in client.sent[0]
+
+    limited = _Client(
+        _Response(200, {"data": {"choices": [{"message": {"content": "x"}}]}})
+    )
+    result = await _provider(limited).generate(
+        ModelRequestV1(
+            role="planner",
+            system_prompt="s",
+            user_prompt="u",
+            max_output_tokens=512,
+        )
+    )
+    assert limited.sent[0]["max_completion_tokens"] == 512
+    assert result.structured is not None
+    assert result.structured["max_completion_tokens"] == 512
 
 
 @pytest.mark.asyncio

@@ -1211,7 +1211,7 @@ def summarize_run(
     ]
     # Preserve raw SDK terminal states, but distinguish a genuine failure from
     # the one terminal-shaped result that the host intentionally knows how to
-    # settle.  ClineCore 0.0.72 reports its configured iteration boundary as a
+    # settle. ClineCore can report its configured iteration boundary as a
     # failed/error result.  The sidecar marks that exact result as a controlled
     # stop; Metis may then import its non-empty, in-plan overlay and run the
     # independent verifier.  Only that complete event chain is a recovery.  A

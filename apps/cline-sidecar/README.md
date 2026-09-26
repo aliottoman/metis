@@ -1,6 +1,6 @@
 # Metis Cline sidecar
 
-This package embeds the pinned `@cline/sdk` **0.0.72** runtime behind a small,
+This package embeds the pinned `@cline/sdk` **0.0.86** runtime behind a small,
 versioned NDJSON protocol. The process is local. Only provider inference leaves
 the machine.
 
@@ -18,9 +18,16 @@ node apps/cline-sidecar/dist/src/index.js \
 
 `--data-dir` is mandatory, absolute, private (`0700`), and cannot be a symlink
 or filesystem root. The sidecar sets all Cline data/session/database roots to
-this directory before importing the SDK. It never opens a TCP or Unix socket;
+this directory before creating ClineCore. It never opens a TCP or Unix socket;
 one supervised Metis process communicates over stdin/stdout. Stdout is reserved
 for protocol frames.
+
+SDK 0.0.86 enables provider-native web search by default for supported models.
+The sidecar persists `web_search: false` in its isolated Cline settings and
+verifies that value before creating ClineCore. Startup fails if the setting
+cannot be written or read back. Native search runs at the provider and is not
+covered by the local tool approval hooks; this startup check keeps project
+coding inside Metis's web-disabled tool policy.
 
 Use `--runtime fake` for deterministic contract tests with no model request.
 `--max-replay-events N` changes the persisted per-session replay bound (default
@@ -115,7 +122,7 @@ Credentials are never returned, logged, or intentionally persisted. After a
 real SDK session starts, all Metis-owned artifacts are scanned for exact
 credential canaries; a match deletes the session and hard-fails. Because keys
 are not stored, `restoreSlice`/`continueSlice` must receive the same provider
-connection after a child-process restart. ClineCore 0.0.72 persists transcripts
+connection after a child-process restart. ClineCore persists transcripts
 but not a live runtime; the first post-restart continuation therefore forks the
 persisted messages under a new session ID and reports the old ID as
 `parentSessionId`. For a long model restart, the fork keeps the original user

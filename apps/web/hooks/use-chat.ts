@@ -38,11 +38,13 @@ import {
   addDocumentToKnowledge,
 } from "@/lib/api";
 import { latestPendingApproval } from "@/lib/approvals";
+import { outgoingChatDraft, restoreChatDraft } from "@/lib/chat-draft";
 import { latestPendingElicitation } from "@/lib/elicitations";
+import { mergeExecutionEvents } from "@/lib/execution-milestones";
 import { isCloudActive } from "@/lib/model";
 import { clinePassReady, projectMappingReady } from "@/lib/model-route";
 import { rememberConversation } from "@/lib/recent-conversations";
-import { mergeAssistantReasoning, mergeAssistantRunEvent, messageBelongsToRun } from "@/lib/run-history";
+import { mergeAssistantReasoning, mergeAssistantRunEvent, mergeHydratedConversationMessages, messageBelongsToRun } from "@/lib/run-history";
 import { trackConversationRun, updateConversationRun } from "@/lib/run-indicators";
 import { latestActionSuggestion } from "@/lib/suggestions";
 import { freshToken } from "@/lib/token";
@@ -148,7 +150,9 @@ export function useChat() {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<AttachmentRef[]>([]);
   const [uploading, setUploading] = useState(false);
+  const uploadsInFlight = useRef(0);
   const [sending, setSending] = useState(false);
+  const stopInFlight = useRef(false);
   const [queued, setQueued] = useState<{ content: string; attachments: AttachmentRef[] } | null>(null);
   const [knowledgeAdds, setKnowledgeAdds] = useState<Record<string, "adding" | "added" | "error">>({});
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -223,6 +227,7 @@ export function useChat() {
     setLoadingConversation(false);
     setSending(false);
     setUploading(false);
+    uploadsInFlight.current = 0;
     setQueued(null);
     setEditingMessageId(null);
     setEditDraft("");
@@ -313,12 +318,12 @@ export function useChat() {
     } else if (type === "run.awaiting_approval" || type === "run.interrupted" || type === "elicitation.requested") {
       updateConversationRun(event.run_id, "attention", true);
     }
-    if (type.includes("delta") || type.includes("failed") || ["assistant.message", "message.completed", "run.completed", "completed"].includes(type)) {
+    if (["message.delta", "assistant.delta", "response.delta", "model.delta", "run.failed", "failed", "run.cancelled", "cancelled", "assistant.message", "message.completed", "run.completed", "completed"].includes(type)) {
       setMessages((current) => mergeAssistantRunEvent(current, event, text));
     }
   }, []);
 
-  const { events, connection, error: streamError, reconnect } = useRunEvents(activeRunId, handleRunEvent);
+  const { events, executionEvents, connection, error: streamError, reconnect } = useRunEvents(activeRunId, handleRunEvent);
   const runActive = Boolean(activeRunId) && !["closed", "error"].includes(connection);
   const hasMessages = messages.length > 0 || loadingConversation;
 
@@ -335,6 +340,13 @@ export function useChat() {
     }
     handledNewRequestRef.current = null;
     if (!requestedConversationId || loadedConversationRef.current === requestedConversationId) return;
+    // A send or upload started in the previous conversation may resolve after
+    // navigation. Retire its callbacks before opening the next thread.
+    generationRef.current += 1;
+    setSending(false);
+    setUploading(false);
+    uploadsInFlight.current = 0;
+    setQueued(null);
     let mounted = true;
     setConversationId(requestedConversationId);
     setConversationTitle("Opening conversation…");
@@ -350,10 +362,11 @@ export function useChat() {
     void Promise.all([getConversation(requestedConversationId), getConversationProject(requestedConversationId)])
       .then(([conversation, projectSession]) => {
         if (!mounted) return;
-        setMessages(conversation.messages);
+        const runId = requestedRunId ?? liveRunsRef.current.get(requestedConversationId) ?? conversation.latest_run_id ?? null;
+        setMessages((current) => mergeHydratedConversationMessages(conversation.messages, current, runId));
         setConversationTitle(conversation.title || "Conversation");
         latestRunRef.current = conversation.latest_run_id ?? null;
-        setActiveRunId(requestedRunId ?? liveRunsRef.current.get(requestedConversationId) ?? conversation.latest_run_id ?? null);
+        setActiveRunId(runId);
         loadedConversationRef.current = requestedConversationId;
         rememberConversation(conversation);
         if (projectSession) {
@@ -408,14 +421,17 @@ export function useChat() {
   }, [activeRunId, latestAssistant?.run_id]);
 
   // -- sending -------------------------------------------------------------------
-  const submit = useCallback(async (overrideContent?: string) => {
+  const submit = useCallback(async (overrideContent?: string, overrideAttachments?: AttachmentRef[]) => {
     const usingOverride = typeof overrideContent === "string";
-    const content = (overrideContent ?? draft).trim();
-    const outgoing = usingOverride ? [] : attachments;
-    if ((!content && !outgoing.length) || sending || uploading) return;
+    const { content, attachments: outgoing } = outgoingChatDraft({ content: draft, attachments }, overrideContent, overrideAttachments);
+    if ((!content && !outgoing.length) || sending || uploading || loadingConversation || projectOpening) return;
     // A run is in flight: this becomes the next message. The composer clears
     // as if it had sent, because from the user's side it has.
     if (runActive) {
+      if (queued) {
+        setError("A message is already queued. Edit it or wait for it to send before queueing another.");
+        return;
+      }
       setQueued({ content, attachments: outgoing });
       if (!usingOverride) {
         setDraft("");
@@ -467,38 +483,39 @@ export function useChat() {
     } catch (sendError) {
       if (generation !== generationRef.current) return;
       setMessages((current) => current.filter((message) => message.id !== userMessage.id));
-      if (!usingOverride) {
-        setDraft(content);
-        setAttachments(userMessage.attachments ?? []);
+      if (!usingOverride || overrideAttachments !== undefined) {
+        setDraft((current) => restoreChatDraft({ content, attachments: [] }, { content: current, attachments: [] }).content);
+        setAttachments((current) => restoreChatDraft({ content: "", attachments: outgoing }, { content: "", attachments: current }).attachments);
       }
       setError(sendError instanceof Error ? sendError.message : "The message could not be sent.");
     } finally {
       if (generation === generationRef.current) setSending(false);
     }
-  }, [attachments, conversationId, conversationTitle, draft, knowledgeScope, projectMode, router, runActive, selectedCustomerId, selectedProjectId, sending, uploading]);
+  }, [attachments, conversationId, conversationTitle, draft, knowledgeScope, loadingConversation, projectMode, projectOpening, queued, router, runActive, selectedCustomerId, selectedProjectId, sending, uploading]);
 
   // The queued message fires when the run that blocked it ends, however it ends.
   const submitRef = useRef(submit);
   submitRef.current = submit;
   useEffect(() => {
-    if (!queued || runActive || sending || uploading) return;
+    if (!queued || runActive || sending || uploading || loadingConversation || projectOpening) return;
     const pending = queued;
     setQueued(null);
-    setAttachments(pending.attachments);
-    void submitRef.current(pending.content);
-  }, [queued, runActive, sending, uploading]);
+    void submitRef.current(pending.content, pending.attachments);
+  }, [queued, runActive, sending, uploading, loadingConversation, projectOpening]);
 
   const unqueue = () => {
     if (!queued) return;
-    setDraft(queued.content);
-    setAttachments(queued.attachments);
+    setDraft((current) => restoreChatDraft(queued, { content: current, attachments: [] }).content);
+    setAttachments((current) => restoreChatDraft(queued, { content: "", attachments: current }).attachments);
     setQueued(null);
+    focusComposer();
   };
 
   const addFiles = async (files: FileList | File[]) => {
     const items = Array.from(files);
     if (!items.length) return;
     const generation = generationRef.current;
+    uploadsInFlight.current += 1;
     setUploading(true);
     setError(null);
     const results = await Promise.allSettled(items.map(uploadFile));
@@ -510,7 +527,8 @@ export function useChat() {
       const detail = failed[0]?.reason instanceof Error ? failed[0].reason.message : "Unsupported or unreadable file.";
       setError(`${failed.length} ${failed.length === 1 ? "file" : "files"} could not be attached. ${detail}`);
     }
-    setUploading(false);
+    uploadsInFlight.current -= 1;
+    setUploading(uploadsInFlight.current > 0);
   };
 
   const removeAttachment = (id: string) => setAttachments((current) => current.filter((item) => item.id !== id));
@@ -623,8 +641,11 @@ export function useChat() {
   };
 
   // -- decisions, answers, proposals, feedback, cancel ----------------------------
-  const pendingApproval = latestPendingApproval(events, decidedApprovals);
-  const pendingElicitation = latestPendingElicitation(events, answeredElicitations);
+  // Requests and their resolutions must survive a long replay, even when
+  // routine updates have pushed both out of the recent activity window.
+  const decisionEvents = useMemo(() => mergeExecutionEvents(executionEvents, events, activeRunId), [activeRunId, events, executionEvents]);
+  const pendingApproval = latestPendingApproval(decisionEvents, decidedApprovals);
+  const pendingElicitation = latestPendingElicitation(decisionEvents, answeredElicitations);
   const pendingSuggestion = latestActionSuggestion(events, dismissedProposals);
   const suggestionState: "idle" | "applying" | "applied" = !pendingSuggestion
     ? "idle"
@@ -682,11 +703,17 @@ export function useChat() {
   const dismissProposal = (proposalId: string) => setDismissedProposals((current) => new Set(current).add(proposalId));
 
   const stop = async () => {
-    if (!activeRunId) return;
+    if (!activeRunId || stopInFlight.current) return;
+    stopInFlight.current = true;
+    // A queued follow-up belongs back in the composer when the user stops
+    // the current run. Otherwise it would auto-send on the cancel event.
+    if (queued) unqueue();
     try {
       await cancelRun(activeRunId);
     } catch (cancelError) {
       setError(cancelError instanceof Error ? cancelError.message : "The run could not be cancelled.");
+    } finally {
+      stopInFlight.current = false;
     }
   };
 
@@ -744,7 +771,7 @@ export function useChat() {
   };
 
   const createProject = async (name: string) => {
-    if (projectOpening || runActive) return;
+    if (projectOpening || runActive) return false;
     setProjectOpening(true);
     setError(null);
     try {
@@ -752,10 +779,11 @@ export function useChat() {
       const found = await listProjectWorkspaces();
       setProjects(found);
       setProjectOpening(false);
-      await chooseProject(created.id, found);
+      return await chooseProject(created.id, found);
     } catch (createError) {
       setProjectOpening(false);
       setError(createError instanceof Error ? createError.message : "Metis could not create that project.");
+      return false;
     }
   };
 
@@ -842,26 +870,14 @@ export function useChat() {
     }
   };
 
-  // How many sources grounded the current run's answer, for the reply's footer.
-  const groundedSources = useMemo(() => {
-    let count = 0;
-    for (const event of events) {
-      if (event.type === "context.retrieved") {
-        const value = Number(event.payload.knowledge_snippet_count ?? 0);
-        if (Number.isFinite(value)) count = Math.max(count, value);
-      }
-    }
-    return count;
-  }, [events]);
-
   return {
     // conversation
     conversationId, conversationTitle, messages, loadingConversation, hasMessages, error, setError, startFresh,
     // composer
     draft, setDraft, attachments, addFiles, removeAttachment, uploading, sending, submit, queued, unqueue, knowledgeAdds, addToKnowledge, composerRef, focusComposer,
     // run
-    activeRunId, runActive, events, connection, streamError, stageLabel, artifacts, stop, recoverableRuns, timelineOpen, setTimelineOpen,
-    pendingApproval, pendingElicitation, pendingSuggestion, suggestionState, approveLabel, decide, decidedApprovals, decisionBusy, answer, answeredElicitations, answerBusy, applyProposal, dismissProposal, groundedSources,
+    activeRunId, runActive, events, executionEvents, connection, streamError, stageLabel, artifacts, stop, recoverableRuns, timelineOpen, setTimelineOpen,
+    pendingApproval, pendingElicitation, pendingSuggestion, suggestionState, approveLabel, decide, decidedApprovals, decisionBusy, answer, answeredElicitations, answerBusy, applyProposal, dismissProposal,
     // message actions
     editingMessageId, editDraft, setEditDraft, startEditing, cancelEditing, submitEdit, retryAnswer, rewinding, copyMessage, copiedMessageId, clearFailedResponse,
     feedback, rate, setCorrection, cancelCorrection, saveToAccount, savedToAccount, savingToAccount, trackerUpdate, trackerBusy, latestAssistant,

@@ -61,7 +61,7 @@ for line in sys.stdin:
     if method == "getInfo":
         emit({"version": "1", "id": request_id, "result": {
             "protocolVersion": "1", "engine": "clinecore", "runtime": "fake",
-            "sdkVersion": "0.0.72", "policyVersion": "1",
+            "sdkVersion": "0.0.86", "policyVersion": "1",
             "allowedTools": ["editor", "read_files", "run_check", "search_codebase"],
         }})
     elif method == "subscribe":

@@ -1,0 +1,130 @@
+/* The execution view uses the workspace tokens; its information hierarchy
+   stays identical in either appearance mode. */
+.chat.has-execution.has-activity { grid-template-columns: minmax(0, 1fr) 400px; }
+.chat.has-execution .chat-notice { display: grid; gap: var(--space-2); }
+.task-bar {
+  align-items: center;
+  background: var(--color-paper-lift);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  color: var(--color-ink);
+  cursor: pointer;
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 11px 13px;
+  text-align: left;
+  width: 100%;
+  transition: border-color var(--motion-fast), background var(--motion-fast);
+}
+.task-bar:hover { background: var(--color-accent-surface); border-color: var(--color-accent); }
+.task-bar-icon { align-items: center; background: var(--color-accent-surface); border-radius: 10px; color: var(--color-accent-ink); display: flex; flex: none; height: 32px; justify-content: center; width: 32px; }
+.task-bar.is-working .task-bar-icon svg, .task-bar.is-reconnecting .task-bar-icon svg, .task-controls button:disabled svg { animation: task-spin 1.6s linear infinite; }
+.task-bar.is-completed .task-bar-icon { background: var(--color-mint-surface); color: var(--color-green-ink); }
+.task-bar.is-waiting .task-bar-icon, .task-bar.is-failed .task-bar-icon { background: var(--color-warning-surface); color: var(--color-warning); }
+.task-bar-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.task-bar-copy strong { font-size: var(--text-md); font-weight: 600; }
+.task-bar-copy > span { color: var(--color-ink-2); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-bar-link { align-items: center; color: var(--color-ink-2); display: inline-flex; flex: none; font-size: var(--text-sm); gap: 3px; }
+.chat-activity.task-panel { background: var(--color-pane); }
+.task-panel .chat-activity-close { right: 12px; top: 12px; z-index: 2; }
+.task-execution { min-width: 0; padding-bottom: var(--space-5); }
+.task-header { background: var(--color-paper); border-bottom: 1px solid var(--color-line); padding: 22px 20px 18px; }
+.task-header > .ui-eyebrow { color: var(--color-accent-ink); }
+.task-header h2 { color: var(--color-ink); font-size: 23px; font-weight: 600; letter-spacing: -0.035em; line-height: 1.2; margin: 7px 0 12px; }
+.task-request { -webkit-box-orient: vertical; -webkit-line-clamp: 3; color: var(--color-ink-2); display: -webkit-box; font-size: var(--text-md); line-height: 1.55; margin: 0 0 16px; overflow: hidden; overflow-wrap: anywhere; }
+.task-state { align-items: center; display: flex; gap: 7px; font-size: var(--text-sm); }
+.task-state > strong { color: var(--color-ink); font-weight: 600; }
+.task-state > span:last-child:not(.task-state-dot) { border-left: 1px solid var(--color-line); color: var(--color-ink-2); margin-left: 3px; overflow: hidden; padding-left: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.task-state-dot { background: var(--color-accent-ink); border-radius: 50%; flex: none; height: 7px; width: 7px; }
+.task-state.is-completed .task-state-dot { background: var(--color-green-ink); }
+.task-state.is-waiting .task-state-dot { background: var(--color-warning); }
+.task-state.is-failed .task-state-dot { background: var(--color-danger); }
+.task-state.is-cancelled .task-state-dot, .task-state.is-idle .task-state-dot { background: var(--color-ink-3); }
+.task-current { color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.5; margin: 8px 0 13px; overflow-wrap: anywhere; }
+.task-controls { display: flex; flex-wrap: wrap; gap: 7px; }
+.task-header > .ui-notice { font-size: var(--text-sm); margin-top: 12px; }
+.task-steering { background: var(--color-accent-surface); border-radius: var(--radius-control); color: var(--color-accent-ink); font-size: var(--text-sm); line-height: 1.5; margin: 12px 0 0; padding: 10px; }
+.task-queued { align-items: center; background: var(--color-surface); border: 1px solid var(--color-line); border-radius: var(--radius-control); display: flex; gap: 8px; margin-top: 12px; padding: 9px; }
+.task-queued > svg { color: var(--color-ink-2); flex: none; }
+.task-queued > span { display: grid; flex: 1; gap: 3px; min-width: 0; }
+.task-queued strong { font-size: var(--text-sm); font-weight: 600; }
+.task-queued small { color: var(--color-ink-2); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-section { border-bottom: 1px solid var(--color-line); padding: 18px 20px; }
+.task-section-title { align-items: center; display: flex; gap: 10px; justify-content: space-between; margin-bottom: 12px; }
+.task-section-title h3 { align-items: center; color: var(--color-ink); display: flex; font-size: var(--text-md); font-weight: 650; gap: 7px; margin: 0; }
+.task-section-title h3 svg { color: var(--color-ink-3); }
+.task-section-title > span { color: var(--color-ink-3); font-size: var(--text-xs); }
+.task-section-title > .ui-chip { color: var(--color-accent-ink); }
+.task-empty, .task-plan-summary { color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.6; margin: 0; }
+.task-plan-summary { margin-bottom: 12px; }
+.task-plan { display: grid; gap: 14px; list-style: none; margin: 0; padding: 0; }
+.task-plan > li { display: grid; gap: 10px; grid-template-columns: 23px minmax(0, 1fr); }
+.task-plan-number { align-items: center; background: var(--color-paper-lift); border: 1px solid var(--color-line); border-radius: 7px; color: var(--color-ink-2); display: inline-flex; font-size: var(--text-xs); height: 23px; justify-content: center; }
+.task-plan .is-checked .task-plan-number { background: var(--color-mint-surface); border-color: transparent; color: var(--color-green-ink); }
+.task-plan strong { display: block; font-size: var(--text-sm); font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; padding-top: 2px; }
+.task-plan p { color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.5; margin: 4px 0 0; }
+.task-plan small { color: var(--color-green-ink); display: block; font-size: var(--text-xs); margin-top: 3px; }
+.task-plan-revision { background: var(--color-surface); border-radius: var(--radius-control); color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.5; margin: 12px 0 0; padding: 10px; overflow-wrap: anywhere; }
+.task-plan-revision strong { color: var(--color-ink); display: block; margin-bottom: 3px; }
+.task-details { font-size: var(--text-sm); margin-top: 13px; }
+.task-details > summary, .task-full-activity > summary { align-items: center; color: var(--color-ink-2); cursor: pointer; display: flex; gap: 6px; list-style: none; }
+.task-details > summary::-webkit-details-marker, .task-full-activity > summary::-webkit-details-marker { display: none; }
+.task-details[open] > summary > svg, .task-full-activity[open] > summary > svg { transform: rotate(90deg); }
+.task-files { display: grid; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
+.task-files li { align-items: flex-start; display: flex; gap: 7px; min-width: 0; }
+.task-files svg { color: var(--color-ink-3); flex: none; margin-top: 1px; }
+.task-files code { background: transparent; color: var(--color-ink-2); flex: 1; font: var(--text-xs)/1.5 var(--font-mono); min-width: 0; overflow-wrap: anywhere; padding: 0; }
+.task-files li > span { color: var(--color-ink-3); flex: none; font-size: var(--text-xs); }
+.task-criteria { color: var(--color-ink-2); display: grid; gap: 7px; line-height: 1.5; margin: 12px 0 0; padding-left: 19px; }
+.task-evidence { display: flex; flex-wrap: wrap; gap: 7px; }
+.task-evidence:empty { display: none; }
+.task-evidence > span { align-items: center; background: var(--color-paper-lift); border: 1px solid var(--color-line); border-radius: 8px; color: var(--color-ink-2); display: inline-flex; font-size: var(--text-xs); gap: 5px; margin-bottom: 12px; padding: 7px 8px; }
+.task-evidence strong { color: var(--color-ink); font-weight: 650; }
+.task-latest { border-left: 2px solid var(--color-accent); padding-left: 11px; }
+.task-latest strong { color: var(--color-ink); display: block; font-size: var(--text-sm); line-height: 1.5; }
+.task-latest p { color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.55; margin: 4px 0 0; overflow-wrap: anywhere; }
+.task-latest time { color: var(--color-ink-3); display: block; font-size: var(--text-xs); margin-top: 8px; }
+.task-blockers { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.task-blockers li { background: var(--color-warning-surface); border: 1px solid color-mix(in srgb, var(--color-warning) 28%, transparent); border-radius: var(--radius-control); padding: 11px; }
+.task-blockers strong { color: var(--color-warning); display: block; font-size: var(--text-sm); line-height: 1.4; }
+.task-blockers p { color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.55; margin: 5px 0 0; overflow-wrap: anywhere; }
+.task-decisions { background: color-mix(in srgb, var(--color-accent-surface) 45%, var(--color-pane)); }
+.task-decisions .approvalCard { margin-top: 10px; min-width: 0; }
+.task-decisions .approvalTitle { flex-wrap: wrap; }
+.task-decisions .approvalTitle strong { min-width: 0; overflow-wrap: anywhere; }
+.task-decisions .approvalActions, .task-decisions .elicitationOptions { flex-wrap: wrap; }
+.task-outputs .artifactSection { margin: 0; }
+.task-outputs .artifactHeading { display: none; }
+.task-outputs .artifactGrid { grid-template-columns: minmax(0, 1fr); }
+.task-outputs .artifactCard { min-width: 0; }
+.task-outputs > .ui-btn { margin-top: 12px; }
+.task-decision-history { display: grid; gap: 12px; list-style: none; margin: 0; padding: 0; }
+.task-decision-history li { display: flex; gap: 8px; }
+.task-decision-history svg { color: var(--color-green-ink); flex: none; margin-top: 2px; }
+.task-decision-history strong { display: block; font-size: var(--text-sm); }
+.task-decision-history p { color: var(--color-ink-2); font-size: var(--text-sm); line-height: 1.5; margin: 4px 0 0; overflow-wrap: anywhere; }
+.task-full-activity { padding: 17px 0 0; }
+.task-full-activity > summary { font-size: var(--text-sm); font-weight: 600; padding: 0 20px; }
+.task-full-activity > summary > span { color: var(--color-ink-3); font-size: var(--text-xs); font-weight: 400; margin-left: auto; }
+.task-full-activity .tl { min-width: 0; margin-top: 12px; }
+.task-full-activity .tl-head { display: none; }
+.task-full-activity .tl-list { padding: 10px 20px; }
+.task-full-activity .tl-title strong { overflow-wrap: anywhere; }
+.task-composer-direction { align-items: center; color: var(--color-accent-ink); display: flex; font-size: var(--text-sm); gap: 10px; line-height: 1.5; padding: 0 3px 8px; }
+.task-composer-direction > span { flex: 1; }
+.task-panel-backdrop { background: rgb(0 0 0 / 24%); border: 0; cursor: default; inset: 0; position: fixed; z-index: 29; }
+@keyframes task-spin { to { transform: rotate(360deg); } }
+@media (max-width: 1080px) {
+  .chat.has-execution.has-activity { grid-template-columns: minmax(0, 1fr) 0; }
+  .chat-activity.task-panel { width: min(420px, 100vw); }
+}
+@media (max-width: 720px) {
+  .task-bar { padding: 9px 10px; }
+  .task-bar-link { font-size: 0; }
+  .task-bar-link svg { height: 16px; width: 16px; }
+  .task-header { padding-top: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-bar, .task-bar svg, .task-controls button:disabled svg { animation: none !important; transition: none; }
+}

@@ -107,7 +107,7 @@ interface TerminationEvidence {
 }
 
 /**
- * Normalize one pinned SDK 0.0.72 defect without rewriting its raw result.
+ * Normalize the SDK's max-iteration error without rewriting its raw result.
  *
  * The agents package throws this exact error after executing the configured
  * number of iterations, then its catch path reports the generic finish reason
@@ -575,7 +575,21 @@ export class ClineRuntime extends EventedRuntime {
     options: { fetch?: typeof fetch } = {},
   ): Promise<ClineRuntime> {
     const canonicalDataDirectory = await configureStorage(dataDirectory);
-    const { ClineCore } = await import("@cline/sdk");
+    const {
+      ClineCore,
+      isModelToolEnabledGlobally,
+      readGlobalSettings,
+      setModelToolEnabledGlobally,
+    } = await import("@cline/sdk");
+    // Provider-executed search bypasses ordinary local-tool policy hooks.
+    // Disable it before a ClineCore can create a coding session.
+    setModelToolEnabledGlobally("web_search", false);
+    if (
+      isModelToolEnabledGlobally("web_search") ||
+      readGlobalSettings().tools?.web_search?.enabled !== false
+    ) {
+      throw new Error("Native web search could not be disabled for the Cline sidecar");
+    }
     const core = await ClineCore.create({
       clientName: "metis-cline-sidecar",
       distinctId: "metis-local-sidecar",

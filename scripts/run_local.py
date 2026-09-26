@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 COMMANDS = {
     "api": [str(ROOT / ".venv" / "bin" / "waqil-api")],
-    "web": ["pnpm", "--dir", str(ROOT / "apps" / "web"), "start"],
+    "web": ["pnpm", "--pm-on-fail=ignore", "--dir", str(ROOT / "apps" / "web"), "start"],
 }
 
 

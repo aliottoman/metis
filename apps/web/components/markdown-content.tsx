@@ -1,21 +1,29 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
+
+import { API_BASE } from "@/lib/api";
+import { MARKDOWN_LINK_TOKEN_SOURCE, markdownHref, markdownLinkParts, splitCitedSources, type CitedSource } from "@/lib/markdown-links";
 
 type MarkdownContentProps = {
   content: string;
 };
 
-function safeHref(raw: string): string | null {
-  const href = raw.trim();
-  if (/^(https?:|mailto:)/i.test(href) || href.startsWith("/") || href.startsWith("#")) {
-    return href;
-  }
-  return null;
-}
+type CitationLinks = { ids: Set<number>; prefix: string };
 
-function inlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
-  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\[[^\]\n]+\]\([^) \n]+(?:\s+"[^"]*")?\)|\*[^*\n]+\*|_[^_\n]+_)/g;
+const INLINE_TOKEN_SOURCE = [
+  /`[^`\n]+`/.source,
+  /\*\*[^*\n]+\*\*/.source,
+  /__[^_\n]+__/.source,
+  /~~[^~\n]+~~/.source,
+  MARKDOWN_LINK_TOKEN_SOURCE,
+  /\[\d+\]/.source,
+  /\*[^*\n]+\*/.source,
+  /_[^_\n]+_/.source,
+].join("|");
+
+function inlineMarkdown(text: string, keyPrefix: string, citations?: CitationLinks): ReactNode[] {
+  const pattern = new RegExp(INLINE_TOKEN_SOURCE, "g");
   const nodes: ReactNode[] = [];
   let cursor = 0;
   let match: RegExpExecArray | null;
@@ -29,19 +37,22 @@ function inlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
     if (token.startsWith("`")) {
       nodes.push(<code key={key}>{token.slice(1, -1)}</code>);
     } else if (token.startsWith("**") || token.startsWith("__")) {
-      nodes.push(<strong key={key}>{inlineMarkdown(token.slice(2, -2), key)}</strong>);
+      nodes.push(<strong key={key}>{inlineMarkdown(token.slice(2, -2), key, citations)}</strong>);
     } else if (token.startsWith("~~")) {
-      nodes.push(<del key={key}>{inlineMarkdown(token.slice(2, -2), key)}</del>);
+      nodes.push(<del key={key}>{inlineMarkdown(token.slice(2, -2), key, citations)}</del>);
     } else if (token.startsWith("[")) {
-      const link = token.match(/^\[([^\]]+)\]\(([^) \n]+)(?:\s+"[^"]*")?\)$/);
-      const href = link ? safeHref(link[2]) : null;
-      nodes.push(
-        href
-          ? <a key={key} href={href} target={href.startsWith("http") ? "_blank" : undefined} rel={href.startsWith("http") ? "noreferrer" : undefined}>{inlineMarkdown(link![1], key)}</a>
-          : token,
-      );
+      const link = markdownLinkParts(token);
+      const href = link ? markdownHref(link.target, API_BASE) : null;
+      if (href && link) {
+        nodes.push(<a key={key} href={href} target={href.startsWith("http") ? "_blank" : undefined} rel={href.startsWith("http") ? "noreferrer" : undefined}>{inlineMarkdown(link.label, key)}</a>);
+      } else {
+        const number = /^\[(\d+)\]$/.exec(token);
+        nodes.push(number && citations?.ids.has(Number(number[1]))
+          ? <a key={key} className="message-citation" href={`#${citations.prefix}-source-${number[1]}`} aria-label={`Jump to source ${number[1]}`}>{token}</a>
+          : token);
+      }
     } else {
-      nodes.push(<em key={key}>{inlineMarkdown(token.slice(1, -1), key)}</em>);
+      nodes.push(<em key={key}>{inlineMarkdown(token.slice(1, -1), key, citations)}</em>);
     }
     cursor = match.index + token.length;
     index += 1;
@@ -65,13 +76,13 @@ function isTableDivider(line: string): boolean {
   return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
-function renderParagraph(lines: string[], key: string): ReactNode {
+function renderParagraph(lines: string[], key: string, citations?: CitationLinks): ReactNode {
   return (
     <p key={key}>
       {lines.map((line, index) => (
         <span key={`${key}-${index}`}>
           {index > 0 ? " " : null}
-          {inlineMarkdown(line.trim(), `${key}-${index}`)}
+          {inlineMarkdown(line.trim(), `${key}-${index}`, citations)}
         </span>
       ))}
     </p>
@@ -79,7 +90,12 @@ function renderParagraph(lines: string[], key: string): ReactNode {
 }
 
 export function MarkdownContent({ content }: MarkdownContentProps) {
-  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  const prefix = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const { body, sources } = splitCitedSources(content);
+  const citations: CitationLinks | undefined = sources.length
+    ? { ids: new Set(sources.map((source) => source.number)), prefix }
+    : undefined;
+  const lines = body.split("\n");
   const blocks: ReactNode[] = [];
   let index = 0;
 
@@ -111,7 +127,7 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
       const level = heading[1].length;
-      const children = inlineMarkdown(heading[2].trim(), `heading-${index}`);
+      const children = inlineMarkdown(heading[2].trim(), `heading-${index}`, citations);
       if (level === 1) blocks.push(<h1 key={`heading-${index}`}>{children}</h1>);
       else if (level === 2) blocks.push(<h2 key={`heading-${index}`}>{children}</h2>);
       else if (level === 3) blocks.push(<h3 key={`heading-${index}`}>{children}</h3>);
@@ -144,11 +160,11 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
       blocks.push(
         <div className="messageTableWrap" key={`table-${index}`}>
           <table>
-            <thead><tr>{headers.map((cell, cellIndex) => <th key={cellIndex} style={{ textAlign: alignments[cellIndex] as "left" | "center" | "right" }}>{inlineMarkdown(cell, `th-${index}-${cellIndex}`)}</th>)}</tr></thead>
+            <thead><tr>{headers.map((cell, cellIndex) => <th key={cellIndex} style={{ textAlign: alignments[cellIndex] as "left" | "center" | "right" }}>{inlineMarkdown(cell, `th-${index}-${cellIndex}`, citations)}</th>)}</tr></thead>
             <tbody>
               {rows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
-                  {headers.map((_, cellIndex) => <td key={cellIndex} style={{ textAlign: alignments[cellIndex] as "left" | "center" | "right" }}>{inlineMarkdown(row[cellIndex] ?? "", `td-${index}-${rowIndex}-${cellIndex}`)}</td>)}
+                  {headers.map((_, cellIndex) => <td key={cellIndex} style={{ textAlign: alignments[cellIndex] as "left" | "center" | "right" }}>{inlineMarkdown(row[cellIndex] ?? "", `td-${index}-${rowIndex}-${cellIndex}`, citations)}</td>)}
                 </tr>
               ))}
             </tbody>
@@ -187,7 +203,7 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
         items.push(item[2]);
         index += 1;
       }
-      const children = items.map((item, itemIndex) => <li key={itemIndex}>{inlineMarkdown(item, `li-${index}-${itemIndex}`)}</li>);
+      const children = items.map((item, itemIndex) => <li key={itemIndex}>{inlineMarkdown(item, `li-${index}-${itemIndex}`, citations)}</li>);
       blocks.push(
         ordered
           ? <ol key={`list-${index}`} start={start}>{children}</ol>
@@ -202,7 +218,7 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
         quote.push(lines[index].replace(/^\s*>\s?/, ""));
         index += 1;
       }
-      blocks.push(<blockquote key={`quote-${index}`}>{renderParagraph(quote, `quote-p-${index}`)}</blockquote>);
+      blocks.push(<blockquote key={`quote-${index}`}>{renderParagraph(quote, `quote-p-${index}`, citations)}</blockquote>);
       continue;
     }
 
@@ -222,8 +238,19 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
       paragraph.push(next);
       index += 1;
     }
-    blocks.push(renderParagraph(paragraph, `paragraph-${index}`));
+    blocks.push(renderParagraph(paragraph, `paragraph-${index}`, citations));
   }
 
-  return <div className="messageContent">{blocks}</div>;
+  return <div className="messageContent">{blocks}{sources.length ? <SourceList sources={sources} prefix={prefix} /> : null}</div>;
+}
+
+function SourceList({ sources, prefix }: { sources: CitedSource[]; prefix: string }) {
+  return <section className="message-sources" aria-label="Sources">
+    <h3>Sources</h3>
+    <ol>
+      {sources.map((source) => <li key={source.number} value={source.number} id={`${prefix}-source-${source.number}`}>
+        {inlineMarkdown(source.content, `${prefix}-source-${source.number}`)}
+      </li>)}
+    </ol>
+  </section>;
 }

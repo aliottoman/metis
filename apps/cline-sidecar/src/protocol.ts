@@ -2,7 +2,7 @@ import { isAbsolute, normalize, parse, resolve } from "node:path";
 
 export const RPC_VERSION = "1" as const;
 export const ENGINE_NAME = "clinecore" as const;
-export const CLINE_SDK_VERSION = "0.0.72" as const;
+export const CLINE_SDK_VERSION = "0.0.86" as const;
 export const TOOL_POLICY_VERSION = "1" as const;
 export const MAX_FRAME_BYTES = 1024 * 1024;
 export const MAX_PROMPT_BYTES = 256 * 1024;

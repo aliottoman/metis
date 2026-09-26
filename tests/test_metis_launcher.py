@@ -70,5 +70,5 @@ def test_launcher_builds_and_validates_sidecar_before_the_web_build() -> None:
     sidecar_gate = source.index("if needs_sidecar_build; then")
     web_gate = source.index("if needs_build; then")
     assert sidecar_gate < web_gate
-    assert 'pnpm --dir "$ROOT/apps/cline-sidecar" build' in source
+    assert 'pnpm --pm-on-fail=ignore --dir "$ROOT/apps/cline-sidecar" build' in source
     assert '[[ ! -s "$ROOT/apps/cline-sidecar/dist/src/index.js" ]]' in source

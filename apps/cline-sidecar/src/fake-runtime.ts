@@ -188,7 +188,7 @@ export class FakeRuntime extends EventedRuntime {
     session.usage.requests += executedIterations;
     if (requestedIterations > maxIterations) {
       session.state = "failed";
-      // Match the pinned SDK 0.0.72 contract: preserve its generic raw reason
+      // Match the SDK contract: preserve its generic raw reason
       // while exposing Metis's independently-derived controlled stop code.
       session.finishReason = "error";
       session.controlledStopReason = "max_iterations";

@@ -49,7 +49,7 @@ input.on("line", (line) => {
       protocolVersion: "1",
       engine: "clinecore",
       runtime: "cline",
-      sdkVersion: "0.0.72",
+      sdkVersion: "0.0.86",
       policyVersion: "1",
       allowedTools: ["editor", "read_files", "run_check", "search_codebase"],
     };
@@ -133,7 +133,7 @@ def test_selected_clinecore_with_a_readable_sidecar_is_ready(tmp_path: Path) -> 
             "protocolVersion": "1",
             "engine": "clinecore",
             "runtime": "cline",
-            "sdkVersion": "0.0.72",
+            "sdkVersion": "0.0.86",
             "policyVersion": "1",
             "allowedTools": [
                 "editor",
@@ -171,7 +171,7 @@ def test_responsive_sidecar_with_wrong_sdk_version_is_not_ready(
     _valid_sidecar(entrypoint)
     entrypoint.write_text(
         entrypoint.read_text(encoding="utf-8").replace(
-            'sdkVersion: "0.0.72"', 'sdkVersion: "0.0.73"'
+            'sdkVersion: "0.0.86"', 'sdkVersion: "0.0.87"'
         ),
         encoding="utf-8",
     )

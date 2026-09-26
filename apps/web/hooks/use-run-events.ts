@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { runEventsUrl } from "@/lib/api";
-import { normalizeRunEvent, parseSseBuffer } from "@/lib/sse";
+import { appendRunActivityEvent, isRunActivityEvent, normalizeRunEvent, parseSseBuffer } from "@/lib/sse";
+import { retainExecutionMilestone } from "@/lib/execution-milestones";
 import type { RunEventV1 } from "@/lib/types";
 
 type ConnectionState = "idle" | "connecting" | "live" | "reconnecting" | "closed" | "error";
@@ -19,6 +20,7 @@ const TERMINAL_TYPES = new Set([
 
 export function useRunEvents(runId: string | null, onEvent?: (event: RunEventV1) => void) {
   const [events, setEvents] = useState<RunEventV1[]>([]);
+  const [executionEvents, setExecutionEvents] = useState<RunEventV1[]>([]);
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
@@ -37,6 +39,7 @@ export function useRunEvents(runId: string | null, onEvent?: (event: RunEventV1)
     setError(null);
     if (previousRunRef.current !== runId) {
       setEvents([]);
+      setExecutionEvents([]);
       seenRef.current = new Set();
       sequenceRef.current = 0;
       previousRunRef.current = runId;
@@ -89,7 +92,10 @@ export function useRunEvents(runId: string | null, onEvent?: (event: RunEventV1)
               if (seenRef.current.has(key)) continue;
               seenRef.current.add(key);
               sequenceRef.current = Math.max(sequenceRef.current, event.sequence);
-              setEvents((current) => [...current.slice(-299), event]);
+              if (isRunActivityEvent(event)) {
+                setEvents((current) => appendRunActivityEvent(current, event));
+              }
+              setExecutionEvents((current) => retainExecutionMilestone(current, event));
               callbackRef.current?.(event);
               if (TERMINAL_TYPES.has(event.type)) terminal = true;
             }
@@ -119,5 +125,5 @@ export function useRunEvents(runId: string | null, onEvent?: (event: RunEventV1)
     };
   }, [runId, generation]);
 
-  return { events, connection, error, reconnect };
+  return { events, executionEvents, connection, error, reconnect };
 }

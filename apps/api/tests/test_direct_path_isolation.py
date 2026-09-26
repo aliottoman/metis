@@ -173,6 +173,29 @@ def test_a_path_named_both_ways_is_treated_as_existing() -> None:
     assert "new.py" in create_block
 
 
+def test_direct_prompt_without_a_host_manifest_describes_the_actual_file_inventory() -> (
+    None
+):
+    from waqil_api.project_coding_engine import direct_coding_prompt
+
+    prompt = direct_coding_prompt(
+        task="Modify exactly app/db.py and tests/test_incidents.py.",
+        existing_files=[],
+        checks=["pytest", "full"],
+    )
+
+    inventory = prompt.split("FILE INVENTORY\n", 1)[1].split("PROTECTED FILES", 1)[0]
+    assert "No host file manifest was supplied" in inventory
+    assert "Inspect the actual\nproject tree before editing" in inventory
+    assert "An empty host list does not mean the project has\nno files" in inventory
+    assert "FILES THAT ALREADY EXIST" not in inventory
+    assert "FILES YOU MUST CREATE" not in inventory
+    assert "(none)" not in inventory
+    assert "Do not create scratch, debug, or probe files" in prompt
+    assert "Put requested tests in the task-requested paths" in prompt
+    assert "use run_check when offered" in prompt
+
+
 def test_the_direct_prompt_states_the_check_vocabulary_and_forbids_commands() -> None:
     from waqil_api.coding_contracts import HOST_CHECKS
     from waqil_api.project_coding_engine import direct_coding_prompt

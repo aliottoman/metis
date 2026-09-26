@@ -58,8 +58,10 @@ HOSTED_MODEL_TOOL_CALLING: dict[str, bool] = {
 
 
 # Cline's subscription-backed catalog, exposed by the API so the web client
-# never has to guess which names are included in ClinePass. These all passed a
-# live ProjectDirectionV1 tool-call probe on 2026-08-10. Paid Anthropic/xAI
+# never has to guess which names are included in ClinePass. The original list
+# passed a live ProjectDirectionV1 probe on 2026-08-10. On 2026-09-26 the
+# gateway returned model-not-found for kimi-k2.6 and deepseek-v4-flash, while
+# mimo-v2.6-flash passed a live structured route probe. Paid Anthropic/xAI
 # routes deliberately stay out of this list: they remain valid explicit model
 # IDs, but presenting them beside subscription models made a zero-credit lane
 # look healthy until the first HTTP 402.
@@ -68,14 +70,19 @@ CLINEPASS_MODELS: tuple[str, ...] = (
     "cline-pass/glm-5.2",
     "cline-pass/kimi-k3",
     "cline-pass/kimi-k2.7-code",
-    "cline-pass/kimi-k2.6",
     "cline-pass/deepseek-v4-pro",
-    "cline-pass/deepseek-v4-flash",
     "cline-pass/minimax-m3",
+    "cline-pass/mimo-v2.6-flash",
     "cline-pass/mimo-v2.5-pro",
     "cline-pass/mimo-v2.5",
     "cline-pass/qwen3.7-max",
 )
+
+
+def is_cline_gateway_model(model: str) -> bool:
+    """Cline gateway IDs are provider/model names, not Ollama model tags."""
+    provider, separator, name = model.strip().partition("/")
+    return bool(separator and provider and name and not is_cloud_model(model))
 
 
 def hosted_model_capability_error(model: str) -> str:
@@ -126,6 +133,17 @@ class ModelPreferenceStore:
             provider = "local"
         if provider == "cline" and not self.cline_available:
             provider = "local"
+        if (
+            provider == "cline"
+            and mode == "pinned"
+            and model
+            and not is_cline_gateway_model(model)
+        ):
+            # Old preferences could carry an Ollama pin across a provider
+            # switch. Display the effective split mode instead of claiming a
+            # pin that the Cline gateway cannot serve.
+            mode = "split"
+            model = None
         raw_tools = raw.get("oci_tools")
         oci_tools = (
             [item for item in raw_tools if item in ("x_search", "code_interpreter")]
@@ -205,6 +223,13 @@ class ModelPreferenceStore:
                 raise ValueError(capability_error)
         if provider not in ("local", "oci", "cohere", "cline"):
             raise ValueError("provider must be 'local', 'oci', 'cohere' or 'cline'")
+        if (
+            provider == "cline"
+            and mode == "pinned"
+            and model
+            and not is_cline_gateway_model(model)
+        ):
+            raise ValueError("a pinned Cline model must use a provider/model ID")
         if provider == "oci" and not self.oci_available:
             raise ValueError(
                 "OCI Responses requires WAQIL_ALLOW_OCI_RESPONSES=true and "
@@ -339,6 +364,11 @@ class ModelPreferenceStore:
                 "quality": preference.model,
                 **provider_aliases,
             }
+            if preference.provider == "cline":
+                # ClinePass resolves its models through _cline_model rather
+                # than the local planner/coder aliases. Without this, the
+                # model selected in the UI never reaches ordinary chat.
+                aliases["_cline_model"] = preference.model
         else:
             aliases = {
                 "planner": self._settings.planner_model,
@@ -346,6 +376,15 @@ class ModelPreferenceStore:
                 "quality": self._settings.quality_model,
                 **provider_aliases,
             }
+        if (
+            preference.provider == "cline"
+            and preference.mode == "split"
+            and self._settings.cline_chat_model.strip()
+        ):
+            # The synthesis call alone may use this alias. Leave the planner
+            # primary and any explicit planner chain intact for evidence and
+            # project work. A planner-chain choice does not select chat answers.
+            aliases["_cline_chat_model"] = self._settings.cline_chat_model.strip()
         for role in MODEL_ROLES:
             chain = preference.role_chains.get(role) or []
             if chain:
@@ -381,13 +420,18 @@ class ModelPreferenceStore:
         if preference.provider == "cline" and not preference.role_chains.get("planner"):
             # Two production-shaped 16-file manifests returned no usable GLM
             # reply while Qwen completed both. The configured model remains
-            # first so WAQIL_CLINE_ORCHESTRATOR_MODEL is still authoritative;
-            # the measured default's safety rung is GLM, de-duplicated when an
-            # environment override already selected it.
+            # first so an explicit pin or WAQIL_CLINE_ORCHESTRATOR_MODEL stays
+            # authoritative; the safety rung is GLM, de-duplicated when it is
+            # already the selected primary.
+            planner_primary = (
+                preference.model
+                if preference.mode == "pinned" and preference.model
+                else self._settings.cline_orchestrator_model
+            )
             planner_models = list(
                 dict.fromkeys(
                     (
-                        self._settings.cline_orchestrator_model,
+                        planner_primary,
                         "cline-pass/glm-5.2",
                     )
                 )

@@ -108,7 +108,7 @@ free_port "$API_PORT"
 if needs_sidecar_build; then
 	say "changes detected, building the local coding sidecar..."
 	notify "Building the latest coding engine…"
-	if ! pnpm --dir "$ROOT/apps/cline-sidecar" build \
+	if ! pnpm --pm-on-fail=ignore --dir "$ROOT/apps/cline-sidecar" build \
 		|| [[ ! -s "$ROOT/apps/cline-sidecar/dist/src/index.js" ]]; then
 		say "coding sidecar build failed, not starting."
 		notify "Build failed. See $LOG"
@@ -121,7 +121,7 @@ fi
 if needs_build; then
 	say "changes detected, building the web app..."
 	notify "Building the latest changes…"
-	if ! pnpm --dir "$ROOT/apps/web" build; then
+	if ! pnpm --pm-on-fail=ignore --dir "$ROOT/apps/web" build; then
 		say "build failed, not starting."
 		notify "Build failed. See $LOG"
 		exit 1

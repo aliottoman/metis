@@ -9,13 +9,15 @@ its bounded repair, routing by the run's aliases, and the preference gates.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 from waqil_api.config import Settings
-from waqil_api.contracts import PROJECT_TOOL_REQUIRED_ARGUMENTS
+from waqil_api.contracts import ModelRequestV1, PROJECT_TOOL_REQUIRED_ARGUMENTS
 from waqil_api.model_preference import ModelPreferenceStore
 from waqil_api.model_provider import (
     CohereModelProvider,
@@ -154,6 +156,118 @@ async def test_generate_returns_text_and_never_the_thinking_channel(tmp_path) ->
     )
     assert result.content == "The answer."
     assert "internal" not in result.content
+
+
+def _frame(kind: str, data: dict) -> bytes:
+    return f"event: {kind}\ndata: {json.dumps({'type': kind, **data})}\n\n".encode()
+
+
+async def _collect(sink: list[str], delta: str) -> None:
+    sink.append(delta)
+
+
+@pytest.mark.asyncio
+async def test_generate_streams_text_and_thinking_as_events_arrive(tmp_path) -> None:
+    emitted: list[str] = []
+    thinking: list[str] = []
+    requests: list[dict] = []
+
+    class Chunks(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield _frame("message-start", {"id": "resp_stream"})
+            yield _frame("content-delta", {"delta": {"message": {"content": {"thinking": "Checking"}}}})
+            assert thinking == ["Checking"] and emitted == []
+            yield _frame("content-delta", {"delta": {"message": {"content": {"text": "Hel"}}}})
+            assert emitted == ["Hel"]
+            yield _frame("content-delta", {"delta": {"message": {"content": {"text": "lo <co"}}}})
+            assert emitted == ["Hel", "lo "]
+            yield _frame("content-delta", {"delta": {"message": {"content": {"text": ">world</co: 0:[0]>!"}}}})
+            assert emitted == ["Hel", "lo ", "world!"]
+            yield _frame("message-end", {"delta": {"finish_reason": "COMPLETE"}})
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Chunks())
+
+    client = httpx.AsyncClient(
+        base_url="https://example.test", transport=httpx.MockTransport(respond)
+    )
+    provider = CohereModelProvider(_settings(tmp_path))
+    provider._client_instance = client
+    try:
+        result = await provider.generate(
+            ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+            on_token=lambda delta: _collect(emitted, delta),
+            on_reasoning=lambda delta: _collect(thinking, delta),
+        )
+    finally:
+        await client.aclose()
+    assert result.content == "Hello world!"
+    assert result.structured["response_id"] == "resp_stream"
+    assert emitted == ["Hel", "lo ", "world!"]
+    assert thinking == ["Checking"]
+    assert requests[0]["stream"] is True
+
+
+@pytest.mark.asyncio
+async def test_stream_rejects_truncated_and_limited_cohere_replies(tmp_path) -> None:
+    async def run(frames: bytes) -> tuple[str, list[str]]:
+        emitted: list[str] = []
+        client = httpx.AsyncClient(
+            base_url="https://example.test",
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200, headers={"content-type": "text/event-stream"}, content=frames
+                )
+            ),
+        )
+        provider = CohereModelProvider(_settings(tmp_path))
+        provider._client_instance = client
+        try:
+            with pytest.raises(ModelProviderError) as failure:
+                await provider.generate(
+                    ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                    on_token=lambda delta: _collect(emitted, delta),
+                )
+            return str(failure.value), emitted
+        finally:
+            await client.aclose()
+
+    partial = _frame("content-delta", {"delta": {"message": {"content": {"text": "partial"}}}})
+    truncated, emitted = await run(partial)
+    assert "before completion" in truncated and emitted == ["partial"]
+    limited, emitted = await run(partial + _frame("message-end", {"delta": {"finish_reason": "MAX_TOKENS"}}))
+    assert "MAX_TOKENS" in limited and emitted == ["partial"]
+    failed, emitted = await run(partial + _frame("error", {"message": "generation failed"}))
+    assert "generation failed" in failed and emitted == ["partial"]
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_cohere_callback_cancellation(tmp_path) -> None:
+    client = httpx.AsyncClient(
+        base_url="https://example.test",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=_frame("content-delta", {"delta": {"message": {"content": {"text": "first"}}}}),
+            )
+        ),
+    )
+    provider = CohereModelProvider(_settings(tmp_path))
+    provider._client_instance = client
+
+    async def cancel(_: str) -> None:
+        raise asyncio.CancelledError()
+
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await provider.generate(
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=cancel,
+            )
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio

@@ -2000,6 +2000,7 @@ class KnowledgeSnippetV1(Contract):
     start_line: int | None = None
     text: str
     score: float
+    source_url: str | None = Field(default=None, max_length=2_048)
 
 
 class PersonalProfileV1(Contract):

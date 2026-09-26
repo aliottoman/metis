@@ -28,7 +28,7 @@ from pydantic import (
 
 
 PROTOCOL_VERSION = "1"
-CLINE_SDK_VERSION = "0.0.72"
+CLINE_SDK_VERSION = "0.0.86"
 CODING_TOOL_POLICY_VERSION = "1"
 # Both parties must name the same tools or the handshake fails. `run_check` is
 # a real custom tool the sidecar registers through the SDK's `extraTools`, with
@@ -504,7 +504,7 @@ class CodingEngineInfoV1(CodingContract):
     protocol_version: Literal["1"] = Field(alias="protocolVersion")
     engine: Literal["clinecore"]
     runtime: Literal["cline", "fake"]
-    sdk_version: Literal["0.0.72"] = Field(alias="sdkVersion")
+    sdk_version: Literal["0.0.86"] = Field(alias="sdkVersion")
     policy_version: Literal["1"] = Field(alias="policyVersion")
     allowed_tools: list[str] = Field(alias="allowedTools", min_length=1, max_length=16)
 

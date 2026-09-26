@@ -89,7 +89,7 @@ class RecordingEngine:
             protocolVersion="1",
             engine="clinecore",
             runtime="fake",
-            sdkVersion="0.0.72",
+            sdkVersion="0.0.86",
             policyVersion="1",
             allowedTools=["editor", "read_files", "run_check", "search_codebase"],
         )

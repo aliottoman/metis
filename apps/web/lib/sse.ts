@@ -7,6 +7,18 @@ export interface SseFrame {
   retry?: number;
 }
 
+/** Keep readable run milestones in the activity log while text deltas still
+ * flow to the message callback. Thousands of tokens should not push an
+ * approval, failed check, or source lookup out of the recent history. */
+export function isRunActivityEvent(event: RunEventV1): boolean {
+  return event.type !== "message.reasoning" && !event.type.includes("delta");
+}
+
+export function appendRunActivityEvent(previous: RunEventV1[], event: RunEventV1): RunEventV1[] {
+  if (!isRunActivityEvent(event)) return previous;
+  return [...previous.slice(-299), event];
+}
+
 export function parseSseBuffer(buffer: string): { frames: SseFrame[]; rest: string } {
   const normalized = buffer.replace(/\r\n/g, "\n");
   const blocks = normalized.split("\n\n");

@@ -163,7 +163,9 @@ def test_build_request_without_a_project_explains_how_to_open_one(
             -1
         ]["content"]
         assert "no project is open" in reply
-        assert "Project" in reply and "Assets" in reply
+        assert "**+**" in reply and "**Project**" in reply
+        assert "type a name to create one" in reply
+        assert "Assets" not in reply
         # It must not have gone near the architecture tool. The events endpoint
         # is an SSE stream, so the event names are read off the `event:` lines
         # rather than from the payloads (one of which mentions diagrams).

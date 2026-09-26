@@ -228,6 +228,34 @@ run ends. Copy and Retry sit on every settled message, and a streaming answer
 only follows the scroll when you are already at the foot of the thread, so
 scrolling up to re-read is never undone by the next token.
 
+The **Sources** menu offers Auto, Notion, and Web. Auto plans whether a turn
+needs current public information, private workspace knowledge, both, or
+neither. Web always searches, and Notion limits the answer to synced Notion
+evidence. Web answers cite numbered sources, with inline citations linking to
+the clickable source list. Set `WAQIL_BRAVE_SEARCH_API_KEY` to use Brave LLM
+Context for linked, extracted web passages. Without a key, search uses the
+keyless DuckDuckGo HTML endpoint, whose markup and availability can change.
+For current public questions, Metis checks whether the passages actually cover
+the claim. If they do not, it can search again or open a previously found public
+page. That refinement has two rounds and a 20-second budget; a sufficiently
+complete first-party component changelog can skip the extra model review.
+Run events record source coverage and response timings so a slow or weak answer
+can be traced. When ClinePass streams reasoning before answer text, Metis shows
+it in the collapsed activity view in batches rather than as answer text.
+
+With ClinePass in split mode, ordinary chat answers use MiMo 2.6 Flash by
+default (`WAQIL_CLINE_CHAT_MODEL` changes that choice). The planner ladder still
+handles evidence and project planning, and the coder ladder still handles
+project edits. A pinned single model remains authoritative for every role. If
+the chat model fails before any answer text arrives, Metis retries once on the
+configured Cline orchestrator model; it never replays a partially streamed answer.
+
+The current ClineCore sidecar is limited to project coding and does not power
+chat web retrieval. Metis pins Cline SDK 0.0.86. Native provider web search is
+explicitly disabled before coding sessions start, and the SDK's URL fetch tool
+is also disabled. The Auto and Web source options use Metis's own retrieval
+path, which works across chat model routes.
+
 The activity drawer is opened by you and stays closed otherwise; a run started
 from the composer does not open it, while a link into a run awaiting approval
 does.

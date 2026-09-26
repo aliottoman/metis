@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from waqil_api.config import Settings
 from waqil_api.model_preference import ModelPreferenceStore
+from waqil_api.model_provider import ClineModelProvider
 
 
 def _settings(tmp_path) -> Settings:
@@ -40,6 +43,9 @@ def test_clinepass_catalog_is_backend_owned_and_excludes_paid_models(tmp_path) -
     assert preference.cline_models[0] == "cline-pass/qwen3.7-plus"
     assert "cline-pass/deepseek-v4-pro" in preference.cline_models
     assert "cline-pass/kimi-k3" in preference.cline_models
+    assert "cline-pass/mimo-v2.6-flash" in preference.cline_models
+    assert "cline-pass/deepseek-v4-flash" not in preference.cline_models
+    assert "cline-pass/kimi-k2.6" not in preference.cline_models
     assert all(model.startswith("cline-pass/") for model in preference.cline_models)
 
 
@@ -52,6 +58,7 @@ def test_clinepass_defaults_have_role_specific_safety_ladders(tmp_path) -> None:
     store.save("split", None, provider="cline")
 
     aliases = store.resolve_aliases()
+    assert aliases["_cline_chat_model"] == "cline-pass/mimo-v2.6-flash"
     planners = json.loads(aliases["_chain_planner"])
     coders = json.loads(aliases["_fallbacks_coder"])
     assert [item["model"] for item in planners] == [
@@ -64,6 +71,23 @@ def test_clinepass_defaults_have_role_specific_safety_ladders(tmp_path) -> None:
     ]
     advertised = set(store.load().cline_models)
     assert {item["model"] for item in planners + coders} <= advertised
+
+
+def test_cline_chat_model_setting_overrides_only_chat_alias(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("WAQIL_CLINE_CHAT_MODEL", "cline-pass/mimo-v2.5")
+    settings = _settings(tmp_path)
+    settings.cline_api_key = "subscription-key"
+    store = ModelPreferenceStore(settings)
+    store.save("split", None, provider="cline")
+
+    aliases = store.resolve_aliases()
+    assert aliases["_cline_chat_model"] == "cline-pass/mimo-v2.5"
+    assert json.loads(aliases["_chain_planner"])[0] == {
+        "provider": "cline",
+        "model": "cline-pass/qwen3.7-plus",
+    }
 
 
 @pytest.mark.parametrize(
@@ -113,7 +137,9 @@ def test_an_explicit_cline_planner_chain_is_never_rewritten(tmp_path) -> None:
         },
     )
 
-    assert json.loads(store.resolve_aliases()["_chain_planner"]) == [
+    aliases = store.resolve_aliases()
+    assert aliases["_cline_chat_model"] == "cline-pass/mimo-v2.6-flash"
+    assert json.loads(aliases["_chain_planner"]) == [
         {"provider": "cline", "model": "cline-pass/qwen3.7-max"}
     ]
 
@@ -135,6 +161,48 @@ def test_pinning_one_model_routes_every_role_to_it(tmp_path) -> None:
         # outage on the pinned model degrades a build instead of ending it.
         "_fallbacks_coder": '[{"provider": "local", "model": "north-mini-code-1.0:mlx-nvfp4"}]',
     }
+
+
+def test_pinned_cline_model_reaches_chat_and_planner_chain(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    settings.cline_api_key = "subscription-key"
+    store = ModelPreferenceStore(settings)
+    store.save("pinned", "cline-pass/mimo-v2.5", provider="cline")
+
+    aliases = store.resolve_aliases()
+    assert aliases["_cline_model"] == "cline-pass/mimo-v2.5"
+    assert "_cline_chat_model" not in aliases
+    assert aliases["_provider"] == "cline"
+    assert json.loads(aliases["_chain_planner"])[0] == {
+        "provider": "cline",
+        "model": "cline-pass/mimo-v2.5",
+    }
+    provider = ClineModelProvider(settings)
+    assert provider._model_for("planner", aliases) == "cline-pass/mimo-v2.5"
+    assert provider._model_for("coder", aliases) == "cline-pass/mimo-v2.5"
+
+
+def test_stale_ollama_pin_is_not_advertised_as_cline_model(tmp_path) -> None:
+    settings = _settings(tmp_path)
+    settings.cline_api_key = "subscription-key"
+    settings.model_preference_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.model_preference_path.write_text(
+        json.dumps(
+            {
+                "mode": "pinned",
+                "provider": "cline",
+                "model": "gpt-oss:120b-cloud",
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = ModelPreferenceStore(settings)
+
+    assert store.load().mode == "split"
+    assert store.load().model is None
+    assert "_cline_model" not in store.resolve_aliases()
+    with pytest.raises(ValueError, match="provider/model ID"):
+        store.save("pinned", "gpt-oss:120b-cloud", provider="cline")
 
 
 def test_switching_back_to_split_clears_the_pin(tmp_path) -> None:

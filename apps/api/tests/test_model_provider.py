@@ -593,6 +593,191 @@ async def test_oci_responses_uses_native_tools_without_service_memory(settings) 
 
 
 @pytest.mark.asyncio
+async def test_oci_generate_streams_deltas_before_completion(settings) -> None:
+    emitted: list[str] = []
+    calls: list[dict] = []
+
+    class Stream:
+        closed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            self.closed = True
+
+        async def __aiter__(self):
+            yield SimpleNamespace(type="response.output_text.delta", delta="Hel")
+            assert emitted == ["Hel"]
+            yield SimpleNamespace(type="response.output_text.delta", delta="lo")
+            assert emitted == ["Hel", "lo"]
+            yield SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(id="resp_stream", model="xai.grok-4.3", output_text="Hello"),
+            )
+
+    stream = Stream()
+
+    class Client:
+        responses = SimpleNamespace()
+
+        def __init__(self):
+            async def create(**kwargs):
+                calls.append(kwargs)
+                return stream
+
+            self.responses.create = create
+
+    provider = OCIResponsesModelProvider(settings)
+    provider._client_instance = Client()
+    result = await provider.generate(
+        ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+        on_token=lambda delta: _collect(emitted, delta),
+    )
+    assert emitted == ["Hel", "lo"]
+    assert result.content == "Hello"
+    assert result.structured["response_id"] == "resp_stream"
+    assert calls[0]["stream"] is True
+    assert calls[0]["store"] is False
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_installed_openai_sdk_decodes_oci_style_response_stream(settings) -> None:
+    """Exercise the pinned SDK's real SSE decoder without an external call."""
+    openai = pytest.importorskip("openai")
+    httpx = pytest.importorskip("httpx")
+    emitted: list[str] = []
+
+    class Chunks(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"type":"response.output_text.delta","delta":"Hel","sequence_number":1,"item_id":"msg_1","output_index":0,"content_index":0}\n\n'
+            assert emitted == ["Hel"]
+            yield b'data: {"type":"response.output_text.delta","delta":"lo","sequence_number":2,"item_id":"msg_1","output_index":0,"content_index":0}\n\n'
+            assert emitted == ["Hel", "lo"]
+            final = {
+                "type": "response.completed",
+                "sequence_number": 3,
+                "response": {
+                    "id": "resp_sdk",
+                    "object": "response",
+                    "created_at": 0,
+                    "status": "completed",
+                    "model": "xai.grok-4.3",
+                    "output": [{
+                        "id": "msg_1",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": "Hello", "annotations": []}],
+                    }],
+                },
+            }
+            yield f"data: {json.dumps(final)}\n\n".encode()
+            yield b"data: [DONE]\n\n"
+
+    transport = httpx.MockTransport(
+        lambda _: httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=Chunks()
+        )
+    )
+    http_client = httpx.AsyncClient(transport=transport)
+    provider = OCIResponsesModelProvider(settings)
+    provider._client_instance = openai.AsyncOpenAI(
+        api_key="test", base_url="https://example.test/v1", http_client=http_client, max_retries=0
+    )
+    try:
+        result = await provider.generate(
+            ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+            on_token=lambda delta: _collect(emitted, delta),
+        )
+    finally:
+        await provider.close()
+    assert result.content == "Hello"
+    assert result.structured["response_id"] == "resp_sdk"
+
+
+@pytest.mark.asyncio
+async def test_oci_stream_rejects_failure_and_truncation_after_partial_text(settings) -> None:
+    async def run(events):
+        emitted: list[str] = []
+
+        class Stream:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                pass
+
+            async def __aiter__(self):
+                for event in events:
+                    yield event
+
+        class Client:
+            responses = SimpleNamespace()
+
+            def __init__(self):
+                async def create(**_):
+                    return Stream()
+
+                self.responses.create = create
+
+        provider = OCIResponsesModelProvider(settings)
+        provider._client_instance = Client()
+        with pytest.raises(ModelProviderError) as failure:
+            await provider.generate(
+                ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+                on_token=lambda delta: _collect(emitted, delta),
+            )
+        assert emitted == ["partial"]
+        return str(failure.value)
+
+    first = SimpleNamespace(type="response.output_text.delta", delta="partial")
+    assert "failed" in await run([
+        first,
+        SimpleNamespace(type="response.failed", response=SimpleNamespace(error=SimpleNamespace(message="model error"))),
+    ])
+    assert "before completion" in await run([first])
+
+
+@pytest.mark.asyncio
+async def test_oci_stream_preserves_callback_cancellation(settings) -> None:
+    closed = False
+
+    class Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            nonlocal closed
+            closed = True
+
+        async def __aiter__(self):
+            yield SimpleNamespace(type="response.output_text.delta", delta="first")
+
+    class Client:
+        responses = SimpleNamespace()
+
+        def __init__(self):
+            async def create(**_):
+                return Stream()
+
+            self.responses.create = create
+
+    async def cancel(_: str) -> None:
+        raise asyncio.CancelledError()
+
+    provider = OCIResponsesModelProvider(settings)
+    provider._client_instance = Client()
+    with pytest.raises(asyncio.CancelledError):
+        await provider.generate(
+            ModelRequestV1(role="planner", system_prompt="s", user_prompt="u"),
+            on_token=cancel,
+        )
+    assert closed
+
+
+@pytest.mark.asyncio
 async def test_oci_project_agent_uses_local_function_contracts(settings) -> None:
     cloud_settings = settings.model_copy(
         update={

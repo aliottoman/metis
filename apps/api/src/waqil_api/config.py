@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     cline_base_url: str = "https://api.cline.bot/api/v1"
     cline_orchestrator_model: str = "cline-pass/qwen3.7-plus"
     cline_coder_model: str = "cline-pass/deepseek-v4-pro"
+    # Ordinary chat answers may use a faster ClinePass model. Planning and
+    # project work retain the orchestrator model or explicit planner chain.
+    # A user pin still selects the model for every role.
+    cline_chat_model: str = "cline-pass/mimo-v2.6-flash"
     cline_max_output_tokens: int = Field(default=32_768, ge=256, le=200_000)
 
     # Speech to text, on the same key. Dictation is the one place a cloud call
@@ -493,10 +497,14 @@ class Settings(BaseSettings):
     corpus_graph_enabled: bool = True
     corpus_graph_expand: bool = True
 
-    # Web research: search + page reading for messages sent with the Web
-    # scope. Never runs in Auto — reaching the open internet is a per-message
-    # user choice, the same consent posture cloud embedding takes.
+    # Web research: search + page reading for Web scope and public questions in
+    # Auto that clearly need current information. Private-context questions
+    # stay local in Auto unless the user explicitly asks for the web.
     web_research_enabled: bool = True
+    # Optional Brave Search LLM Context. Without WAQIL_BRAVE_SEARCH_API_KEY,
+    # the existing keyless DuckDuckGo search remains available.
+    brave_search_api_key: str = ""
+    brave_search_timeout_seconds: float = Field(default=15.0, ge=2.0, le=30.0)
     web_search_max_results: int = Field(default=4, ge=1, le=8)
     web_fetch_timeout_seconds: float = Field(default=8.0, ge=2.0, le=30.0)
     # Per-page prompt budget. Four pages at this cap stay well inside every
