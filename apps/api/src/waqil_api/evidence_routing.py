@@ -66,8 +66,19 @@ _SENSITIVE_QUERY = re.compile(
 _URL = re.compile(r"https?://[^\s<>\"')\]]+", re.IGNORECASE)
 _COMPONENT = re.compile(r"\b(?:sdk|harness|cli|runtime)\b", re.IGNORECASE)
 _GENERIC_FOCUS = {
-    "changelog", "feature", "features", "harness", "latest", "new",
-    "recent", "release", "releases", "runtime", "sdk", "cli", "updates",
+    "changelog",
+    "feature",
+    "features",
+    "harness",
+    "latest",
+    "new",
+    "recent",
+    "release",
+    "releases",
+    "runtime",
+    "sdk",
+    "cli",
+    "updates",
 }
 _VERSION_REQUEST = re.compile(r"(?<![\w.])v?\d+\.\d+(?:\.\d+)?(?![\w.])", re.IGNORECASE)
 _RELEASE_REQUEST = re.compile(
@@ -99,9 +110,7 @@ def safe_public_queries(queries: list[str]) -> list[str]:
     return safe
 
 
-def safe_public_open_urls(
-    urls: list[str], snippets: list[dict[str, Any]]
-) -> list[str]:
+def safe_public_open_urls(urls: list[str], snippets: list[dict[str, Any]]) -> list[str]:
     """Open only previously retrieved public source URLs, never model URLs.
 
     A model-selected arbitrary URL could smuggle local context in its path or
@@ -139,25 +148,60 @@ def safe_focus_terms(terms: list[str]) -> list[str]:
 
 
 _SUBJECT_STOPWORDS = _GENERIC_FOCUS | {
-    "a", "about", "agent", "ai", "all", "an", "and", "app", "assistant",
-    "best", "can", "code", "current", "did", "does", "editor", "essential", "extension",
-    "for", "from", "improvement", "improvements", "its", "local", "my",
-    "native", "of", "personal", "product", "recently", "released", "search",
-    "support", "supports", "the", "tool",
-    "tools", "version", "versions", "vs", "web", "what", "which", "with", "would",
+    "a",
+    "about",
+    "agent",
+    "ai",
+    "all",
+    "an",
+    "and",
+    "app",
+    "assistant",
+    "best",
+    "can",
+    "code",
+    "current",
+    "did",
+    "does",
+    "editor",
+    "essential",
+    "extension",
+    "for",
+    "from",
+    "improvement",
+    "improvements",
+    "its",
+    "local",
+    "my",
+    "native",
+    "of",
+    "personal",
+    "product",
+    "recently",
+    "released",
+    "search",
+    "support",
+    "supports",
+    "the",
+    "tool",
+    "tools",
+    "version",
+    "versions",
+    "vs",
+    "web",
+    "what",
+    "which",
+    "with",
+    "would",
 }
 
 
-def _public_subject_from_queries(instruction: str, queries: list[str]) -> str | None:
-    """Reuse a named subject already present in both user text and safe queries.
-
-    The repair never promotes a fresh name from private context into a public
-    search. It only recombines words the model already placed in a query that
-    passed the public-query guard.
-    """
+def _public_subjects_from_queries(instruction: str, queries: list[str]) -> list[str]:
+    """Names appearing in both the current instruction and safe public queries."""
     instruction_words = {
         word.casefold() for word in re.findall(r"[A-Za-z][A-Za-z0-9_.+-]*", instruction)
     }
+    subjects: list[str] = []
     for query in queries:
         for word in re.findall(r"[A-Za-z][A-Za-z0-9_.+-]*", query):
             lowered = word.casefold()
@@ -165,6 +209,7 @@ def _public_subject_from_queries(instruction: str, queries: list[str]) -> str | 
                 len(word) < 3
                 or lowered in _SUBJECT_STOPWORDS
                 or lowered not in instruction_words
+                or lowered in {subject.casefold() for subject in subjects}
             ):
                 continue
             if re.search(
@@ -174,8 +219,14 @@ def _public_subject_from_queries(instruction: str, queries: list[str]) -> str | 
                 re.IGNORECASE,
             ):
                 continue
-            return word
-    return None
+            subjects.append(word)
+    return subjects
+
+
+def _public_subject_from_queries(instruction: str, queries: list[str]) -> str | None:
+    """Use one unambiguous named subject already in safe public queries."""
+    subjects = _public_subjects_from_queries(instruction, queries)
+    return subjects[0] if len(subjects) == 1 else None
 
 
 def public_component_query(
@@ -195,18 +246,21 @@ def public_component_query(
     return targeted[0] if targeted else None
 
 
-def public_component_changelog_present(
+def public_component_changelog_source_url(
     instruction: str, queries: list[str], snippets: list[dict[str, Any]]
-) -> bool:
-    """Whether evidence already includes the named component's GitHub record."""
+) -> str | None:
+    """Find the citable same-owner component changelog in retrieved evidence."""
     targeted = public_component_query(instruction, queries, [])
     if targeted is None:
-        return False
+        return None
     subject, component, _ = targeted.split(" ", 2)
     for item in snippets:
         if item.get("provider") != "web" or not str(item.get("text") or "").strip():
             continue
-        parsed = urlsplit(str(item.get("source_url") or ""))
+        source_url = str(item.get("source_url") or "")
+        if not _public_url(source_url):
+            continue
+        parsed = urlsplit(source_url)
         parts = parsed.path.strip("/").split("/")
         if (
             parsed.hostname == "github.com"
@@ -216,8 +270,17 @@ def public_component_changelog_present(
             and component.casefold() in {part.casefold() for part in parts[4:-1]}
             and parts[-1].casefold() in {"changelog.md", "changes.md"}
         ):
-            return True
-    return False
+            return source_url
+    return None
+
+
+def public_component_changelog_present(
+    instruction: str, queries: list[str], snippets: list[dict[str, Any]]
+) -> bool:
+    return (
+        public_component_changelog_source_url(instruction, queries, snippets)
+        is not None
+    )
 
 
 def public_component_changelog_candidate(
@@ -242,7 +305,8 @@ def public_component_changelog_candidate(
         if (
             parsed.scheme != "https"
             or parsed.hostname != "github.com"
-            or parsed.query or parsed.fragment
+            or parsed.query
+            or parsed.fragment
             or len(parts) != 5
             or parts[0].casefold() != subject.casefold()
             or parts[2] != "blob"
@@ -275,7 +339,8 @@ def preserve_public_component(
         return queries
     subject, component, _ = targeted.split(" ", 2)
     paired = [
-        query for query in queries
+        query
+        for query in queries
         if re.search(rf"\b{re.escape(subject)}\b", query, re.IGNORECASE)
         and re.search(rf"\b{re.escape(component)}\b", query, re.IGNORECASE)
     ]
@@ -285,7 +350,8 @@ def preserve_public_component(
     if _COMPONENT.search(instruction).group().casefold() == "harness":
         harness = next(
             (
-                query for query in queries
+                query
+                for query in queries
                 if re.search(rf"\b{re.escape(subject)}\b", query, re.IGNORECASE)
                 and re.search(r"\bharness\b", query, re.IGNORECASE)
             ),
@@ -297,7 +363,8 @@ def preserve_public_component(
         if harness and harness.casefold() != first.casefold():
             return [first, harness]
     specific = [
-        query for query in queries
+        query
+        for query in queries
         if query.casefold() != first.casefold()
         and re.search(rf"\b{re.escape(subject)}\b", query, re.IGNORECASE)
     ]
@@ -309,7 +376,10 @@ def preserve_public_component(
 
 
 def official_release_source_url(
-    prompt: str, snippets: list[dict[str, Any]], focus_terms: list[str]
+    prompt: str,
+    snippets: list[dict[str, Any]],
+    focus_terms: list[str],
+    public_queries: list[str] | None = None,
 ) -> str | None:
     """Recognize a substantive first-party changelog for a release question.
 
@@ -321,14 +391,24 @@ def official_release_source_url(
     instruction = user_instruction(prompt)
     if not _RELEASE_REQUEST.search(instruction):
         return None
-    subject = next(
-        (term.casefold() for term in focus_terms if re.fullmatch(r"[\w.-]{3,40}", term)
-         and term.casefold() not in _GENERIC_FOCUS),
+    safe_queries = safe_public_queries(public_queries or [])
+    if len(_public_subjects_from_queries(instruction, safe_queries)) > 1:
+        return None
+    subject = _public_subject_from_queries(instruction, safe_queries) or next(
+        (
+            term
+            for term in focus_terms
+            if re.fullmatch(r"[\w.-]{3,40}", term)
+            and term.casefold() not in _GENERIC_FOCUS
+        ),
         "",
     )
+    subject = subject.casefold()
     if not subject:
         return None
-    requested_versions = {match.group().lstrip("vV") for match in _VERSION_REQUEST.finditer(instruction)}
+    requested_versions = {
+        match.group().lstrip("vV") for match in _VERSION_REQUEST.finditer(instruction)
+    }
     component_match = _COMPONENT.search(instruction)
     for item in snippets:
         if item.get("provider") != "web":
@@ -356,7 +436,9 @@ def official_release_source_url(
         # solely on those headings when the excerpt is explicitly incomplete.
         if "other release entries omitted" in body.casefold():
             continue
-        if requested_versions and not all(version in body for version in requested_versions):
+        if requested_versions and not all(
+            version in body for version in requested_versions
+        ):
             continue
         if len(re.findall(r"(?m)^##\s+\[?v?\d+\.\d+", body)) < 2:
             continue
@@ -485,7 +567,7 @@ async def review_web_evidence(
             # The first two sources carry the most promising evidence; keeping
             # their full bounded excerpt lets the reviewer see older release
             # sections instead of only the newest heading.
-            "text": str(item.get("text", ""))[:3500 if index < 2 else 900],
+            "text": str(item.get("text", ""))[: 3500 if index < 2 else 900],
         }
         for index, item in enumerate(web_sources)
     ]

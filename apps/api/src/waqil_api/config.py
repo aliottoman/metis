@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     cline_base_url: str = "https://api.cline.bot/api/v1"
     cline_orchestrator_model: str = "cline-pass/qwen3.7-plus"
     cline_coder_model: str = "cline-pass/deepseek-v4-pro"
+    # Ordinary chat answers may use a faster ClinePass model. Planning and
+    # project work retain the orchestrator model; a user pin or explicit
+    # planner chain takes precedence over this default.
+    cline_chat_model: str = "cline-pass/mimo-v2.6-flash"
     cline_max_output_tokens: int = Field(default=32_768, ge=256, le=200_000)
 
     # Speech to text, on the same key. Dictation is the one place a cloud call

@@ -133,7 +133,12 @@ class ModelPreferenceStore:
             provider = "local"
         if provider == "cline" and not self.cline_available:
             provider = "local"
-        if provider == "cline" and mode == "pinned" and model and not is_cline_gateway_model(model):
+        if (
+            provider == "cline"
+            and mode == "pinned"
+            and model
+            and not is_cline_gateway_model(model)
+        ):
             # Old preferences could carry an Ollama pin across a provider
             # switch. Display the effective split mode instead of claiming a
             # pin that the Cline gateway cannot serve.
@@ -218,7 +223,12 @@ class ModelPreferenceStore:
                 raise ValueError(capability_error)
         if provider not in ("local", "oci", "cohere", "cline"):
             raise ValueError("provider must be 'local', 'oci', 'cohere' or 'cline'")
-        if provider == "cline" and mode == "pinned" and model and not is_cline_gateway_model(model):
+        if (
+            provider == "cline"
+            and mode == "pinned"
+            and model
+            and not is_cline_gateway_model(model)
+        ):
             raise ValueError("a pinned Cline model must use a provider/model ID")
         if provider == "oci" and not self.oci_available:
             raise ValueError(
@@ -366,6 +376,15 @@ class ModelPreferenceStore:
                 "quality": self._settings.quality_model,
                 **provider_aliases,
             }
+        if (
+            preference.provider == "cline"
+            and preference.mode == "split"
+            and not preference.role_chains.get("planner")
+            and self._settings.cline_chat_model.strip()
+        ):
+            # The synthesis call alone may use this alias. Leave the planner
+            # primary and safety chain intact for evidence and project work.
+            aliases["_cline_chat_model"] = self._settings.cline_chat_model.strip()
         for role in MODEL_ROLES:
             chain = preference.role_chains.get(role) or []
             if chain:
