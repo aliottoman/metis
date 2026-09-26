@@ -379,11 +379,11 @@ class ModelPreferenceStore:
         if (
             preference.provider == "cline"
             and preference.mode == "split"
-            and not preference.role_chains.get("planner")
             and self._settings.cline_chat_model.strip()
         ):
             # The synthesis call alone may use this alias. Leave the planner
-            # primary and safety chain intact for evidence and project work.
+            # primary and any explicit planner chain intact for evidence and
+            # project work. A planner-chain choice does not select chat answers.
             aliases["_cline_chat_model"] = self._settings.cline_chat_model.strip()
         for role in MODEL_ROLES:
             chain = preference.role_chains.get(role) or []

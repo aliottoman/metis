@@ -118,8 +118,8 @@ class Settings(BaseSettings):
     cline_orchestrator_model: str = "cline-pass/qwen3.7-plus"
     cline_coder_model: str = "cline-pass/deepseek-v4-pro"
     # Ordinary chat answers may use a faster ClinePass model. Planning and
-    # project work retain the orchestrator model; a user pin or explicit
-    # planner chain takes precedence over this default.
+    # project work retain the orchestrator model or explicit planner chain.
+    # A user pin still selects the model for every role.
     cline_chat_model: str = "cline-pass/mimo-v2.6-flash"
     cline_max_output_tokens: int = Field(default=32_768, ge=256, le=200_000)
 

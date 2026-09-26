@@ -140,7 +140,7 @@ async def test_split_chat_uses_flash_while_evidence_and_project_planning_use_qwe
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("choice", ["pinned", "planner_chain"])
-async def test_user_model_choices_are_not_replaced_by_chat_default(
+async def test_planner_chain_keeps_planning_model_and_pin_keeps_answer_model(
     settings, choice: str
 ) -> None:
     store = _cline_store(settings)
@@ -158,7 +158,7 @@ async def test_user_model_choices_are_not_replaced_by_chat_default(
             },
         )
     aliases = store.resolve_aliases()
-    assert "_cline_chat_model" not in aliases
+    assert aliases.get("_cline_chat_model") == (None if choice == "pinned" else FLASH)
     assert json.loads(aliases["_chain_planner"])[0]["model"] == selected
     model = _Model(settings)
     plane = _plane(settings, model)
@@ -169,9 +169,10 @@ async def test_user_model_choices_are_not_replaced_by_chat_default(
 
     assert model.calls[0] == ("project", selected)
     assert model.calls[1][0] == "answer"
-    assert model.calls[1][1] != FLASH
     if choice == "pinned":
         assert model.calls[1][1] == selected
+    else:
+        assert model.calls[1][1] == FLASH
 
 
 @pytest.mark.asyncio
