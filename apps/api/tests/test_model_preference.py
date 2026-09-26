@@ -138,7 +138,7 @@ def test_an_explicit_cline_planner_chain_is_never_rewritten(tmp_path) -> None:
     )
 
     aliases = store.resolve_aliases()
-    assert "_cline_chat_model" not in aliases
+    assert aliases["_cline_chat_model"] == "cline-pass/mimo-v2.6-flash"
     assert json.loads(aliases["_chain_planner"]) == [
         {"provider": "cline", "model": "cline-pass/qwen3.7-max"}
     ]
