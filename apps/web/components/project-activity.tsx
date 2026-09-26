@@ -1,97 +1,96 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import { ChevronDown, CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
 
 import { runEventSummary, runEventTitle, runEventTone } from "@/components/run-timeline";
 import type { RunEventV1 } from "@/lib/types";
 
-// The conversation shows milestones. The task panel retains the complete
-// event log for anyone who needs the model, policy, and retrieval details.
-const VISIBLE_EVENT_TYPES = new Set([
-  "stage.entered",
-  "context.knowledge_error",
-  "project.check_result",
-  "project.build_checked",
-  "project.staged_verified",
-  "project.vertical_slice_checked",
-  "project.coding_round",
-  "tool.started",
-  "tool.completed",
-  "tool.evaluated",
-  "artifact.created",
-  "run.model_fallback",
-  "run.model_exhausted",
-  "run.failed",
-  "run.cancelled",
+// Keep the conversation brief. The task overview retains the event-by-event
+// record, including model and retrieval details.
+const VISIBLE = new Set([
+  "stage.entered", "context.knowledge_error", "project.check_result",
+  "project.build_checked", "project.staged_verified", "project.vertical_slice_checked",
+  "project.coding_round", "tool.started", "tool.completed", "tool.evaluated",
+  "artifact.created", "run.model_fallback", "run.model_exhausted",
+  "run.failed", "run.cancelled",
 ]);
 
-function milestoneFor(event: RunEventV1): { title: string; summary: string } | null {
-  if (event.type === "tool.started" || event.type === "tool.completed" || event.type === "tool.evaluated") {
-    const name = ["display_name", "tool_name", "tool", "name", "slug"]
-      .map((key) => event.payload[key])
-      .find((value): value is string => typeof value === "string" && Boolean(value.trim()));
-    const summary = [event.payload.summary, event.payload.message]
-      .find((value): value is string => typeof value === "string" && Boolean(value.trim()))?.trim() ?? "";
-    // Tool plumbing without a useful label belongs in the full task log.
-    if (!name && !summary) return null;
-    const label = name?.split(/[.:/]/).at(-1)?.replace(/[_-]+/g, " ").trim();
-    const action = event.type === "tool.started" ? "Using" : event.type === "tool.completed" ? "Finished" : "Checked";
-    return { title: label ? `${action} ${label}` : `${action} a tool`, summary };
-  }
-  if (event.type !== "stage.entered") {
-    return { title: runEventTitle(event.type, event.payload), summary: runEventSummary(event) };
-  }
-  const stage = event.payload.stage;
-  if (["ingesting", "retrieving", "embedding", "reranking"].includes(String(stage))) {
-    return { title: "Finding context", summary: "Reading the request and relevant information." };
-  }
-  if (["synthesizing", "revising", "reviewing"].includes(String(stage))) {
-    return { title: "Preparing the answer", summary: "Writing and checking the response." };
-  }
-  return { title: runEventTitle(event.type, event.payload), summary: runEventSummary(event) };
-}
-
-type ActivityStep = {
-  id: string;
+type ActivityGroup = {
+  key: string;
   title: string;
   summary: string;
   tone: string;
+  count: number;
+  sequence: number;
 };
 
-function compactSummary(value: string): string {
-  const singleLine = value.replace(/\s+/g, " ").trim();
-  return singleLine.length > 180 ? `${singleLine.slice(0, 177).trimEnd()}…` : singleLine;
+function compact(value: string): string {
+  const line = value.replace(/\s+/g, " ").trim();
+  return line.length > 180 ? `${line.slice(0, 177).trimEnd()}…` : line;
 }
 
-function stepsFrom(events: readonly RunEventV1[]): ActivityStep[] {
-  const ordered = [...events]
-    .filter((event) => VISIBLE_EVENT_TYPES.has(event.type))
-    .sort((a, b) => a.sequence - b.sequence);
-  const steps: ActivityStep[] = [];
-  for (const event of ordered) {
-    const milestone = milestoneFor(event);
-    if (!milestone) continue;
-    const title = milestone.title;
-    const summary = compactSummary(milestone.summary);
-    const prior = steps[steps.length - 1];
-    if (prior && prior.title === title && prior.summary === summary) continue;
-    steps.push({
-      id: event.id || `${event.run_id}-${event.sequence}`,
-      title,
-      summary,
-      tone: runEventTone(event),
+function usefulSummary(event: RunEventV1): string {
+  const summary = runEventSummary(event);
+  return summary === "Recorded by the control plane" ? "" : compact(summary);
+}
+
+function activityFor(event: RunEventV1): Omit<ActivityGroup, "count" | "sequence"> | null {
+  const payload = event.payload;
+  const tone = runEventTone(event);
+  if (event.type === "stage.entered") {
+    const stage = String(payload.stage ?? "");
+    if (stage === "ingesting") return { key: "reading", title: "Reading the request", summary: "Understanding what you need.", tone };
+    if (["retrieving", "embedding", "reranking"].includes(stage)) return { key: "context", title: "Finding context", summary: "Gathering relevant information.", tone };
+    if (stage === "planning") return { key: "planning", title: "Planning", summary: "Choosing how to handle the request.", tone };
+    if (["synthesizing", "authoring", "designing", "drafting", "rendering"].includes(stage)) return { key: "writing", title: "Writing the response", summary: "Preparing the answer.", tone };
+    if (["reviewing", "revising"].includes(stage)) return { key: "review", title: "Checking the response", summary: "Reviewing the answer before sending it.", tone };
+    if (stage === "project_check") return { key: "checks", title: "Checking the work", summary: "Running project checks.", tone };
+    if (["project_reasoning", "project_tool"].includes(stage)) return { key: "project", title: "Working in the project", summary: "Making progress on the requested change.", tone };
+  }
+  if (event.type.startsWith("tool.")) {
+    const name = ["display_name", "tool_name", "tool", "name", "slug"]
+      .map((key) => payload[key])
+      .find((value): value is string => typeof value === "string" && Boolean(value.trim()));
+    const summary = [payload.summary, payload.message]
+      .find((value): value is string => typeof value === "string" && Boolean(value.trim()))?.trim();
+    if (!name && !summary) return null;
+    const label = name?.split(/[.:/]/).at(-1)?.replace(/[_-]+/g, " ").trim();
+    const verb = event.type === "tool.started" ? "Using" : event.type === "tool.completed" ? "Used" : "Checked";
+    return { key: "tools", title: "Using tools", summary: compact([label ? `${verb} ${label}` : "Tool activity", summary].filter(Boolean).join(" · ")), tone };
+  }
+  if ((event.type.startsWith("project.") && event.type.includes("check")) || ["project.staged_verified", "project.vertical_slice_checked"].includes(event.type)) {
+    return { key: "checks", title: "Checking the work", summary: usefulSummary(event), tone };
+  }
+  if (event.type === "project.coding_round") return { key: "project", title: "Working in the project", summary: usefulSummary(event), tone };
+  if (event.type === "artifact.created") return { key: "outputs", title: "Preparing output", summary: usefulSummary(event), tone };
+  if (event.type === "run.model_fallback") return { key: "model", title: "Switching models", summary: usefulSummary(event), tone };
+  if (["run.failed", "run.model_exhausted", "context.knowledge_error"].includes(event.type)) {
+    return { key: "problem", title: "Needs attention", summary: usefulSummary(event), tone: "danger" };
+  }
+  if (event.type === "run.cancelled") return { key: "stopped", title: "Stopped", summary: usefulSummary(event), tone };
+  return { key: event.type, title: runEventTitle(event.type, payload), summary: usefulSummary(event), tone };
+}
+
+function groupsFrom(events: readonly RunEventV1[]): ActivityGroup[] {
+  const groups = new Map<string, ActivityGroup>();
+  for (const event of [...events].sort((a, b) => a.sequence - b.sequence)) {
+    if (!VISIBLE.has(event.type)) continue;
+    const activity = activityFor(event);
+    if (!activity) continue;
+    const previous = groups.get(activity.key);
+    groups.set(activity.key, {
+      ...activity,
+      summary: activity.summary || previous?.summary || "",
+      count: (previous?.count ?? 0) + 1,
+      sequence: event.sequence,
     });
   }
-  return steps.slice(-8);
+  return [...groups.values()].sort((a, b) => a.sequence - b.sequence);
 }
 
 export function ProjectActivity({
-  events,
-  reasoning,
-  live,
-  attention = false,
-  stageLabel,
-  projectName,
+  events, reasoning, live, attention = false, stageLabel, projectName,
 }: {
   events: RunEventV1[];
   reasoning?: string;
@@ -101,56 +100,33 @@ export function ProjectActivity({
   projectName?: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const steps = useMemo(() => stepsFrom(events), [events]);
-  const latest = steps[steps.length - 1];
-  const activity = latest?.title || stageLabel || "Thinking";
-  const context = latest?.summary || (projectName ? `Working in ${projectName}.` : "Working on your request.");
-
-  useEffect(() => {
-    if (!open) return;
-    const body = bodyRef.current;
-    if (body) body.scrollTop = body.scrollHeight;
-  }, [attention, live, open, reasoning, steps.length]);
+  const detailId = useId();
+  const groups = useMemo(() => groupsFrom(events), [events]);
+  const latest = groups.at(-1);
+  const failed = !live && (latest?.key === "problem" || latest?.tone === "danger");
+  const status = attention ? "Waiting for your input" : failed ? "Needs attention" : live ? (stageLabel?.trim() || latest?.title || "Working") : "View activity";
+  const secondary = live ? latest?.title && latest.title !== status ? latest.title : projectName ? `Working in ${projectName}` : "Metis is working" : groups.length ? `${groups.length} ${groups.length === 1 ? "part" : "parts"}` : "";
+  const recent = groups.slice(-4);
+  const earlier = groups.slice(0, -4);
 
   return (
-    <section className={`projectActivity ${live ? "isLive" : attention ? "isAttention" : "isSettled"} ${open ? "isOpen" : ""}`}>
-      <button type="button" onClick={() => setOpen((wasOpen) => !wasOpen)} aria-expanded={open} aria-label={`${attention ? "Waiting for your input" : live ? "Metis is working" : "Metis activity"}. ${open ? "Hide" : "Show"} activity details`}>
-        <span className="projectActivityPulse" aria-hidden="true" />
-        <span className="projectActivityHeading">
-          <strong>{attention ? "Waiting for your input" : live ? "Metis is working" : "Activity"}</strong>
-          {live ? <small>{activity.replace(/…$/, "")}</small> : null}
-        </span>
-        <span className="projectActivityAction">{open ? "Hide" : "Details"}</span>
-        <span className="projectActivityChevron" aria-hidden="true">⌄</span>
+    <section className={`projectActivity ${live ? "isLive" : attention || failed ? "isAttention" : "isSettled"} ${open ? "isOpen" : ""}`}>
+      <button type="button" onClick={() => setOpen((wasOpen) => !wasOpen)} aria-expanded={open} aria-controls={open ? detailId : undefined} aria-label={`${status}. ${open ? "Hide" : "Show"} activity details`}>
+        <span className="projectActivityState" aria-hidden="true">{live ? <LoaderCircle size={14} /> : attention || failed ? <CircleAlert size={14} /> : <CircleCheck size={14} />}</span>
+        <span className="projectActivityHeading"><strong aria-live={live ? "polite" : "off"}>{status}</strong>{secondary ? <small>{secondary}</small> : null}</span>
+        <ChevronDown className="projectActivityChevron" size={14} aria-hidden="true" />
       </button>
-
       {open ? (
-        <div className="projectActivityBody" ref={bodyRef}>
-          <ol role="list">
-            {!steps.length ? (
-              <li className="tone-model isCurrent">
-                <span className="projectActivityNode" />
-                <div><strong>{activity}</strong><p>{context}</p></div>
-              </li>
-            ) : steps.map((step, index) => (
-              <li className={`tone-${step.tone} ${live && index === steps.length - 1 ? "isCurrent" : ""}`} key={step.id}>
-                <span className="projectActivityNode" />
-                <div>
-                  <span className="projectActivityStepHead">
-                    <strong>{step.title}</strong>
-                  </span>
-                  {step.summary ? <p>{step.summary}</p> : null}
-                </div>
-              </li>
-            ))}
+        <div className="projectActivityBody" id={detailId}>
+          <ol aria-label="Activity summary">
+            {!groups.length ? <li><span className="projectActivityNode" aria-hidden="true" /><div><strong>{status}</strong><p>{projectName ? `Working in ${projectName}.` : "Working on your request."}</p></div></li> : null}
+            {recent.map((group) => <li className={`tone-${group.tone} ${live && group.key === latest?.key ? "isCurrent" : ""}`} key={group.key}>
+              <span className="projectActivityNode" aria-hidden="true" />
+              <div><span className="projectActivityStepHead"><strong>{group.title}</strong>{group.count > 1 ? <small>{group.count} updates</small> : null}</span>{group.summary ? <p>{group.summary}</p> : null}</div>
+            </li>)}
           </ol>
-          {reasoning?.trim() ? (
-            <details className="projectReasoning">
-              <summary><span>Model reasoning</span><small>Available from this model</small></summary>
-              <p>{reasoning}</p>
-            </details>
-          ) : null}
+          {earlier.length ? <details className="projectActivityEarlier"><summary>{earlier.length} earlier {earlier.length === 1 ? "part" : "parts"}<ChevronDown size={13} aria-hidden="true" /></summary><ul>{earlier.map((group) => <li key={group.key}><strong>{group.title}</strong>{group.summary ? <p>{group.summary}</p> : null}</li>)}</ul></details> : null}
+          {reasoning?.trim() ? <details className="projectReasoning"><summary>Model reasoning<ChevronDown size={13} aria-hidden="true" /></summary><p>{reasoning}</p></details> : null}
         </div>
       ) : null}
     </section>

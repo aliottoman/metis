@@ -4,7 +4,7 @@
 // composer, and the activity drawer beside them. State lives in useChat;
 // this file only arranges the pieces.
 
-import { Activity, Keyboard, Mic, X } from "lucide-react";
+import { Activity, MessageCircle, Mic, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -107,8 +107,8 @@ export function ChatWorkspace() {
       <section className="chat-main">
         <header className="chat-head">
           <div className="chat-title">
-            <span className="ui-status"><span className={`ui-dot ${chat.runActive ? "is-waiting" : "is-live"}`} aria-hidden="true" />{mode}</span>
             <strong title={chat.conversationTitle}>{chat.conversationTitle}</strong>
+            <span className="chat-head-state"><span className={`ui-dot ${chat.runActive ? "is-waiting" : "is-live"}`} aria-hidden="true" />{chat.runActive ? "Working" : mode}</span>
           </div>
           <div className="chat-tools">
             <ModelControl
@@ -122,14 +122,13 @@ export function ChatWorkspace() {
               projectBusy={chat.projectOpening}
               disabled={chat.runActive}
             />
-            <div className="chat-mode" role="group" aria-label="Conversation mode">
-              <button type="button" className={`ui-btn is-sm${voiceOpen ? " is-quiet" : ""}`} aria-pressed={!voiceOpen} onClick={() => setVoiceOpen(false)}><Keyboard size={14} aria-hidden="true" /> Chat</button>
-              <button type="button" className={`ui-btn is-sm${voiceOpen ? "" : " is-quiet"}`} aria-pressed={voiceOpen} onClick={openVoice}><Mic size={14} aria-hidden="true" /> Voice</button>
-            </div>
-            <button ref={activityButton} type="button" className={`ui-btn is-sm chat-activity-toggle${chat.timelineOpen ? "" : " is-quiet"}`} aria-label="Task overview" aria-expanded={chat.timelineOpen} aria-controls="chat-activity" onClick={() => chat.setTimelineOpen(!chat.timelineOpen)} title="Plan, progress, outputs and decisions">
-              <Activity size={14} aria-hidden="true" />
-              <span>Task</span>
-              {chat.events.length ? <small className="chat-count">{chat.events.length}</small> : null}
+            <button type="button" className={`ui-btn is-sm is-quiet chat-voice-toggle${voiceOpen ? " is-active" : ""}`} aria-label={voiceOpen ? "Return to chat" : "Open voice chat"} aria-pressed={voiceOpen} onClick={() => voiceOpen ? setVoiceOpen(false) : openVoice()} title={voiceOpen ? "Return to chat" : "Open voice chat"}>
+              {voiceOpen ? <MessageCircle size={16} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
+              <span>{voiceOpen ? "Chat" : "Voice"}</span>
+            </button>
+            <button ref={activityButton} type="button" className={`ui-btn is-sm is-quiet chat-activity-toggle${chat.timelineOpen ? " is-active" : ""}`} aria-label="Task overview" aria-expanded={chat.timelineOpen} aria-controls="chat-activity" onClick={() => chat.setTimelineOpen(!chat.timelineOpen)} title="Activity and details">
+              <Activity size={16} aria-hidden="true" />
+              <span>Activity</span>
             </button>
           </div>
         </header>

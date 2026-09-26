@@ -1,10 +1,9 @@
 "use client";
 
-// The composer: a box to type in, Send, and one "+" menu for everything else
-// (customer or project scope, files, sources, dictation). Stop sits beside
-// Send while a run is live, when Send queues instead.
+// The composer keeps the draft and its context together. Frequently used
+// actions stay visible; the add menu holds the less common choices.
 
-import { ArrowUp, LoaderCircle, Mic, Paperclip, Plus, Square, X } from "lucide-react";
+import { ArrowUp, BookOpen, Building2, ChevronDown, FolderOpen, Globe2, LoaderCircle, Mic, Paperclip, Plus, Search, Square, X } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 
 import { CommandPicker, type PickerOption } from "@/components/command-picker";
@@ -18,7 +17,7 @@ type Picker = "customer" | "project" | null;
 
 const SLASH = /(^|\s)\/([a-zA-Z]*)$/;
 const SOURCES: Array<{ value: KnowledgeScope; label: string; hint: string }> = [
-  { value: "auto", label: "Auto", hint: "Everything relevant, Notion included" },
+  { value: "auto", label: "Auto", hint: "Use the web and your sources when helpful" },
   { value: "notion", label: "Notion", hint: "Only synced Notion pages" },
   { value: "web", label: "Web", hint: "Search the web and cite it" },
 ];
@@ -30,7 +29,8 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
   const fileInput = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const caretRef = useRef<number | null>(null);
+  const sourceButtonRef = useRef<HTMLButtonElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement | HTMLTextAreaElement | null>(null);
   const textarea = chat.composerRef;
 
   // Measure before paint so each keystroke grows or shrinks the box without
@@ -69,14 +69,6 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
     };
   }, [resizeComposer]);
 
-  // After a programmatic edit (list continuation) put the caret back.
-  useLayoutEffect(() => {
-    const caret = caretRef.current;
-    if (caret == null) return;
-    caretRef.current = null;
-    textarea.current?.setSelectionRange(caret, caret);
-  }, [chat.draft, textarea]);
-
   useEffect(() => {
     if (!menuOpen) return;
     const close = (event: PointerEvent) => {
@@ -86,7 +78,7 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
       if (event.key === "Escape" && !event.defaultPrevented) {
         event.preventDefault();
         setMenuOpen(false);
-        if (menuRef.current?.contains(document.activeElement)) menuButtonRef.current?.focus();
+        if (menuRef.current?.contains(document.activeElement)) menuTriggerRef.current?.focus();
       }
     };
     document.addEventListener("pointerdown", close);
@@ -119,8 +111,24 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
   const onDraftChange = (value: string) => {
     chat.setDraft(value);
     // A "/" at the start or after a space opens the menu, like "+".
-    if (SLASH.test(value)) setMenuOpen(true);
+    if (SLASH.test(value)) {
+      menuTriggerRef.current = textarea.current;
+      setMenuOpen(true);
+    }
     else setMenuOpen(false);
+  };
+
+  const toggleMenu = (trigger: HTMLButtonElement | null, focusSource = false) => {
+    setPicker(null);
+    if (!menuOpen) {
+      menuTriggerRef.current = trigger;
+      setMenuOpen(true);
+      requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>(focusSource
+        ? '[role="menuitemradio"][aria-checked="true"]'
+        : '[role="menuitem"]:not(:disabled)')?.focus());
+    } else {
+      setMenuOpen(false);
+    }
   };
 
   const pick = (which: Exclude<Picker, null> | "attach" | "dictate") => {
@@ -145,32 +153,8 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
       return;
     }
     if (event.key !== "Enter" || event.shiftKey) return;
-    // Enter continues a markdown list; an empty item leaves it; anything else sends.
-    const box = textarea.current;
-    if (box && !event.metaKey && !event.ctrlKey && box.selectionStart === box.selectionEnd) {
-      const value = box.value;
-      const caret = box.selectionStart;
-      const lineStart = value.lastIndexOf("\n", caret - 1) + 1;
-      const lineEnd = value.indexOf("\n", caret);
-      const line = value.slice(lineStart, lineEnd === -1 ? value.length : lineEnd);
-      const marker = line.match(/^(\s*)([-*+]|\d+[.)])(\s+)(.*)$/);
-      if (marker) {
-        event.preventDefault();
-        const [, indent, bullet, gap, content] = marker;
-        if (content.trim() === "") {
-          chat.setDraft(value.slice(0, lineStart) + value.slice(lineStart + indent.length + bullet.length + gap.length));
-          caretRef.current = lineStart;
-          return;
-        }
-        const next = /^\d/.test(bullet) ? `${Number.parseInt(bullet, 10) + 1}${bullet.replace(/^\d+/, "")}` : bullet;
-        const insertion = `\n${indent}${next} `;
-        chat.setDraft(value.slice(0, caret) + insertion + value.slice(caret));
-        caretRef.current = caret + insertion.length;
-        return;
-      }
-    }
     event.preventDefault();
-    void chat.submit();
+    if (canSend) void chat.submit();
   };
 
   const placeholder = voiceOpen ? "Type while voice mode is open…"
@@ -182,6 +166,8 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
               : "Message Metis…";
   const canSend = Boolean(chat.draft.trim() || chat.attachments.length) && !chat.sending && !chat.uploading && !chat.loadingConversation && !chat.projectOpening && !(chat.runActive && chat.queued);
   const dictating = dictation.state === "recording" || dictation.state === "transcribing";
+  const selectedSource = SOURCES.find((source) => source.value === chat.knowledgeScope) ?? SOURCES[0];
+  const SourceIcon = chat.knowledgeScope === "web" ? Search : chat.knowledgeScope === "notion" ? BookOpen : Globe2;
 
   return (
     <form className="composer" aria-label="Message composer" onSubmit={(event) => { event.preventDefault(); if (canSend) void chat.submit(); }}>
@@ -210,6 +196,28 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
         </div>
       ) : null}
 
+      {chat.selectedCustomer || chat.selectedProject ? (
+        <div className="composer-context" aria-label="Conversation context">
+          {chat.selectedCustomer ? (
+            <span className="composer-context-chip">
+              <Building2 size={13} aria-hidden="true" />
+              <span className="composer-chip-label" title={chat.selectedCustomer.name}>{chat.selectedCustomer.name}</span>
+              <button type="button" className="composer-context-action" disabled={chat.trackerBusy || chat.runActive} title="Add this account's activity tracker update to the conversation" onClick={() => void chat.trackerUpdate()}>
+                {chat.trackerBusy ? "Building…" : "Tracker"}
+              </button>
+              <button type="button" className="composer-x" aria-label={`Remove ${chat.selectedCustomer.name}`} disabled={chat.runActive} onClick={() => chat.setSelectedCustomerId(null)}><X size={12} /></button>
+            </span>
+          ) : null}
+          {chat.selectedProject ? (
+            <span className="composer-context-chip">
+              <FolderOpen size={13} aria-hidden="true" />
+              <span className="composer-chip-label" title={chat.selectedProject.name}>{chat.projectOpening ? "Mapping…" : chat.selectedProject.name}</span>
+              <button type="button" className="composer-x" aria-label={`Remove ${chat.selectedProject.name}`} disabled={chat.projectOpening || chat.runActive} onClick={() => void chat.chooseProject(null)}><X size={12} /></button>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       <textarea
         ref={textarea}
         rows={1}
@@ -226,10 +234,11 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
         placeholder={placeholder}
         aria-label="Message Metis"
         aria-describedby={`${id}-hint`}
-        disabled={chat.sending || chat.loadingConversation}
+        disabled={chat.loadingConversation}
       />
 
       <div className="composer-bar">
+        <div className="composer-left">
         <div className="composer-anchor" ref={menuRef} onBlur={(event) => {
           if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setMenuOpen(false);
         }} onKeyDown={(event) => {
@@ -238,7 +247,7 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
             event.preventDefault();
             event.stopPropagation();
             setMenuOpen(false);
-            menuButtonRef.current?.focus();
+            menuTriggerRef.current?.focus();
             return;
           }
           if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
@@ -249,31 +258,32 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
             : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
           buttons[next]?.focus();
         }}>
-          <button ref={menuButtonRef} type="button" className="ui-btn is-quiet is-sm composer-plus" aria-label="Add context, files or sources" aria-expanded={menuOpen} aria-controls={menuOpen ? `${id}-menu` : undefined} aria-haspopup="menu" onClick={() => {
-            setPicker(null);
-            setMenuOpen((value) => !value);
-            if (!menuOpen) requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus());
-          }} title="Add context, files or sources ( / )">
-            <Plus size={16} aria-hidden="true" />
+          <button ref={menuButtonRef} type="button" className="composer-tool composer-plus" aria-label="Add context or files" aria-expanded={menuOpen} aria-controls={menuOpen ? `${id}-menu` : undefined} aria-haspopup="menu" onClick={() => toggleMenu(menuButtonRef.current)} title="Add context or files ( / )">
+            <Plus size={18} aria-hidden="true" />
+          </button>
+          <button ref={sourceButtonRef} type="button" className={`composer-source${chat.knowledgeScope !== "auto" ? " is-specific" : ""}`} aria-label={`Sources: ${selectedSource.label}. ${selectedSource.hint}`} aria-expanded={menuOpen} aria-controls={menuOpen ? `${id}-menu` : undefined} aria-haspopup="menu" disabled={chat.runActive} onClick={() => toggleMenu(sourceButtonRef.current, true)} title={chat.runActive ? "Sources are fixed while responding" : selectedSource.hint}>
+            <SourceIcon size={15} aria-hidden="true" />
+            <span>{selectedSource.label}</span>
+            <ChevronDown size={13} aria-hidden="true" />
           </button>
           {menuOpen ? (
             <div className="composer-menu" id={`${id}-menu`} role="menu" aria-label="Add to this message">
               <button type="button" role="menuitem" onClick={() => pick("customer")} disabled={chat.runActive}>
-                <span>Customer</span><small>{chat.selectedCustomer ? chat.selectedCustomer.name : `${customerOptions.length} accounts`}</small>
+                <Building2 size={16} aria-hidden="true" /><span><strong>Customer</strong><small>{chat.selectedCustomer ? chat.selectedCustomer.name : `${customerOptions.length} accounts`}</small></span>
               </button>
               <button type="button" role="menuitem" onClick={() => pick("project")} disabled={chat.runActive}>
-                <span>Project</span><small>{chat.selectedProject ? chat.selectedProject.name : `${chat.projects.length} in the catalog`}</small>
+                <FolderOpen size={16} aria-hidden="true" /><span><strong>Project</strong><small>{chat.selectedProject ? chat.selectedProject.name : `${chat.projects.length} in the catalog`}</small></span>
               </button>
               <button type="button" role="menuitem" onClick={() => pick("attach")} disabled={chat.uploading}>
-                <span>Attach files</span><small>Images, documents, code</small>
+                <Paperclip size={16} aria-hidden="true" /><span><strong>Attach files</strong><small>Images, documents, code</small></span>
               </button>
               {dictation.state !== "unsupported" && !voiceOpen ? (
                 <button type="button" role="menuitem" onClick={() => pick("dictate")}>
-                  <span>Dictate</span><small>{dictation.provider === "elevenlabs" ? "ElevenLabs Scribe" : "Cohere Transcribe"}</small>
+                  <Mic size={16} aria-hidden="true" /><span><strong>Dictate</strong><small>{dictation.provider === "elevenlabs" ? "ElevenLabs Scribe" : "Cohere Transcribe"}</small></span>
                 </button>
               ) : null}
               <div className="composer-sources" role="group" aria-label="Answer sources">
-                <span>Sources</span>
+                <span>Search in</span>
                 {SOURCES.map((source) => (
                   <button key={source.value} type="button" role="menuitemradio" className={chat.knowledgeScope === source.value ? "is-on" : ""} aria-checked={chat.knowledgeScope === source.value} disabled={chat.runActive} title={source.hint} onClick={() => {
                     chat.setKnowledgeScope(source.value);
@@ -317,34 +327,19 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
             />
           ) : null}
         </div>
-
-        {chat.selectedCustomer ? (
-          <span className="ui-chip is-accent composer-chip">
-            <span className="composer-chip-label" title={chat.selectedCustomer.name}>{chat.selectedCustomer.name}</span>
-            <button type="button" className="ui-btn is-quiet is-sm" disabled={chat.trackerBusy || chat.runActive} title="Drop this account's activity-tracker update into the thread" onClick={() => void chat.trackerUpdate()}>
-              {chat.trackerBusy ? "Building…" : "Tracker"}
-            </button>
-            <button type="button" className="composer-x" aria-label={`Remove ${chat.selectedCustomer.name}`} disabled={chat.runActive} onClick={() => chat.setSelectedCustomerId(null)}><X size={12} /></button>
-          </span>
-        ) : null}
-        {chat.selectedProject ? (
-          <span className="ui-chip is-outline composer-chip">
-            <span className="composer-chip-label" title={chat.selectedProject.name}>{chat.projectOpening ? "Mapping…" : chat.selectedProject.name}</span>
-            <button type="button" className="composer-x" aria-label={`Remove ${chat.selectedProject.name}`} disabled={chat.projectOpening || chat.runActive} onClick={() => void chat.chooseProject(null)}><X size={12} /></button>
-          </span>
-        ) : null}
-        {chat.knowledgeScope !== "auto" ? <span className="ui-chip composer-chip">{chat.knowledgeScope === "notion" ? "Notion only" : "Web"}</span> : null}
-
-        <span className="composer-spacer" />
+          <button type="button" className="composer-tool composer-attach" onClick={() => fileInput.current?.click()} disabled={chat.uploading} aria-label="Attach files" title="Attach files">
+            <Paperclip size={17} aria-hidden="true" />
+          </button>
+        </div>
 
         <div className="composer-actions">
           {dictating ? (
-            <button type="button" className="ui-btn is-sm" onClick={dictation.cancel}>Discard</button>
+            <button type="button" className="composer-discard" onClick={dictation.cancel}>Discard</button>
           ) : null}
           {dictation.state !== "unsupported" && !voiceOpen ? (
             <button
               type="button"
-              className={`ui-btn is-quiet is-sm composer-mic is-${dictation.state}`}
+              className={`composer-tool composer-mic is-${dictation.state}`}
               onClick={dictation.toggle}
               disabled={chat.sending || dictation.state === "transcribing"}
               aria-pressed={dictation.state === "recording"}
@@ -355,14 +350,12 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
               <Mic size={16} aria-hidden="true" />
             </button>
           ) : null}
-          <button type="button" className="ui-btn is-quiet is-sm" onClick={() => fileInput.current?.click()} disabled={chat.uploading} aria-label="Attach files" title="Attach files">
-            <Paperclip size={16} aria-hidden="true" />
-          </button>
           {chat.runActive ? (
-            <button type="button" className="ui-btn is-sm is-danger" onClick={() => void chat.stop()} aria-label="Stop the run"><Square size={12} aria-hidden="true" /> Stop</button>
+            <button type="button" className="composer-tool composer-stop" onClick={() => void chat.stop()} aria-label="Stop response" title="Stop response"><Square size={14} aria-hidden="true" /></button>
           ) : null}
-          <button type="submit" className={`ui-btn is-primary composer-send${chat.sending || chat.uploading ? " is-loading" : ""}`} disabled={!canSend} aria-label={chat.runActive ? "Queue this message" : "Send"} title={chat.runActive ? "Queue for when the run finishes" : "Send · Enter"}>
-            {chat.sending || chat.uploading ? <LoaderCircle size={16} aria-hidden="true" /> : chat.runActive ? <Plus size={16} aria-hidden="true" /> : <ArrowUp size={16} aria-hidden="true" />}
+          <button type="submit" className={`composer-send${chat.runActive ? " is-queue" : ""}${chat.sending || chat.uploading ? " is-loading" : ""}`} disabled={!canSend} aria-label={chat.runActive ? "Queue this message" : "Send message"} title={chat.queued ? "A message is already queued" : chat.runActive ? "Queue for when the response finishes" : "Send · Enter"}>
+            {chat.sending || chat.uploading ? <LoaderCircle size={17} aria-hidden="true" /> : chat.runActive ? <Plus size={16} aria-hidden="true" /> : <ArrowUp size={17} aria-hidden="true" />}
+            {chat.runActive ? <span>Queue</span> : null}
           </button>
         </div>
         <input ref={fileInput} type="file" multiple hidden accept={CHAT_ATTACHMENT_ACCEPT} onChange={(event) => {
@@ -371,8 +364,8 @@ export function Composer({ chat, dictation, voiceOpen }: { chat: Chat; dictation
           if (files.length) void chat.addFiles(files);
         }} />
       </div>
-      <div className="composer-hint" id={`${id}-hint`}>
-        {chat.uploading ? <span role="status">Attaching files…</span> : chat.projectOpening ? <span role="status">Opening project…</span> : chat.queued ? "Your queued message sends when this run finishes. You can keep drafting." : <span>Enter to send · Shift Enter for a new line · ⌘ / Ctrl Enter to send a list</span>}
+      <div className={`composer-hint${chat.uploading || chat.projectOpening || chat.queued ? "" : " is-sr-only"}`} id={`${id}-hint`}>
+        {chat.uploading ? <span role="status">Attaching files…</span> : chat.projectOpening ? <span role="status">Opening project…</span> : chat.queued ? <span role="status">Your queued message sends when this response finishes. You can keep drafting.</span> : <span>Enter to send. Shift Enter for a new line.</span>}
       </div>
     </form>
   );

@@ -6,6 +6,7 @@
 // already at the bottom.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { ArrowDown, Copy, Pencil, RotateCcw, ThumbsDown, ThumbsUp } from "lucide-react";
 
 import { ApplyCard } from "@/components/apply-card";
 import { ApprovalCard } from "@/components/approval-card";
@@ -39,12 +40,16 @@ export function Thread({ chat }: { chat: Chat }) {
   const [atBottom, setAtBottom] = useState(true);
   const following = useRef(true);
   const lastScrollTop = useRef(0);
+  const manualScrollUntil = useRef(0);
+  const jumping = useRef(false);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
   const [droppedFolders, setDroppedFolders] = useState<FileSystemDirectoryEntry[]>([]);
 
   useLayoutEffect(() => {
     following.current = true;
+    manualScrollUntil.current = 0;
+    jumping.current = false;
     const element = viewport.current;
     if (element) {
       element.scrollTop = element.scrollHeight;
@@ -62,10 +67,27 @@ export function Thread({ chat }: { chat: Chat }) {
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
+    const markManualScroll = () => { manualScrollUntil.current = performance.now() + 900; };
+    const markScrollbarDrag = (event: PointerEvent) => {
+      if (event.clientX >= element.getBoundingClientRect().right - 22) markManualScroll();
+    };
+    const markScrollbarMove = (event: PointerEvent) => {
+      if (event.buttons === 1 && event.clientX >= element.getBoundingClientRect().right - 22) markManualScroll();
+    };
+    const markKeyboardScroll = (event: KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markManualScroll();
+    };
     const sync = () => {
-      const top = element.scrollTop;
+      let top = element.scrollTop;
+      const manual = performance.now() < manualScrollUntil.current;
       const distance = element.scrollHeight - top - element.clientHeight;
-      following.current = nextThreadFollowing(following.current, lastScrollTop.current, top, distance, "scroll");
+      if (manual) jumping.current = false;
+      following.current = nextThreadFollowing(following.current, lastScrollTop.current, top, distance, manual ? "scroll" : "resize");
+      if (!manual && !jumping.current && following.current && distance > 1) {
+        element.scrollTop = element.scrollHeight;
+        top = element.scrollTop;
+      }
+      if (jumping.current && distance <= 1) jumping.current = false;
       lastScrollTop.current = top;
       setAtBottom(following.current);
     };
@@ -83,10 +105,20 @@ export function Thread({ chat }: { chat: Chat }) {
     observer.observe(element);
     const list = element.querySelector(".thread-list");
     if (list) observer.observe(list);
+    element.addEventListener("wheel", markManualScroll, { passive: true });
+    element.addEventListener("touchmove", markManualScroll, { passive: true });
+    element.addEventListener("pointerdown", markScrollbarDrag, { passive: true });
+    element.addEventListener("pointermove", markScrollbarMove, { passive: true });
+    element.addEventListener("keydown", markKeyboardScroll);
     element.addEventListener("scroll", sync, { passive: true });
     keepPosition();
     return () => {
       observer.disconnect();
+      element.removeEventListener("wheel", markManualScroll);
+      element.removeEventListener("touchmove", markManualScroll);
+      element.removeEventListener("pointerdown", markScrollbarDrag);
+      element.removeEventListener("pointermove", markScrollbarMove);
+      element.removeEventListener("keydown", markKeyboardScroll);
       element.removeEventListener("scroll", sync);
     };
   }, [chat.conversationId, chat.hasMessages]);
@@ -102,13 +134,16 @@ export function Thread({ chat }: { chat: Chat }) {
     const element = viewport.current;
     if (!element) return;
     following.current = true;
+    manualScrollUntil.current = 0;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    element.scrollTo({ top: element.scrollHeight, behavior: reduced || latest.current.runActive ? "auto" : "smooth" });
+    jumping.current = !reduced && !latest.current.runActive;
+    element.scrollTo({ top: element.scrollHeight, behavior: jumping.current ? "smooth" : "auto" });
     setAtBottom(true);
   }, []);
 
   return (
-    <div
+    <div className="thread-shell">
+      <div
       ref={viewport}
       className={`thread${dragging ? " is-dragging" : ""}`}
       aria-label="Conversation messages"
@@ -168,9 +203,10 @@ export function Thread({ chat }: { chat: Chat }) {
         </div>
       )}
 
+      </div>
       {chat.hasMessages && !atBottom ? (
         <button type="button" className="ui-btn is-sm thread-jump" onClick={jump}>
-          ↓ {chat.runActive ? "Jump to the live answer" : "Jump to latest"}
+          <ArrowDown size={14} aria-hidden="true" /> {chat.runActive ? "Follow answer" : "Jump to latest"}
         </button>
       ) : null}
     </div>
@@ -221,7 +257,7 @@ const Message = memo(function Message({ message, chat, latest }: MessageProps) {
   return (
     <article className={`msg is-${message.role}${message.failed ? " is-failed" : ""}${editing ? " is-editing" : ""}${message.streaming ? " is-streaming" : ""}`}>
       <header className="msg-head">
-        <span>{message.role === "user" ? "You" : "Metis"}</span>
+        <span className="msg-speaker">{message.role === "user" ? "You" : <><span className="msg-avatar" aria-hidden="true">✦</span>Metis</>}</span>
         <time dateTime={message.created_at}>{clock(message.created_at)}</time>
       </header>
 
@@ -229,7 +265,7 @@ const Message = memo(function Message({ message, chat, latest }: MessageProps) {
         <ProjectActivity events={chat.events} reasoning={message.reasoning} live={Boolean(message.streaming) && !chat.pendingApproval && !chat.pendingElicitation} attention={Boolean(chat.pendingApproval || chat.pendingElicitation)} stageLabel={isLatest ? chat.stageLabel : null} projectName={chat.selectedProject?.name} />
       ) : message.reasoning ? (
         <details className="msg-thinking">
-          <summary>Thought process · {message.reasoning.trim().split(/\s+/).length} words</summary>
+          <summary>How Metis worked</summary>
           <pre>{message.reasoning}</pre>
         </details>
       ) : null}
@@ -279,12 +315,12 @@ const Message = memo(function Message({ message, chat, latest }: MessageProps) {
             <span className="msg-grounded">{citedSources} {citedSources === 1 ? "source" : "sources"} cited</span>
           ) : null}
           <div className="msg-actions">
-            <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.copyMessage(message)}>{chat.copiedMessageId === message.id ? "Copied" : "Copy"}</button>
+            <button type="button" className="ui-btn is-quiet is-sm msg-action-icon" aria-label={chat.copiedMessageId === message.id ? "Copied" : "Copy message"} title={chat.copiedMessageId === message.id ? "Copied" : "Copy"} onClick={() => void latest.current.copyMessage(message)}><Copy size={14} aria-hidden="true" /></button>
             {message.role === "user" ? (
-              <button type="button" className="ui-btn is-quiet is-sm" onClick={() => latest.current.startEditing(message)} disabled={chat.runActive || chat.rewinding || !isPersisted(message)} title="Edit and rewind the conversation to here">Edit</button>
+              <button type="button" className="ui-btn is-quiet is-sm msg-action-icon" aria-label="Edit message" onClick={() => latest.current.startEditing(message)} disabled={chat.runActive || chat.rewinding || !isPersisted(message)} title="Edit and rewind the conversation to here"><Pencil size={14} aria-hidden="true" /></button>
             ) : message.kind === "tracker" ? null : (
               <>
-                <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.retryAnswer(message)} disabled={chat.runActive || chat.rewinding} title="Ask again, for example after changing the model">{chat.rewinding ? "Retrying…" : "Retry"}</button>
+                <button type="button" className="ui-btn is-quiet is-sm msg-action-icon" aria-label="Regenerate response" onClick={() => void latest.current.retryAnswer(message)} disabled={chat.runActive || chat.rewinding} title="Regenerate response"><RotateCcw size={14} aria-hidden="true" /></button>
                 {inRun ? (
                   <>
                     <button type="button" className="ui-btn is-quiet is-sm" disabled={chat.sending || chat.uploading || chat.runActive} title="Turn this repeatable process into a governed tool" onClick={() => void latest.current.submit(TOOL_BUILD_PROMPT)}>Make a tool</button>
@@ -297,8 +333,8 @@ const Message = memo(function Message({ message, chat, latest }: MessageProps) {
                       <span className="msg-rated">Feedback recorded</span>
                     ) : (
                       <>
-                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.rate("positive")} disabled={chat.feedback.busy} aria-label="This was useful" title="This was useful">👍</button>
-                        <button type="button" className="ui-btn is-quiet is-sm" onClick={() => void latest.current.rate("negative")} disabled={chat.feedback.busy} aria-label="Needs a correction" title="Needs a correction">👎</button>
+                        <button type="button" className="ui-btn is-quiet is-sm msg-action-icon" onClick={() => void latest.current.rate("positive")} disabled={chat.feedback.busy} aria-label="This was useful" title="This was useful"><ThumbsUp size={14} aria-hidden="true" /></button>
+                        <button type="button" className="ui-btn is-quiet is-sm msg-action-icon" onClick={() => void latest.current.rate("negative")} disabled={chat.feedback.busy} aria-label="Needs a correction" title="Needs a correction"><ThumbsDown size={14} aria-hidden="true" /></button>
                       </>
                     )}
                   </>

@@ -1,13 +1,12 @@
 "use client";
 
 // The conversation list, beside the chat rather than in the navigation.
-// Search sees everything; the resting view shows a compact recent set and
-// offers the rest on request. Every row carries its run state, so a chat
-// still working or waiting for you says so from here.
+// Search sees the history returned by the API. Every row carries its run
+// state, so a chat still working or waiting for you says so from here.
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, Search, SquarePen, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { FOCUS_SEARCH_EVENT } from "@/components/app-shell";
@@ -25,9 +24,9 @@ import {
   readRunIndicators,
   type ConversationRunIndicator,
 } from "@/lib/run-indicators";
+import { freshToken } from "@/lib/token";
 import type { ConversationSummary } from "@/lib/types";
 
-const COMPACT_LIMIT = 14;
 const MOBILE_QUERY = "(max-width: 720px)";
 
 const RUN_WORDS: Record<string, string> = {
@@ -35,16 +34,22 @@ const RUN_WORDS: Record<string, string> = {
   attention: "Needs you",
   failed: "Interrupted",
   cancelled: "Stopped",
-  done: "Done",
+  done: "New reply",
 };
 
 function groupLabel(timestamp?: string): string {
   if (!timestamp) return "Earlier";
   const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Earlier";
   const now = new Date();
-  const delta = now.getTime() - date.getTime();
-  if (delta < 86_400_000 && date.getDate() === now.getDate()) return "Today";
-  if (delta < 7 * 86_400_000) return "This week";
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const lastWeek = new Date(today);
+  lastWeek.setDate(today.getDate() - 7);
+  if (date >= today) return "Today";
+  if (date >= yesterday) return "Yesterday";
+  if (date >= lastWeek) return "Previous 7 days";
   return "Earlier";
 }
 
@@ -72,7 +77,6 @@ export function ConversationList() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [indicators, setIndicators] = useState<Record<string, ConversationRunIndicator>>({});
   const searchRef = useRef<HTMLInputElement>(null);
@@ -169,16 +173,20 @@ export function ConversationList() {
     if (!needle) return conversations;
     return conversations.filter((item) => `${item.title} ${item.last_message ?? ""}`.toLowerCase().includes(needle));
   }, [conversations, query]);
-  const visible = query.trim() || expanded ? filtered : filtered.slice(0, COMPACT_LIMIT);
   const grouped = useMemo(
     () =>
-      visible.reduce<Record<string, ConversationSummary[]>>((result, item) => {
+      filtered.reduce<Record<string, ConversationSummary[]>>((result, item) => {
         const label = groupLabel(item.updated_at ?? item.created_at);
         result[label] = [...(result[label] ?? []), item];
         return result;
       }, {}),
-    [visible],
+    [filtered],
   );
+
+  const startNew = () => {
+    if (mobile) closeMobile();
+    router.push(`/?new=${freshToken()}`);
+  };
 
   const remove = async (conversation: ConversationSummary) => {
     if (deleting || !window.confirm(`Delete “${conversation.title}”? This removes the chat and its messages.`)) return;
@@ -204,25 +212,34 @@ export function ConversationList() {
       </button>
 
       <header className="chatHistoryHead">
-        <strong>Conversations</strong>
-        <small>{conversations.length}</small>
-        <button type="button" className="ui-btn is-quiet is-sm" onClick={toggle} aria-label="Hide conversations" title="Hide conversations">
+        <strong>Chats</strong>
+        <button type="button" className="ui-btn is-quiet is-sm" data-dialog-autofocus onClick={toggle} aria-label="Hide conversations" title="Hide conversations">
           <PanelLeftClose size={16} aria-hidden="true" />
         </button>
       </header>
+
+      <button type="button" className="chatHistoryNew" onClick={startNew}>
+        <SquarePen size={16} aria-hidden="true" />
+        <span>New chat</span>
+      </button>
 
       <label className="chatHistorySearch">
         <Search size={14} aria-hidden="true" />
         <input
           ref={searchRef}
-          data-dialog-autofocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search conversations"
-          aria-label="Search conversations"
+          placeholder="Search chats"
+          aria-label="Search chats"
+          onKeyDown={(event) => {
+            if (event.key !== "Escape" || !query) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setQuery("");
+          }}
         />
         {query ? (
-          <button type="button" className="ui-btn is-quiet is-sm" aria-label="Clear search" onClick={() => { setQuery(""); searchRef.current?.focus(); }}>×</button>
+          <button type="button" className="chatHistoryClear" aria-label="Clear search" onClick={() => { setQuery(""); searchRef.current?.focus(); }}><X size={14} aria-hidden="true" /></button>
         ) : (
           <kbd aria-hidden="true">⌘K</kbd>
         )}
@@ -230,7 +247,7 @@ export function ConversationList() {
 
       <div className="chatHistoryList" id={`${id}-list`}>
         {Object.entries(grouped).map(([label, items]) => (
-          <section key={label} className="ui-stagger">
+          <section key={label} className="chatHistoryGroup">
             <h2>{label}</h2>
             {items.map((conversation) => {
               const indicator = indicators[conversation.id];
@@ -248,31 +265,27 @@ export function ConversationList() {
                     aria-current={current ? "page" : undefined}
                     title={conversation.title}
                   >
-                    <span>{conversation.title}</span>
-                    {word ? <small><i aria-hidden="true">●</i>{word}</small> : null}
+                    <span className="chatHistoryTitle">{conversation.title}</span>
+                    {word ? <small><i className="chatHistoryStateDot" aria-hidden="true" />{word}</small> : null}
                   </Link>
                   <button
                     type="button"
                     className="chatHistoryDelete"
                     aria-label={`Delete ${conversation.title}`}
+                    title="Delete chat"
                     disabled={deleting === conversation.id}
                     onClick={() => void remove(conversation)}
                   >
-                    ×
+                    <Trash2 size={15} aria-hidden="true" />
                   </button>
                 </div>
               );
             })}
           </section>
         ))}
-        {!query.trim() && filtered.length > COMPACT_LIMIT ? (
-          <button type="button" className="ui-btn is-quiet is-sm chatHistoryMore" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-            {expanded ? "Show recent only" : `Show all ${filtered.length}`}
-          </button>
-        ) : null}
         {!loaded && !filtered.length ? <Skeleton rows={6} height={30} /> : null}
         {loaded && !filtered.length ? (
-          <p className="chatHistoryEmpty">{query ? "No matching conversations." : "Your conversations will appear here."}</p>
+          <p className="chatHistoryEmpty">{query ? "No matching chats." : "Your chats will appear here."}</p>
         ) : null}
       </div>
     </aside>
