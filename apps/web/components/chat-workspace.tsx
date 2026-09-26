@@ -79,9 +79,6 @@ export function ChatWorkspace() {
   const stopTask = async () => {
     if (stopping || !chat.runActive) return;
     setStopping(true);
-    // Stopping a task must not immediately launch its queued follow-up.
-    // Restore that message to the draft, where the user can revise it.
-    if (chat.queued) chat.unqueue();
     try { await chat.stop(); } finally { setStopping(false); }
   };
   const showResponse = () => {

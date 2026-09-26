@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { runEventsUrl } from "@/lib/api";
-import { normalizeRunEvent, parseSseBuffer } from "@/lib/sse";
+import { appendRunActivityEvent, isRunActivityEvent, normalizeRunEvent, parseSseBuffer } from "@/lib/sse";
 import { retainExecutionMilestone } from "@/lib/execution-milestones";
 import type { RunEventV1 } from "@/lib/types";
 
@@ -92,7 +92,9 @@ export function useRunEvents(runId: string | null, onEvent?: (event: RunEventV1)
               if (seenRef.current.has(key)) continue;
               seenRef.current.add(key);
               sequenceRef.current = Math.max(sequenceRef.current, event.sequence);
-              setEvents((current) => [...current.slice(-299), event]);
+              if (isRunActivityEvent(event)) {
+                setEvents((current) => appendRunActivityEvent(current, event));
+              }
               setExecutionEvents((current) => retainExecutionMilestone(current, event));
               callbackRef.current?.(event);
               if (TERMINAL_TYPES.has(event.type)) terminal = true;

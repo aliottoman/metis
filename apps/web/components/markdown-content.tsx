@@ -3,7 +3,7 @@
 import { useId, type ReactNode } from "react";
 
 import { API_BASE } from "@/lib/api";
-import { markdownHref, splitCitedSources, type CitedSource } from "@/lib/markdown-links";
+import { MARKDOWN_LINK_TOKEN_SOURCE, markdownHref, markdownLinkParts, splitCitedSources, type CitedSource } from "@/lib/markdown-links";
 
 type MarkdownContentProps = {
   content: string;
@@ -11,8 +11,19 @@ type MarkdownContentProps = {
 
 type CitationLinks = { ids: Set<number>; prefix: string };
 
+const INLINE_TOKEN_SOURCE = [
+  /`[^`\n]+`/.source,
+  /\*\*[^*\n]+\*\*/.source,
+  /__[^_\n]+__/.source,
+  /~~[^~\n]+~~/.source,
+  MARKDOWN_LINK_TOKEN_SOURCE,
+  /\[\d+\]/.source,
+  /\*[^*\n]+\*/.source,
+  /_[^_\n]+_/.source,
+].join("|");
+
 function inlineMarkdown(text: string, keyPrefix: string, citations?: CitationLinks): ReactNode[] {
-  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\[[^\]\n]+\]\([^) \n]+(?:\s+"[^"]*")?\)|\[\d+\]|\*[^*\n]+\*|_[^_\n]+_)/g;
+  const pattern = new RegExp(INLINE_TOKEN_SOURCE, "g");
   const nodes: ReactNode[] = [];
   let cursor = 0;
   let match: RegExpExecArray | null;
@@ -30,10 +41,10 @@ function inlineMarkdown(text: string, keyPrefix: string, citations?: CitationLin
     } else if (token.startsWith("~~")) {
       nodes.push(<del key={key}>{inlineMarkdown(token.slice(2, -2), key, citations)}</del>);
     } else if (token.startsWith("[")) {
-      const link = token.match(/^\[([^\]]+)\]\(([^) \n]+)(?:\s+"[^"]*")?\)$/);
-      const href = link ? markdownHref(link[2], API_BASE) : null;
+      const link = markdownLinkParts(token);
+      const href = link ? markdownHref(link.target, API_BASE) : null;
       if (href && link) {
-        nodes.push(<a key={key} href={href} target={href.startsWith("http") ? "_blank" : undefined} rel={href.startsWith("http") ? "noreferrer" : undefined}>{inlineMarkdown(link[1], key)}</a>);
+        nodes.push(<a key={key} href={href} target={href.startsWith("http") ? "_blank" : undefined} rel={href.startsWith("http") ? "noreferrer" : undefined}>{inlineMarkdown(link.label, key)}</a>);
       } else {
         const number = /^\[(\d+)\]$/.exec(token);
         nodes.push(number && citations?.ids.has(Number(number[1]))

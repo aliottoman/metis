@@ -1,3 +1,13 @@
+// A source URL can contain parentheses, such as a Wikipedia article title.
+// Match one balanced pair inside the target so the final ')' still closes
+// the Markdown link.
+export const MARKDOWN_LINK_TOKEN_SOURCE = String.raw`\[[^\]\n]+\]\((?:[^()\s]|\([^()\s]*\))+(?:\s+"[^"]*")?\)`;
+
+export function markdownLinkParts(token: string): { label: string; target: string } | null {
+  const match = /^\[([^\]\n]+)\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+"[^"]*")?\)$/.exec(token);
+  return match ? { label: match[1], target: match[2] } : null;
+}
+
 /** Resolve attached-source downloads without moving app navigation off-origin. */
 export function markdownHref(raw: string, apiBase: string): string | null {
   const href = raw.trim();

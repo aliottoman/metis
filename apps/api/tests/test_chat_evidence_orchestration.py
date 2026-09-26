@@ -8,6 +8,7 @@ the quality of real model decisions, which a fake model cannot establish.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -22,6 +23,7 @@ from waqil_api.evidence_routing import (
     EvidenceReviewV1,
     has_official_release_coverage,
     preserve_public_component,
+    safe_public_open_urls,
     safe_public_queries,
 )
 from waqil_api.main import create_app
@@ -414,6 +416,298 @@ def test_inadequate_web_evidence_gets_one_bounded_followup(settings) -> None:
     assert web.calls[1]["include_prompt_urls"] is False
     assert _payload(events, "evidence.reviewed")["followup_source_count"] == 1
     assert corpus.calls == []
+
+
+def test_model_can_only_open_urls_from_public_search_results() -> None:
+    snippets = [
+        {
+            "provider": "web",
+            "source_url": "https://example.com/release",
+            "text": "A public release excerpt.",
+        },
+        {
+            "provider": "web",
+            "source_url": "http://127.0.0.1/private",
+            "text": "Unsafe URL.",
+        },
+        {
+            "provider": "notion",
+            "source_url": "https://example.com/private",
+            "text": "Private document.",
+        },
+    ]
+    assert safe_public_open_urls(
+        [
+            "https://example.com/release",
+            "https://example.com/elsewhere?secret=123",
+            "http://127.0.0.1/private",
+            "https://example.com/private",
+        ],
+        snippets,
+    ) == ["https://example.com/release"]
+
+
+def test_inadequate_excerpt_opens_only_existing_source(settings) -> None:
+    model = _Model(
+        sources=["web"],
+        queries=["Cline SDK changelog"],
+        verify=True,
+        review=EvidenceReviewV1(
+            adequate=False,
+            open_urls=[
+                "https://example.com/release",
+                "https://example.com/elsewhere?private=1",
+            ],
+        ),
+    )
+    web, corpus = _Web(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _, events = _turn(client, model, web, corpus, "What changed in Cline SDK?")
+    assert len(web.calls) == 2
+    assert web.calls[1]["prompt"] == "Read https://example.com/release"
+    assert web.calls[1]["queries"] == []
+    assert _payload(events, "evidence.reviewed")["opened_url_count"] == 1
+    assert corpus.calls == []
+
+
+def test_opened_page_replaces_short_search_excerpt_for_same_url(settings) -> None:
+    class _CaptureModel(_Model):
+        answer_prompt = ""
+
+        async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+            self.answer_prompt = request.user_prompt
+            return await super().generate(
+                request, on_token, model_aliases=model_aliases,
+                on_reasoning=on_reasoning,
+            )
+
+    class _SameUrlWeb(_Web):
+        async def retrieve(self, prompt, **kwargs):
+            result = await super().retrieve(prompt, **kwargs)
+            if len(self.calls) == 2:
+                result[0].text = "Brief search excerpt."
+            elif len(self.calls) == 3:
+                result[0].text = (
+                    "Full opened page says Cline SDK 0.0.83 enabled native web search."
+                )
+            return result
+
+    model = _CaptureModel(
+        sources=["web"],
+        queries=["Cline SDK changelog"],
+        verify=True,
+        review=EvidenceReviewV1(
+            adequate=False,
+            followup_queries=["Cline SDK native web search"],
+            open_urls=["https://example.com/release"],
+        ),
+    )
+    web, corpus = _SameUrlWeb(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _turn(client, model, web, corpus, "What changed in Cline SDK?")
+    assert "Full opened page says Cline SDK" in model.answer_prompt
+    assert "Brief search excerpt" not in model.answer_prompt
+    assert len(web.calls) == 3
+    assert corpus.calls == []
+
+
+def test_new_followup_passage_gets_second_coverage_review(settings) -> None:
+    class _ReviewTwice(_Model):
+        async def _structured(self, schema, **kwargs):
+            if schema is EvidenceReviewV1:
+                self.structured_calls.append(schema.__name__)
+                if self.structured_calls.count(schema.__name__) == 1:
+                    return EvidenceReviewV1(
+                        adequate=False,
+                        followup_queries=["Cline SDK 0.0.83 native web search"],
+                    )
+                return EvidenceReviewV1(adequate=True)
+            return await super()._structured(schema, **kwargs)
+
+    class _NewSourceWeb(_Web):
+        async def retrieve(self, prompt, **kwargs):
+            result = await super().retrieve(prompt, **kwargs)
+            if len(self.calls) == 2:
+                result[0].source_url = "https://example.com/sdk-changelog"
+                result[0].rel_path = result[0].source_url
+                result[0].text = "Cline SDK 0.0.83 enabled native web search."
+            return result
+
+    model = _ReviewTwice(
+        sources=["web"], queries=["Cline SDK changelog"], verify=True
+    )
+    web, corpus = _NewSourceWeb(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _, events = _turn(client, model, web, corpus, "What changed in Cline SDK?")
+    reviewed = _payload(events, "evidence.reviewed")
+    assert reviewed["adequate"] is True
+    assert reviewed["review_calls"] == 2
+    assert reviewed["followup_search_calls"] == 1
+    assert _payload(events, "context.retrieved")["web_source_count"] == 2
+    assert corpus.calls == []
+
+
+def test_followup_official_changelog_ends_research_and_drops_aggregator(settings) -> None:
+    class _OfficialSecond(_Web):
+        async def retrieve(self, prompt, **kwargs):
+            result = await super().retrieve(prompt, **kwargs)
+            if len(self.calls) == 2:
+                result[0].source_url = (
+                    "https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md"
+                )
+                result[0].rel_path = result[0].source_url
+                result[0].text = (
+                    "## 0.0.86\nLocal recovery.\n"
+                    "## 0.0.83\nProvider-native web search enabled."
+                )
+            return result
+
+    model = _Model(
+        sources=["web"],
+        queries=["Cline SDK changelog"],
+        focus_terms=["Cline", "SDK"],
+        verify=True,
+        review=EvidenceReviewV1(
+            adequate=False,
+            followup_queries=["Cline SDK official changelog"],
+        ),
+    )
+    web, corpus = _OfficialSecond(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _, events = _turn(
+            client, model, web, corpus,
+            "What features did Cline SDK 0.0.83 and 0.0.86 release?",
+        )
+    reviewed = _payload(events, "evidence.reviewed")
+    assert reviewed["adequate"] is True
+    assert reviewed["review_calls"] == 1
+    assert _payload(events, "context.retrieved")["web_source_count"] == 1
+    assert len(web.calls) == 2
+    assert corpus.calls == []
+
+
+def test_web_research_stops_after_two_refinement_rounds(settings) -> None:
+    class _PersistentGap(_Model):
+        async def _structured(self, schema, **kwargs):
+            if schema is EvidenceReviewV1:
+                self.structured_calls.append(schema.__name__)
+                number = self.structured_calls.count(schema.__name__)
+                return EvidenceReviewV1(
+                    adequate=False,
+                    followup_queries=[f"Cline SDK 0.0.{80 + number} changelog"],
+                )
+            return await super()._structured(schema, **kwargs)
+
+    class _NovelWeb(_Web):
+        async def retrieve(self, prompt, **kwargs):
+            result = await super().retrieve(prompt, **kwargs)
+            if result:
+                number = len(self.calls)
+                result[0].source_url = f"https://example.com/release-{number}"
+                result[0].rel_path = result[0].source_url
+                result[0].text = f"Release {number} describes a separate public feature."
+            return result
+
+    model = _PersistentGap(
+        sources=["web"], queries=["Cline SDK changelog"], verify=True
+    )
+    web, corpus = _NovelWeb(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _, events = _turn(client, model, web, corpus, "What changed in Cline SDK?")
+    reviewed = _payload(events, "evidence.reviewed")
+    assert reviewed["review_calls"] == 2
+    assert reviewed["followup_search_calls"] == 2
+    assert reviewed["adequate"] is None
+    assert len(web.calls) == 3  # Initial search and no more than two follow-ups.
+    assert corpus.calls == []
+
+
+def test_initial_web_search_timeout_still_delivers_reply(settings, monkeypatch) -> None:
+    from waqil_api import control_plane
+
+    class _SlowWeb(_Web):
+        async def retrieve(self, prompt, **kwargs):
+            await asyncio.sleep(0.2)
+            return await super().retrieve(prompt, **kwargs)
+
+    monkeypatch.setattr(control_plane, "_WEB_RESEARCH_INITIAL_SECONDS", 0.01)
+    model = _Model(
+        sources=["web"], queries=["Cline SDK changelog"], verify=True
+    )
+    web, corpus = _SlowWeb(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _, events = _turn(client, model, web, corpus, "What changed in Cline SDK?")
+    error = _payload(events, "context.knowledge_error")
+    assert error["category"] == "web_search_failed"
+    assert error["error_type"] == "TimeoutError"
+    assert _payload(events, "context.retrieved")["web_source_count"] == 0
+    assert model.structured_calls.count("EvidenceReviewV1") == 0
+    assert corpus.calls == []
+
+
+def test_web_research_review_timeout_preserves_initial_sources(settings, monkeypatch) -> None:
+    from waqil_api import control_plane
+
+    class _SlowReview(_Model):
+        async def _structured(self, schema, **kwargs):
+            if schema is EvidenceReviewV1:
+                await asyncio.sleep(0.2)
+            return await super()._structured(schema, **kwargs)
+
+    monkeypatch.setattr(control_plane, "_WEB_RESEARCH_REVIEW_SECONDS", 0.01)
+    model = _SlowReview(
+        sources=["web"], queries=["Cline SDK changelog"], verify=True
+    )
+    web, corpus = _Web(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _, events = _turn(client, model, web, corpus, "What changed in Cline SDK?")
+    reviewed = _payload(events, "evidence.reviewed")
+    assert reviewed["timed_out"] is True
+    assert reviewed["review_calls"] == 0
+    assert _payload(events, "context.retrieved")["web_source_count"] == 1
+    assert len(web.calls) == 1
+    assert corpus.calls == []
+
+
+def test_model_response_event_exposes_only_safe_latency_metrics(settings) -> None:
+    class _TimedModel(_Model):
+        async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+            result = await super().generate(
+                request, on_token, model_aliases=model_aliases,
+                on_reasoning=on_reasoning,
+            )
+            result.structured = {
+                "provider": "cline",
+                "generation_seconds": 1.23456,
+                "response_headers_seconds": 0.25,
+                "first_event_seconds": 0.5,
+                "first_text_seconds": 0.75,
+                "input_characters": 100,
+                "output_characters": 20,
+                "max_completion_tokens": 512,
+                "streamed": True,
+                "raw_prompt": "must never appear in events",
+                "api_key": "must never appear in events",
+                "other_seconds": float("inf"),
+            }
+            return result
+
+    model = _TimedModel(sources=[], model_name="cline-pass/qwen3.7-plus")
+    web, corpus = _Web(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _, events = _turn(client, model, web, corpus, "Explain Python lists.")
+    response = _payload(events, "model.response")
+    assert response["timings"] == {
+        "generation_seconds": 1.235,
+        "response_headers_seconds": 0.25,
+        "first_event_seconds": 0.5,
+        "first_text_seconds": 0.75,
+        "input_characters": 100,
+        "output_characters": 20,
+        "max_completion_tokens": 512,
+        "streamed": True,
+    }
+    assert "must never appear in events" not in events
 
 
 def test_response_event_identifies_clinepass_as_cline(settings) -> None:

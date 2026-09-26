@@ -4932,7 +4932,12 @@ class ClineModelProvider:
         raise ModelProviderError(f"Cline kept failing after {attempts} attempts")
 
     async def _stream_chat(
-        self, payload: dict[str, Any], on_token: Callable[[str], Awaitable[None]]
+        self,
+        payload: dict[str, Any],
+        on_token: Callable[[str], Awaitable[None]],
+        *,
+        started_at: float | None = None,
+        timings: dict[str, float] | None = None,
     ) -> str:
         """Read OpenAI-style SSE deltas, including Cline's optional data wrapper.
 
@@ -4954,6 +4959,10 @@ class ClineModelProvider:
             nonlocal finish_seen
             if raw == "[DONE]":
                 return True
+            if timings is not None and started_at is not None:
+                timings.setdefault(
+                    "first_event_seconds", round(time.monotonic() - started_at, 3)
+                )
             try:
                 item = json.loads(raw)
             except ValueError as exc:
@@ -5016,6 +5025,12 @@ class ClineModelProvider:
                             ):
                                 await asyncio.sleep(1.0 + attempt * 2)
                                 continue
+                        if timings is not None and started_at is not None:
+                            # A retried 429/5xx must not masquerade as the
+                            # successful response's header time.
+                            timings["response_headers_seconds"] = round(
+                                time.monotonic() - started_at, 3
+                            )
                         if (
                             "text/event-stream"
                             not in response.headers.get("content-type", "").lower()
@@ -5187,8 +5202,12 @@ class ClineModelProvider:
         model_aliases=None,
         on_reasoning=None,
     ) -> ModelResultV1:
+        started_at = time.monotonic()
+        stream_timings: dict[str, float] = {}
+        first_text_seconds: float | None = None
+        selected_model = self._model_for(request.role, model_aliases)
         payload = {
-            "model": self._model_for(request.role, model_aliases),
+            "model": selected_model,
             "messages": [
                 {
                     "role": "system",
@@ -5196,15 +5215,41 @@ class ClineModelProvider:
                 },
                 {"role": "user", "content": request.user_prompt},
             ],
-            "max_completion_tokens": self.settings.cline_max_output_tokens,
+            "max_completion_tokens": (
+                request.max_output_tokens or self.settings.cline_max_output_tokens
+            ),
         }
         if on_token is None:
             reply = await self._chat(payload)
             content = str(self._message(reply).get("content") or "")
         else:
-            content = await self._stream_chat(payload, on_token)
+            async def timed_on_token(delta: str) -> None:
+                nonlocal first_text_seconds
+                if delta and first_text_seconds is None:
+                    first_text_seconds = round(time.monotonic() - started_at, 3)
+                await on_token(delta)
+
+            content = await self._stream_chat(
+                payload,
+                timed_on_token,
+                started_at=started_at,
+                timings=stream_timings,
+            )
         return ModelResultV1(
-            content=content, model=self._model_for(request.role, model_aliases)
+            content=content,
+            model=selected_model,
+            structured={
+                "provider": "cline",
+                "generation_seconds": round(time.monotonic() - started_at, 3),
+                "first_text_seconds": first_text_seconds,
+                "streamed": on_token is not None,
+                "input_characters": sum(
+                    len(str(message["content"])) for message in payload["messages"]
+                ),
+                "output_characters": len(content),
+                "max_completion_tokens": payload["max_completion_tokens"],
+                **stream_timings,
+            },
         )
 
     async def project_step(
