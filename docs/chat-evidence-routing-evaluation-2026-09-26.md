@@ -166,11 +166,12 @@ MiMo 2.5 did answer the exact reported Cline question in 26.64 seconds with an
 SDK changelog citation, compared with the earlier 50.85-second Qwen run. On the
 three matched questions Qwen was faster overall, and both models had weak
 weather sourcing. MiMo 2.6 Flash routed six synthetic cases and started a
-short answer quickly, but missed the SDK changelog in the exact Cline question.
+short answer quickly, but missed the SDK changelog in the exact Cline question
+at that stage of the source-ranking work.
 `cline-pass/deepseek-v4-flash` and `cline-pass/kimi-k2.6` returned model-not-found
 from the current gateway, so they were removed from Metis's advertised list;
-the live-verified `cline-pass/mimo-v2.6-flash` was added. The default remains
-Qwen pending a larger quality and latency comparison.
+the live-verified `cline-pass/mimo-v2.6-flash` was added. The default remained
+Qwen at this point in the evaluation; the final chat-only rollout is below.
 
 The live saved preference also combined the Cline provider with a pinned Ollama
 model ID, `gpt-oss:120b-cloud`. Cline's direct chat provider ignored that pin;
@@ -201,3 +202,27 @@ defines the endpoint and response shape. The account currently has no Brave
 search key, so only mocked contract tests have run; source quality and latency
 need a live, key-backed comparison before treating it as qualified. This
 adapter also does not yet give the answer model an iterative search/open loop.
+
+## Final chat-only rollout
+
+After repairing the subject-bearing public query, filtering similarly named
+third-party repositories when the official component changelog is present,
+and surfacing distinct release capabilities before synthesis, the exact
+reported Cline question produced an answer citing Cline's SDK and app
+changelogs. It included SDK 0.0.83 provider-native web search, its supported
+provider/model condition, hooks, concurrent subagents, compaction, and grouped
+retry fixes. With MiMo 2.6 Flash for answer synthesis, the disposable full turn
+finished in 35.80 seconds and began answer text at 25.27 seconds. The earlier
+Qwen turn on the same question took 82.85 seconds and omitted web search.
+These are individual live runs with different answer prompts and network
+conditions, not a controlled speed benchmark or a guarantee for every turn.
+
+A stable Python question took 13.79 seconds, began answer text at 8.12 seconds,
+and made no public search call. In split ClinePass mode, Flash now serves chat
+answers only; configured planner chains continue to handle planning, and a
+pinned single model still applies to all roles. The final guard can add one
+cited information-access finding from a validated official changelog if a
+broad app-adoption answer omits it. It makes no extra model call and never
+copies arbitrary page text into the answer. The active app still uses the
+keyless DuckDuckGo HTML backend until a Brave key is configured; native Cline
+web search remains disabled in the guarded coding sidecar.

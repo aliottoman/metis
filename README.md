@@ -243,6 +243,13 @@ Run events record source coverage and response timings so a slow or weak answer
 can be traced. When ClinePass streams reasoning before answer text, Metis shows
 it in the collapsed activity view in batches rather than as answer text.
 
+With ClinePass in split mode, ordinary chat answers use MiMo 2.6 Flash by
+default (`WAQIL_CLINE_CHAT_MODEL` changes that choice). The planner ladder still
+handles evidence and project planning, and the coder ladder still handles
+project edits. A pinned single model remains authoritative for every role. If
+the chat model fails before any answer text arrives, Metis retries once on the
+configured Cline orchestrator model; it never replays a partially streamed answer.
+
 The current ClineCore sidecar is limited to project coding and does not power
 chat web retrieval. Metis pins Cline SDK 0.0.86. Native provider web search is
 explicitly disabled before coding sessions start, and the SDK's URL fetch tool
