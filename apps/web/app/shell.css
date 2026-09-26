@@ -49,11 +49,11 @@ body { background: var(--color-rail); margin: 0; overflow: hidden; }
 @keyframes pane-in { from { opacity: 0.001; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* ── Rail ──────────────────────────────────────────────────────────────── */
-/* Dark and warm, lit evenly from above: one soft wash that fades out by the
-   first group, so nothing reads as a patch under the traffic lights. In the
-   native window those own the first 40px. */
+/* One flat plum, the same as the frame around the pane: no wash, no glow,
+   so the rail never changes colour where it meets the top of the window.
+   In the native window the traffic lights own the first 40px. */
 .rail {
-  background: linear-gradient(180deg, rgba(209, 142, 226, 0.09), rgba(255, 119, 89, 0.03) 140px, transparent 260px);
+  background: none;
   color: var(--color-rail-ink);
   display: flex;
   flex: 0 0 var(--rail-width);
@@ -336,7 +336,24 @@ html.metisNativeWindow .rail { padding-top: 40px; }
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  justify-content: flex-end;
+  margin-left: auto;
 }
+
+/* ── Older pages, in the same frame as the rebuilt ones ─────────────────── */
+/* The workspacePage container brought its own hero spacing, a centred
+   1160px column, its own scroll box and a top-left wash, so its pages sat
+   lower, narrower and lighter than Today or Assets. The pane owns all of
+   that now: one padding, one scroll, one ground. */
+.workspacePage {
+  background: none;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  padding: var(--space-4) var(--space-5) var(--space-6);
+}
+.workspacePage > * { max-width: none; }
 
 /* ── Chat: the conversation list beside the workspace ───────────────────── */
 .chatLayout { display: flex; flex: 1 1 auto; min-height: 0; }
@@ -452,12 +469,14 @@ html.metisNativeWindow .rail { padding-top: 40px; }
 }
 
 /* ── Route transitions ────────────────────────────────────────────────── */
-/* The rail is named so it stays put; the page is the only thing that moves.
-   The root's default crossfade is switched off so nothing fades twice. */
+/* The rail and the frame are named so they stay put; the page is the only
+   thing that moves. Their old snapshots are dropped and the new ones held
+   still: shown together, two opaque copies add up (the pair blends with
+   plus-lighter) and the whole frame brightens for the length of the fade. */
 .rail { view-transition-name: rail; }
 .pane-view { view-transition-name: page; }
-::view-transition-old(root), ::view-transition-new(root) { animation: none; }
-::view-transition-old(rail), ::view-transition-new(rail) { animation: none; }
+::view-transition-old(root), ::view-transition-old(rail) { display: none; }
+::view-transition-new(root), ::view-transition-new(rail) { animation: none; mix-blend-mode: normal; }
 ::view-transition-old(page) { animation: page-out var(--motion-fast) var(--ease-standard) both; }
 ::view-transition-new(page) { animation: page-in var(--motion-base) var(--ease-out) both; }
 @keyframes page-out { to { opacity: 0; } }
