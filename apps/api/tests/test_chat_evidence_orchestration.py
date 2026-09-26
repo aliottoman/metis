@@ -23,6 +23,8 @@ from waqil_api.evidence_routing import (
     EvidenceReviewV1,
     has_official_release_coverage,
     preserve_public_component,
+    public_component_changelog_candidate,
+    public_component_changelog_present,
     safe_public_open_urls,
     safe_public_queries,
 )
@@ -295,17 +297,102 @@ def test_public_component_query_keeps_requested_harness_track() -> None:
         "What new Cline harness features were released?",
         ["Cline VS Code extension recent releases", "Cline latest changelog"],
         ["Cline", "harness", "releases"],
-    ) == ["Cline SDK changelog", "Cline VS Code extension recent releases"]
+    ) == ["Cline SDK changelog", "Cline harness changelog"]
     assert preserve_public_component(
         "What new Cline harness features were released?",
         ["Cline official changelog", "Cline harness new features"],
         ["Cline", "harness"],
-    ) == ["Cline SDK changelog", "Cline official changelog"]
+    ) == ["Cline SDK changelog", "Cline harness new features"]
     assert preserve_public_component(
         "Compare my private SDK notes with the latest release.",
         ["latest release"],
         ["my private SDK notes"],
     ) == ["latest release"]
+
+
+def test_query_repair_pairs_subject_and_component_from_separate_safe_queries() -> None:
+    prompt = (
+        "What new features did cline release recently for its harness "
+        "that would improve a local AI personal app?"
+    )
+    queries = [
+        "new features SDK changelog",
+        "Cline VS Code extension recent releases changelog 2026",
+    ]
+    assert preserve_public_component(
+        prompt, queries,
+        ["new features", "harness", "local AI", "recent releases"],
+    ) == ["Cline SDK changelog", "Cline harness changelog"]
+    assert preserve_public_component(
+        "Does Cline harness support native web search?",
+        ["native web search", "Cline extension changelog"],
+        [],
+    ) == ["Cline SDK changelog", "Cline harness changelog"]
+
+
+def test_query_repair_does_not_promote_private_or_partial_names() -> None:
+    assert preserve_public_component(
+        "Compare my SecretProject notes with Cline harness releases",
+        ["SecretProject changelog", "Cline extension changelog"],
+        [],
+    ) == ["Cline SDK changelog", "Cline harness changelog"]
+    assert preserve_public_component(
+        "What new Cliner harness features shipped?",
+        ["Cline extension changelog"],
+        [],
+    ) == ["Cline extension changelog"]
+
+
+def test_component_changelog_candidate_uses_only_same_owner_public_github_path() -> None:
+    prompt = "What new Example harness features shipped?"
+    queries = ["Example SDK changelog"]
+    generic = {
+        "provider": "web",
+        "source_url": "https://github.com/example/example/blob/main/CHANGELOG.md",
+        "text": "Generic releases.",
+    }
+    assert public_component_changelog_candidate(prompt, queries, [generic]) == (
+        "https://github.com/example/example/blob/main/sdk/CHANGELOG.md"
+    )
+    assert not public_component_changelog_present(prompt, queries, [generic])
+    sdk = {
+        **generic,
+        "source_url": "https://github.com/example/example/blob/main/sdk/CHANGELOG.md",
+        "text": "## 1.2.3\nA cited SDK capability.",
+    }
+    assert public_component_changelog_present(prompt, queries, [sdk])
+    assert public_component_changelog_candidate(prompt, queries, [sdk]) is None
+    assert public_component_changelog_candidate(
+        prompt, queries,
+        [{**generic, "source_url": "https://github.com/other/example/blob/main/CHANGELOG.md"}],
+    ) is None
+    assert public_component_changelog_candidate(
+        prompt, queries,
+        [{**generic, "source_url": "http://127.0.0.1/CHANGELOG.md"}],
+    ) is None
+
+
+def test_exact_harness_question_searches_named_component(settings) -> None:
+    model = _Model(
+        sources=["web"],
+        queries=[
+            "new features SDK changelog",
+            "Cline VS Code extension recent releases changelog 2026",
+        ],
+        focus_terms=["new features", "harness", "local AI", "recent releases"],
+        verify=True,
+    )
+    web, corpus = _Web(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _turn(
+            client, model, web, corpus,
+            "What new features did cline release recently for its harness "
+            "that would be essential for a local AI personal app?",
+        )
+    assert web.calls[0]["queries"] == [
+        "Cline SDK changelog", "Cline harness changelog",
+    ]
+    assert corpus.calls == []
 
 
 def test_official_component_changelog_can_satisfy_release_coverage() -> None:
@@ -722,8 +809,72 @@ def test_web_research_review_timeout_preserves_initial_sources(settings, monkeyp
     reviewed = _payload(events, "evidence.reviewed")
     assert reviewed["timed_out"] is True
     assert reviewed["review_calls"] == 0
+    assert reviewed["adequate"] is False
+    assert reviewed["followup_search_calls"] == 1
     assert _payload(events, "context.retrieved")["web_source_count"] == 1
-    assert len(web.calls) == 1
+    assert len(web.calls) == 2
+    assert web.calls[1]["queries"] == ["Cline SDK changelog GitHub"]
+    assert corpus.calls == []
+
+
+def test_review_timeout_opens_same_owner_component_changelog(settings, monkeypatch) -> None:
+    from waqil_api import control_plane
+
+    class _SlowCaptureModel(_Model):
+        answer_prompt = ""
+
+        async def _structured(self, schema, **kwargs):
+            if schema is EvidenceReviewV1:
+                await asyncio.sleep(0.2)
+            return await super()._structured(schema, **kwargs)
+
+        async def generate(self, request, on_token=None, *, model_aliases=None, on_reasoning=None):
+            self.answer_prompt = request.user_prompt
+            return await super().generate(
+                request, on_token, model_aliases=model_aliases,
+                on_reasoning=on_reasoning,
+            )
+
+    class _GenericThenSdk(_Web):
+        async def retrieve(self, prompt, **kwargs):
+            result = await super().retrieve(prompt, **kwargs)
+            if len(self.calls) == 1:
+                result[0].source_url = (
+                    "https://github.com/example/example/blob/main/CHANGELOG.md"
+                )
+                result[0].rel_path = result[0].source_url
+                result[0].text = "## 2.0\nGeneral editor changes."
+            else:
+                result[0].source_url = (
+                    "https://github.com/example/example/blob/main/sdk/CHANGELOG.md"
+                )
+                result[0].rel_path = result[0].source_url
+                result[0].text = (
+                    "## 1.2\nNative public lookup is enabled by default.\n"
+                    "## 1.1\nOther runtime changes."
+                )
+            return result
+
+    monkeypatch.setattr(control_plane, "_WEB_RESEARCH_REVIEW_SECONDS", 0.01)
+    model = _SlowCaptureModel(
+        sources=["web"], queries=["Example SDK changelog"], verify=True
+    )
+    web, corpus = _GenericThenSdk(), _Corpus()
+    with TestClient(create_app(settings)) as client:
+        _, events = _turn(
+            client, model, web, corpus,
+            "What new Example harness features were released?",
+        )
+    reviewed = _payload(events, "evidence.reviewed")
+    assert reviewed["timed_out"] is True
+    assert reviewed["opened_url_count"] == 1
+    assert reviewed["adequate"] is None
+    assert web.calls[1]["prompt"] == (
+        "Read https://github.com/example/example/blob/main/sdk/CHANGELOG.md"
+    )
+    assert web.calls[1]["queries"] == []
+    assert "Native public lookup is enabled by default" in model.answer_prompt
+    assert "source-coverage review did not finish" in model.answer_prompt
     assert corpus.calls == []
 
 

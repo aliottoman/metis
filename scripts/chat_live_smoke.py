@@ -58,7 +58,7 @@ class _LoggedWeb:
                     {
                         "title": item.source_label,
                         "url": item.source_url,
-                        "excerpt": item.text[:1800],
+                        "excerpt": item.text[:4000],
                     }
                     for item in result
                 ],

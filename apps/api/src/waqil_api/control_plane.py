@@ -76,6 +76,9 @@ from .evidence_routing import (
     official_release_source_url,
     plan_evidence,
     planner_failure_plan,
+    public_component_changelog_candidate,
+    public_component_changelog_present,
+    public_component_query,
     review_web_evidence,
     safe_public_open_urls,
     scope_plan,
@@ -3005,6 +3008,76 @@ class ControlPlane:
                 )
             except TimeoutError:
                 timed_out = True
+                # A timed-out reviewer cannot certify generic release pages.
+                # Try one host-derived, public component source while the
+                # refinement budget remains; otherwise synthesis sees a gap.
+                adequate = None if public_component_changelog_present(
+                    state["prompt"], evidence.public_queries, snippets
+                ) else False
+                if adequate is False and loop.time() < deadline:
+                    candidate = public_component_changelog_candidate(
+                        state["prompt"], evidence.public_queries, snippets
+                    )
+                    targeted = public_component_query(
+                        state["prompt"], evidence.public_queries, evidence.focus_terms
+                    )
+                    if candidate is not None and open_calls < _WEB_RESEARCH_MAX_OPENS:
+                        open_calls += 1
+                        fallback = self.web.retrieve(
+                            f"Read {candidate}", queries=[],
+                            focus_terms=evidence.focus_terms,
+                            include_prompt_urls=True,
+                        )
+                        action = "open"
+                    elif targeted is not None and search_calls < _WEB_RESEARCH_MAX_ROUNDS:
+                        search_calls += 1
+                        fallback = self.web.retrieve(
+                            state["prompt"], queries=[f"{targeted} GitHub"],
+                            focus_terms=evidence.focus_terms,
+                            include_prompt_urls=False,
+                        )
+                        action = "search"
+                    else:
+                        fallback = None
+                        action = ""
+                    if fallback is not None:
+                        try:
+                            repaired = await asyncio.wait_for(
+                                fallback, timeout=deadline - loop.time()
+                            )
+                        except TimeoutError:
+                            pass
+                        except Exception as error:  # noqa: BLE001 - keep initial evidence
+                            await self.events.emit(
+                                state["run_id"], state["conversation_id"],
+                                "evidence.research_error",
+                                {"action": action, "error_type": type(error).__name__},
+                            )
+                        else:
+                            followup_count += len(repaired)
+                            repaired_web = [
+                                item.model_dump(mode="json") for item in repaired
+                                if item.provider == "web" and item.source_url
+                            ]
+                            private_items = [
+                                item for item in snippets if item.get("provider") != "web"
+                            ]
+                            ordered_web: list[dict[str, Any]] = []
+                            seen_urls: set[str] = set()
+                            for item in repaired_web + [
+                                item for item in snippets if item.get("provider") == "web"
+                            ]:
+                                url = str(item.get("source_url") or "")
+                                if url and url not in seen_urls and str(item.get("text") or "").strip():
+                                    seen_urls.add(url)
+                                    ordered_web.append(item)
+                            snippets = private_items + ordered_web[
+                                : self.settings.web_search_max_results + 1
+                            ]
+                            if public_component_changelog_present(
+                                state["prompt"], evidence.public_queries, snippets
+                            ):
+                                adequate = None
                 break
             except Exception as error:  # noqa: BLE001 - a review cannot erase sources
                 await self.events.emit(
@@ -10464,12 +10537,17 @@ class ControlPlane:
             )
         else:
             knowledge_block = ""
+        coverage = state.get("evidence_review", {})
         coverage_block = (
             "\n\nA source-coverage check found that the retrieved public pages "
             "did not fully establish the requested facts. Answer only the parts "
             "directly supported by the passages, and state which requested "
             "parts remain unverified. Do not imply this is a complete list."
-            if state.get("evidence_review", {}).get("adequate") is False
+            if coverage.get("adequate") is False
+            else "\n\nThe source-coverage review did not finish. Cite only claims "
+            "directly supported by the retrieved passages; present release "
+            "items as verified highlights, not a complete inventory."
+            if coverage.get("timed_out")
             else ""
         )
         revision_block = (
