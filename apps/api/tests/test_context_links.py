@@ -146,18 +146,19 @@ def test_source_urls_cannot_escape_the_link_context(url) -> None:
 
 
 def test_attached_document_citation_links_only_to_its_valid_upload_id() -> None:
-    upload_id = "upl_" + "a" * 20
+    upload_id = "upl_" + "a" * 32
     sources = _document_sources(["brief.txt", "other.txt"], [upload_id, "../../other"])
     answer, _ = _append_cited_sources("The document says this [1].", sources)
     assert f"[brief.txt](/api/v1/uploads/{upload_id})" in answer
     assert "source_url" not in sources[1]
+    assert "source_url" not in _document_sources(["short.txt"], ["upl_" + "a" * 20])[0]
 
 
 def ingestion_plane(settings, tmp_path, files):
     records = {}
     ids = []
     for index, (name, media_type, content) in enumerate(files):
-        upload_id = f"upl_{index:020x}"
+        upload_id = f"upl_{index:032x}"
         ids.append(upload_id)
         path = tmp_path / name
         path.write_bytes(content)

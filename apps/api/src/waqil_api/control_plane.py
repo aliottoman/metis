@@ -1610,7 +1610,7 @@ def _document_sources(
                 {"source_url": f"/api/v1/uploads/{upload_ids[index]}"}
                 if upload_ids
                 and index < len(upload_ids)
-                and re.fullmatch(r"upl_[a-f0-9]{20}", upload_ids[index])
+                and re.fullmatch(r"upl_[a-f0-9]{32}", upload_ids[index])
                 else {}
             ),
         }
