@@ -16,6 +16,9 @@ const SETTLE_TIMEOUT_MS = 800;
 
 function supported(): boolean {
   return typeof document !== "undefined"
+    // WKWebView can retain an invisible snapshot over the fixed chat pane.
+    // Native navigation uses the normal React update instead.
+    && !document.documentElement.classList.contains("metisNativeWindow")
     && typeof document.startViewTransition === "function"
     // A hidden document cannot run a transition; it would only abort.
     && document.visibilityState === "visible"

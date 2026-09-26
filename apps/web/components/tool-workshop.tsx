@@ -1,5 +1,8 @@
 "use client";
 
+import { Wrench, Search } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Notice } from "@/components/ui/notice";
@@ -64,6 +67,7 @@ export function ToolWorkshop() {
   const [definitionProposals, setDefinitionProposals] = useState<ToolDefinitionProposal[]>([]);
   const [builds, setBuilds] = useState<ToolDefinitionBuild[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -143,7 +147,9 @@ export function ToolWorkshop() {
     drafts: tools.filter((tool) => toolGroup(tool) === "drafts").length,
   }), [tools]);
 
-  const visibleTools = filter === "all" ? tools : tools.filter((tool) => toolGroup(tool) === filter);
+  const search = query.trim().toLowerCase();
+  const visibleTools = tools.filter((tool) => (filter === "all" || toolGroup(tool) === filter) && `${tool.name} ${tool.description}`.toLowerCase().includes(search));
+  const visibleDefinitions = definitions.filter(({ definition }) => `${definition.name} ${definition.slug} ${definition.description}`.toLowerCase().includes(search));
   const evaluatedBuilds = builds.filter((build) => build.status === "evaluated");
 
   async function decide(tool: ToolRecord, decision: "approve" | "reject") {
@@ -281,17 +287,8 @@ export function ToolWorkshop() {
   }
 
   return (
-    <div className="workspacePage">
-      <header className="pageHeader">
-        <div>
-          <span className="eyebrow">Governed capabilities</span>
-          <h1>Tool Workshop</h1>
-          <p>See what Metis can reuse, how each tool is contained, and the evidence behind every active version.</p>
-        </div>
-        <button className="secondaryButton" type="button" onClick={() => void load()} disabled={loading}>
-          {loading ? "Refreshing…" : "Refresh registry"}
-        </button>
-      </header>
+    <div className="workspacePage toolsPage">
+      <PageHeader icon={<Wrench />} eyebrow="Built to be useful" title="Tool Workshop" lede="Your reusable capabilities, with their versions, checks, and review decisions in one place." actions={<button className="ui-btn" type="button" onClick={() => void load()} disabled={loading}>{loading ? "Refreshing…" : "Refresh registry"}</button>} />
 
       <section className="statStrip" aria-label="Tool registry summary">
         <div><strong>{counts.active}</strong><span>Active tools</span></div>
@@ -300,19 +297,20 @@ export function ToolWorkshop() {
         <div><strong>{tools.reduce((sum, tool) => sum + (tool.evaluation?.total ?? 0), 0)}</strong><span>Evaluations run</span></div>
       </section>
 
+      <label className="workspace-search"><Search size={16} aria-hidden="true" /><input type="search" aria-label="Search tools" placeholder="Find a tool by name or purpose…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+
       <section className="toolTrustBanner" aria-label="Trusted tool lifecycle">
         <span className="toolTrustMark" aria-hidden="true">✓</span>
         <div><strong>Explicit build requests go straight through</strong><p>Metis can define, evaluate, activate, and use a tool in one run when it remains local, contained, and network-free. Anything broader or inferred still pauses for review.</p></div>
         <span className="toolTrustTag">Trusted fast path</span>
       </section>
 
-      <div className="filterTabs" role="tablist" aria-label="Tool status filter">
+      <div className="filterTabs" role="group" aria-label="Tool status filter">
         {(["all", "pending", "active", "drafts"] as Filter[]).map((item) => (
           <button
             key={item}
             type="button"
-            role="tab"
-            aria-selected={filter === item}
+            aria-pressed={filter === item}
             onClick={() => setFilter(item)}
           >
             {item === "all" ? "All" : item[0]!.toUpperCase() + item.slice(1)}
@@ -380,9 +378,9 @@ export function ToolWorkshop() {
           <span className="sectionBadge">{definitions.length} registered</span>
         </header>
 
-        {definitions.length ? (
+        {visibleDefinitions.length ? (
           <div className="registryGrid">
-            {definitions.map((record) => {
+            {visibleDefinitions.map((record) => {
               const definition = record.definition;
               const capability = definition.capability_profile;
               return (
@@ -430,7 +428,7 @@ export function ToolWorkshop() {
             })}
           </div>
         ) : (
-          <p className="registryEmpty">No tool definitions yet. When Metis hardens a repeatable process into a declarative tool, it appears here with its full capability grant.</p>
+          <p className="registryEmpty">{search ? "No definitions match this search." : "No tool definitions yet. Reusable capabilities appear here with their approved scope."}</p>
         )}
 
         <div className="definitionInbox">
@@ -489,10 +487,11 @@ export function ToolWorkshop() {
       <div className="toolGrid ui-stagger" aria-live="polite">
         {loading && !tools.length ? Array.from({ length: 3 }, (_, index) => <Skeleton key={index} rows={1} height={280} />) : null}
         {!loading && !visibleTools.length ? (
-          <div className="emptyPanel">
-            <span className="emptyGlyph">◇</span>
+          <div className="workspace-empty">
+            <Wrench aria-hidden="true" />
             <h2>No tools in this view</h2>
-            <p>When Metis discovers a repeatable workflow, its tested proposal will appear here.</p>
+            <p>{search || filter !== "all" ? "Try a different search or show all tools." : "When Metis discovers a repeatable workflow, its tested proposal will appear here."}</p>
+            {search || filter !== "all" ? <button className="ui-btn" type="button" onClick={() => { setQuery(""); setFilter("all"); }}>Clear filters</button> : null}
           </div>
         ) : null}
         {visibleTools.map((tool) => {

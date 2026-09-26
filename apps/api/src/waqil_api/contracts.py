@@ -2884,6 +2884,21 @@ class CustomerEvidenceV1(Contract):
     line_end: int | None = Field(default=None, ge=1)
 
 
+class CustomerRecordEvidenceV1(CustomerEvidenceV1):
+    """Provenance attached by the app when a person keeps a meeting action.
+
+    Separate from extraction evidence so a model cannot invent meeting IDs in
+    a proposed customer update.
+    """
+
+    source: Literal["meeting"] | None = None
+    meeting_id: str | None = None
+    proposal_id: str | None = None
+    turn_id: str | None = None
+    start: float | None = Field(default=None, ge=0)
+    end: float | None = Field(default=None, ge=0)
+
+
 class CustomerPersonExtractV1(Contract):
     name: str = Field(min_length=1, max_length=160)
     role: str = Field(default="", max_length=160)
@@ -2989,7 +3004,7 @@ class CustomerActionV1(Contract):
     owner: str = ""
     due_at: datetime | None = None
     status: Literal["open", "done", "cancelled"] = "open"
-    evidence: CustomerEvidenceV1 = Field(default_factory=CustomerEvidenceV1)
+    evidence: CustomerRecordEvidenceV1 = Field(default_factory=CustomerRecordEvidenceV1)
     created_at: datetime
     updated_at: datetime
 
@@ -3784,6 +3799,7 @@ class AttentionItemV1(Contract):
     kind: Literal[
         "run_approval",
         "customer_action",
+        "customer_opportunity",
         "customer_note",
         "tool_proposal",
         "memory",
@@ -3802,6 +3818,12 @@ class AttentionItemV1(Contract):
     # Consequence, not recency: what it costs to leave this until tomorrow.
     priority: float = 0.0
     deferred_until: datetime | None = None
+    account_name: str = ""
+    updated_at: datetime | None = None
+    why_now: str = ""
+    next_step: str = ""
+    prepared_prompt: str = ""
+    source_href: str = ""
 
 
 class AttentionFeedV1(Contract):
@@ -3815,6 +3837,8 @@ class AttentionFeedV1(Contract):
     counts: dict[str, int] = Field(default_factory=dict)
     total: int = 0
     deferred: int = 0
+    neglected: list[AttentionItemV1] = Field(default_factory=list)
+    opportunities: list[AttentionItemV1] = Field(default_factory=list)
 
 
 class AttentionDeferV1(Contract):

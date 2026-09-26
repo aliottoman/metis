@@ -578,7 +578,10 @@ async def batch_attention(
                 )
                 memory_approved = memory_approved or body.decision == "approve"
             elif kind == "customer_action" and body.decision == "approve":
-                await app.database.update_customer_action(record_id, status="done")
+                updated = await app.database.update_customer_action(record_id, status="done")
+                if updated is None:
+                    skipped.append(key)
+                    continue
             else:
                 skipped.append(key)
                 continue
@@ -2746,6 +2749,24 @@ async def upload_file(
         media_type,
         blob.size,
         str(blob.path),
+    )
+
+
+@router.get("/uploads/{upload_id}")
+async def get_upload(upload_id: str, request: Request) -> FileResponse:
+    """Open an attached source by its stored ID, never by a caller's path."""
+    app = runtime(request)
+    record = await app.database.get_upload_record(upload_id)
+    if record is None:
+        raise not_found("upload")
+    path = app.blobs.path_for(record["sha256"])
+    if not path.is_file():
+        raise not_found("upload content")
+    return FileResponse(
+        path,
+        media_type=record["media_type"],
+        filename=record["filename"],
+        content_disposition_type="attachment",
     )
 
 

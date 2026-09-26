@@ -164,10 +164,13 @@ final class WebWindowController: NSObject, NSWindowDelegate, WKUIDelegate, WKNav
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
-        // target=_blank. Local pages keep living in this window; anything
-        // else goes to the default browser. Never a second WKWebView.
+        // Metis routes stay in this window. An asset's "Open in browser"
+        // points to a different local port and must leave the Metis shell in
+        // place, just like an external link.
         if let url = navigationAction.request.url {
-            if let host = url.host, host == "127.0.0.1" || host == "localhost" {
+            if let host = url.host,
+               (host == "127.0.0.1" || host == "localhost"),
+               url.port == appURL.port {
                 webView.load(URLRequest(url: url))
             } else {
                 NSWorkspace.shared.open(url)

@@ -18,6 +18,11 @@ import "./chat.css";
 import "./workbenches.css";
 import "./companion.css";
 import "./audio.css";
+import "./assets.css";
+import "./workspaces.css";
+import "./knowledge-workspaces.css";
+import "./conversations.css";
+import "./customers.css";
 
 export const metadata: Metadata = {
   applicationName: PRODUCT_NAME,

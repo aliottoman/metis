@@ -1,0 +1,135 @@
+/* One material and hierarchy across the library, workspaces and settings. */
+:root {
+  --workspace-accent: var(--color-accent-ink);
+  --workspace-tint: var(--color-accent-surface);
+  --workspace-radius: 16px;
+}
+.customers, .toolsPage { --workspace-accent: var(--color-green-ink); --workspace-tint: var(--color-mint-surface); }
+.today, .knowledgePage, .interviews, .dacPage { --workspace-accent: var(--color-warning); --workspace-tint: var(--color-warning-surface); }
+:where(.workspacePage, .today, .customers, .assets, .agents, .meetings, .interviews) {
+  gap: 24px;
+  min-width: 0;
+}
+.workspacePage { display: flex; flex-direction: column; gap: 24px; }
+.workspacePage > * { margin: 0; }
+.ui-page-header {
+  position: relative;
+  isolation: isolate;
+  align-items: center;
+  padding: 23px 24px;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--workspace-accent) 12%, var(--color-line));
+  border-radius: var(--workspace-radius);
+  background: linear-gradient(110deg, var(--color-paper-lift) 20%, color-mix(in srgb, var(--workspace-tint) 60%, var(--color-paper-lift)));
+}
+.ui-page-header::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: radial-gradient(color-mix(in srgb, var(--workspace-accent) 16%, transparent) .65px, transparent .65px);
+  background-size: 7px 7px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 45%, #000);
+  mask-image: linear-gradient(90deg, transparent 45%, #000);
+}
+.ui-page-header > div.ui-page-heading { display: flex; align-items: center; gap: 15px; flex: 1 1 360px; min-width: 0; }
+.ui-page-copy { min-width: 0; }
+.ui-page-icon { display: grid; place-items: center; flex: 0 0 46px; width: 46px; height: 46px; border: 1px solid color-mix(in srgb, var(--workspace-accent) 12%, transparent); border-radius: 14px; color: var(--workspace-accent); background: var(--workspace-tint); box-shadow: inset 0 1px color-mix(in srgb, var(--color-paper-lift) 65%, transparent); }
+.ui-page-icon svg { width: 22px; height: 22px; stroke-width: 1.6; }
+.ui-page-header .ui-eyebrow { color: var(--workspace-accent); font-size: 10px; letter-spacing: .09em; margin-bottom: 6px; }
+.ui-page-header h1 { font-size: 28px; line-height: 1.15; letter-spacing: -.035em; }
+.ui-page-header p { font-size: 13px; line-height: 1.65; max-width: 64ch; margin-top: 7px; }
+.ui-page-header .ui-page-actions { margin-left: auto; justify-content: flex-end; }
+.workspacePage > .ui-page-header { margin-bottom: 0; }
+.workspacePage > section, .workspacePage > nav { scroll-margin-top: 24px; }
+.workspace-search { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 42px; padding: 0 13px; background: var(--color-paper-lift); border: 1px solid var(--color-line); border-radius: 10px; color: var(--color-ink-3); }
+.workspace-search:focus-within { border-color: var(--workspace-accent); box-shadow: 0 0 0 3px var(--workspace-tint); }
+.workspace-search input { min-width: 0; width: 100%; background: transparent; color: var(--color-ink); border: 0; outline: 0; border-radius: 0; box-shadow: none; padding: 11px 0; font: inherit; font-size: 13px; }
+.workspace-search svg { flex-shrink: 0; }
+.workspace-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.workspace-toolbar .workspace-search { flex: 1 1 240px; }
+.workspace-toolbar > small, .workspace-count { color: var(--color-ink-3); font-size: 12px; }
+.workspace-jump-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.workspace-jump-nav a { text-decoration: none; color: var(--color-ink-2); border: 1px solid var(--color-line); background: var(--color-paper-lift); border-radius: 999px; padding: 8px 13px; font-size: 12px; }
+.workspace-jump-nav a:hover { color: var(--workspace-accent); background: var(--workspace-tint); border-color: color-mix(in srgb, var(--workspace-accent) 25%, var(--color-line)); }
+.workspace-section-intro { display: flex; align-items: flex-start; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid var(--color-line); }
+.workspace-section-intro > svg { flex-shrink: 0; color: var(--workspace-accent); margin-top: 2px; }
+.workspace-section-intro h2 { font-size: 19px; line-height: 1.35; margin: 0 0 6px; font-weight: 600; letter-spacing: -.025em; }
+.workspace-section-intro p { color: var(--color-ink-3); font-size: 13px; line-height: 1.65; margin: 0; max-width: 70ch; }
+.workspace-empty { display: flex; flex-direction: column; align-items: center; text-align: center; justify-content: center; gap: 12px; padding: 48px 24px; border: 1px dashed var(--color-line); border-radius: 16px; background: color-mix(in srgb, var(--workspace-tint) 12%, var(--color-paper-lift)); }
+.workspace-empty > svg { width: 38px; height: 38px; color: var(--workspace-accent); stroke-width: 1.3; }
+.workspace-empty h2 { margin: 4px 0 0; font-size: 20px; font-weight: 550; letter-spacing: -.025em; }
+.workspace-empty p { max-width: 58ch; color: var(--color-ink-3); font-size: 13px; line-height: 1.7; margin: 0; }
+.workspacePage :where(.settingsSection, .answerCard, .toolCard, .improvementSection, .toolRegistrySection, .dacRecommend, .dacConfigure, .dacResults, .dacOptimizer) { border: 1px solid var(--color-line); border-radius: var(--workspace-radius); background: var(--color-paper-lift); padding: 24px; box-shadow: none; }
+.workspacePage :where(.sectionTitle h2, .improvementSection h2, .toolRegistrySection h2) { font-size: 18px; font-weight: 600; letter-spacing: -.025em; }
+.workspacePage :where(.sectionTitle p, .sectionLede) { font-size: 13px; line-height: 1.7; color: var(--color-ink-3); }
+.workspacePage .statStrip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; border: 0; background: none; padding: 0; }
+.workspacePage .statStrip::before, .workspacePage .statStrip::after { display: none; }
+.workspacePage .statStrip > div { padding: 19px 20px; border: 1px solid var(--color-line); border-radius: 14px; background: var(--color-paper-lift); min-width: 0; }
+.workspacePage .statStrip > div:first-child { background: linear-gradient(125deg, var(--workspace-tint), var(--color-paper-lift)); }
+.workspacePage .statStrip strong { color: var(--workspace-accent); font-size: 28px; letter-spacing: -.04em; font-weight: 550; }
+.workspacePage .statStrip span { margin-top: 5px; font-size: 11px; color: var(--color-ink-3); }
+.answerPage .answerTabs, .toolsPage .filterTabs { border: 0; gap: 6px; display: flex; flex-wrap: wrap; padding: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
+.answerPage .answerTabs button, .toolsPage .filterTabs button { border: 1px solid var(--color-line); border-radius: 999px; padding: 9px 15px; color: var(--color-ink-2); background: var(--color-paper-lift); font-size: 12px; }
+.answerPage .answerTabs button[aria-pressed=true], .toolsPage .filterTabs button[aria-pressed=true] { background: var(--workspace-tint); color: var(--workspace-accent); border-color: transparent; }
+.answerPage .answerCard { display: flex; flex-direction: column; gap: 16px; }
+.answerPage .answerHead h2 { font-size: 18px; line-height: 1.5; letter-spacing: -.02em; }
+.answerPage .answerBody { margin: 0; max-width: 85ch; color: var(--color-ink-2); line-height: 1.85; font-size: 14px; }
+.answerPage .answerMetaGrid { margin: 0; background: var(--color-pane); border-radius: 10px; padding: 14px 16px; }
+.answerPage .answerEntities { gap: 7px; }
+.toolsPage .toolTrustBanner { background: var(--workspace-tint); border: 1px solid color-mix(in srgb, var(--workspace-accent) 12%, var(--color-line)); border-radius: 14px; box-shadow: none; }
+.toolsPage .toolTrustMark, .toolsPage .toolIcon { color: var(--workspace-accent); background: var(--workspace-tint); }
+.toolsPage .toolGrid { gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 350px), 1fr)); }
+.toolsPage .toolCard:hover { transform: none; box-shadow: var(--shadow-1); }
+.toolsPage .toolRegistrySection { margin-top: 0; }
+.toolsPage .toolDefinitionGrid { gap: 12px; }
+.toolsPage .improvementSection > header, .toolsPage .toolRegistrySection > header { gap: 16px; }
+.settingsPage .healthHero { padding: 20px 24px; border-radius: 16px; border: 1px solid var(--color-line); background: var(--color-paper-lift); }
+.settingsPage .healthHero h2 { font-size: 20px; }
+.settingsPage .healthHero p { font-size: 12px; color: var(--color-ink-3); overflow-wrap: anywhere; }
+.settingsPage .settingsSection { scroll-margin-top: 20px; }
+.settingsPage .providerChoice { border-radius: 12px; box-shadow: none; }
+.settingsPage .modelRow { padding: 16px 0; }
+.settingsPage .settingsGrid { gap: 16px; }
+.settingsPage .settingsGrid > .settingsSection { margin: 0; }
+.agents .agents-body { gap: 20px; }
+.agents .accounts { padding: 16px; border-radius: 16px; border: 1px solid var(--color-line); background: var(--color-paper-lift); }
+.agents .agent { padding: 24px; border-radius: 16px; border: 1px solid var(--color-line); background: var(--color-paper-lift); }
+.agents .agent-new-panel { min-width: 0; }
+.agents .accounts-row { padding: 12px; margin: 2px 0; }
+.agents .accounts-row.is-home { background: var(--workspace-tint); color: var(--workspace-accent); border: 0; border-radius: 10px; margin-bottom: 10px; }
+.agents .agent-grid { gap: 18px; align-items: start; }
+.agents .agent-actions { flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--color-line); padding-top: 18px; }
+.agents .agent-note { font-size: 12px; line-height: 1.6; }
+.today .today-section { padding: 20px; border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-paper-lift); }
+.today .today-row { padding-top: 12px; padding-bottom: 12px; }
+.today .today-row-title { white-space: normal; line-height: 1.6; }
+.today .today-row-actions { opacity: 1; }
+.today .today-section h2 { color: var(--workspace-accent); }
+.dacPage .dacRecommend, .dacPage .dacConfigure { margin-top: 0; }
+.dacPage .dacRecommend { background: linear-gradient(115deg, var(--color-paper-lift), color-mix(in srgb, var(--workspace-tint) 25%, var(--color-paper-lift))); }
+.dacPage .dacRecommend h2 { font-size: 22px; letter-spacing: -.03em; }
+.dacPage .dacMetric { border-radius: 12px; background: var(--color-pane); }
+.dacPage .dacCost { border-radius: 12px; }
+@media (max-width: 1080px) {
+  .ui-page-header .ui-page-actions { flex-basis: 100%; }
+  .workspacePage .statStrip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  :where(.workspacePage, .today, .customers, .assets, .agents, .meetings, .interviews) { gap: 18px; }
+  .workspacePage { gap: 18px; }
+  .ui-page-header { padding: 19px 18px; gap: 18px; }
+  .ui-page-header > div.ui-page-heading { gap: 12px; flex-basis: 100%; align-items: flex-start; }
+  .ui-page-icon { flex-basis: 38px; width: 38px; height: 38px; border-radius: 12px; }
+  .ui-page-icon svg { width: 19px; height: 19px; }
+  .ui-page-header h1 { font-size: 25px; }
+  .ui-page-header p { font-size: 12px; }
+  .ui-page-header .ui-page-actions { justify-content: flex-start; margin-left: 0; }
+  .workspacePage :where(.settingsSection, .answerCard, .toolCard, .improvementSection, .toolRegistrySection, .dacRecommend, .dacConfigure, .dacResults, .dacOptimizer), .agents .agent { padding: 18px; }
+  .workspacePage .statStrip > div { padding: 16px; }
+  .workspacePage .statStrip strong { font-size: 25px; }
+  .today .today-section { padding: 16px; }
+  .agents .accounts { position: static; max-height: 280px; }
+}

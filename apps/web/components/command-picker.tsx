@@ -1,6 +1,7 @@
 "use client";
 
 import { ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { enabledPickerIndexes, groupPickerOptions } from "@/lib/picker-options";
 
 /**
  * A search-first picker for choosing one record out of many.
@@ -130,38 +131,33 @@ export function CommandPicker({
 
   // Sections only make sense on the unfiltered list; once results are ranked by
   // relevance, grouping them would fight the ranking.
-  const sections = useMemo(() => {
-    if (needle) return [{ group: "", items: visible }];
-    const order: string[] = [];
-    const byGroup = new Map<string, PickerOption[]>();
-    for (const option of visible) {
-      const key = option.group ?? "";
-      if (!byGroup.has(key)) {
-        byGroup.set(key, []);
-        order.push(key);
-      }
-      byGroup.get(key)!.push(option);
-    }
-    return order.map((group) => ({ group, items: byGroup.get(group)! }));
-  }, [needle, visible]);
+  const sections = useMemo(() => groupPickerOptions(visible, !needle), [needle, visible]);
+  const displayed = useMemo(() => sections.flatMap((section) => section.items), [sections]);
 
   const selectable = useMemo(
-    () => visible.reduce<number[]>((result, option, index) => {
-      if (!option.disabled) result.push(index);
-      return result;
-    }, []),
-    [visible],
+    () => enabledPickerIndexes(displayed),
+    [displayed],
   );
 
   useEffect(() => {
+    const previousFocus = document.activeElement;
     inputRef.current?.focus();
+    return () => {
+      // Click-away should keep the new focus; keyboard dismissal returns to
+      // the control that opened this picker.
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected &&
+        (document.activeElement === document.body || wrapperRef.current?.contains(document.activeElement))) {
+        previousFocus.focus();
+      }
+    };
   }, []);
 
   // A new query invalidates the old cursor: land on the best match so Enter
   // always picks what the ranking put first.
   useEffect(() => {
-    setActiveIndex(selectable[0] ?? -1);
-  }, [needle, selectable]);
+    setActiveIndex((current) => selectable.includes(current) ? current : selectable[0] ?? -1);
+  }, [selectable]);
+  useEffect(() => setActiveIndex(selectable[0] ?? -1), [needle]);
 
   useEffect(() => {
     if (activeIndex < 0) return;
@@ -191,6 +187,15 @@ export function CommandPicker({
   );
 
   function onKeyDown(event: React.KeyboardEvent) {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      onDismiss();
+      return;
+    }
+    // Header and footer may contain independent controls.
+    if (event.target !== inputRef.current) return;
     switch (event.key) {
       case "ArrowDown":
         event.preventDefault();
@@ -201,29 +206,28 @@ export function CommandPicker({
         step(-1);
         break;
       case "Home":
+        if (!event.ctrlKey && !event.metaKey) break;
         event.preventDefault();
         setActiveIndex(selectable[0] ?? -1);
         break;
       case "End":
+        if (!event.ctrlKey && !event.metaKey) break;
         event.preventDefault();
         setActiveIndex(selectable[selectable.length - 1] ?? -1);
         break;
       case "Enter": {
         event.preventDefault();
-        const option = visible[activeIndex];
-        if (option && !option.disabled) choose(option);
+        const option = displayed[activeIndex];
+        if (option && !option.disabled && !busy) choose(option);
         break;
       }
-      case "Escape":
-        event.preventDefault();
-        onDismiss();
-        break;
       default:
         break;
     }
   }
 
   function choose(option: PickerOption) {
+    if (busy || option.disabled) return;
     if (option.id === CREATE_ROW_ID) {
       if (onCreate) onCreate(query.trim());
       return;
@@ -232,14 +236,16 @@ export function CommandPicker({
   }
 
   let flatIndex = -1;
-  const activeOption = visible[activeIndex];
+  const activeOption = displayed[activeIndex];
   const activeOptionId =
     activeIndex >= 0 && activeOption && !activeOption.disabled
       ? `${id}-option-${activeIndex}`
       : undefined;
 
   return (
-    <div className="commandPicker" ref={wrapperRef} onKeyDown={onKeyDown}>
+    <div className="commandPicker" ref={wrapperRef} onKeyDown={onKeyDown} aria-busy={busy} onBlur={(event) => {
+      if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) onDismiss();
+    }}>
       <div className="commandPickerSearch">
         <span aria-hidden="true">⌕</span>
         <input
@@ -257,8 +263,9 @@ export function CommandPicker({
           spellCheck={false}
           autoComplete="off"
         />
-        <b>{visible.length}</b>
+        <b aria-hidden="true">{visible.length}</b>
       </div>
+      <span className="visuallyHidden" role="status">{busy ? "Working…" : `${visible.length} ${visible.length === 1 ? "result" : "results"}`}</span>
 
       {header ? <div className="commandPickerHeader">{header}</div> : null}
 
@@ -277,7 +284,7 @@ export function CommandPicker({
                   data-index={index}
                   role="option"
                   aria-selected={selected}
-                  aria-disabled={option.disabled || undefined}
+                  aria-disabled={option.disabled || busy || undefined}
                   className={[
                     "commandPickerOption",
                     selected ? "isSelected" : "",

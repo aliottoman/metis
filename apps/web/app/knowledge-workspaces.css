@@ -1,0 +1,210 @@
+/* Knowledge and Memory share the material and rhythm of the asset library. */
+.reference-workspace { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.reference-workspace .reference-kicker { display: block; color: var(--workspace-accent); font-size: 10px; font-weight: 600; letter-spacing: .07em; line-height: 1.5; text-transform: uppercase; }
+.reference-workspace .reference-summary { display: flex; flex-wrap: wrap; gap: 10px 28px; padding: 2px 4px; }
+.reference-summary > div { align-items: center; color: var(--color-ink-3); display: flex; font-size: 12px; gap: 9px; min-height: 24px; }
+.reference-summary svg { color: var(--workspace-accent); flex-shrink: 0; stroke-width: 1.7; }
+.reference-summary strong { color: var(--color-ink); font-weight: 600; }
+.reference-workspace .reference-source-mark { align-items: center; background: var(--workspace-tint); border: 1px solid color-mix(in srgb, var(--workspace-accent) 12%, transparent); border-radius: 11px; color: var(--workspace-accent); display: inline-flex; flex: 0 0 38px; height: 38px; justify-content: center; width: 38px; }
+.reference-workspace .reference-tools { align-items: center; display: flex; gap: 12px; min-width: 0; }
+.reference-workspace .reference-search { align-items: center; background: var(--color-paper-lift); border: 1px solid var(--color-line); border-radius: 10px; color: var(--color-ink-3); display: flex; flex: 1; gap: 10px; min-width: 0; padding: 0 13px; }
+.reference-search > svg { flex-shrink: 0; }
+.reference-workspace .reference-search input { background: transparent; border: 0; border-radius: 0; box-shadow: none; color: var(--color-ink); font: inherit; font-size: 13px; min-width: 0; outline: none; padding: 12px 0; width: 100%; }
+.reference-workspace .reference-search:focus-within { border-color: var(--workspace-accent); box-shadow: 0 0 0 3px var(--workspace-tint); }
+.reference-kind-filter { flex: 0 0 175px; width: 175px; }
+.reference-kind-filter .selectTrigger { min-height: 42px; }
+.reference-workspace .reference-empty { align-items: center; background: color-mix(in srgb, var(--workspace-tint) 12%, var(--color-paper-lift)); border: 1px dashed var(--color-line); border-radius: 16px; display: flex; flex-direction: column; gap: 12px; grid-column: 1 / -1; justify-content: center; min-height: 270px; padding: 36px 24px; text-align: center; }
+.reference-empty > svg { color: var(--workspace-accent); stroke-width: 1.4; }
+.reference-empty h3 { color: var(--color-ink); font-size: 19px; font-weight: 550; letter-spacing: -.025em; margin: 2px 0 0; }
+.reference-empty p { color: var(--color-ink-3); font-size: 13px; line-height: 1.7; margin: 0; max-width: 52ch; }
+
+/* A quiet navigation strip; each area gets a complete, focused workspace. */
+.knowledge-workspace .reference-navigation { display: block; min-width: 0; }
+.knowledge-workspace .reference-navigation .knowledgeTabs { background: transparent; backdrop-filter: none; border: 0; border-bottom: 1px solid var(--color-line); border-radius: 0; box-shadow: none; display: flex; gap: 20px; overflow-x: auto; padding: 0; }
+.knowledge-workspace .reference-navigation .knowledgeTab { align-items: center; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; color: var(--color-ink-3); display: inline-flex; flex: none; flex-direction: row; gap: 8px; min-height: 45px; padding: 10px 2px 13px; white-space: nowrap; }
+.knowledge-workspace .reference-navigation .knowledgeTabLabel { color: inherit; font-size: 12px; font-weight: 550; }
+.knowledge-workspace .reference-navigation .knowledgeTab:hover { color: var(--color-ink); background: transparent; }
+.knowledge-workspace .reference-navigation .knowledgeTab.isActive { border-color: var(--workspace-accent); color: var(--workspace-accent); }
+.reference-unsaved { background: var(--workspace-accent); border-radius: 50%; flex: none; height: 5px; width: 5px; }
+.knowledge-workspace .reference-panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.knowledge-workspace .reference-panel > .knowledgeSection { grid-column: 1 / -1; }
+.knowledge-workspace .knowledgeSection { background: var(--color-paper-lift); backdrop-filter: none; border: 1px solid var(--color-line); border-radius: 16px; box-shadow: none; gap: 18px; min-height: 0; padding: 24px; }
+.knowledge-workspace .knowledgeSectionHead { align-items: center; gap: 14px; }
+.knowledge-workspace .knowledgeSectionHead h2 { color: var(--color-ink); display: block; font-size: 20px; font-weight: 550; letter-spacing: -.025em; line-height: 1.4; margin: 4px 0 0; }
+.knowledge-workspace .sectionLede { color: var(--color-ink-3); font-size: 13px; line-height: 1.75; margin: -6px 0 0; max-width: 80ch; }
+.knowledge-workspace .knowledgeInput, .knowledge-workspace .knowledgeTextarea { background: var(--color-paper); border: 1px solid var(--color-line); box-shadow: none; color: var(--color-ink); }
+.knowledge-workspace .knowledgeInput:focus, .knowledge-workspace .knowledgeTextarea:focus { border-color: var(--workspace-accent); box-shadow: 0 0 0 3px var(--workspace-tint); outline: none; }
+.knowledge-workspace .reference-notice { align-items: center; background: var(--workspace-tint); border: 1px solid color-mix(in srgb, var(--workspace-accent) 15%, transparent); border-radius: 12px; box-shadow: none; gap: 12px; margin: 0; padding: 13px 16px; }
+.reference-notice .principleMark { align-items: center; background: none; color: var(--workspace-accent); display: flex; flex: 0 0 25px; height: auto; justify-content: center; padding: 0; width: 25px; }
+.reference-notice > div { flex: 1; min-width: 0; }
+.reference-notice strong { color: var(--workspace-accent); font-size: 12px; font-weight: 600; }
+.reference-notice p { color: var(--color-ink-2); font-size: 12px; line-height: 1.6; margin: 3px 0 0; }
+.reference-notice > a { flex-shrink: 0; }
+
+/* Sources are reference cards, with clear permission and indexing actions. */
+.knowledge-workspace .sourceGrid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); }
+.knowledge-workspace .sourceGrid .sourceCard { background: var(--color-paper); border: 1px solid var(--color-line); border-radius: 16px; box-shadow: none; display: flex; flex-direction: column; gap: 15px; min-height: 240px; padding: 20px; }
+.knowledge-workspace .sourceGrid .sourceCard:hover { border-color: color-mix(in srgb, var(--workspace-accent) 30%, var(--color-line)); box-shadow: var(--shadow-1); transform: none; }
+.knowledge-workspace .sourceCard .memoryCardHeader { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; }
+.knowledge-workspace .sourceCard .sourceLabel { align-items: flex-start; color: var(--color-ink); display: flex; flex: 1; flex-direction: column; font-size: 14px; font-weight: 550; gap: 5px; min-width: 100px; overflow-wrap: anywhere; text-align: left; }
+.knowledge-workspace .sourceCard .memoryKind { align-self: flex-start; background: none; color: var(--color-ink-3); font-size: 10px; font-weight: 500; letter-spacing: .05em; padding: 0; }
+.knowledge-workspace .sourceGrid .sourcePath { background: var(--color-surface); border-radius: 8px; color: var(--color-ink-2); font-size: 11px; line-height: 1.6; margin: 0; overflow-wrap: anywhere; padding: 9px 10px; }
+.knowledge-workspace .sourceGrid .memoryMeta { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.knowledge-workspace .sourceGrid .memoryMeta > div { display: block; padding: 0; }
+.knowledge-workspace .memoryMeta dt { color: var(--color-ink-3); font-size: 10px; font-weight: 500; letter-spacing: .03em; margin-bottom: 4px; }
+.knowledge-workspace .memoryMeta dd { color: var(--color-ink-2); font-size: 12px; margin: 0; }
+.knowledge-workspace .sourceGrid .cardActions { align-items: center; border-top: 1px solid var(--color-line); display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 14px; }
+.knowledge-workspace .sourceGrid .cardActions button { font-size: 11px; min-height: 31px; padding: 7px 10px; width: auto; }
+.knowledge-workspace .sourceGrid .cardActions .dangerButton { margin-right: auto; }
+.knowledge-workspace .sourceAddForm { align-items: center; background: var(--color-paper); border: 1px solid color-mix(in srgb, var(--workspace-accent) 20%, var(--color-line)); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 18px; }
+.sourceAddForm .reference-form-heading { display: flex; flex: 1 1 100%; flex-direction: column; gap: 5px; margin-bottom: 4px; }
+.reference-form-heading strong { color: var(--color-ink); font-size: 13px; font-weight: 550; }
+.reference-form-heading span { color: var(--color-ink-3); font-size: 12px; line-height: 1.6; }
+.knowledge-workspace .sourceAddForm .sourcePathInput { flex: 1 1 100%; width: 100%; }
+.knowledge-workspace .sourceAddForm .knowledgeInput:not(.sourcePathInput) { flex: 1 1 200px; width: auto; }
+.knowledge-workspace .sourceAddForm .knowledgeSelect { flex: 0 1 130px; min-width: 110px; }
+
+/* Profile and search results have a comfortable, document-like reading measure. */
+.knowledge-workspace .profileSection { width: 100%; max-width: 980px; justify-self: center; }
+.knowledge-workspace .profileSection .knowledgeTextarea { font-size: 14px; line-height: 1.85; min-height: 320px; padding: 22px; }
+.reference-note-meta { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; }
+.reference-note-meta .ui-chip { background: var(--workspace-tint); color: var(--workspace-accent); }
+.reference-note-meta .mutedMeta { font-size: 11px; }
+.reference-note-body { color: var(--color-ink-2); font-size: 14px; line-height: 1.9; overflow-wrap: anywhere; }
+.reference-note-body .messageContent { font-size: inherit; line-height: inherit; }
+.reference-note-body .messageContent > :first-child { margin-top: 0; }
+.reference-note-body .messageContent > :last-child { margin-bottom: 0; }
+.reference-note-body .messageContent h1, .reference-note-body .messageContent h2, .reference-note-body .messageContent h3 { color: var(--color-ink); font-size: 20px; font-weight: 550; letter-spacing: -.02em; line-height: 1.5; }
+.reference-note-body pre { max-width: 100%; overflow: auto; }
+.knowledge-workspace .profileSection .reference-note-body { background: var(--color-paper); border: 1px solid var(--color-line); border-radius: 12px; min-height: 280px; padding: 28px; }
+.knowledge-workspace .profileSection > .cardActions { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; margin: 0; }
+.knowledge-workspace .notionWorkspace { max-width: 1040px; overflow: visible; width: 100%; justify-self: center; }
+.knowledge-workspace .notionWorkspace::before, .knowledge-workspace .notionWorkspace::after { display: none; }
+.knowledge-workspace .notionMonogram { background: var(--workspace-tint); border-color: var(--color-line); color: var(--workspace-accent); height: 44px; width: 44px; font-size: 24px; }
+.knowledge-workspace .notionIdentity h2 { font-size: 22px; font-weight: 550; }
+.knowledge-workspace .notionStats { background: none; border: 0; gap: 12px; margin: 0; }
+.knowledge-workspace .notionStats > div { background: var(--color-paper); border: 1px solid var(--color-line); border-radius: 12px; padding: 16px; }
+.knowledge-workspace .notionStats dd { color: var(--color-ink); font-size: 23px; font-weight: 550; letter-spacing: -.03em; }
+.knowledge-workspace .notionForm { background: var(--color-paper); border: 1px solid var(--color-line); border-radius: 12px; padding: 20px; }
+.knowledge-workspace .notionFormHeading strong { color: var(--color-ink); font-size: 15px; font-weight: 550; }
+.knowledge-workspace .notionFormFooter { align-items: center; gap: 16px; }
+.knowledge-workspace .knowledgeExploreGrid { gap: 18px; }
+.knowledge-workspace .retrievalSection .sourceForm { background: var(--color-paper); border: 1px solid var(--color-line); border-radius: 10px; padding: 8px; }
+.knowledge-workspace .retrievalSection .snippetList { gap: 14px; }
+.knowledge-workspace .snippetCard { background: var(--color-paper); border: 1px solid var(--color-line); border-radius: 12px; padding: 18px; }
+.knowledge-workspace .snippetText { color: var(--color-ink-2); font: 13px/1.8 var(--font-sans); white-space: pre-wrap; }
+.reference-search-prompt { align-items: center; border: 1px dashed var(--color-line); border-radius: 12px; color: var(--workspace-accent); display: flex; gap: 16px; padding: 25px; }
+.reference-search-prompt > svg { flex-shrink: 0; }
+.reference-search-prompt strong { color: var(--color-ink-2); font-size: 13px; font-weight: 550; }
+.reference-search-prompt p { color: var(--color-ink-3); font-size: 12px; line-height: 1.65; margin: 5px 0 0; }
+.knowledge-workspace .scorePill, .knowledge-workspace .graphStatPill { background: var(--workspace-tint); border-color: transparent; color: var(--workspace-accent); }
+.knowledge-workspace .graphEdgeRow { background: var(--color-paper); border-color: var(--color-line); }
+.knowledge-workspace .tierTag { background: var(--color-surface); color: var(--color-ink-3); display: inline-block; font-size: 10px; font-weight: 500; margin-left: 6px; vertical-align: middle; }
+
+/* Memory: a note index beside a complete reading and review surface. */
+.reference-collection-heading { align-items: flex-end; display: flex; gap: 12px; justify-content: space-between; margin-top: 4px; }
+.reference-collection-heading h2 { color: var(--color-ink); font-size: 21px; font-weight: 550; letter-spacing: -.025em; margin: 5px 0 0; }
+.reference-collection-heading > span { color: var(--color-ink-3); font-size: 12px; white-space: nowrap; }
+.reference-memory-toolbar { display: flex; flex-direction: column; gap: 16px; }
+.memory-workspace .reference-memory-tabs { background: none; border: 0; display: flex; flex-wrap: wrap; gap: 7px; margin: 0; overflow: visible; padding: 0; }
+.memory-workspace .reference-memory-tabs button { background: var(--color-paper-lift); border: 1px solid var(--color-line); border-radius: 999px; color: var(--color-ink-2); font-size: 12px; padding: 9px 14px; }
+.memory-workspace .reference-memory-tabs button[aria-selected=true] { background: var(--workspace-tint); border-color: color-mix(in srgb, var(--workspace-accent) 14%, transparent); box-shadow: none; color: var(--workspace-accent); }
+.memory-workspace .reference-memory-tabs button span { background: color-mix(in srgb, var(--color-ink) 5%, transparent); color: inherit; font-size: 10px; margin-left: 7px; padding: 2px 6px; }
+.reference-memory-collection { min-width: 0; }
+.reference-memory-layout { align-items: start; display: grid; gap: 18px; grid-template-columns: minmax(220px, 32%) minmax(0, 1fr); }
+.reference-note-list { background: var(--color-paper-lift); border: 1px solid var(--color-line); border-radius: 16px; display: flex; flex-direction: column; max-height: 640px; min-width: 0; overflow: auto; padding: 7px; }
+.reference-note-row { background: none; border: 1px solid transparent; border-bottom-color: var(--color-line); border-radius: 11px; color: var(--color-ink-2); cursor: pointer; display: flex; flex-direction: column; font: inherit; gap: 11px; padding: 16px; text-align: left; transition: background var(--motion-fast), border-color var(--motion-fast); width: 100%; }
+.reference-note-row:last-child { border-bottom-color: transparent; }
+.reference-note-row:hover { background: var(--color-surface); }
+.reference-note-row.is-selected { background: var(--workspace-tint); border-color: color-mix(in srgb, var(--workspace-accent) 16%, transparent); }
+.reference-note-row-top { align-items: center; display: flex; gap: 10px; justify-content: space-between; }
+.reference-note-row-top > svg { color: var(--workspace-accent); flex-shrink: 0; }
+.reference-note-row strong { display: -webkit-box; font-size: 13px; font-weight: 500; line-height: 1.8; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.reference-note-date { color: var(--color-ink-3); font-size: 10px; }
+.reference-note-state { background: var(--color-ink-3); border-radius: 50%; flex: 0 0 5px; height: 5px; width: 5px; }
+.reference-note-state.is-pending { background: var(--workspace-accent); }
+.reference-note-reader { background: var(--color-paper-lift); border: 1px solid var(--color-line); border-radius: 16px; min-width: 0; overflow: hidden; position: sticky; top: 20px; }
+.reference-note-reader > header { align-items: center; border-bottom: 1px solid var(--color-line); display: flex; flex-wrap: wrap; gap: 12px; padding: 22px 24px; }
+.reference-note-reader > header > div { flex: 1; min-width: 130px; }
+.reference-note-reader h3 { color: var(--color-ink); font-size: 18px; font-weight: 550; letter-spacing: -.025em; line-height: 1.45; margin: 5px 0 0; }
+.reference-note-reader > .reference-note-body { min-height: 170px; padding: 28px; }
+.reference-note-rationale { align-items: flex-start; background: var(--color-paper); border: 1px solid var(--color-line); border-radius: 10px; display: flex; gap: 10px; margin: 0 24px 22px; padding: 15px; }
+.reference-note-rationale > svg { color: var(--workspace-accent); flex-shrink: 0; margin-top: 2px; }
+.reference-note-rationale strong { color: var(--color-ink); font-size: 12px; font-weight: 550; }
+.reference-note-rationale p { color: var(--color-ink-3); font-size: 12px; line-height: 1.75; margin: 5px 0 0; white-space: pre-wrap; }
+.reference-note-facts { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 24px; padding: 0 0 22px; }
+.reference-note-facts dt { color: var(--color-ink-3); font-size: 10px; margin-bottom: 6px; }
+.reference-note-facts dd { color: var(--color-ink-2); font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+.reference-note-actions { background: var(--color-paper); border-top: 1px solid var(--color-line); display: flex; flex-direction: column; gap: 12px; padding: 18px 24px; }
+.reference-note-actions p { align-items: center; color: var(--color-ink-3); display: flex; font-size: 11px; gap: 7px; line-height: 1.6; margin: 0; }
+.reference-note-actions > div { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.memory-workspace .reference-composer { background: var(--color-paper-lift); border: 1px solid color-mix(in srgb, var(--workspace-accent) 25%, var(--color-line)); border-radius: 16px; box-shadow: none; gap: 18px; margin: 0; padding: 24px; }
+.reference-composer-heading { align-items: flex-start; display: flex; gap: 13px; }
+.reference-composer-heading > div { flex: 1; min-width: 0; }
+.memory-workspace .reference-composer h2 { color: var(--color-ink); font-size: 20px; font-weight: 550; letter-spacing: -.025em; margin: 4px 0 7px; }
+.memory-workspace .reference-composer p { color: var(--color-ink-3); font-size: 12px; line-height: 1.65; }
+.memory-workspace .reference-composer textarea { background: var(--color-paper); border: 1px solid var(--color-line); border-radius: 10px; color: var(--color-ink); font: 14px/1.8 var(--font-sans); min-height: 145px; padding: 18px; }
+.memory-workspace .memoryComposerActions { align-items: center; display: flex; flex-direction: row; flex-wrap: wrap; gap: 14px; }
+.memory-workspace .memoryComposerActions .memoryKindSelect { flex: 0 1 220px; }
+.memory-workspace .memoryComposerActions > span { color: var(--color-ink-3); font-size: 10px; margin: 0 auto 0 0; }
+.reference-draft-return { align-items: center; background: var(--workspace-tint); border: 1px solid color-mix(in srgb, var(--workspace-accent) 15%, transparent); border-radius: 12px; color: var(--workspace-accent); cursor: pointer; display: flex; flex-wrap: wrap; font: 12px var(--font-sans); gap: 10px; padding: 14px 18px; text-align: left; }
+.reference-draft-return span { font-size: 11px; margin-left: auto; text-decoration: underline; text-underline-offset: 3px; }
+.reference-memory-settings { background: var(--color-paper-lift); border: 1px solid var(--color-line); border-radius: 16px; margin-top: 2px; padding: 20px 24px; }
+.reference-memory-settings-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; }
+.reference-memory-settings-heading > div { flex: 1; min-width: 150px; }
+.reference-memory-settings h2 { color: var(--color-ink); font-size: 14px; font-weight: 550; margin: 0 0 4px; }
+.reference-memory-settings p { color: var(--color-ink-3); font-size: 12px; line-height: 1.7; margin: 0; }
+.reference-memory-settings details { border-top: 1px solid var(--color-line); margin-top: 16px; padding-top: 15px; }
+.reference-memory-settings summary { align-items: center; color: var(--color-ink-2); cursor: pointer; display: flex; font-size: 12px; gap: 8px; justify-content: space-between; list-style: none; }
+.reference-memory-settings summary::-webkit-details-marker { display: none; }
+.reference-memory-settings details[open] summary svg { transform: rotate(180deg); }
+.reference-consent { align-items: flex-start; display: flex; flex-direction: column; gap: 12px; padding-top: 14px; }
+.reference-consent .ui-btn { height: auto; line-height: 1.5; min-height: 30px; padding-block: 6px; white-space: normal; }
+
+@media (max-width: 1080px) {
+  .reference-memory-layout { grid-template-columns: minmax(210px, 35%) minmax(0, 1fr); gap: 14px; }
+  .reference-note-reader > header { padding: 18px; }
+  .reference-note-reader > .reference-note-body { padding: 22px; }
+  .reference-note-rationale { margin-inline: 18px; }
+  .reference-note-facts { margin-inline: 18px; }
+  .knowledge-workspace .notionFormFooter { align-items: stretch; }
+}
+@media (max-width: 760px) {
+  .reference-memory-layout { grid-template-columns: minmax(0, 1fr); }
+  .reference-note-list { max-height: 290px; }
+  .reference-note-row { gap: 7px; padding: 13px; }
+  .reference-note-row strong { -webkit-line-clamp: 2; }
+  .reference-note-reader { position: static; }
+}
+@media (max-width: 720px) {
+  .reference-workspace { gap: 18px; }
+  .reference-workspace .reference-summary { gap: 9px 18px; }
+  .reference-summary > div { font-size: 11px; }
+  .knowledge-workspace .reference-navigation .knowledgeTabs { gap: 17px; }
+  .knowledge-workspace .reference-navigation .knowledgeTab { gap: 6px; }
+  .knowledge-workspace .reference-navigation .knowledgeTabLabel { font-size: 11px; }
+  .knowledge-workspace .knowledgeSection, .memory-workspace .reference-composer { padding: 18px; }
+  .knowledge-workspace .reference-notice { align-items: flex-start; flex-wrap: wrap; padding: 13px; }
+  .reference-notice > div { flex-basis: calc(100% - 40px); }
+  .reference-notice > a { margin-left: 36px; }
+  .reference-workspace .reference-tools { align-items: stretch; flex-direction: column; gap: 9px; }
+  .reference-kind-filter { align-self: flex-start; flex-basis: auto; max-width: 100%; width: 190px; }
+  .knowledge-workspace .sourceAddForm { align-items: stretch; flex-direction: column; padding: 14px; }
+  .knowledge-workspace .sourceAddForm > *, .knowledge-workspace .sourceAddForm .knowledgeSelect, .knowledge-workspace .sourceAddForm .knowledgeInput:not(.sourcePathInput), .knowledge-workspace .sourceAddForm .sourcePathInput { flex: none; width: 100%; }
+  .knowledge-workspace .profileSection .reference-note-body { padding: 20px; }
+  .knowledge-workspace .sourceGrid .sourceCard { padding: 16px; }
+  .knowledge-workspace .notionForm { padding: 16px; }
+  .knowledge-workspace .notionFormFooter .notionActions { display: flex; flex-wrap: wrap; gap: 9px; }
+  .knowledge-workspace .notionFormFooter .notionActions button { flex: 1 1 140px; }
+  .memory-workspace .reference-memory-tabs { gap: 6px; }
+  .memory-workspace .reference-memory-tabs button { font-size: 11px; padding: 8px 11px; }
+  .reference-collection-heading h2 { font-size: 19px; }
+  .reference-composer-heading > .reference-source-mark { display: none; }
+  .memory-workspace .memoryComposerActions .memoryKindSelect { flex-basis: 100%; }
+  .reference-note-facts { gap: 10px; }
+  .reference-note-actions { padding: 17px 18px; }
+  .reference-memory-settings { padding: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reference-note-row { transition: none; }
+}

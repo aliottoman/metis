@@ -4,12 +4,13 @@
 // drafts; the detail remounts on account change, so nothing carries over.
 
 import { useState, type ReactNode } from "react";
+import { NotebookPen, Plus } from "lucide-react";
 
 import { WinValuation } from "@/components/customers/win-valuation";
-import { createCustomerAction, createCustomerFact, createCustomerNote, createCustomerOutput, deleteCustomerAction, deleteCustomerFact, deleteCustomerNote, deleteCustomerPerson, deleteCustomerSource, deleteCustomerWin, editCustomerAction, addCustomerPerson, saveCustomerSettings, updateCustomerAction, updateCustomerFact, updateCustomerNote, updateCustomerPerson, updateCustomerSource } from "@/lib/api";
+import { createCustomerAction, createCustomerFact, createCustomerOutput, deleteCustomerAction, deleteCustomerFact, deleteCustomerPerson, deleteCustomerSource, deleteCustomerWin, editCustomerAction, addCustomerPerson, saveCustomerSettings, updateCustomerAction, updateCustomerFact, updateCustomerPerson, updateCustomerSource } from "@/lib/api";
 import { actionMeta, dateInputValue, FACT_KINDS, instantFromDateInput, isOverdue, SOURCE_KINDS, TECHNICAL_KINDS, usd, when, winDay } from "@/lib/customers";
 import type { Customers } from "@/hooks/use-customers";
-import type { CustomerAccountDetail, CustomerAction, CustomerFact, CustomerNote, CustomerOutput, CustomerPerson, CustomerSource } from "@/lib/types";
+import type { CustomerAccountDetail, CustomerAction, CustomerFact, CustomerOutput, CustomerPerson, CustomerSource } from "@/lib/types";
 
 type Props = { c: Customers; detail: CustomerAccountDetail };
 
@@ -64,10 +65,10 @@ export function Overview({ c, detail }: Props) {
       </dl>
       {open.length ? (
         <section className="overview-card">
-          <h3>Next actions</h3>
+          <header><h3>Next actions</h3><button type="button" className="ui-btn is-quiet is-sm" onClick={() => c.setTab("actions")}>View all</button></header>
           {open.slice(0, 5).map((action) => (
             <label key={action.id} className="overview-action">
-              <input type="checkbox" checked={false} disabled={c.busy === action.id} onChange={() => void c.run(action.id, () => updateCustomerAction(action.id, "done"))} />
+              <input type="checkbox" checked={false} disabled={Boolean(c.busy)} onChange={() => void c.run(action.id, () => updateCustomerAction(action.id, "done"))} />
               <span>{action.description}<small>{actionMeta(action)}</small></span>
             </label>
           ))}
@@ -75,13 +76,13 @@ export function Overview({ c, detail }: Props) {
       ) : null}
       {detail.facts.length ? (
         <section className="overview-card">
-          <h3>Latest understanding</h3>
+          <header><h3>Latest understanding</h3><button type="button" className="ui-btn is-quiet is-sm" onClick={() => c.setTab("facts")}>View facts</button></header>
           {detail.facts.slice(0, 6).map((fact) => <p key={fact.id}><b>{fact.kind.replace("_", " ")}</b>{fact.content}</p>)}
         </section>
       ) : null}
       {recent.length ? (
         <section className="overview-card">
-          <h3>Recently captured</h3>
+          <header><h3>Recently captured</h3><button type="button" className="ui-btn is-quiet is-sm" onClick={() => c.setTab("sources")}>Open sources</button></header>
           {recent.map((source) => (
             <p key={source.id}><b>{source.source_kind}</b>{source.title || source.content.slice(0, 120)}{source.status === "waiting" ? <em> · waiting for analysis</em> : source.status === "review" ? <em> · ready to review</em> : null}</p>
           ))}
@@ -89,58 +90,12 @@ export function Overview({ c, detail }: Props) {
       ) : null}
       {pinned.length ? (
         <section className="overview-card">
-          <h3>Pinned notes</h3>
-          {pinned.map((note) => <p key={note.id}><b>{note.title || "note"}</b>{note.body.slice(0, 220)}{note.body.length > 220 ? "…" : ""}</p>)}
+          <header><h3>Pinned notes</h3><button type="button" className="ui-btn is-quiet is-sm" onClick={() => c.setTab("notes")}>Open notes</button></header>
+          {pinned.map((note) => <p key={note.id}><button type="button" className="customer-overview-note" onClick={() => c.select(detail.account.id, "notes", { kind: "note", id: note.id })}>{note.title || "Untitled note"}</button>{note.body.slice(0, 220)}{note.body.length > 220 ? "…" : ""}</p>)}
         </section>
       ) : null}
-      {!open.length && !detail.facts.length && !recent.length ? <Empty>Nothing recorded yet. Capture a note or add a fact to start.</Empty> : null}
+      {!open.length && !detail.facts.length && !recent.length && !pinned.length ? <div className="workspace-empty"><NotebookPen aria-hidden="true" /><h2>Make this account your own</h2><p>Start with a working note, or capture a meeting or conversation to review its facts and next steps.</p><div className="workspace-toolbar"><button type="button" className="ui-btn is-primary" onClick={() => c.setTab("notes")}>Open account notes</button><button type="button" className="ui-btn" onClick={() => c.setDialog({ kind: "capture" })}>Capture a source</button></div></div> : null}
     </div>
-  );
-}
-
-// ── Notes ──────────────────────────────────────────────────────────────────
-
-type NoteDraft = { title: string; body: string; pinned: boolean };
-const EMPTY_NOTE: NoteDraft = { title: "", body: "", pinned: false };
-
-function NoteForm({ draft, onChange, onCancel, onSave, saving }: { draft: NoteDraft; onChange: (draft: NoteDraft) => void; onCancel: () => void; onSave: () => void; saving: boolean }) {
-  return (
-    <article className="records-form">
-      <input value={draft.title} onChange={(event) => onChange({ ...draft, title: event.target.value })} placeholder="Title (optional)" aria-label="Note title" />
-      <textarea value={draft.body} onChange={(event) => onChange({ ...draft, body: event.target.value })} placeholder="What should this account always carry with it?" aria-label="Note body" />
-      <label className="records-check"><input type="checkbox" checked={draft.pinned} onChange={(event) => onChange({ ...draft, pinned: event.target.checked })} /> Pin to account context</label>
-      <FormActions onCancel={onCancel} onSave={onSave} canSave={Boolean(draft.body.trim())} saving={saving} />
-    </article>
-  );
-}
-
-export function Notes({ c, detail, composerOpen, setComposerOpen }: Props & { composerOpen: boolean; setComposerOpen: (open: boolean) => void }) {
-  const [draft, setDraft] = useState(EMPTY_NOTE);
-  const [editing, setEditing] = useState<{ id: string; draft: NoteDraft } | null>(null);
-  const id = detail.account.id;
-  const save = (note: CustomerNote, next: NoteDraft, notice?: string) => c.run(note.id, () => updateCustomerNote(note.id, { title: next.title.trim(), body: next.body.trim(), pinned: next.pinned }), notice).then((ok) => ok && setEditing(null));
-  return (
-    <section className="records">
-      <ListHead text="Notes are yours: written directly, never analyzed. Pin one to hand it to every conversation scoped to this account." adding={composerOpen} onToggle={() => setComposerOpen(!composerOpen)} label="New note" />
-      {composerOpen ? (
-        <NoteForm draft={draft} onChange={setDraft} onCancel={() => { setComposerOpen(false); setDraft(EMPTY_NOTE); }} saving={c.busy === "new-note"} onSave={() => void c.run("new-note", () => createCustomerNote(id, { title: draft.title.trim(), body: draft.body.trim(), pinned: draft.pinned }), draft.pinned ? "Note saved and pinned." : "Note saved.").then((ok) => { if (ok) { setDraft(EMPTY_NOTE); setComposerOpen(false); } })} />
-      ) : null}
-      {detail.notes.map((note) => editing?.id === note.id ? (
-        <NoteForm key={note.id} draft={editing.draft} onChange={(next) => setEditing({ id: note.id, draft: next })} onCancel={() => setEditing(null)} saving={c.busy === note.id} onSave={() => void save(note, editing.draft)} />
-      ) : (
-        <article key={note.id} className={`records-row${note.pinned ? " is-pinned" : ""}`}>
-          <div>
-            <strong>{note.title || "Note"}</strong>
-            <small>{when(note.updated_at)}{note.origin === "chat" ? " · saved from a conversation" : ""}{note.pinned ? " · pinned" : ""}</small>
-            <p>{note.body}</p>
-          </div>
-          <RowActions busy={c.busy === note.id} onEdit={() => setEditing({ id: note.id, draft: { title: note.title, body: note.body, pinned: note.pinned } })} onDelete={() => window.confirm("Delete this note?") && void c.run(note.id, () => deleteCustomerNote(note.id))}>
-            <button type="button" className="ui-btn is-quiet is-sm" disabled={c.busy === note.id} onClick={() => void save(note, { title: note.title, body: note.body, pinned: !note.pinned })}>{note.pinned ? "Unpin" : "Pin"}</button>
-          </RowActions>
-        </article>
-      ))}
-      {!detail.notes.length && !composerOpen ? <Empty>No notes on this account yet.</Empty> : null}
-    </section>
   );
 }
 
@@ -251,7 +206,7 @@ export function Facts({ c, detail }: Props) {
       {visible.map((fact) => editing?.id === fact.id ? (
         <FactForm key={fact.id} draft={editing.draft} withStatus onChange={(next) => setEditing({ id: fact.id, draft: next })} onCancel={() => setEditing(null)} saving={c.busy === fact.id} onSave={() => void c.run(fact.id, () => updateCustomerFact(fact.id, { kind: editing.draft.kind, content: editing.draft.content.trim(), status: editing.draft.status })).then((ok) => ok && setEditing(null))} />
       ) : (
-        <article key={fact.id} className={`records-row${fact.status !== "active" ? ` is-${fact.status}` : ""}`}>
+        <article key={fact.id} id={`fact-${fact.id}`} className={`records-row${fact.status !== "active" ? ` is-${fact.status}` : ""}`}>
           <div>
             <small>{fact.kind.replace("_", " ")}{fact.status !== "active" ? ` · ${fact.status}` : ""} · {Math.round(fact.confidence * 100)}% confidence</small>
             <p>{fact.content}</p>
@@ -313,6 +268,7 @@ export function Sources({ c, detail }: Props) {
   const [editing, setEditing] = useState<{ id: string; draft: SourceDraft } | null>(null);
   return (
     <section className="records">
+      <div className="customer-section-heading"><div><h2>Source trail</h2><p>Original notes and conversations. Review extracted facts and actions before they become account context.</p></div><button type="button" className="ui-btn" onClick={() => c.setDialog({ kind: "capture" })}><Plus size={15} aria-hidden="true" />Capture source</button></div>
       {detail.sources.map((source) => editing?.id === source.id ? (
         <div key={source.id} id={`source-${source.id}`} className="records-form">
           <div className="records-form-row">
@@ -327,7 +283,7 @@ export function Sources({ c, detail }: Props) {
           <div>
             <small>{source.source_kind} · {when(source.occurred_at || source.created_at)} · <em className={`source-${source.status}`}>{SOURCE_STATUS[source.status]}</em></small>
             <strong>{source.title}</strong>
-            <p>{source.content}</p>
+            <details className="customer-source-content"><summary>Read original source</summary><p>{source.content}</p></details>
           </div>
           <RowActions busy={c.busy === source.id} onEdit={() => setEditing({ id: source.id, draft: { title: source.title, content: source.content, source_kind: source.source_kind } })} onDelete={() => window.confirm("Delete this captured note? It leaves the timeline with it; facts and actions already saved from it remain.") && void c.run(source.id, () => deleteCustomerSource(source.id))}>
             {source.status === "waiting" ? <button type="button" className="ui-btn is-sm" disabled={!c.modelReady || c.busy === source.id} onClick={() => void c.openProposal(source.id, true)}>{c.modelReady ? (c.busy === source.id ? "Analyzing…" : "Analyze") : "Launch model to analyze"}</button>

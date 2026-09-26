@@ -2055,9 +2055,9 @@ class Database:
                         "source": "meeting",
                         "meeting_id": meeting_id,
                         "proposal_id": proposal_id,
-                        "turn_id": proposal.get("turn_id"),
-                        "start": proposal.get("start"),
-                        "end": proposal.get("end"),
+                        "turn_id": proposal.get("evidence_turn_id"),
+                        "start": proposal.get("evidence_start"),
+                        "end": proposal.get("evidence_end"),
                     }
                     conn.execute(
                         """INSERT INTO customer_actions
@@ -8246,11 +8246,11 @@ class Database:
                 waiting_notes = [
                     dict(row)
                     for row in conn.execute(
-                        """SELECT s.id, s.title, s.account_id, s.created_at,
+                        """SELECT s.id, s.title, s.account_id, s.created_at, s.status,
                                   a.name AS account_name
                         FROM customer_sources s
                         JOIN customer_accounts a ON a.id = s.account_id
-                        WHERE s.status = 'waiting'
+                        WHERE s.status IN ('waiting', 'review')
                         ORDER BY s.created_at LIMIT 50"""
                     ).fetchall()
                 ]
@@ -8258,9 +8258,11 @@ class Database:
                     dict(row)
                     for row in conn.execute(
                         """SELECT c.id, c.description, c.owner, c.due_at, c.created_at,
-                                  c.account_id, a.name AS account_name
+                                  c.updated_at, c.account_id, a.name AS account_name,
+                                  i.source_id
                         FROM customer_actions c
                         JOIN customer_accounts a ON a.id = c.account_id
+                        LEFT JOIN customer_interactions i ON i.id = c.interaction_id
                         WHERE c.status = 'open'
                         ORDER BY CASE
                             WHEN c.due_at IS NOT NULL AND c.due_at < ? THEN 0
@@ -8279,6 +8281,28 @@ class Database:
                         LEFT JOIN messages m ON m.id = r.user_message_id
                         WHERE r.status = 'awaiting_approval'
                         ORDER BY r.created_at DESC LIMIT 25"""
+                    ).fetchall()
+                ]
+                # Reviewed needs are opportunity signals, not inferred deals.
+                # A source with a recorded follow-up is already being handled.
+                opportunity_signals = [
+                    dict(row)
+                    for row in conn.execute(
+                        """SELECT f.id, f.content, f.kind, f.created_at,
+                                  f.account_id, a.name AS account_name, i.source_id
+                        FROM customer_facts f
+                        JOIN customer_accounts a ON a.id = f.account_id
+                        LEFT JOIN customer_interactions i ON i.id = f.interaction_id
+                        WHERE f.status = 'active' AND a.status = 'active'
+                          AND f.kind IN ('requirement', 'use_case')
+                          AND julianday(f.created_at) >= julianday(?) - 14
+                          AND NOT EXISTS (
+                            SELECT 1 FROM customer_actions c
+                            WHERE c.interaction_id = f.interaction_id
+                              AND c.status IN ('open', 'done')
+                          )
+                        ORDER BY f.created_at DESC LIMIT 12""",
+                        (now,),
                     ).fetchall()
                 ]
                 tool_proposals = (
@@ -8329,6 +8353,7 @@ class Database:
                     "pending_memories": pending_memories,
                     "waiting_notes": waiting_notes,
                     "open_actions": open_actions,
+                    "opportunity_signals": opportunity_signals,
                     "waiting_runs": waiting_runs,
                     "tool_proposals": tool_proposals,
                     "stale_sources": stale_sources,

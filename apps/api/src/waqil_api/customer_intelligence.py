@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 from .contracts import (
     CustomerAccountDetailV1,
@@ -13,6 +14,7 @@ from .contracts import (
     CustomerActionV1,
     CustomerDashboardV1,
     CustomerEvidenceV1,
+    CustomerRecordEvidenceV1,
     CustomerExtractionV1,
     CustomerFactV1,
     CustomerInteractionV1,
@@ -27,6 +29,7 @@ from .contracts import (
     CustomerWinV1,
     KnowledgeSnippetV1,
 )
+from .context_links import customer_record_url, meeting_source_url, source_record_url
 from .database import Database
 from .local_model_session import LocalModelSessionManager
 from .model_preference import is_cloud_model
@@ -63,7 +66,7 @@ def _source(row: dict[str, Any]) -> CustomerSourceV1:
     )
 
 
-def _evidence(value: Any) -> CustomerEvidenceV1:
+def _evidence(value: Any, *, record: bool = False) -> CustomerEvidenceV1:
     if isinstance(value, str):
         import json
 
@@ -71,12 +74,13 @@ def _evidence(value: Any) -> CustomerEvidenceV1:
             value = json.loads(value)
         except ValueError:
             value = {}
-    return CustomerEvidenceV1.model_validate(value or {})
+    contract = CustomerRecordEvidenceV1 if record else CustomerEvidenceV1
+    return contract.model_validate(value or {})
 
 
 def _action(row: dict[str, Any]) -> CustomerActionV1:
     value = dict(row)
-    value["evidence"] = _evidence(value.pop("evidence_json", {}))
+    value["evidence"] = _evidence(value.pop("evidence_json", {}), record=True)
     return CustomerActionV1.model_validate(value)
 
 
@@ -477,7 +481,36 @@ class CustomerIntelligenceService:
         def cap(items: list[Any], limit: int) -> list[Any]:
             return items[:limit] if compact else items
 
-        def add(label: str, symbol: str, text: str, record_id: str) -> None:
+        def add(
+            label: str,
+            symbol: str,
+            text: str,
+            record_id: str,
+            *,
+            tab: str,
+            evidence: CustomerEvidenceV1 | None = None,
+            source_id: str | None = None,
+            origin_url: str | None = None,
+        ) -> None:
+            provenance_url = origin_url or customer_record_url(
+                account_id, tab, f"{tab.rstrip('s')}-{record_id}"
+            )
+            reviewed_source = source_id or (evidence.source_id if evidence else None)
+            if reviewed_source:
+                provenance_url = source_record_url(account_id, reviewed_source)
+            if (
+                isinstance(evidence, CustomerRecordEvidenceV1)
+                and evidence.source == "meeting"
+                and evidence.meeting_id
+            ):
+                provenance_url = meeting_source_url(
+                    evidence.meeting_id, evidence.turn_id
+                )
+                text += "\nKept from a meeting action reviewed by the user."
+            if evidence and evidence.quote:
+                # This is the exact quote the user reviewed, never the rest of
+                # a raw note or transcript that has not been approved.
+                text += f"\nReviewed source excerpt: {evidence.quote[:600]}"
             snippets.append(
                 KnowledgeSnippetV1(
                     source_label=label,
@@ -486,6 +519,7 @@ class CustomerIntelligenceService:
                     symbol=symbol[:120],
                     text=text.strip()[:2_000],
                     score=1.0,
+                    source_url=provenance_url,
                 )
             )
 
@@ -501,13 +535,20 @@ class CustomerIntelligenceService:
                 parts.append(f"Won: {win.won_at.date().isoformat()}")
             if win.brief:
                 parts.append(win.brief)
-            add("Recorded win", win.title, ". ".join(parts), win.id)
+            add("Recorded win", win.title, ". ".join(parts), win.id, tab="wins")
 
         for fact in cap(
             [item for item in detail.facts if item.status in {"active", "disputed"}], 10
         ):
             label = "Disputed fact" if fact.status == "disputed" else "Reviewed fact"
-            add(label, f"{fact.kind}", f"[{fact.kind}] {fact.content}", fact.id)
+            add(
+                label,
+                f"{fact.kind}",
+                f"[{fact.kind}] {fact.content}",
+                fact.id,
+                tab="facts",
+                evidence=fact.evidence,
+            )
 
         for action in cap(
             [item for item in detail.actions if item.status == "open"], 8
@@ -519,6 +560,8 @@ class CustomerIntelligenceService:
                 action.description[:60],
                 f"Open action: {action.description} (owner: {owner}{due})",
                 action.id,
+                tab="actions",
+                evidence=action.evidence,
             )
 
         for person in cap(detail.people, 4):
@@ -530,6 +573,8 @@ class CustomerIntelligenceService:
                 person.name,
                 f"{person.name}{f' — {descriptor}' if descriptor else ''}",
                 person.id,
+                tab="people",
+                evidence=person.evidence,
             )
 
         for note in cap([item for item in detail.notes if item.pinned], 3):
@@ -538,6 +583,12 @@ class CustomerIntelligenceService:
                 note.title or "Note",
                 f"{note.title or 'Note'}: {' '.join(note.body.split())}",
                 note.id,
+                tab="notes",
+                origin_url=(
+                    f"/?conversation={quote(note.origin_ref, safe='')}"
+                    if note.origin == "chat" and note.origin_ref
+                    else None
+                ),
             )
 
         # Newest first, bounded: an account with a long history must not crowd
@@ -556,6 +607,8 @@ class CustomerIntelligenceService:
                 f"{interaction.title or 'Interaction'} ({when})",
                 f"{when} — {summary}",
                 interaction.id,
+                tab="timeline",
+                source_id=interaction.source_id,
             )
         return snippets
 

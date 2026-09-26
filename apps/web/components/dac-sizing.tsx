@@ -1,5 +1,8 @@
 "use client";
 
+import { Gauge } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SelectMenu, type SelectOption } from "@/components/select-menu";
@@ -312,19 +315,7 @@ export function DacSizing() {
 
   return (
     <div className="workspacePage dacPage">
-      <header className="pageHeader">
-        <div>
-          <span className="eyebrow">Dedicated AI Cluster</span>
-          <h1>Sizing</h1>
-          <p>
-            Pick a shape, predict throughput and latency, and price it — for every model Oracle
-            validates for import, not just the ones it publishes benchmarks for.
-          </p>
-        </div>
-        <button className="secondaryButton" type="button" onClick={() => void run()} disabled={busy}>
-          {busy ? "Computing…" : "Recompute"}
-        </button>
-      </header>
+      <PageHeader icon={<Gauge />} eyebrow="Plan with confidence" title="Sizing" lede="Explore models, compare capacity, and estimate the cost of your next AI workload." actions={<button className="ui-btn" type="button" onClick={() => void run()} disabled={busy}>{busy ? "Computing…" : "Recompute"}</button>} />
 
       {error ? (
         <Notice kind="error" title="Sizing unavailable" onDismiss={() => setError(null)}>

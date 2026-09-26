@@ -61,7 +61,7 @@
 
 /* ── Meetings ───────────────────────────────────────────────────────────── */
 
-.meetings, .interviews { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-5) var(--space-6); flex: 1 1 auto; min-height: 0; position: relative; }
+.meetings, .interviews { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--page-padding, 28px) var(--page-padding, 28px) var(--space-6); flex: 1 1 auto; min-height: 0; position: relative; }
 .meetings-drop { position: absolute; inset: var(--space-3); z-index: 3; display: grid; place-content: center; border: 2px dashed var(--color-accent); border-radius: var(--radius-pane); background: color-mix(in srgb, var(--color-pane) 88%, transparent); color: var(--color-accent-ink); font-weight: 600; pointer-events: none; }
 .meetings-body { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-5); flex: 1 1 auto; min-height: 0; }
 .meeting { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
@@ -172,7 +172,7 @@
 .interview-verdict { flex-basis: 100%; margin: var(--space-1) 0 0; font-size: var(--text-md); line-height: 1.55; }
 .interview-score-actions { display: flex; gap: 2px; }
 .ui-chip.is-advance { background: var(--color-mint-surface); color: var(--color-green-ink); }
-.ui-chip.is-borderline { background: var(--color-gold); color: var(--color-ink); }
+.ui-chip.is-borderline { background: var(--color-warning-surface); color: var(--color-warning); }
 .ui-chip.is-do_not_advance { background: var(--color-coral-soft); color: var(--color-danger); }
 .interview-rubric { display: flex; flex-direction: column; gap: 6px; }
 .interview-rubric > div { display: grid; grid-template-columns: 160px minmax(0, 1fr) 24px; align-items: center; gap: var(--space-3); font-size: var(--text-sm); }

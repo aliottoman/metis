@@ -1,0 +1,238 @@
+/* Recording libraries and practice rooms share the workspace language. */
+.conversations-meetings, .conversations-interviews { gap: 24px; }
+.conversations-meetings { --conversation-ink: var(--color-accent-ink); --conversation-tint: var(--color-accent-surface); }
+.conversations-interviews { --conversation-ink: var(--color-warning); --conversation-tint: var(--color-warning-surface); }
+.conversation-mark { display: inline-grid; place-items: center; flex-shrink: 0; width: 42px; height: 42px; border-radius: 13px; background: var(--conversation-tint); color: var(--conversation-ink); }
+.conversation-search { display: flex; align-items: center; gap: 10px; min-width: 0; border: 1px solid var(--color-line); border-radius: 11px; background: var(--color-paper-lift); padding: 0 13px; color: var(--color-ink-3); }
+.conversation-search:focus-within { border-color: var(--conversation-ink); box-shadow: 0 0 0 3px var(--conversation-tint); }
+.conversation-search input, .meeting-transcript-head .conversation-search input { width: 100%; min-width: 0; border: 0; border-radius: 0; background: transparent; padding: 11px 0; color: var(--color-ink); font: inherit; font-size: 12px; outline: none; box-shadow: none; }
+.conversation-search input:focus { outline: none; box-shadow: none; }
+.conversation-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 14px; min-height: 300px; padding: 38px 22px; border: 1px dashed var(--color-line); border-radius: 16px; }
+.conversation-empty .conversation-mark { height: 64px; width: 64px; border-radius: 20px; }
+.conversation-empty h3 { margin: 5px 0 0; font-size: 21px; font-weight: 550; letter-spacing: -.035em; }
+.conversation-empty p { max-width: 480px; margin: 0; color: var(--color-ink-3); font-size: 13px; line-height: 1.7; }
+.conversation-empty small { color: var(--color-ink-3); font-size: 11px; }
+.conversation-empty.is-compact { min-height: 180px; }
+.conversation-spin { animation: conversation-spin 1.25s linear infinite; }
+@keyframes conversation-spin { to { transform: rotate(360deg); } }
+.recording-library-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.recording-library-stats > div { display: flex; align-items: center; gap: 14px; padding: 17px 20px; border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-paper-lift); min-width: 0; }
+.recording-library-stats > div > span:last-child { display: flex; flex-direction: column; gap: 3px; }
+.recording-library-stats strong { font-size: 23px; font-weight: 550; line-height: 1.1; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+.recording-library-stats small { font-size: 11px; line-height: 1.4; color: var(--color-ink-3); }
+.recording-catalog { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.recording-catalog-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 3px; }
+.recording-catalog-head h2 { margin: 0; font-size: 17px; letter-spacing: -.025em; font-weight: 600; }
+.recording-catalog-head p { margin: 5px 0 0; font-size: 12px; color: var(--color-ink-3); line-height: 1.5; }
+.recording-catalog-head .conversation-search { width: min(340px, 40%); }
+.recording-filter-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.recording-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.recording-filters .ui-chip { gap: 9px; padding: 7px 11px; }
+.recording-filters small { font-size: 10px; font-variant-numeric: tabular-nums; opacity: .75; }
+.recording-result-count { color: var(--color-ink-3); font-size: 11px; white-space: nowrap; }
+.recording-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); gap: 15px; }
+.recording-card { display: flex; flex-direction: column; gap: 13px; padding: 20px; border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-paper-lift); text-align: left; color: var(--color-ink); font: inherit; cursor: pointer; min-width: 0; transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast); }
+.recording-card:hover { border-color: color-mix(in srgb, var(--conversation-ink) 38%, var(--color-line)); box-shadow: var(--shadow-1); transform: translateY(-2px); }
+.recording-card:focus-visible { outline: 2px solid var(--conversation-ink); outline-offset: 3px; }
+.recording-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.recording-card-top .ui-status { font-size: 10px; }
+.recording-card.is-failed .conversation-mark { background: var(--color-warning-surface); color: var(--color-warning); }
+.recording-card-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 16px; line-height: 1.4; letter-spacing: -.025em; font-weight: 600; overflow-wrap: anywhere; }
+.recording-card-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 1.65; color: var(--color-ink-3); flex: 1; overflow-wrap: anywhere; }
+.recording-card-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--color-ink-3); font-size: 10px; margin-top: 3px; }
+.recording-card-meta > span:first-child { display: inline-flex; align-items: center; gap: 5px; }
+.recording-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 1px solid var(--color-line); color: var(--conversation-ink); font-size: 11px; font-weight: 500; }
+.conversations-meetings .meetings-drop { gap: 10px; text-align: center; justify-items: center; backdrop-filter: blur(5px); }
+.conversations-meetings .meetings-drop span { font-size: 12px; font-weight: 400; }
+.recording-workspace { display: flex; flex-direction: column; gap: 20px; width: min(100%, 1120px); margin: 0 auto; min-width: 0; }
+.recording-breadcrumb { display: flex; align-items: center; gap: 10px; color: var(--color-ink-3); font-size: 11px; }
+.recording-breadcrumb > .ui-btn { padding-left: 0; }
+.recording-workspace-head { display: flex; align-items: center; gap: 17px; min-width: 0; }
+.recording-workspace-head > .conversation-mark { width: 54px; height: 54px; border-radius: 17px; }
+.recording-workspace-name { flex: 1; min-width: 0; }
+.recording-workspace-name h1 { margin: 0; font-size: clamp(23px, 2.2vw, 29px); font-weight: 550; line-height: 1.25; letter-spacing: -.04em; overflow-wrap: anywhere; }
+.recording-workspace-name p { margin: 7px 0 0; color: var(--color-ink-3); font-size: 12px; line-height: 1.6; }
+.recording-workspace-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.recording-workspace-actions > :last-child { margin-left: auto; }
+.recording-player { padding: 16px 20px; border: 1px solid var(--color-line); border-radius: 16px; background: color-mix(in srgb, var(--conversation-tint) 35%, var(--color-paper-lift)); }
+.recording-player .ui-audio { margin: 0; border: 0; background: transparent; padding: 0; }
+.recording-workspace-tabs { display: flex; gap: 26px; border-bottom: 1px solid var(--color-line); }
+.recording-workspace-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 12px 0 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; font: inherit; font-size: 13px; color: var(--color-ink-3); cursor: pointer; }
+.recording-workspace-tabs button[aria-selected=true] { border-color: var(--conversation-ink); color: var(--conversation-ink); }
+.recording-workspace-tabs small { padding: 3px 7px; border-radius: 6px; background: var(--color-surface); font-size: 10px; }
+.recording-workspace-tabs button[aria-selected=true] small { background: var(--conversation-tint); }
+.recording-workspace > [hidden] { display: none; }
+.recording-workspace .meeting-overview { gap: 16px; }
+.recording-workspace .meeting-card { gap: 14px; padding: 23px; border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-paper-lift); }
+.recording-workspace .meeting-card h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 1.4; letter-spacing: -.015em; text-transform: none; color: var(--color-ink); }
+.recording-workspace .meeting-card h3 > svg { color: var(--conversation-ink); flex-shrink: 0; }
+.recording-workspace .meeting-card h3 small { margin-left: auto; font-size: 11px; color: var(--color-ink-3); }
+.recording-workspace .meeting-summary { font-size: 14px; line-height: 1.85; max-width: 88ch; }
+.meeting-section-description { margin: -4px 0 0; color: var(--color-ink-3); font-size: 12px; line-height: 1.65; }
+.recording-workspace .meeting-proposal { gap: 12px; padding: 15px 0 0; font-size: 13px; line-height: 1.6; }
+.recording-workspace .meeting-proposal .ui-chip { font-size: 10px; }
+.recording-workspace .meeting-proposal .meeting-time { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; }
+.meeting-review-clear { display: flex; align-items: center; gap: 8px; margin: 0; padding: 11px 0 2px; color: var(--color-ink-3); font-size: 12px; }
+.meeting-review-clear svg { color: var(--color-green-ink); flex-shrink: 0; }
+.meeting-speaker-editor { min-width: 0; padding: 12px; border: 1px solid var(--color-line); border-radius: 12px; background: var(--color-paper); }
+.meeting-speaker-editor .ui-field > span { font-size: 11px; }
+.meeting-speaker-editor input { width: 100%; min-width: 0; }
+.meeting-speaker-editor > div { display: flex; justify-content: flex-end; gap: 4px; margin-top: 8px; }
+.recording-workspace .meeting-log { border: 1px solid var(--color-line); border-radius: 14px; padding: 16px 20px; }
+.recording-workspace .meeting-log ol { margin-top: 15px; font-size: 11px; }
+.recording-workspace .meeting-pipeline { flex-wrap: wrap; gap: 12px; font-size: 11px; }
+.recording-workspace .meeting-title { min-width: 0; flex-wrap: wrap; }
+.recording-workspace .meeting-title input { min-width: 140px; }
+.recording-workspace .meeting-transcript { gap: 20px; }
+.recording-workspace .meeting-transcript-head { gap: 16px; }
+.recording-workspace .meeting-transcript-head h3 { margin: 0 0 5px; font-size: 16px; font-weight: 550; letter-spacing: -.025em; color: var(--color-ink); }
+.recording-workspace .meeting-transcript-head small, .meeting-search-count { font-size: 11px; color: var(--color-ink-3); }
+.recording-workspace .meeting-turns { gap: 14px; }
+.recording-workspace .meeting-turns li { padding: 18px 21px; border: 1px solid var(--color-line); border-left: 3px solid var(--color-accent); border-radius: 14px; background: var(--color-paper-lift); gap: 10px; scroll-margin-top: 24px; }
+.recording-workspace .meeting-turns li.tone-1 { border-left-color: var(--color-coral); }
+.recording-workspace .meeting-turns li.tone-2 { border-left-color: var(--color-mint); }
+.recording-workspace .meeting-turns li.tone-3 { border-left-color: var(--color-gold); }
+.recording-workspace .meeting-turns li[aria-current=location] { box-shadow: 0 0 0 2px var(--conversation-ink); background: color-mix(in srgb, var(--conversation-tint) 28%, var(--color-paper-lift)); }
+.recording-workspace .meeting-turns header { flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.recording-workspace .meeting-turns header > span { color: var(--color-ink-3); font-size: 10px; }
+.recording-workspace .meeting-turns header .ui-btn { opacity: 1; }
+.recording-workspace .meeting-turns p { font-size: 14px; line-height: 1.85; }
+.recording-workspace .meeting-original p { font-size: 12px; }
+.interview-journey { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 0 0 21px; margin: 0; border-bottom: 1px solid var(--color-line); }
+.interview-journey li { display: flex; align-items: center; gap: 11px; color: var(--color-ink-3); min-width: 0; }
+.interview-journey li > span { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border-radius: 11px; border: 1px solid var(--color-line); background: var(--color-paper-lift); }
+.interview-journey strong, .interview-journey small { display: block; }
+.interview-journey strong { font-size: 12px; font-weight: 550; }
+.interview-journey small { margin-top: 3px; font-size: 10px; }
+.interview-journey .is-current { color: var(--color-ink); }
+.interview-journey .is-current > span { color: var(--conversation-ink); background: var(--conversation-tint); border-color: color-mix(in srgb, var(--conversation-ink) 22%, var(--color-line)); }
+.interview-journey .is-done > span { color: var(--color-green-ink); background: var(--color-mint-surface); }
+.conversations-interviews .interview-setup-grid { grid-template-columns: minmax(0, 1fr) 290px; gap: 20px; }
+.conversations-interviews .interview-form { gap: 18px; min-width: 0; }
+.conversations-interviews .interview-form section { padding: 24px; border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-paper-lift); gap: 18px; }
+.conversations-interviews .interview-form h2 { gap: 11px; font-size: 17px; letter-spacing: -.025em; }
+.conversations-interviews .interview-form h2 > span { display: inline-grid; place-items: center; width: 27px; height: 27px; border-radius: 8px; background: var(--conversation-tint); color: var(--conversation-ink); font-size: 10px; }
+.conversations-interviews .interview-form .ui-field { font-size: 12px; min-width: 0; }
+.conversations-interviews .interview-form .ui-field > span { color: var(--color-ink-2); }
+.conversations-interviews .interview-form input, .conversations-interviews .interview-form textarea { background: var(--color-paper); min-width: 0; font-size: 13px; line-height: 1.65; }
+.conversations-interviews .interview-rounds { gap: 9px; }
+.conversations-interviews .interview-round { padding: 15px 13px; border-radius: 12px; gap: 7px; box-shadow: none; background: var(--color-paper); }
+.conversations-interviews .interview-round strong { font-size: 12px; }
+.conversations-interviews .interview-round span { font-size: 11px; line-height: 1.6; color: var(--color-ink-3); }
+.conversations-interviews .interview-round.is-selected { border-color: var(--conversation-ink); background: var(--conversation-tint); box-shadow: 0 0 0 1px var(--conversation-ink); }
+.conversations-interviews .interview-round:focus-within { outline: 2px solid var(--conversation-ink); outline-offset: 3px; }
+.conversations-interviews .interview-quick { gap: 6px; }
+.conversations-interviews .interview-quick .ui-chip { font-size: 10px; padding: 6px 9px; }
+.conversations-interviews .interview-quick .is-accent { background: var(--conversation-tint); color: var(--conversation-ink); }
+.conversations-interviews .interview-brief { gap: 13px; padding: 22px; border-radius: 16px; background: color-mix(in srgb, var(--conversation-tint) 25%, var(--color-paper-lift)); }
+.conversations-interviews .interview-brief > .ui-eyebrow { color: var(--conversation-ink); font-size: 9px; }
+.conversations-interviews .interview-brief > strong { font-size: 20px; line-height: 1.3; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.conversations-interviews .interview-brief > span { font-size: 12px; line-height: 1.6; }
+.conversations-interviews .interview-brief dl { gap: 12px; margin: 5px 0; padding: 16px 0; border-block: 1px solid var(--color-line); font-size: 11px; }
+.conversations-interviews .interview-brief dl div { flex-direction: column; gap: 4px; }
+.conversations-interviews .interview-brief dd { text-align: left; color: var(--color-ink-2); }
+.conversations-interviews .interview-brief .is-primary { width: 100%; justify-content: center; }
+.conversations-interviews .interview-live { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, .9fr); align-items: start; gap: 20px; }
+.conversations-interviews .interview-live-head { grid-column: 1 / -1; align-items: center; padding: 20px 22px; background: var(--color-paper-lift); border: 1px solid var(--color-line); border-radius: 16px; }
+.conversations-interviews .interview-live-head strong { font-size: 17px; font-weight: 550; letter-spacing: -.025em; }
+.conversations-interviews .interview-live-head .ui-eyebrow { font-size: 9px; color: var(--conversation-ink); }
+.conversations-interviews .interview-progress { padding: 8px 11px; border-radius: 8px; background: var(--conversation-tint); color: var(--conversation-ink); font-size: 10px; }
+.conversations-interviews .interview-live > .stage { grid-column: 1; grid-row: 2 / 6; padding: 25px 22px; border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-paper-lift); gap: 17px; }
+.conversations-interviews .stage-caption { width: 100%; max-height: 230px; overflow: auto; padding: 2px; }
+.conversations-interviews .stage-caption p { font-size: 16px; line-height: 1.7; }
+.conversations-interviews .stage-hint { font-size: 12px; line-height: 1.6; color: var(--color-ink-3); }
+.conversations-interviews .stage-label { font-size: 11px; }
+.conversations-interviews .stage-controls { padding-top: 18px; border-top: 1px solid var(--color-line); width: 100%; gap: 8px; }
+.conversations-interviews .stage-controls .ui-btn { font-size: 11px; }
+.conversations-interviews .stage-volume { flex-basis: 100%; justify-content: center; margin: 3px 0; }
+.conversations-interviews .interview-question { grid-column: 2; grid-row: 2; padding: 23px; border-radius: 16px; background: color-mix(in srgb, var(--conversation-tint) 35%, var(--color-paper-lift)); }
+.conversations-interviews .interview-question .ui-eyebrow { color: var(--conversation-ink); font-size: 9px; }
+.conversations-interviews .interview-question p { margin-top: 12px; font-size: 17px; line-height: 1.65; }
+.conversations-interviews .interview-typed { grid-column: 2; grid-row: 3; gap: 8px; }
+.conversations-interviews .interview-typed input { min-width: 0; border-radius: 11px; font-size: 12px; padding: 12px; }
+.conversations-interviews .interview-live > .transcript { grid-column: 2; grid-row: 4; max-height: 530px; overflow: auto; }
+.conversations-interviews .interview-live > .interview-note { grid-column: 1 / -1; grid-row: 6; }
+.conversations-interviews .transcript { padding: 15px 20px; border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-paper-lift); font-size: 12px; }
+.conversations-interviews .transcript > summary { font-size: 12px; }
+.conversations-interviews .transcript-turns { margin-top: 16px; gap: 20px; }
+.conversations-interviews .transcript-turns li { grid-template-columns: 48px minmax(0, 1fr); gap: 14px; }
+.conversations-interviews .transcript-turns li > span { font-size: 9px; }
+.conversations-interviews .transcript-turns li > p { font-size: 13px; line-height: 1.75; }
+.conversations-interviews .interview-scorecard { width: min(100%, 960px); gap: 20px; }
+.conversations-interviews .interview-score-head, .conversations-interviews .interview-block, .conversations-interviews .interview-rubric { padding: 23px; border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-paper-lift); }
+.conversations-interviews .interview-score-head { background: color-mix(in srgb, var(--conversation-tint) 25%, var(--color-paper-lift)); }
+.conversations-interviews .interview-block { gap: 15px; }
+.conversations-interviews .interview-block h3 { font-size: 13px; letter-spacing: -.015em; text-transform: none; color: var(--color-ink); }
+.conversations-interviews .interview-rubric { gap: 15px; }
+.conversations-interviews .interview-rubric b { background: var(--conversation-ink); }
+.conversations-interviews .interview-delivery > div { padding: 17px; border-radius: 12px; background: var(--color-paper); }
+@media (max-width: 1100px) {
+  .conversations-interviews .interview-setup-grid { grid-template-columns: minmax(0, 1fr) 250px; gap: 16px; }
+  .conversations-interviews .interview-rounds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .conversations-interviews .interview-form section { padding: 20px; }
+  .recording-library-stats > div { padding: 15px; gap: 10px; }
+}
+@media (max-width: 900px) {
+  .conversations-interviews .interview-live { grid-template-columns: minmax(0, 1fr); }
+  .conversations-interviews .interview-live > .stage, .conversations-interviews .interview-question, .conversations-interviews .interview-typed, .conversations-interviews .interview-live > .transcript, .conversations-interviews .interview-live > .interview-note { grid-column: 1; grid-row: auto; }
+  .conversations-interviews .interview-live > .stage { padding: 22px 18px; }
+  .conversations-interviews .stage-orb { width: 130px; height: 130px; }
+}
+@media (max-width: 720px) {
+  .conversations-meetings, .conversations-interviews { gap: 20px; }
+  .recording-library-stats { gap: 8px; }
+  .recording-library-stats > div { padding: 13px 11px; align-items: flex-start; }
+  .recording-library-stats .conversation-mark { display: none; }
+  .recording-library-stats strong { font-size: 21px; }
+  .recording-library-stats small { font-size: 10px; }
+  .recording-catalog-head { flex-direction: column; align-items: stretch; gap: 14px; }
+  .recording-catalog-head .conversation-search { width: 100%; }
+  .recording-filter-row { align-items: flex-start; flex-direction: column; gap: 9px; }
+  .recording-card { padding: 18px; }
+  .recording-workspace { gap: 16px; }
+  .recording-workspace-head { flex-wrap: wrap; gap: 12px; }
+  .recording-workspace-head > .conversation-mark { height: 42px; width: 42px; border-radius: 13px; }
+  .recording-workspace-name { flex-basis: calc(100% - 58px); }
+  .recording-workspace-head > .ui-status { margin-left: 54px; }
+  .recording-workspace-name h1 { font-size: 22px; }
+  .recording-workspace-actions > :last-child { margin-left: 0; }
+  .recording-player { padding: 16px 12px; }
+  .recording-workspace-tabs { gap: 20px; }
+  .recording-workspace-tabs button { gap: 6px; font-size: 12px; }
+  .recording-workspace-tabs small { font-size: 9px; padding: 3px 5px; }
+  .recording-workspace .meeting-card { padding: 18px; }
+  .recording-workspace .meeting-proposal { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .recording-workspace .meeting-proposal > .ui-chip { justify-self: start; }
+  .recording-workspace .meeting-proposal > span:last-child { justify-content: flex-end; }
+  .recording-workspace .meeting-log li { grid-template-columns: 1fr; gap: 3px; }
+  .recording-workspace .meeting-transcript-head { flex-direction: column; align-items: stretch; }
+  .recording-workspace .meeting-turns li { padding: 15px; }
+  .recording-workspace .meeting-turns p { font-size: 13px; }
+  .interview-journey { gap: 10px; padding-bottom: 18px; }
+  .interview-journey li { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .interview-journey strong { font-size: 10px; line-height: 1.4; }
+  .interview-journey small { display: none; }
+  .conversations-interviews .interview-setup-grid { grid-template-columns: minmax(0, 1fr); }
+  .conversations-interviews .interview-form section { padding: 18px; }
+  .conversations-interviews .interview-brief { position: static; padding: 20px; }
+  .conversations-interviews .interview-row { grid-template-columns: minmax(0, 1fr); }
+  .conversations-interviews .interview-live-head { flex-wrap: wrap; padding: 18px; gap: 12px; }
+  .conversations-interviews .interview-live-head strong { font-size: 15px; overflow-wrap: anywhere; }
+  .conversations-interviews .interview-question { padding: 18px; }
+  .conversations-interviews .interview-question p { font-size: 15px; }
+  .conversations-interviews .interview-score-head, .conversations-interviews .interview-block, .conversations-interviews .interview-rubric { padding: 18px; }
+  .conversations-interviews .interview-score-head { grid-template-columns: auto minmax(0, 1fr); gap: 15px; }
+  .conversations-interviews .interview-score-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  .conversations-interviews .transcript { padding: 13px 15px; }
+  .conversations-interviews .interview-rubric > div { grid-template-columns: minmax(100px, 1fr) minmax(50px, 1fr) 22px; gap: 10px; font-size: 11px; }
+}
+@media (max-width: 420px) {
+  .conversations-interviews .interview-rounds { grid-template-columns: minmax(0, 1fr); }
+  .recording-breadcrumb { gap: 5px; }
+  .recording-breadcrumb > span { font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conversation-spin { animation: none; }
+  .recording-card { transition: none; }
+  .recording-card:hover { transform: none; }
+}

@@ -1,5 +1,7 @@
 "use client";
 
+import { AudioLines, Search } from "lucide-react";
+
 // The agent factory: draft → review → deploy → test. The review screen is the
 // approval surface — what it shows is exactly what deploys, and Deploy asks
 // once, naming what it is about to create in the owner's ElevenLabs account.
@@ -51,8 +53,10 @@ export function AgentFactory() {
   const [agents, setAgents] = useState<VoiceAgent[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
+  const visibleAgents = agents.filter((agent) => `${agent.spec.name} ${agent.company}`.toLowerCase().includes(query.trim().toLowerCase()));
 
   const replace = useCallback((agent: VoiceAgent) => {
     setAgents((current) =>
@@ -77,9 +81,10 @@ export function AgentFactory() {
   return (
     <div className="agents">
       <PageHeader
-        eyebrow="ElevenLabs"
+        icon={<AudioLines />}
+        eyebrow="Voice agent studio"
         title="Agents"
-        lede="A prospect brief in, a deployed voice agent out: prompt, knowledge, simulation tests, and a demo page. Nothing reaches ElevenLabs until you have read it and said so."
+        lede="Turn a brief into a voice agent. Shape its knowledge, review its behavior, and test it before sharing."
       />
 
       {error ? (
@@ -90,6 +95,8 @@ export function AgentFactory() {
 
       <div className="agents-body">
         <aside className="accounts" aria-label="Agents">
+          <label className="workspace-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="Search agents" placeholder="Find an agent…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+          <span className="workspace-count">{loaded ? `${agents.length} ${agents.length === 1 ? "agent" : "agents"} in your studio` : "Reading your agents…"}</span>
           <div className="accounts-list ui-stagger">
             <button
               type="button"
@@ -100,7 +107,7 @@ export function AgentFactory() {
               <span><strong>+ New agent</strong><small>A brief in, a deployed agent out</small></span>
             </button>
             {!loaded ? <Skeleton rows={4} height={52} /> : null}
-            {agents.map((agent) => (
+            {visibleAgents.map((agent) => (
               <button
                 key={agent.id}
                 type="button"
@@ -112,6 +119,7 @@ export function AgentFactory() {
                 <i className={`ui-dot is-${agentState(agent.status)}`} aria-hidden="true" />
               </button>
             ))}
+            {loaded && !visibleAgents.length && query.trim() ? <p className="accounts-empty">No agents match this search. <button className="ui-btn is-quiet is-sm" type="button" onClick={() => setQuery("")}>Clear</button></p> : null}
           </div>
         </aside>
 
@@ -126,7 +134,8 @@ export function AgentFactory() {
             }}
             onError={setError}
           />
-        ) : (
+        ) : null}
+        <div className="agent-new-panel" hidden={Boolean(selected)}>
           <BriefForm
             availability={availability}
             onDrafted={(agent) => {
@@ -135,7 +144,7 @@ export function AgentFactory() {
             }}
             onError={setError}
           />
-        )}
+        </div>
       </div>
     </div>
   );
@@ -183,6 +192,7 @@ function BriefForm({
           </ul>
         </Notice>
       ) : null}
+      <div className="workspace-section-intro"><AudioLines size={22} /><div><h2>Start with a clear brief</h2><p>Describe who this agent helps and what a good conversation should achieve. You’ll review the draft before deployment.</p></div></div>
       <div className="agent-grid">
         <label className="ui-field">
           <span>Company</span>

@@ -70,6 +70,7 @@ from . import (
     tool_contracts,
 )
 from .database import Database
+from .context_links import context_account, link_run_history, safe_source_url
 from . import customer_tools, document_factory, queue_update
 from .evidence_routing import (
     EvidencePlanV1,
@@ -982,6 +983,11 @@ def _source_display(source: dict[str, Any]) -> str:
     `path::symbol` form, so a local file is unaffected."""
     rel_path = source.get("rel_path", "")
     symbol = source.get("symbol")
+    if source.get("source_url", "") and source.get("source_label", "").startswith(
+        ("Past conversation", "Project conversation")
+    ):
+        heading = str(source.get("text", "")).split("\n", 1)[0].lstrip("# ")[:160]
+        return symbol or heading or "Open conversation"
     if source.get("provider") == "customer":
         # `account#record_id` — the id is what makes the record addressable,
         # but the reader wants the account and what the record is about.
@@ -1302,15 +1308,28 @@ def _unsupported_claims(answer: str, evidence: str) -> list[str]:
     return [item for item in unsupported if not (item in seen or seen.add(item))]
 
 
-def _document_sources(filenames: list[str]) -> list[dict[str, Any]]:
+def _document_sources(
+    filenames: list[str], upload_ids: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Give every attached document a citable source record of its own.
 
     Without this an attached file has no `[n]` slot, so a prompt that asks for
     citations can only ever point at retrieved passages — which silently pushes
     a document answer onto Notion/corpus provenance."""
     return [
-        {"source_label": "Attached document", "rel_path": name, "symbol": None}
-        for name in filenames
+        {
+            "source_label": "Attached document",
+            "rel_path": name,
+            "symbol": None,
+            **(
+                {"source_url": f"/api/v1/uploads/{upload_ids[index]}"}
+                if upload_ids
+                and index < len(upload_ids)
+                and re.fullmatch(r"upl_[a-f0-9]{20}", upload_ids[index])
+                else {}
+            ),
+        }
+        for index, name in enumerate(filenames)
     ]
 
 
@@ -1436,11 +1455,14 @@ def _append_cited_sources(
     for number in cited:
         source = sources[number - 1]
         display = _source_display(source)
-        if source.get("provider") == "web":
+        linked_url = safe_source_url(source.get("source_url"))
+        if linked_url:
+            location = f"[{_MARKDOWN_LINK_TEXT.sub('', display)}]({linked_url})"
+        elif source.get("provider") == "web":
             # A web source's rel_path is its URL and its label is the page
             # title, so the reader gets "Title — [domain](url)" they can open.
-            web_url = source.get("rel_path", "")
-            domain = urlparse(web_url).netloc or web_url
+            web_url = safe_source_url(source.get("rel_path"))
+            domain = urlparse(web_url).netloc if web_url else ""
             location = f"[{domain}]({web_url})" if web_url else display
         else:
             url = _notion_page_url(source.get("rel_path", ""))
@@ -2988,6 +3010,7 @@ class ControlPlane:
         gated_out = 0
         customer_id = model_aliases.get("_customer_id", "")
         customer_scoped = bool(customer_id) and self.customers is not None
+        corpus_query = state["prompt"]
         if customer_scoped:
             # Customer mode is a hard scope boundary: do not mix global memories,
             # personal profile, general corpus, summaries, or earlier chat turns.
@@ -3002,6 +3025,7 @@ class ControlPlane:
             recent_messages = []
             summary = ""
             personal_profile = ""
+        if customer_scoped and not notion_scope:
             try:
                 knowledge_snippets = [
                     item.model_dump(mode="json")
@@ -3025,8 +3049,12 @@ class ControlPlane:
             # seven open ones — a confident falsehood about the user's own
             # record. Compact, prepended, and cited like any other evidence; the
             # rest of the unscoped context is untouched.
-            named = await self._named_account(state)
+            named, from_follow_up = await self._context_account(state, recent_messages)
             if named is not None:
+                if from_follow_up:
+                    # Only the locally resolved account name joins the query;
+                    # prior conversation text is never sent for embedding.
+                    corpus_query = f"{named.get('name', '')} {state['prompt']}".strip()
                 try:
                     knowledge_snippets = [
                         item.model_dump(mode="json")
@@ -3053,6 +3081,7 @@ class ControlPlane:
                             "account_id": str(named["id"]),
                             "name": str(named.get("name", "")),
                             "snippet_count": len(knowledge_snippets),
+                            "from_follow_up": from_follow_up,
                         },
                     )
         if wants_private and self.corpus is not None and self.corpus.available():
@@ -3086,7 +3115,7 @@ class ControlPlane:
                     )
                 else:
                     retrieved = await self.corpus.retrieve(
-                        state["prompt"], on_stage=on_stage
+                        corpus_query, on_stage=on_stage
                     )
                 # Only auto-inject genuinely relevant passages into the answer prompt.
                 threshold = self.settings.corpus_min_relevance
@@ -3230,6 +3259,7 @@ class ControlPlane:
             and self.answers is not None
             and self.answers.enabled()
             and not notion_scope
+            and not customer_scoped
         ):
             try:
                 banked = await self.answers.retrieve(state["prompt"], top_k=3)
@@ -3238,6 +3268,7 @@ class ControlPlane:
                 ] + knowledge_snippets
             except Exception:  # noqa: BLE001 - never fail a turn on retrieval
                 pass
+        await link_run_history(self.database, knowledge_snippets)
         await self.events.emit(
             state["run_id"],
             state["conversation_id"],
@@ -3256,6 +3287,9 @@ class ControlPlane:
                 ),
                 "knowledge_gated_out": gated_out,
                 "knowledge_scope": knowledge_scope,
+                "linked_source_count": sum(
+                    bool(item.get("source_url")) for item in knowledge_snippets
+                ),
                 "profile_characters": len(personal_profile),
                 "truncated": bool(truncated_sources),
             },
@@ -9371,6 +9405,16 @@ class ControlPlane:
         resolved, _tied = queue_update.resolve_account(state["prompt"], accounts)
         return resolved
 
+    async def _context_account(
+        self, state: AgentState, recent_messages: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Follow-up account context is evidence only, never a write scope."""
+        try:
+            accounts = await self.database.list_customer_accounts()
+        except Exception:
+            return None, False
+        return context_account(state["prompt"], recent_messages, accounts)
+
     def _customer_agent_system(self) -> str:
         """The routing contract handed to the model for a customer-scoped chat.
 
@@ -10336,7 +10380,9 @@ class ControlPlane:
         if attachment_text.strip() and not attachment_filenames:
             attachment_filenames = ["the attached document"]
         document_sources = (
-            _document_sources(attachment_filenames) if attachment_text.strip() else []
+            _document_sources(attachment_filenames, state.get("attachment_ids", []))
+            if attachment_text.strip()
+            else []
         )
         sources = [*knowledge, *document_sources]
         if document_sources:

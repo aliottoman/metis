@@ -177,9 +177,9 @@ body { background: var(--m-paper); color: var(--m-ink); }
 .secondaryButton:hover:not(:disabled),
 .ghostButton:hover:not(:disabled),
 .iconButton:hover:not(:disabled) {
-  background: var(--m-ink-btn);
-  border-color: transparent;
-  color: #fbf8f2;
+  background: var(--color-surface);
+  border-color: var(--color-line);
+  color: var(--color-ink);
 }
 .textButton { color: var(--m-ink); }
 .dangerButton,
@@ -238,9 +238,9 @@ select,
 }
 .filterTabs button[aria-pressed="true"],
 .filterTabs button.active {
-  background: var(--m-ink-btn);
-  border-color: transparent;
-  color: #fbf8f2;
+  background: var(--color-surface);
+  border-color: var(--color-line);
+  color: var(--color-ink);
 }
 
 /* ── Model control: greige panel, ink selection, no green tint ──────────
@@ -521,16 +521,16 @@ select { border-radius: var(--m-r-field); }
 
 /* A few places elsewhere that were carrying weight in grey and can afford
    the palette: the knowledge counters, the registry icons, the tier badge. */
-.knowledgeOverview > div:nth-child(1) strong { color: #33578c; }
-.knowledgeOverview > div:nth-child(2) strong { color: #1d6b5c; }
-.knowledgeOverview > div:nth-child(3) strong { color: #773d92; }
-.knowledgeOverview > div:nth-child(4) strong { color: #ab472a; }
+.knowledgeOverview > div:nth-child(1) strong { color: var(--color-accent-ink); }
+.knowledgeOverview > div:nth-child(2) strong { color: var(--color-green-ink); }
+.knowledgeOverview > div:nth-child(3) strong { color: var(--color-accent-ink); }
+.knowledgeOverview > div:nth-child(4) strong { color: var(--color-accent-ink); }
 .toolIcon {
   background: linear-gradient(142deg, #e4b3f4 0%, #ac6ed2 100%);
   color: #fff;
   border: 0;
 }
-.tierTag { background: #f2e4f8; border-color: #e2ccec; color: #773d92; }
+.tierTag { background: var(--color-accent-surface); border-color: var(--m-lav-edge); color: var(--color-accent-ink); }
 @keyframes metisBeadTurn { to { transform: rotate(360deg); } }
 @keyframes mPerchSettle {
   0% { transform: translateY(-4px) scale(0.94); }
@@ -552,11 +552,11 @@ select { border-radius: var(--m-r-field); }
   color: var(--m-ink);
 }
 .primaryButton {
-  background: var(--m-forest);
-  border-color: var(--m-forest);
-  color: #f4f7f5;
+  background: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-paper);
 }
-.primaryButton:hover:not(:disabled) { background: #2f4a40; border-color: #2f4a40; }
+.primaryButton:hover:not(:disabled) { background: var(--color-ink); border-color: var(--color-ink); }
 /* The approvals stay a card. They are the one thing in this panel that is
    a question rather than a record, and they should not read as prose. */
 .approvalCard {
@@ -724,7 +724,7 @@ select { border-radius: var(--m-r-field); }
 .selectChevron {
   transition: transform var(--motion-base) var(--m-menu-ease), color var(--motion-base) ease;
 }
-.selectMenu.isOpen .selectChevron { color: #765f89; transform: rotate(180deg); }
+.selectMenu.isOpen .selectChevron { color: var(--color-accent-ink); transform: rotate(180deg); }
 
 .selectPopup {
   top: calc(100% - 1px);
@@ -807,8 +807,8 @@ select { border-radius: var(--m-r-field); }
   transition: background-color var(--motion-fast) ease, transform var(--motion-base) var(--m-menu-ease);
 }
 .selectOption.isActive { background: var(--m-surface); transform: translateX(2px); }
-.selectOption.isSelected { color: #654778; font-weight: 600; }
-.selectOption.isSelected::after { color: #87659d; }
+.selectOption.isSelected { color: var(--color-accent-ink); font-weight: 600; }
+.selectOption.isSelected::after { color: var(--color-accent-ink); }
 .selectOption:active:not(.isDisabled) { transform: scale(0.985); }
 
 /* A select inside the already-expanded model menu unfolds in document flow.
@@ -840,7 +840,7 @@ select { border-radius: var(--m-r-field); }
   to { opacity: 1; clip-path: inset(0 0 0 0 round 18px); transform: scaleX(1) translateY(0); }
 }
 .commandPickerSearch,
-.commandPickerFooter { border-color: var(--m-line); background: rgba(237, 233, 225, 0.5); }
+.commandPickerFooter { border-color: var(--m-line); background: var(--color-surface); }
 .commandPickerOption { border-radius: var(--radius-control); transition: background-color var(--motion-fast) ease, transform var(--motion-base) var(--m-menu-ease); }
 .commandPickerOption.isActive { background: var(--m-surface); box-shadow: none; transform: translateX(2px); }
 .commandPickerOption.isSelected { box-shadow: inset 3px 0 #9b77b3; }
@@ -878,7 +878,7 @@ select { border-radius: var(--m-r-field); }
   border-radius: var(--radius-card);
   transition: border-color var(--motion-base) ease, background-color var(--motion-base) ease;
 }
-.modelControlRole.open { border-color: var(--m-line); background: rgba(237, 233, 225, 0.55); }
+.modelControlRole.open { border-color: var(--m-line); background: var(--color-surface); }
 .modelControlRoleHead { min-height: 38px; padding: 7px 10px; border-radius: var(--radius-control); }
 .modelControlRoleRungs { padding: 0 9px 10px; animation: mRoleReveal var(--motion-base) var(--m-menu-ease); }
 @keyframes mRoleReveal {
@@ -886,6 +886,7 @@ select { border-radius: var(--m-r-field); }
   to { opacity: 1; transform: translateY(0); }
 }
 .sourceAddForm .selectField { flex: 0 0 min(178px, 38%); }
+.sourceAddForm > * { min-width: 0; }
 .memoryKind.selectField { min-width: min(220px, 100%); }
 .settingsSection .selectField { min-width: min(240px, 100%); }
 
@@ -900,9 +901,9 @@ select { border-radius: var(--m-r-field); }
   border-radius: var(--radius-control);
   background: transparent;
 }
-.projectActivity.isAttention { background: color-mix(in srgb, var(--color-gold) 20%, var(--color-paper-lift)); }
+.projectActivity.isAttention { background: var(--color-warning-surface); }
 .projectActivity.isAttention .projectActivityPulse::before {
-  background: color-mix(in srgb, var(--color-gold) 55%, var(--color-ink));
+  background: var(--color-warning);
 }
 .projectActivity > button {
   display: grid;
@@ -1024,6 +1025,10 @@ select { border-radius: var(--m-r-field); }
   .sourceAddForm .selectField { flex-basis: 100%; }
   .projectActivityHeading small { white-space: normal; }
 }
+@media (max-width: 720px) {
+  .sourceForm.sourceAddForm { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .sourceForm.sourceAddForm > * { width: 100%; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .selectPopup,
@@ -1050,7 +1055,7 @@ select { border-radius: var(--m-r-field); }
    one level down, while infrequent configuration folds into one disclosure. */
 .modelControlPanel { width: min(370px, calc(100vw - 24px)); padding: 12px; }
 .modelControlIntro { display: grid; gap: 4px; padding: 3px 4px 11px; }
-.modelControlIntro .eyebrow { color: #87659d; }
+.modelControlIntro .eyebrow { color: var(--color-accent-ink); }
 .modelControlIntro > strong { font-size: var(--text-lg); font-weight: 570; letter-spacing: -0.018em; }
 .modelControlIntro > p { margin: 0; color: var(--m-ink-2); font-size: var(--text-xs); line-height: 1.4; }
 .modelControlRoutes { gap: 3px; }
@@ -1102,7 +1107,7 @@ select { border-radius: var(--m-r-field); }
   transition: border-color var(--motion-base) ease, background-color var(--motion-base) ease;
 }
 .modelControlAdvancedToggle:hover { border-color: #c6b8d6; background: var(--m-surface); color: var(--m-ink); }
-.modelControlAdvancedToggle b { color: #87659d; font-size: var(--text-xs); transition: transform var(--motion-base) var(--m-menu-ease); }
+.modelControlAdvancedToggle b { color: var(--color-accent-ink); font-size: var(--text-xs); transition: transform var(--motion-base) var(--m-menu-ease); }
 .modelControlAdvancedToggle[aria-expanded="true"] b { transform: rotate(180deg); }
 .modelControlAdvanced { animation: mAdvancedReveal var(--motion-base) var(--m-menu-ease); }
 .modelControlAdvanced > .modelControlSession:first-child { margin-top: 10px; }
@@ -1182,19 +1187,16 @@ button,
 }
 .modelControlTrigger,
 .workspacePage .secondaryButton {
-  background: rgba(255, 255, 255, 0.54);
-  border-color: rgba(51, 46, 40, 0.1);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
-    0 5px 15px rgba(45, 39, 34, 0.04);
+  background: var(--color-paper-lift);
+  border-color: var(--color-line);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-1);
 }
 .modelControlTrigger:hover,
 .workspacePage .secondaryButton:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.84);
-  border-color: rgba(51, 46, 40, 0.14);
-  box-shadow:
-    inset 0 1px 0 #fff,
-    0 8px 20px rgba(45, 39, 34, 0.075);
+  background: var(--color-surface);
+  border-color: var(--color-ink-3);
+  color: var(--color-ink);
 }
 
 .workspacePage {

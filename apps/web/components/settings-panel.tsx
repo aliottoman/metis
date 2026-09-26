@@ -1,5 +1,7 @@
 "use client";
 
+import { SlidersHorizontal } from "lucide-react";
+
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -16,6 +18,7 @@ import { ThemeControl } from "@/components/ui/theme-control";
 import type { HealthSnapshot, ModelPreference, SpeechPreference, VoiceAvailability } from "@/lib/types";
 import { MetisCompanion } from "@/components/metis-companion";
 import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
 import { Status } from "@/components/ui/status";
 import { usePoll } from "@/hooks/use-poll";
 import { SelectMenu } from "@/components/select-menu";
@@ -48,14 +51,14 @@ export function SettingsPanel() {
   const localModels = health?.models ?? [];
 
   const loadPreference = useCallback(async () => {
+    setPreferenceError(null);
     try {
       const current = await getModelPreference();
       setPreference(current);
       if (current.model) setPinnedChoice(current.model);
       setOciTools(current.oci_tools);
-    } catch {
-      // Non-fatal — the picker just keeps its default; health above already
-      // reports whether the API is reachable at all.
+    } catch (loadError) {
+      setPreferenceError(loadError instanceof Error ? loadError.message : "Model preferences could not be loaded.");
     }
   }, []);
 
@@ -66,10 +69,13 @@ export function SettingsPanel() {
     tools: Array<"x_search" | "code_interpreter">,
     failure: string,
   ) {
+    if (savingPreference || !preference) return;
     setSavingPreference(true);
     setPreferenceError(null);
     try {
-      setPreference(await setModelPreference(mode, model, provider, tools));
+      const saved = await setModelPreference(mode, model, provider, tools);
+      setPreference(saved);
+      setOciTools(saved.oci_tools);
     } catch (saveError) {
       setPreferenceError(saveError instanceof Error ? saveError.message : failure);
     } finally {
@@ -89,11 +95,11 @@ export function SettingsPanel() {
   };
 
   const loadSpeech = useCallback(async () => {
+    setSpeechError(null);
     try {
       setSpeech(await getSpeechPreference());
-    } catch {
-      // Non-fatal, like the model preference above: dictation keeps working on
-      // whatever the server already has stored.
+    } catch (loadError) {
+      setSpeechError(loadError instanceof Error ? loadError.message : "Voice preferences could not be loaded.");
     }
   }, []);
 
@@ -135,7 +141,6 @@ export function SettingsPanel() {
     const selected = ociTools.includes(tool)
       ? ociTools.filter((item) => item !== tool)
       : [...ociTools, tool];
-    setOciTools(selected);
     await save(preference?.mode ?? "split", preference?.model ?? null, preference?.provider ?? "local", selected, "Could not update OCI tools.");
   }
 
@@ -161,6 +166,10 @@ export function SettingsPanel() {
   }, [refresh, loadPreference, loadSpeech]);
   // Health moves on its own; re-read it while the page is on screen.
   usePoll(refresh, 15_000);
+
+  useEffect(() => {
+    if (!pinnedChoice && localModels.length) setPinnedChoice(localModels[0]!.id);
+  }, [localModels, pinnedChoice]);
 
   const isPinned = preference?.mode === "pinned";
   const provider = preference?.provider ?? "local";
@@ -202,15 +211,15 @@ export function SettingsPanel() {
 
   return (
     <div className="workspacePage settingsPage">
-      <header className="pageHeader">
-        <div>
-          <span className="eyebrow">Runtime</span>
-          <h1>Settings & health</h1>
-          <p>Choose where Metis reasons while keeping permissions, tools, and memory under local control.</p>
-        </div>
-        <button className="secondaryButton" type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "Checking…" : "Check now"}</button>
-      </header>
+      <PageHeader
+        icon={<SlidersHorizontal />}
+        eyebrow="Make Metis yours"
+        title="Settings & health"
+        lede="Personalize your workspace, choose your models, and keep an eye on connected services."
+        actions={<button className="ui-btn" type="button" onClick={() => { void refresh(); void loadPreference(); void loadSpeech(); }} disabled={loading || savingPreference || savingSpeech}>{loading ? "Checking…" : "Check now"}</button>}
+      />
 
+      <nav className="workspace-jump-nav" aria-label="Settings sections">{[["appearance", "Appearance"], ["reasoning", "Models & reasoning"], ["voice", "Voice & audio"], ["services", "Services & privacy"]].map(([id, label]) => <a key={id} href={`#settings-${id}`}>{label}</a>)}</nav>
       <section className={`healthHero ${health?.status === "ok" ? "healthy" : "unhealthy"}`}>
         <span className="healthOrb"><i /></span>
         <div>
@@ -220,7 +229,7 @@ export function SettingsPanel() {
         </div>
       </section>
 
-      <section className="settingsSection">
+      <section className="settingsSection" id="settings-appearance">
         <div className="sectionTitle"><div><h2>Appearance</h2><p>Follow your Mac, or pin light or dark. Remembered on this device.</p></div></div>
         <ThemeControl />
       </section>
@@ -230,7 +239,17 @@ export function SettingsPanel() {
           <div><h2>Companion expression</h2><p>Choose how visibly the companion reacts. Mood color still communicates listening, working, done, and trouble in every mode.</p></div>
           <span className="sectionBadge">{companionEnergy}</span>
         </div>
-        <div className="companion-energy" role="radiogroup" aria-label="Companion expression">
+        <div className="companion-energy" role="radiogroup" aria-label="Companion expression" onKeyDown={(event) => {
+          const choices: CompanionEnergy[] = ["calm", "expressive", "playful"];
+          const current = choices.indexOf(companionEnergy);
+          const next = event.key === "ArrowRight" || event.key === "ArrowDown" ? (current + 1) % choices.length : event.key === "ArrowLeft" || event.key === "ArrowUp" ? (current + choices.length - 1) % choices.length : -1;
+          if (next < 0) return;
+          event.preventDefault();
+          const choice = choices[next]!;
+          setCompanionEnergy(choice);
+          writeCompanionEnergy(choice);
+          event.currentTarget.querySelectorAll<HTMLButtonElement>("[role=radio]")[next]?.focus();
+        }}>
           {([
             ["calm", "Calm", "Slow breathing and restrained color."],
             ["expressive", "Expressive", "Fluid motion and clear mood shifts."],
@@ -240,6 +259,7 @@ export function SettingsPanel() {
               type="button"
               role="radio"
               aria-checked={companionEnergy === value}
+              tabIndex={companionEnergy === value ? 0 : -1}
               className={companionEnergy === value ? "selected" : ""}
               key={value}
               onClick={() => { setCompanionEnergy(value); writeCompanionEnergy(value); }}
@@ -254,19 +274,19 @@ export function SettingsPanel() {
         </div>
       </section>
 
-      <section className="settingsSection">
-        <div className="sectionTitle"><div><h2>Reasoning provider</h2><p>The selected provider is pinned into every new run for reliable replay. Notes, sizing, and analysis follow this choice too.</p></div><span className="sectionBadge">{providerBadge}</span></div>
-        <div className="providerChoiceGrid">
-          <button type="button" className={`providerChoice ${provider === "local" ? "selected" : ""}`} onClick={() => void chooseProvider("local")} disabled={savingPreference}>
+      <section className="settingsSection" id="settings-reasoning">
+        <div className="sectionTitle"><div><h2>Reasoning provider</h2><p>The selected provider is pinned into every new run for reliable replay. Notes, sizing, and analysis follow this choice too.</p></div><span className="sectionBadge">{preference ? providerBadge : preferenceError ? "Unavailable" : "Loading…"}</span></div>
+        <div className="providerChoiceGrid" role="group" aria-label="Reasoning provider">
+          <button type="button" aria-pressed={preference !== null && provider === "local"} className={`providerChoice ${preference && provider === "local" ? "selected" : ""}`} onClick={() => void chooseProvider("local")} disabled={savingPreference || !preference}>
             <span>On device</span><strong>Local Ollama</strong><small>Private, offline reasoning with the models installed below.</small>
           </button>
-          <button type="button" className={`providerChoice ${provider === "oci" ? "selected" : ""}`} onClick={() => void chooseProvider("oci")} disabled={savingPreference || !preference?.oci_available}>
+          <button type="button" aria-pressed={preference !== null && provider === "oci"} className={`providerChoice ${provider === "oci" ? "selected" : ""}`} onClick={() => void chooseProvider("oci")} disabled={savingPreference || !preference?.oci_available}>
             <span>OCI Responses</span><strong>Grok</strong><small>{preference?.oci_available ? "Large-context cloud reasoning with governed native tools." : "Configure the OCI Responses project OCID to enable."}</small>
           </button>
-          <button type="button" className={`providerChoice ${provider === "cohere" ? "selected" : ""}`} onClick={() => void chooseProvider("cohere")} disabled={savingPreference || !preference?.cohere_available}>
+          <button type="button" aria-pressed={preference !== null && provider === "cohere"} className={`providerChoice ${provider === "cohere" ? "selected" : ""}`} onClick={() => void chooseProvider("cohere")} disabled={savingPreference || !preference?.cohere_available}>
             <span>Cohere</span><strong>Command A+</strong><small>{preference?.cohere_available ? "Strong tool use and structured output; also powers dictation." : "Configure Cohere on OCI Generative AI to enable."}</small>
           </button>
-          <button type="button" className={`providerChoice ${provider === "cline" ? "selected" : ""}`} onClick={() => void chooseProvider("cline")} disabled={savingPreference || !clineReady}>
+          <button type="button" aria-pressed={preference !== null && provider === "cline"} className={`providerChoice ${provider === "cline" ? "selected" : ""}`} onClick={() => void chooseProvider("cline")} disabled={savingPreference || !clineReady}>
             <span>ClinePass</span><strong>Planner + coder roles</strong><small>{clineReady ? `${clineModels.length} verified subscription model${clineModels.length === 1 ? "" : "s"}; choose each role and backup from the chat model control.` : "Configure WAQIL_CLINE_API_KEY to enable the verified ClinePass catalog."}</small>
           </button>
         </div>
@@ -275,9 +295,10 @@ export function SettingsPanel() {
           <label><input type="checkbox" checked={ociTools.includes("x_search")} onChange={() => void toggleOciTool("x_search")} disabled={savingPreference || !preference?.oci_available} /><span><strong>X Search</strong><small>Native X search — the Web scope in chat is the general one</small></span></label>
         </div>
         <p className="sectionLede">Metis tools remain available through the governed planner. Model calls made while a tool executes follow the same provider as the run, under each tool&apos;s per-run call budget and pinned prompts. Cloud service-side memory remains off.</p>
+        {preferenceError ? <Notice kind="error" action={!preference ? "Try again" : undefined} onAction={() => void loadPreference()} onDismiss={preference ? () => setPreferenceError(null) : undefined}>{preferenceError}</Notice> : null}
       </section>
 
-      <section className="settingsSection">
+      <section className="settingsSection" id="settings-voice">
         <div className="sectionTitle">
           <div><h2>Voice &amp; audio</h2><p>Who transcribes dictation, what reasons during a live conversation, and how carefully Metis confirms a spoken write.</p></div>
           <Status state={voiceAvailability?.available ? "ready" : "stopped"} label={voiceAvailability?.available ? "Live voice ready" : "Live setup needed"} />
@@ -302,6 +323,7 @@ export function SettingsPanel() {
             <label className="ui-field">
               <span>Reasoning model</span>
               <select value={speech?.voice_model ?? ""} onChange={(event) => void saveVoiceSettings({ model: event.target.value })} disabled={savingSpeech || !speech?.voice_models.length}>
+                {!speech?.voice_models.length ? <option value="">No voice models available</option> : null}
                 {(speech?.voice_models ?? []).map((model) => <option key={model} value={model}>{model}</option>)}
               </select>
             </label>
@@ -311,7 +333,7 @@ export function SettingsPanel() {
             </label>
           </div>
         </div>
-        {speechError ? <Notice kind="error">{speechError}</Notice> : null}
+        {speechError ? <Notice kind="error" action={!speech ? "Try again" : undefined} onAction={() => void loadSpeech()} onDismiss={speech ? () => setSpeechError(null) : undefined}>{speechError}</Notice> : null}
       </section>
 
       <section className="settingsSection">
@@ -339,8 +361,9 @@ export function SettingsPanel() {
           <button
             type="button"
             className={isPinned ? "secondaryButton" : "primaryButton"}
+            aria-pressed={preference !== null && !isPinned}
             onClick={() => void choosePerTask()}
-            disabled={savingPreference}
+            disabled={savingPreference || !preference}
           >
             Per-task (default)
           </button>
@@ -350,7 +373,7 @@ export function SettingsPanel() {
             label="Pinned local model"
             value={pinnedChoice}
             onChange={setPinnedChoice}
-            disabled={savingPreference || !localModels.length}
+            disabled={savingPreference || !preference || !localModels.length}
             options={localModels.length
               ? localModels.map((model) => ({ value: model.id, label: model.label || model.id }))
               : [{ value: "", label: "No local models", disabled: true }]}
@@ -359,7 +382,7 @@ export function SettingsPanel() {
             type="button"
             className={isPinned ? "primaryButton" : "secondaryButton"}
             onClick={() => void choosePinned(pinnedChoice)}
-            disabled={savingPreference || !pinnedChoice}
+            disabled={savingPreference || !preference || !pinnedChoice}
           >
             {savingPreference ? "Saving…" : "Always use this model"}
           </button>
@@ -369,10 +392,9 @@ export function SettingsPanel() {
             Pinned to {localModels.find((model) => model.id === preference.model)?.label ?? preference.model} for every request — new conversations only.
           </span>
         ) : null}
-        {preferenceError ? <span className="mutedMeta" role="alert">{preferenceError}</span> : null}
       </section>
 
-      <div className="settingsGrid">
+      <div className="settingsGrid" id="settings-services">
         <section className="settingsSection compactSection">
           <div className="sectionTitle"><div><h2>Privacy boundary</h2><p>Cloud use is explicit and run-pinned.</p></div></div>
           <ul className="checkList">

@@ -1,8 +1,11 @@
 import { Suspense } from "react";
+import type { Metadata } from "next";
 
 import { CustomerWorkbench } from "@/components/customer-workbench";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
+
+export const metadata: Metadata = { title: "Customers" };
 
 // The workbench reads the URL, so it renders on the client; until then the
 // page shows its own header and the shape of the list, never a blank pane.

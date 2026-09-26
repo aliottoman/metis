@@ -412,12 +412,13 @@ export interface CorpusReindexResult {
 
 export interface KnowledgeSnippet {
   source_label: string;
-  provider: "local" | "notion" | "web";
+  provider: "local" | "notion" | "web" | "customer" | "answer";
   rel_path: string;
   symbol?: string | null;
   start_line?: number | null;
   text: string;
   score: number;
+  source_url?: string | null;
 }
 
 export interface NotionConnection {
@@ -944,6 +945,12 @@ export interface CustomerEvidence {
   source_id: string | null;
   line_start: number | null;
   line_end: number | null;
+  source?: "meeting" | null;
+  meeting_id?: string | null;
+  proposal_id?: string | null;
+  turn_id?: string | null;
+  start?: number | null;
+  end?: number | null;
 }
 
 /** A person as a model proposed them — no row yet, so no id. */
@@ -1393,8 +1400,8 @@ export interface DacRecommendation {
 }
 
 export type AttentionKind =
-  | "run_approval" | "customer_action" | "customer_note"
-  | "tool_proposal" | "memory" | "asset_trust" | "stale_source";
+  | "run_approval" | "customer_action" | "customer_note" | "customer_opportunity"
+  | "tool_proposal" | "memory" | "answer_atom" | "asset_trust" | "stale_source";
 
 export interface AttentionItem {
   key: string;
@@ -1409,6 +1416,12 @@ export interface AttentionItem {
   overdue: boolean;
   priority: number;
   deferred_until: string | null;
+  account_name?: string;
+  updated_at?: string | null;
+  why_now?: string;
+  next_step?: string;
+  prepared_prompt?: string;
+  source_href?: string;
 }
 
 export interface AttentionFeed {
@@ -1419,6 +1432,8 @@ export interface AttentionFeed {
   counts: Partial<Record<AttentionKind, number>>;
   total: number;
   deferred: number;
+  neglected?: AttentionItem[];
+  opportunities?: AttentionItem[];
 }
 
 export interface AttentionBatchResult {

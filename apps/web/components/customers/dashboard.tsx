@@ -32,9 +32,9 @@ export function Dashboard({ c }: { c: Customers }) {
         <header><h2>Needs you</h2><span>{d.priority_actions.length ? `${d.priority_actions.length} open across your accounts` : "Every captured action is closed"}</span></header>
         {d.priority_actions.map((action) => (
           <article key={action.id} className={`dash-action${isOverdue(action) ? " is-overdue" : ""}`}>
-            <button type="button" className="dash-account" onClick={() => c.select(action.account_id, "actions")}>{action.account_name || "Account"}</button>
+            <button type="button" className="dash-account" onClick={() => c.select(action.account_id, "actions", { kind: "action", id: action.id })}>{action.account_name || "Account"}</button>
             <div><strong>{action.description}</strong><small>{actionMeta(action)}</small></div>
-            <button type="button" className="ui-btn is-sm" disabled={c.busy === action.id} onClick={() => void c.run(action.id, () => updateCustomerAction(action.id, "done"))}>{c.busy === action.id ? "…" : "Done"}</button>
+            <button type="button" className="ui-btn is-sm" disabled={Boolean(c.busy)} onClick={() => void c.run(action.id, () => updateCustomerAction(action.id, "done"))}>{c.busy === action.id ? "Saving…" : "Mark done"}</button>
           </article>
         ))}
       </section>

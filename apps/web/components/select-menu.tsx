@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { enabledPickerIndexes, groupPickerOptions } from "@/lib/picker-options";
 
 /**
  * A styled, keyboard-accessible replacement for a native `<select>`.
@@ -107,27 +108,12 @@ export function SelectMenu({
 
   // Options keep their given order; groups are emitted the first time they
   // appear so the caller controls ranking without also controlling layout.
-  const sections = useMemo(() => {
-    const order: string[] = [];
-    const byGroup = new Map<string, SelectOption[]>();
-    for (const option of visible) {
-      const key = option.group ?? "";
-      if (!byGroup.has(key)) {
-        byGroup.set(key, []);
-        order.push(key);
-      }
-      byGroup.get(key)!.push(option);
-    }
-    return order.map((key) => ({ group: key, items: byGroup.get(key)! }));
-  }, [visible]);
+  const sections = useMemo(() => groupPickerOptions(visible), [visible]);
+  const displayed = useMemo(() => sections.flatMap((section) => section.items), [sections]);
 
   const selectableIndexes = useMemo(
-    () =>
-      visible.reduce<number[]>((result, option, index) => {
-        if (!option.disabled) result.push(index);
-        return result;
-      }, []),
-    [visible],
+    () => enabledPickerIndexes(displayed),
+    [displayed],
   );
 
   const clearCloseTimer = useCallback(() => {
@@ -170,11 +156,20 @@ export function SelectMenu({
     clearCloseTimer();
     setClosing(false);
     setOpen(true);
-    const current = visible.findIndex((option) => option.value === value);
+    typeahead.current = { buffer: "", at: 0 };
+    const current = displayed.findIndex((option) => option.value === value && !option.disabled);
     setActiveIndex(current >= 0 ? current : (selectableIndexes[0] ?? -1));
-  }, [clearCloseTimer, disabled, selectableIndexes, value, visible]);
+  }, [clearCloseTimer, disabled, selectableIndexes, value, displayed]);
 
   useEffect(() => clearCloseTimer, [clearCloseTimer]);
+
+  useEffect(() => {
+    if (disabled && open) close(false);
+  }, [close, disabled, open]);
+
+  useEffect(() => {
+    if (open) setActiveIndex((current) => selectableIndexes.includes(current) ? current : selectableIndexes[0] ?? -1);
+  }, [open, selectableIndexes]);
 
   useEffect(() => {
     if (!open) return;
@@ -195,7 +190,7 @@ export function SelectMenu({
     const measure = () => {
       const trigger = buttonRef.current?.getBoundingClientRect();
       if (!trigger) return;
-      const wanted = Math.min(listRef.current?.scrollHeight ?? 0, MAX_POPUP_HEIGHT) + 16;
+      const wanted = Math.min(listRef.current?.scrollHeight ?? 0, MAX_POPUP_HEIGHT) + (showSearch ? 60 : 16);
       const below = window.innerHeight - trigger.bottom;
       setDropUp(below < wanted && trigger.top > below);
     };
@@ -206,7 +201,7 @@ export function SelectMenu({
       window.removeEventListener("scroll", measure, true);
       window.removeEventListener("resize", measure);
     };
-  }, [open, visible.length]);
+  }, [open, showSearch, visible.length]);
 
   useEffect(() => {
     if (open && showSearch) searchRef.current?.focus();
@@ -241,16 +236,16 @@ export function SelectMenu({
       const state = typeahead.current;
       state.buffer = now - state.at > TYPEAHEAD_RESET_MS ? character : state.buffer + character;
       state.at = now;
-      const match = visible.findIndex(
+      const match = displayed.findIndex(
         (option) => !option.disabled && option.label.toLowerCase().startsWith(state.buffer),
       );
       if (match >= 0) setActiveIndex(match);
     },
-    [visible],
+    [displayed],
   );
 
   function onKeyDown(event: React.KeyboardEvent) {
-    if (disabled) return;
+    if (disabled || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     if (!open) {
       if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) {
         event.preventDefault();
@@ -268,22 +263,30 @@ export function SelectMenu({
         step(-1);
         break;
       case "Home":
+        if (event.target === searchRef.current && !event.ctrlKey && !event.metaKey) break;
         event.preventDefault();
         setActiveIndex(selectableIndexes[0] ?? -1);
         break;
       case "End":
+        if (event.target === searchRef.current && !event.ctrlKey && !event.metaKey) break;
         event.preventDefault();
         setActiveIndex(selectableIndexes[selectableIndexes.length - 1] ?? -1);
         break;
       case "Enter":
         event.preventDefault();
-        commit(visible[activeIndex]);
+        commit(displayed[activeIndex]);
+        break;
+      case " ":
+        if (event.target === searchRef.current) break;
+        event.preventDefault();
+        commit(displayed[activeIndex]);
         break;
       case "Tab":
         close(false);
         break;
       case "Escape":
         event.preventDefault();
+        event.stopPropagation();
         close();
         break;
       default:
@@ -296,6 +299,8 @@ export function SelectMenu({
 
   let flatIndex = -1;
   const menuState = open ? "open" : closing ? "closing" : "closed";
+  const activeOptionId = open && activeIndex >= 0 && displayed[activeIndex] && !displayed[activeIndex].disabled
+    ? `${id}-option-${activeIndex}` : undefined;
 
   return (
     <div className={`selectField ${className}`.trim()}>
@@ -307,6 +312,9 @@ export function SelectMenu({
         data-state={menuState}
         data-placement={dropUp ? "top" : "bottom"}
         ref={wrapperRef}
+        onBlur={(event) => {
+          if (open && event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) close(false);
+        }}
       >
         <button
           type="button"
@@ -316,6 +324,7 @@ export function SelectMenu({
           aria-controls={`${id}-list`}
           aria-expanded={open}
           aria-haspopup="listbox"
+          aria-activedescendant={!showSearch ? activeOptionId : undefined}
           aria-labelledby={`${id}-label`}
           disabled={disabled}
           onClick={() => (open ? close() : openMenu())}
@@ -362,8 +371,14 @@ export function SelectMenu({
                   }}
                   onKeyDown={onKeyDown}
                   placeholder="Filter…"
+                  role="combobox"
+                  aria-expanded={open}
+                  aria-autocomplete="list"
+                  aria-activedescendant={activeOptionId}
                   aria-label={`Filter ${label}`}
                   aria-controls={`${id}-list`}
+                  autoComplete="off"
+                  spellCheck={false}
                 />
               </div>
             ) : null}
@@ -373,7 +388,7 @@ export function SelectMenu({
               role="listbox"
               aria-labelledby={`${id}-label`}
               ref={listRef}
-              tabIndex={showSearch ? -1 : 0}
+              tabIndex={-1}
               onKeyDown={showSearch ? undefined : onKeyDown}
             >
               {sections.map((section) => (
@@ -390,6 +405,7 @@ export function SelectMenu({
                     return (
                       <div
                         key={option.value}
+                        id={`${id}-option-${index}`}
                         data-index={index}
                         role="option"
                         aria-selected={isSelected}

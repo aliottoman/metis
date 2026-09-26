@@ -62,10 +62,15 @@
 .ui-btn.is-quiet { background: transparent; border-color: transparent; }
 .ui-btn.is-quiet:hover:not(:disabled) { background: var(--color-surface); border-color: transparent; color: var(--color-ink); transform: none; box-shadow: none; }
 .ui-btn.is-danger { color: var(--color-danger); }
-.ui-btn.is-danger:hover:not(:disabled) { background: var(--color-danger); border-color: var(--color-danger); color: #fff; }
+.ui-btn.is-danger:hover:not(:disabled) { background: var(--color-danger); border-color: var(--color-danger); color: var(--color-on-danger); }
 .ui-btn.is-sm { font-size: var(--text-sm); height: 28px; padding: 0 10px; }
 .ui-btn.is-lg { font-size: var(--text-base); height: 40px; padding: 0 18px; }
 .ui-btn svg { height: 1em; width: 1em; transition: transform var(--motion-base) var(--ease-out); }
+.theme-control { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border: 1px solid var(--color-line); border-radius: var(--radius-pill); background: var(--color-paper); }
+.theme-control .ui-btn { border: 0; background: transparent; box-shadow: none; }
+.theme-control .ui-btn[aria-pressed="true"] { background: var(--color-ink); color: var(--color-paper); box-shadow: var(--shadow-1); }
+.theme-control .ui-btn::before { display: none; }
+.theme-control .ui-btn:hover { transform: none; }
 .ui-btn:hover:not(:disabled) svg { transform: scale(1.1); }
 
 /* ── Chip ──────────────────────────────────────────────────────────────── */
@@ -85,7 +90,7 @@
 .ui-chip.is-accent { background: var(--color-accent-surface); color: var(--color-accent-ink); }
 button.ui-chip { cursor: pointer; font: inherit; font-size: var(--text-sm); transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard), transform var(--motion-fast) var(--ease-out); }
 button.ui-chip:hover { background: var(--color-line); color: var(--color-ink); }
-button.ui-chip.is-accent:hover { background: var(--color-accent); color: var(--color-ink); }
+button.ui-chip.is-accent:hover { background: var(--color-accent); color: var(--color-on-accent); }
 button.ui-chip:active { transform: scale(0.96); }
 .ui-chip.is-outline { background: transparent; border-color: var(--color-line); }
 .ui-chip small { color: var(--color-ink-3); font-size: var(--text-xs); }
@@ -177,7 +182,7 @@ button.ui-chip:active { transform: scale(0.96); }
 /* The title block takes the room; the actions keep to the right edge. */
 .ui-page-header > div:first-child { flex: 1 1 40ch; min-width: 0; }
 .ui-page-header .ui-eyebrow { color: var(--color-ink-3); display: block; font-family: var(--font-mono); font-size: var(--text-xs); letter-spacing: 0.08em; margin-bottom: 4px; text-transform: uppercase; }
-.ui-page-header h1 { font-family: var(--font-display); font-size: var(--text-4xl); font-weight: 600; letter-spacing: -0.015em; line-height: 1.1; margin: 0; text-wrap: balance; }
+.ui-page-header h1 { font-family: var(--font-display); font-size: var(--text-4xl); font-weight: 600; letter-spacing: -0.025em; line-height: 1.15; margin: 0; text-wrap: balance; }
 .ui-page-header p { color: var(--color-ink-2); font-size: var(--text-base); line-height: 1.5; margin: 6px 0 0; max-width: 60ch; }
 .ui-page-header .ui-page-actions { align-items: center; display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
@@ -256,4 +261,17 @@ button.ui-chip:active { transform: scale(0.96); }
 @media (prefers-reduced-motion: reduce) {
   .ui-toast, .ui-skeleton, .ui-stagger > * { animation: none; }
   .ui-btn, .ui-btn::before, .ui-btn svg, button.ui-chip { transition: none; transform: none; }
+}
+
+@media (max-width: 720px) {
+  :root { --page-padding: 16px; }
+  .ui-notice { flex-wrap: wrap; }
+  .ui-notice > div { flex-basis: calc(100% - 36px); }
+  .ui-audio { flex-wrap: wrap; gap: var(--space-2); }
+  .ui-audio input[type="range"] { flex-basis: 40%; }
+  .ui-page-header .ui-page-actions { justify-content: flex-start; margin-left: 0; }
+}
+@media (pointer: coarse) {
+  .ui-btn.is-sm { min-height: 36px; }
+  .ui-tabs button { min-height: 44px; }
 }

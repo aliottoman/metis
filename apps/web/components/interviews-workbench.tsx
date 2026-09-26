@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConversationProvider } from "@elevenlabs/react";
+import { Check, ClipboardList, MessageCircle, Mic, Sparkles } from "lucide-react";
 
 import { Transcript } from "@/components/audio/stage";
 import { InterviewLive } from "@/components/interviews/live";
@@ -28,18 +29,27 @@ export function InterviewsWorkbench() {
 
 function Body() {
   const [availability, setAvailability] = useState<InterviewAvailability | null>(null);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [draft, setDraft] = useState<InterviewDraft>(EMPTY_DRAFT);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const context = useMemo(() => draftToContext(draft), [draft]);
   const interview = useInterviewSession({ context });
+  const checkAvailability = useCallback(async () => {
+    setAvailabilityError(null);
+    try {
+      setAvailability(await getInterviewAvailability());
+    } catch (error) {
+      setAvailabilityError(error instanceof Error ? error.message : "Interview readiness could not be checked.");
+    }
+  }, []);
 
   // The draft loads after mount so server and first paint agree, then every
   // edit is kept: an accidental navigation must not cost a pasted description.
   useEffect(() => {
     setDraft(loadInterviewDraft());
     setDraftLoaded(true);
-    void getInterviewAvailability().then(setAvailability).catch(() => setAvailability(null));
-  }, []);
+    void checkAvailability();
+  }, [checkAvailability]);
   useEffect(() => { if (draftLoaded) saveInterviewDraft(draft); }, [draft, draftLoaded]);
 
   const retryRound = useCallback(() => { interview.reset(); void interview.start(); }, [interview]);
@@ -51,14 +61,18 @@ function Body() {
   const round = INTERVIEW_TYPES.find((item) => item.value === (interview.session?.interview_type ?? draft.interview_type))?.label ?? "";
   const focus = interview.session?.focus_areas ?? parseFocusAreas(draft.focus_areas);
   const transcript = interview.turns.map((turn) => ({ id: String(turn.ordinal), speaker: turn.role === "agent" ? "Chiron" : "You", text: turn.text, agent: turn.role === "agent" }));
+  const preparing = interview.phase === "setup" || interview.phase === "ready";
+  const step = preparing ? 0 : interview.live ? 1 : 2;
 
   return (
-    <div className="interviews">
-      <PageHeader eyebrow="Mock rounds" title="Interviews" lede="Five questions, real follow-ups, and a delivery read from the recording. No rehearsed praise." />
+    <div className={`interviews conversations-interviews${interview.live ? " is-interview-live" : ""}`}>
+      <PageHeader eyebrow="Your practice room" title="Interviews" icon={<Mic size={22} aria-hidden="true" />} lede={preparing ? "Practice the conversation before it matters. A focused round, thoughtful follow-ups, and feedback you can use." : interview.live ? "One conversation at a time. Take a breath, make your point, and keep going." : "Return to your answers, understand your delivery, and choose what to practice next."} />
+      <ol className="interview-journey" aria-label="Interview progress">{[{ label: "Prepare your round", hint: "Role and focus", Icon: ClipboardList }, { label: "Have the conversation", hint: "Five questions, live follow-ups", Icon: MessageCircle }, { label: "Reflect and improve", hint: "Your answers and delivery", Icon: Sparkles }].map(({ label, hint, Icon }, index) => <li key={label} className={index === step ? "is-current" : index < step ? "is-done" : ""} aria-current={index === step ? "step" : undefined}><span>{index < step ? <Check size={17} aria-hidden="true" /> : <Icon size={17} aria-hidden="true" />}</span><div><strong>{label}</strong><small>{hint}</small></div></li>)}</ol>
       {interview.error ? <Notice kind="error" onDismiss={interview.dismissError}>{interview.error}</Notice> : null}
+      {availabilityError ? <Notice kind="error" title="Interview service unavailable" action="Try again" onAction={() => void checkAvailability()}>{availabilityError}</Notice> : !availability ? <Notice kind="info">Checking interview readiness…</Notice> : null}
 
-      {interview.phase === "setup" || interview.phase === "ready" ? (
-        <InterviewSetup draft={draft} onChange={setDraft} availability={availability} canBegin={context !== null && availability?.available !== false} onBegin={() => void interview.start()} />
+      {preparing ? (
+        <InterviewSetup draft={draft} onChange={setDraft} availability={availability} canBegin={context !== null && availability?.available === true} onBegin={() => void interview.start()} />
       ) : null}
 
       {interview.live ? <InterviewLive interview={interview} jobTitle={jobTitle} companyName={companyName} round={round} focus={focus} /> : null}

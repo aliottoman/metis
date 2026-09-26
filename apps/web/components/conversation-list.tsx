@@ -8,10 +8,11 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { FOCUS_SEARCH_EVENT } from "@/components/app-shell";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { deleteConversation, listConversations } from "@/lib/api";
 import {
   CONVERSATIONS_CHANGED_EVENT,
@@ -27,6 +28,7 @@ import {
 import type { ConversationSummary } from "@/lib/types";
 
 const COMPACT_LIMIT = 14;
+const MOBILE_QUERY = "(max-width: 720px)";
 
 const RUN_WORDS: Record<string, string> = {
   working: "Working",
@@ -51,7 +53,22 @@ export function ConversationList() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const active = searchParams.get("conversation");
-  const [open, setOpen] = useState(true);
+  const newConversation = searchParams.get("new");
+  const id = useId();
+  const [desktopOpen, setDesktopOpen] = useState(true);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const subscribeMobile = useCallback((notify: () => void) => {
+    const media = window.matchMedia(MOBILE_QUERY);
+    const changed = () => {
+      setMobileOpen(false);
+      notify();
+    };
+    media.addEventListener("change", changed);
+    return () => media.removeEventListener("change", changed);
+  }, []);
+  const mobile = useSyncExternalStore(subscribeMobile, () => window.matchMedia(MOBILE_QUERY).matches, () => false);
+  const open = mobile ? mobileOpen : desktopOpen;
+  const modalOpen = mobile && mobileOpen;
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
@@ -59,14 +76,39 @@ export function ConversationList() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [indicators, setIndicators] = useState<Record<string, ConversationRunIndicator>>({});
   const searchRef = useRef<HTMLInputElement>(null);
+  const historyRef = useRef<HTMLElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const closeMobile = useCallback(() => setMobileOpen(false), []);
+
+  useLayoutEffect(() => {
+    if (modalOpen) returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }, [modalOpen]);
+  useDialogFocus(historyRef, modalOpen, closeMobile);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    const chat = historyRef.current?.parentElement?.querySelector<HTMLElement>(":scope > .chat");
+    if (!chat) return;
+    const previousInert = chat.inert;
+    chat.inert = true;
+    return () => {
+      chat.inert = previousInert;
+      // The dialog hook may restore focus before its sibling becomes usable.
+      // Complete that restoration once the chat has left the inert state.
+      const previous = returnFocusRef.current;
+      if (previous?.isConnected && !previous.closest("[inert]") && previous.getClientRects().length) previous.focus({ preventScroll: true });
+    };
+  }, [modalOpen]);
 
   useEffect(() => {
     try {
-      setOpen(window.localStorage.getItem("metis.historyOpen") !== "0" && window.innerWidth > 720);
+      setDesktopOpen(window.localStorage.getItem("metis.historyOpen") !== "0");
     } catch {
-      setOpen(true);
+      setDesktopOpen(true);
     }
   }, []);
+
+  useEffect(() => setMobileOpen(false), [pathname, active, newConversation]);
 
   useEffect(() => {
     let mounted = true;
@@ -99,7 +141,8 @@ export function ConversationList() {
   // page or navigates with `focus=search` so the list mounts and focuses.
   useEffect(() => {
     const focus = () => {
-      setOpen(true);
+      if (window.matchMedia(MOBILE_QUERY).matches) setMobileOpen(true);
+      else setDesktopOpen(true);
       window.setTimeout(() => searchRef.current?.focus(), 0);
     };
     window.addEventListener(FOCUS_SEARCH_EVENT, focus);
@@ -109,7 +152,11 @@ export function ConversationList() {
 
   const toggle = () => {
     const next = !open;
-    setOpen(next);
+    if (mobile) {
+      setMobileOpen(next);
+      return;
+    }
+    setDesktopOpen(next);
     try {
       window.localStorage.setItem("metis.historyOpen", next ? "1" : "0");
     } catch {
@@ -149,8 +196,10 @@ export function ConversationList() {
   };
 
   return (
-    <aside className={`chatHistory${open ? "" : " is-closed"}`} aria-label="Conversations">
-      <button type="button" className="ui-btn is-quiet is-sm chatHistoryOpen" onClick={toggle} aria-label="Show conversations" title="Show conversations">
+    <>
+    {modalOpen ? <button type="button" className="chatHistoryScrim" tabIndex={-1} aria-label="Close conversations" onClick={closeMobile} /> : null}
+    <aside ref={historyRef} id={id} className={`chatHistory${open ? "" : " is-closed"}${modalOpen ? " is-mobile-open" : ""}`} aria-label="Conversations" role={modalOpen ? "dialog" : undefined} aria-modal={modalOpen || undefined}>
+      <button type="button" className="ui-btn is-quiet is-sm chatHistoryOpen" onClick={toggle} aria-label="Show conversations" title="Show conversations" aria-expanded={open} aria-controls={`${id}-list`}>
         <PanelLeftOpen size={16} aria-hidden="true" />
       </button>
 
@@ -166,6 +215,7 @@ export function ConversationList() {
         <Search size={14} aria-hidden="true" />
         <input
           ref={searchRef}
+          data-dialog-autofocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search conversations"
@@ -178,7 +228,7 @@ export function ConversationList() {
         )}
       </label>
 
-      <div className="chatHistoryList">
+      <div className="chatHistoryList" id={`${id}-list`}>
         {Object.entries(grouped).map(([label, items]) => (
           <section key={label} className="ui-stagger">
             <h2>{label}</h2>
@@ -193,7 +243,7 @@ export function ConversationList() {
                 >
                   <Link
                     href={`/?conversation=${encodeURIComponent(conversation.id)}`}
-                    onClick={() => acknowledgeConversationRun(conversation.id)}
+                    onClick={() => { acknowledgeConversationRun(conversation.id); if (mobile) closeMobile(); }}
                     className={current ? "is-active" : ""}
                     aria-current={current ? "page" : undefined}
                     title={conversation.title}
@@ -226,5 +276,6 @@ export function ConversationList() {
         ) : null}
       </div>
     </aside>
+    </>
   );
 }

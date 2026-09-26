@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { artifactUrl } from "@/lib/api";
 import { sanitizeSvgForPreview } from "@/lib/svg-preview";
 import type { ArtifactRef } from "@/lib/types";
@@ -27,18 +28,14 @@ function artifactKind(artifact: ArtifactRef): string {
 }
 
 export function ArtifactViewer({ artifacts }: { artifacts: ArtifactRef[] }) {
+  const titleId = useId();
+  const dialog = useRef<HTMLElement>(null);
   const [selected, setSelected] = useState<ArtifactRef | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewText, setPreviewText] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelected(null);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  useDialogFocus(dialog, selected !== null, () => setSelected(null));
 
   useEffect(() => {
     if (!selected) {
@@ -61,6 +58,7 @@ export function ArtifactViewer({ artifacts }: { artifacts: ArtifactRef[] }) {
         return { kind: "text" as const, value: await response.text() };
       })
       .then((preview) => {
+        if (controller.signal.aborted) return;
         if (preview.kind === "blob") {
           objectUrl = URL.createObjectURL(preview.value);
           setPreviewUrl(objectUrl);
@@ -106,12 +104,12 @@ export function ArtifactViewer({ artifacts }: { artifacts: ArtifactRef[] }) {
 
       {selected ? (
         <div className="modalBackdrop artifactBackdrop" role="presentation" onMouseDown={() => setSelected(null)}>
-          <section className="artifactModal" role="dialog" aria-modal="true" aria-labelledby="artifact-title" onMouseDown={(event) => event.stopPropagation()}>
+          <section ref={dialog} className="artifactModal" role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}>
             <header>
-              <div><span className="eyebrow">Sandboxed preview</span><h2 id="artifact-title">{selected.name}</h2></div>
+              <div><span className="eyebrow">File preview</span><h2 id={titleId}>{selected.name}</h2></div>
               <div>
                 <a className="secondaryButton" href={artifactUrl(selected.id, selected.download_url)} download={selected.name}>Download</a>
-                <button className="iconButton" type="button" aria-label="Close preview" onClick={() => setSelected(null)}>×</button>
+                <button data-dialog-autofocus className="iconButton" type="button" aria-label="Close preview" onClick={() => setSelected(null)}>×</button>
               </div>
             </header>
             <div className="artifactPreview">

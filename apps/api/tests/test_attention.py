@@ -9,8 +9,22 @@ without anything breaking.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from waqil_api.attention import AttentionService
+
+
+async def test_asset_review_opens_the_exact_workspace_settings() -> None:
+    class Assets:
+        async def list(self):
+            return [SimpleNamespace(
+                id="asset/demo", name="Demo", launch_configured=True,
+                launch_approved=False,
+            )]
+
+    feed = await AttentionService(_FakeDatabase(), assets=Assets()).feed()
+    item = next(item for item in feed.items if item.kind == "asset_trust")
+    assert item.href == "/assets/asset%2Fdemo?view=settings"
 
 
 def _iso(when: datetime) -> str:

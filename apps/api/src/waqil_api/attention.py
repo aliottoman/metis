@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 import asyncio
 
@@ -34,6 +35,7 @@ from .database import Database
 _BASE_WEIGHT = {
     "run_approval": 90,  # a run is stopped mid-flight, holding its work
     "customer_action": 80,  # a promise to someone outside this machine
+    "customer_opportunity": 70,  # a reviewed need without a recorded follow-up
     "customer_note": 60,  # captured intelligence not yet in the record
     "tool_proposal": 45,  # a capability waiting to become real
     "answer_atom": 40,  # reusable knowledge, one review from being real
@@ -45,7 +47,8 @@ _BASE_WEIGHT = {
 _KIND_LABEL = {
     "run_approval": "Approval",
     "customer_action": "Customer action",
-    "customer_note": "Note to analyze",
+    "customer_opportunity": "Opportunity signal",
+    "customer_note": "Customer note",
     "tool_proposal": "Tool proposal",
     "answer_atom": "Answer to keep",
     "memory": "Memory proposal",
@@ -67,6 +70,24 @@ def _parse(value: Any) -> datetime | None:
 def _age_days(value: Any, now: datetime) -> float:
     created = _parse(value)
     return max((now - created).total_seconds() / 86_400, 0.0) if created else 0.0
+
+
+_NEXT_STEP = {
+    "run_approval": "Open the paused run, inspect the proposed change, then approve or reject it.",
+    "customer_note": "Read the captured note, analyze it when ready, and review the proposed updates.",
+    "tool_proposal": "Review the tool's purpose, permissions, and proposed behavior before deciding.",
+    "answer_atom": "Compare the answer with its source, then keep it if it is reusable and accurate.",
+    "memory": "Check the proposed fact against its source before remembering it.",
+    "asset_trust": "Inspect the launch commands and trust the recipe only if they match your intent.",
+    "stale_source": "Check the source's status and indexing permissions, then retry if needed.",
+}
+
+
+def _neglected(item: AttentionItemV1, now: datetime) -> bool:
+    """A future deadline is planned work; an old creation date is not neglect."""
+    return item.kind == "customer_action" and (
+        item.overdue or (item.due_at is None and _age_days(item.updated_at, now) >= 7)
+    )
 
 
 class AttentionService:
@@ -121,6 +142,12 @@ class AttentionService:
             created_at: Any = None,
             due_at: Any = None,
             account_id: str | None = None,
+            account_name: str = "",
+            updated_at: Any = None,
+            source_href: str = "",
+            why_now: str = "",
+            next_step: str = "",
+            prepared_prompt: str = "",
             bump: float = 0.0,
         ) -> None:
             due = _parse(due_at)
@@ -138,6 +165,19 @@ class AttentionService:
                     score += 15
                 elif hours <= 72:
                     score += 6
+            next_step = next_step or _NEXT_STEP.get(
+                kind, "Review the source and agree a next step."
+            )
+            why_now = why_now or (
+                "Work is paused until you make this decision."
+                if kind == "run_approval"
+                else "This review can make existing work useful again."
+            )
+            source_href = source_href or href
+            prepared_prompt = (
+                prepared_prompt
+                or f"{title}\n\nNext step: {next_step}\nSource: {source_href}"
+            )
             items.append(
                 AttentionItemV1(
                     key=key,
@@ -152,6 +192,12 @@ class AttentionService:
                     overdue=overdue,
                     priority=round(score, 2),
                     deferred_until=_parse(deferrals.get(key)),
+                    account_name=account_name,
+                    updated_at=_parse(updated_at),
+                    source_href=source_href,
+                    why_now=why_now,
+                    next_step=next_step,
+                    prepared_prompt=prepared_prompt,
                 )
             )
 
@@ -168,27 +214,115 @@ class AttentionService:
 
         for action in data.get("open_actions", []):
             owner = str(action.get("owner") or "").strip()
+            account_name = str(action.get("account_name") or "")
+            description = str(action.get("description") or "Open action")
+            href = f"/customers?account={action['account_id']}&tab=actions&action={action['id']}"
+            source_href = (
+                f"/customers?account={action['account_id']}&tab=sources&source={action['source_id']}"
+                if action.get("source_id")
+                else href
+            )
+            due = _parse(action.get("due_at"))
+            untouched = int(_age_days(action.get("updated_at"), now))
+            why_now = (
+                f"Due {due.strftime('%b %d')}; the commitment is still open."
+                if due and due < now
+                else f"Due {due.strftime('%b %d')}; prepare the next step before the deadline."
+                if due
+                else f"No recorded update in {untouched} days, and no due date is set."
+                if untouched >= 7
+                else "An open commitment has no due date yet."
+            )
+            next_step = (
+                f"Review the source, confirm {owner}'s next step, and record completion or a revised due date."
+                if owner
+                else "Review the source, confirm who owns the next step, and record completion or a due date."
+            )
             add(
                 key=f"customer_action:{action['id']}",
                 kind="customer_action",
-                title=str(action.get("description") or "Open action"),
+                title=description,
                 detail=f"{action.get('account_name', '')}"
                 + (f" · owner {owner}" if owner else ""),
-                href=f"/customers?account={action['account_id']}&tab=actions&action={action['id']}",
+                href=href,
                 created_at=action.get("created_at"),
                 due_at=action.get("due_at"),
                 account_id=str(action.get("account_id") or "") or None,
+                account_name=account_name,
+                updated_at=action.get("updated_at"),
+                source_href=source_href,
+                why_now=why_now,
+                next_step=next_step,
+                prepared_prompt=(
+                    f"{account_name}: {description}\n\n"
+                    f"1. Read the original commitment: {source_href}\n"
+                    f"2. {next_step}\n"
+                    "3. Mark complete only after the work is finished.\n\n"
+                    f"Follow-up draft:\nFollowing up on {description.rstrip('.')}. "
+                    "Could you confirm the current status and next step? "
+                    "If the timeline has changed, let's agree an updated date."
+                ),
+                bump=8 if not due and untouched >= 7 else 0,
+            )
+
+        for signal in data.get("opportunity_signals", []):
+            content = str(signal.get("content") or "Recorded customer need")
+            account_name = str(signal.get("account_name") or "")
+            href = f"/customers?account={signal['account_id']}&tab=facts&fact={signal['id']}"
+            source_href = (
+                f"/customers?account={signal['account_id']}&tab=sources&source={signal['source_id']}"
+                if signal.get("source_id")
+                else href
+            )
+            add(
+                key=f"customer_opportunity:{signal['id']}",
+                kind="customer_opportunity",
+                title=content,
+                detail=f"{account_name} · reviewed {str(signal.get('kind') or 'need').replace('_', ' ')}",
+                href=href,
+                source_href=source_href,
+                created_at=signal.get("created_at"),
+                account_id=str(signal["account_id"]),
+                account_name=account_name,
+                why_now="A need was recorded in the last 14 days; its source has no recorded follow-up action.",
+                next_step="Confirm the need, identify the decision-maker and timing, then agree one concrete follow-up.",
+                prepared_prompt=(
+                    f"Opportunity to qualify with {account_name}\n\nRecorded need: {content}\n"
+                    f"Source: {source_href}\n\n"
+                    "1. Confirm the need is still current and review the source evidence.\n"
+                    "2. Ask who owns the decision, what success looks like, and when it is needed.\n"
+                    "3. Agree a discovery conversation, demo, or sizing review and record its owner and date.\n\n"
+                    "This is a recorded need to qualify; no deal value or likelihood has been inferred."
+                ),
             )
 
         for note in data.get("waiting_notes", []):
+            ready_to_review = note.get("status") == "review"
             add(
                 key=f"customer_note:{note['id']}",
                 kind="customer_note",
                 title=str(note.get("title") or "Captured note"),
-                detail=f"{note.get('account_name', '')} · captured, not yet analyzed",
+                detail=f"{note.get('account_name', '')} · "
+                + (
+                    "analysis ready for review"
+                    if ready_to_review
+                    else "captured, not yet analyzed"
+                ),
                 href=f"/customers?account={note['account_id']}&tab=sources&source={note['id']}",
                 created_at=note.get("created_at"),
                 account_id=str(note.get("account_id") or "") or None,
+                account_name=str(note.get("account_name") or ""),
+                next_step=(
+                    "Open the captured note, check the extracted facts and actions, and save only the changes you approve."
+                    if ready_to_review
+                    else ""
+                ),
+                why_now=(
+                    "The analysis is ready; reviewing it turns captured information into usable account context."
+                    if ready_to_review
+                    else "A captured customer conversation has not been analyzed yet."
+                ),
+                bump=6 if ready_to_review else 0,
             )
 
         for proposal in data.get("tool_proposals", []):
@@ -235,7 +369,7 @@ class AttentionService:
                 kind="asset_trust",
                 title=asset.name,
                 detail="Launch recipe configured but not yet trusted to run",
-                href="/assets",
+                href=f"/assets/{quote(asset.id, safe='')}?view=settings",
             )
 
         for source in data.get("stale_sources", []):
@@ -254,6 +388,11 @@ class AttentionService:
                 bump=10 if state == "error" else 0,
             )
 
+        # The database normally filters expiry; keep adapters and stale snapshots
+        # from hiding work after its chosen return time.
+        for item in items:
+            if item.deferred_until is not None and item.deferred_until <= now:
+                item.deferred_until = None
         live = [item for item in items if item.deferred_until is None]
         snoozed = sorted(
             (item for item in items if item.deferred_until is not None),
@@ -271,11 +410,15 @@ class AttentionService:
             counts=counts,
             total=len(live),
             deferred=len(snoozed),
+            neglected=[item for item in live if _neglected(item, now)],
+            opportunities=[
+                item for item in live if item.kind == "customer_opportunity"
+            ],
         )
 
 
 class MorningBrief:
-    """Composes the day's brief: host-counted facts, model-written prose.
+    """Composes the day's brief from records; optional prose is explicit.
 
     The split is the same one the document factory uses, and for the same
     reason. Anything a model writes here is commentary on numbers it was
@@ -298,27 +441,12 @@ class MorningBrief:
         # aliases the routed provider cannot resolve which model to ask.
         self.preference = preference
         self.last_error = ""
-        # A morning brief regenerated on every page load is both wrong in
-        # concept and, on a rate-limited free tier, the reason its prose
-        # appears only sometimes. Composed once, then served from here.
-        self._cached: Any | None = None
-        self._cached_at: datetime | None = None
-        self._cache_ttl = timedelta(minutes=20)
 
     async def compose(self, *, hours: int = 24, refresh: bool = False) -> Any:
         from .contracts import MorningBriefV1
 
         now = datetime.now(UTC)
-        if (
-            not refresh
-            and self._cached is not None
-            and self._cached_at is not None
-            and now - self._cached_at < self._cache_ttl
-            # Only a brief that actually got its prose is worth reusing; one
-            # that lost it to a rate limit should try again next time.
-            and self._cached.narrative
-        ):
-            return self._cached
+        self.last_error = ""
         since = now - timedelta(hours=max(hours, 1))
         stamp = since.isoformat().replace("+00:00", "Z")
         feed, changes = await asyncio.gather(
@@ -349,8 +477,22 @@ class MorningBrief:
             changed=changed,
             focus=feed.top,
             waiting_total=feed.total,
+            narrative=(
+                f"{feed.counts.get('customer_action', 0)} open commitments, "
+                f"{len(feed.neglected)} needing a follow-up, and "
+                f"{len(feed.opportunities)} recent opportunity signals."
+                if feed.total
+                else ""
+            ),
+            recommendation=(
+                f"Start with {feed.top[0].title}. {feed.top[0].why_now}"
+                if feed.top
+                else ""
+            ),
         )
-        if self.model is None:
+        # Opening Today, refreshing facts, and listening must never start a
+        # reasoning job. The caller must explicitly request written prose.
+        if self.model is None or not refresh:
             return brief
         facts = "\n".join(
             [
@@ -398,9 +540,7 @@ class MorningBrief:
         except Exception as error:  # noqa: BLE001 - the facts are the brief; prose is a bonus
             # Surfaced, not swallowed: a brief that quietly loses its prose
             # every morning is indistinguishable from one that never had any.
-            brief = brief.model_copy(update={"narrative": "", "recommendation": ""})
             self.last_error = f"{type(error).__name__}: {str(error)[:200]}"
-        self._cached, self._cached_at = brief, now
         return brief
 
 

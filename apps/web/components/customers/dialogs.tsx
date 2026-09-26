@@ -3,7 +3,7 @@
 // The four dialogs: capture a raw note, record or edit a win, the rate card,
 // and the review of an extracted update. One Modal shell under all of them.
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 
 import { captureCustomerSource, createCustomerWin, estimateWinValuation, saveSkuRates, updateCustomerWin } from "@/lib/api";
@@ -12,14 +12,28 @@ import type { Customers } from "@/hooks/use-customers";
 import type { CustomerExtraction, CustomerProposal, CustomerWin } from "@/lib/types";
 
 export function Modal({ title, eyebrow, onClose, wide, children, footer }: { title: string; eyebrow?: string; onClose: () => void; wide?: boolean; children: ReactNode; footer?: ReactNode }) {
+  const modal = useRef<HTMLElement>(null);
+  const close = useRef(onClose);
+  useEffect(() => { close.current = onClose; }, [onClose]);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const controls = () => [...(modal.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]') ?? [])].filter((element) => element.getClientRects().length > 0);
+    (modal.current?.querySelector<HTMLElement>("input, textarea, select") ?? controls()[0] ?? modal.current)?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close.current(); }
+      if (event.key !== "Tab") return;
+      const elements = controls();
+      const first = elements[0]; const last = elements[elements.length - 1];
+      if (!first) { event.preventDefault(); modal.current?.focus(); }
+      else if (event.shiftKey && (document.activeElement === first || !modal.current?.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !modal.current?.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    return () => { document.removeEventListener("keydown", onKey); previous?.focus(); };
+  }, []);
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className={`modal${wide ? " is-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+      <section ref={modal} tabIndex={-1} className={`modal${wide ? " is-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-head">
           <div>{eyebrow ? <span className="ui-eyebrow">{eyebrow}</span> : null}<strong>{title}</strong></div>
           <button type="button" className="ui-btn is-quiet is-sm" aria-label="Close" onClick={onClose}><X size={16} /></button>
@@ -35,17 +49,17 @@ export function CaptureDialog({ c, accountId }: { c: Customers; accountId: strin
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [kind, setKind] = useState<"note" | "meeting" | "chat" | "notion" | "attachment">("meeting");
-  const close = () => c.setDialog(null);
+  const close = () => { if (c.busy === "capture") return; if ((title || content) && !window.confirm("Discard this captured source draft?")) return; c.setDialog(null); };
   const save = () => void c.run("capture", async () => {
     const source = await captureCustomerSource({ account_id: accountId, title: title.trim(), content: content.trim(), source_kind: kind });
     c.toast(source.status === "duplicate" ? "This exact note was already captured." : c.modelReady ? "Saved. Choose Analyze when you want the extracted update." : "Saved as waiting for analysis.");
     c.setTab("sources");
-  }).then((ok) => ok && close());
+  }).then((ok) => ok && c.setDialog(null));
   return (
-    <Modal title="Capture a customer note" eyebrow="Raw source" onClose={close} footer={<><button type="button" className="ui-btn is-sm" onClick={close}>Cancel</button><button type="button" className="ui-btn is-primary is-sm" disabled={!title.trim() || !content.trim() || c.busy === "capture"} onClick={save}>{c.busy === "capture" ? "Saving…" : "Save raw note"}</button></>}>
-      <label className="ui-field"><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>{["meeting", "note", "chat", "notion", "attachment"].map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-      <label className="ui-field"><span>Title</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Discovery call · July 28" /></label>
-      <label className="ui-field"><span>Notes</span><textarea rows={8} value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste the original notes. Metis saves them first; analysis is a separate step." /></label>
+    <Modal title="Capture a source" eyebrow="Original customer context" onClose={close} footer={<><button type="button" className="ui-btn is-sm" disabled={Boolean(c.busy)} onClick={close}>Cancel</button><button type="button" className="ui-btn is-primary is-sm" disabled={!title.trim() || !content.trim() || Boolean(c.busy)} onClick={save}>{c.busy === "capture" ? "Saving…" : "Save source"}</button></>}>
+      <label className="ui-field"><span>Type</span><select disabled={Boolean(c.busy)} value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>{["meeting", "note", "chat", "notion", "attachment"].map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+      <label className="ui-field"><span>Title</span><input disabled={Boolean(c.busy)} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Discovery call · July 28" /></label>
+      <label className="ui-field"><span>Original notes or conversation</span><textarea disabled={Boolean(c.busy)} rows={10} value={content} onChange={(event) => setContent(event.target.value)} placeholder="Paste the original notes. Metis saves them first; analysis is a separate step." /></label>
       <p className="modal-hint">Writing something down for yourself? Use <b>Add note</b> instead; it skips analysis entirely.</p>
     </Modal>
   );

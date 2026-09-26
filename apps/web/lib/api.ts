@@ -1202,6 +1202,7 @@ function normalizeSnippet(value: unknown): KnowledgeSnippet {
     start_line: numberValue(item.start_line) ?? null,
     text: stringValue(item.text),
     score: numberValue(item.score) ?? 0,
+    source_url: item.source_url == null ? null : stringValue(item.source_url),
   };
 }
 

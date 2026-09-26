@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useToast } from "@/components/ui/toast";
 import { analyzeCustomerSource, getCustomer, getCustomerDashboard, getCustomerSettings, getCustomerSourceProposal, getLocalModelSession, getModelPreference, getSkuRates, listCustomers, saveCustomerProposal } from "@/lib/api";
-import { matchesFilter, type AccountFilter } from "@/lib/customers";
+import { ACCOUNT_FILTERS, matchesFilter, type AccountFilter } from "@/lib/customers";
 import { activeModelLabel, isCloudActive } from "@/lib/model";
 import type { CustomerAccount, CustomerAccountDetail, CustomerDashboard, CustomerExtraction, CustomerProposal, CustomerSettings, CustomerWin, LocalModelSession, ModelPreference, SkuRateCard } from "@/lib/types";
 
@@ -29,6 +29,8 @@ export function useCustomers() {
   const toast = useToast();
   const requestedAccount = params.get("account") || null;
   const requestedTab = params.get("tab");
+  const requestedQuery = params.get("q") ?? "";
+  const requestedFilter = params.get("filter");
 
   const [accounts, setAccounts] = useState<CustomerAccount[]>([]);
   const [dashboard, setDashboard] = useState<CustomerDashboard | null>(null);
@@ -39,20 +41,27 @@ export function useCustomers() {
   const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(requestedAccount);
   const [detail, setDetail] = useState<CustomerAccountDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(Boolean(requestedAccount));
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>(isTab(requestedTab) ? requestedTab : "overview");
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<AccountFilter>("all");
+  const [query, setQuery] = useState(requestedQuery);
+  const [filter, setFilter] = useState<AccountFilter>(ACCOUNT_FILTERS.some(([value]) => value === requestedFilter) ? requestedFilter as AccountFilter : "all");
   const [dialog, setDialog] = useState<Dialog>(null);
   const [proposal, setProposal] = useState<CustomerProposal | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef<string | null>(null);
+  const selectedIdRef = useRef<string | null>(requestedAccount);
+  const detailRequest = useRef(0);
+  const indexRequest = useRef(0);
 
   const refreshIndex = useCallback(async () => {
+    const request = ++indexRequest.current;
     const [nextAccounts, nextDashboard, nextSettings, nextSession, nextRates, nextPreference] = await Promise.all([
       listCustomers(), getCustomerDashboard(), getCustomerSettings(),
       getLocalModelSession().catch(() => null), getSkuRates().catch(() => null), getModelPreference().catch(() => null),
     ]);
+    if (request !== indexRequest.current) return;
     setAccounts(nextAccounts);
     setDashboard(nextDashboard);
     setSettings(nextSettings);
@@ -61,10 +70,26 @@ export function useCustomers() {
     if (nextPreference) setModelPreference(nextPreference);
     setLoaded(true);
   }, []);
-  const refreshDetail = useCallback(async (id: string) => setDetail(await getCustomer(id)), []);
+  const refreshDetail = useCallback(async (id: string) => {
+    const request = ++detailRequest.current;
+    if (selectedIdRef.current === id) {
+      setDetailLoading(true);
+      setDetailError(null);
+    }
+    try {
+      const next = await getCustomer(id);
+      if (request === detailRequest.current && selectedIdRef.current === id) setDetail(next);
+    } catch (loadError) {
+      if (request === detailRequest.current && selectedIdRef.current === id) setDetailError(loadError instanceof Error ? loadError.message : "That account could not be opened.");
+      throw loadError;
+    } finally {
+      if (request === detailRequest.current && selectedIdRef.current === id) setDetailLoading(false);
+    }
+  }, []);
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshIndex(), selectedId ? refreshDetail(selectedId) : Promise.resolve()]);
-  }, [refreshDetail, refreshIndex, selectedId]);
+    const id = selectedIdRef.current;
+    await Promise.all([refreshIndex(), id ? refreshDetail(id) : Promise.resolve()]);
+  }, [refreshDetail, refreshIndex]);
 
   useEffect(() => {
     void refreshIndex().catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Customer data could not be loaded."));
@@ -72,16 +97,23 @@ export function useCustomers() {
 
   // A deep link carries the account and the tab; follow both.
   useEffect(() => {
-    if (requestedAccount) setSelectedId(requestedAccount);
-    if (isTab(requestedTab)) setTab(requestedTab);
+    selectedIdRef.current = requestedAccount;
+    setSelectedId(requestedAccount);
+    setTab(isTab(requestedTab) ? requestedTab : "overview");
   }, [requestedAccount, requestedTab]);
 
   useEffect(() => {
-    if (!selectedId) { setDetail(null); return; }
-    let mounted = true;
-    void getCustomer(selectedId).then((next) => mounted && setDetail(next)).catch((loadError) => mounted && setError(loadError instanceof Error ? loadError.message : "That account could not be opened."));
-    return () => { mounted = false; };
-  }, [selectedId]);
+    setQuery(requestedQuery);
+    setFilter(ACCOUNT_FILTERS.some(([value]) => value === requestedFilter) ? requestedFilter as AccountFilter : "all");
+  }, [requestedQuery, requestedFilter]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+    setDetail(null);
+    setDetailError(null);
+    if (!selectedId) { setDetailLoading(false); return; }
+    void refreshDetail(selectedId).catch(() => undefined);
+  }, [refreshDetail, selectedId]);
 
   useEffect(() => {
     const listener = (event: Event) => {
@@ -105,11 +137,23 @@ export function useCustomers() {
   }, []);
 
   /** Open an account (or the dashboard with null) on a tab; the URL follows. */
-  const select = useCallback((id: string | null, nextTab: Tab = "overview") => {
+  const select = useCallback((id: string | null, nextTab: Tab = "overview", record?: { kind: "note" | "source" | "action" | "fact"; id: string }) => {
+    const changingAccount = selectedIdRef.current !== id;
+    selectedIdRef.current = id;
     setSelectedId(id);
     setTab(nextTab);
-    router.replace(id ? `/customers?account=${encodeURIComponent(id)}&tab=${nextTab}` : "/customers");
-  }, [router]);
+    const next = new URLSearchParams();
+    if (query) next.set("q", query);
+    if (filter !== "all") next.set("filter", filter);
+    if (id) { next.set("account", id); next.set("tab", nextTab); }
+    if (id && record) next.set(record.kind, record.id);
+    const href = `/customers${next.size ? `?${next}` : ""}`;
+    if (changingAccount) router.push(href, { scroll: false });
+    else router.replace(href, { scroll: false });
+  }, [router, query, filter]);
+  const changeTab = useCallback((nextTab: Tab) => select(selectedIdRef.current, nextTab), [select]);
+  const changeQuery = (value: string) => { setQuery(value); const next = new URLSearchParams(window.location.search); if (value) next.set("q", value); else next.delete("q"); window.history.replaceState(null, "", `/customers${next.size ? `?${next}` : ""}`); };
+  const changeFilter = (value: AccountFilter) => { setFilter(value); const next = new URLSearchParams(window.location.search); if (value !== "all") next.set("filter", value); else next.delete("filter"); window.history.replaceState(null, "", `/customers${next.size ? `?${next}` : ""}`); };
 
   /** Every edit: busy, try, toast, re-read. Returns whether it succeeded. */
   const run = useCallback(async (key: string, work: () => Promise<unknown>, notice?: string): Promise<boolean> => {
@@ -120,7 +164,9 @@ export function useCustomers() {
     try {
       await work();
       if (notice) toast(notice);
-      await refreshAll();
+      // The write succeeded even if its follow-up read failed. Returning false
+      // here would leave a new-note draft ready to create a duplicate on retry.
+      await refreshAll().catch((problem) => setError(`Saved, but the latest account data could not be loaded. ${problem instanceof Error ? problem.message : "Please refresh to see the change."}`));
       return true;
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "That change could not be saved.");
@@ -155,10 +201,12 @@ export function useCustomers() {
 
   return {
     accounts, visibleAccounts, dashboard, settings, setSettings, rateCard, setRateCard, loaded,
-    selectedId, detail, tab, setTab, select, query, setQuery, filter, setFilter,
+    selectedId, detail, detailLoading, detailError, tab, setTab: changeTab, select, query, setQuery: changeQuery, filter, setFilter: changeFilter,
     dialog, setDialog, proposal, setProposal, openProposal, saveProposal,
     busy, error, setError, run, refreshAll, toast, modelLabel, modelReady, sessionState: session?.state ?? "off",
     requestedSource: params.get("source"), requestedAction: params.get("action"),
+    requestedFact: params.get("fact"),
+    requestedNote: params.get("note"),
   };
 }
 

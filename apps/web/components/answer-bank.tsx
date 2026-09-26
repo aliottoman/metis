@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Copy, MessagesSquare, Search } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
+import { useToast } from "@/components/ui/toast";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -41,6 +45,7 @@ function toneFor(value: string): (typeof TONES)[number] {
 }
 
 export function AnswerBank() {
+  const toast = useToast();
   const [tab, setTab] = useState<Tab>("pending");
   const [atoms, setAtoms] = useState<AnswerAtom[]>([]);
   const [entities, setEntities] = useState<AnswerEntity[]>([]);
@@ -53,18 +58,26 @@ export function AnswerBank() {
   const [conflicts, setConflicts] = useState<Record<string, AnswerAtom[]>>({});
   const [replacing, setReplacing] = useState<Record<string, Set<string>>>({});
   const [entityFilter, setEntityFilter] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const requestVersion = useRef(0);
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  const actionBusy = useRef(false);
 
   const refresh = useCallback(async (which: Tab) => {
+    if (which !== tabRef.current) return;
+    const version = ++requestVersion.current;
     setLoading(true);
     setError(null);
     try {
       const [rows, tags] = await Promise.all([getAnswers(which), getAnswerEntities()]);
+      if (version !== requestVersion.current || which !== tabRef.current) return;
       setAtoms(rows);
       setEntities(tags);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not read the bank.");
+      if (version === requestVersion.current && which === tabRef.current) setError(loadError instanceof Error ? loadError.message : "Could not read the bank.");
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current && which === tabRef.current) setLoading(false);
     }
   }, []);
 
@@ -88,6 +101,8 @@ export function AnswerBank() {
   }, [atoms, tab]);
 
   async function decide(atom: AnswerAtom, status: "active" | "rejected" | "superseded") {
+    if (actionBusy.current) return;
+    actionBusy.current = true;
     setBusy(atom.id);
     try {
       const supersedes = status === "active" ? [...(replacing[atom.id] ?? [])] : [];
@@ -96,7 +111,17 @@ export function AnswerBank() {
     } catch (decideError) {
       setError(decideError instanceof Error ? decideError.message : "Could not apply that.");
     } finally {
+      actionBusy.current = false;
       setBusy(null);
+    }
+  }
+
+  async function copyAnswer(content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      toast("Answer copied.");
+    } catch {
+      toast("Could not copy. Select the answer text to copy it.", "error");
     }
   }
 
@@ -111,30 +136,15 @@ export function AnswerBank() {
 
   const visible = useMemo(
     () =>
-      entityFilter
-        ? atoms.filter((atom) => parseList(atom.entities_json).some(
-            (entity) => entity.toLowerCase() === entityFilter,
-          ))
-        : atoms,
-    [atoms, entityFilter],
+      atoms.filter((atom) => (!entityFilter || parseList(atom.entities_json).some(
+        (entity) => entity.toLowerCase() === entityFilter.toLowerCase(),
+      )) && (!query.trim() || `${atom.question} ${atom.answer} ${parseList(atom.entities_json).join(" ")}`.toLowerCase().includes(query.trim().toLowerCase()))),
+    [atoms, entityFilter, query],
   );
 
   return (
     <div className="workspacePage answerPage">
-      <header className="pageHeader">
-        <div>
-          <span className="eyebrow">Answer bank</span>
-          <h1>What you have already worked out</h1>
-          <p>
-            Answers you have given once, kept with the evidence that made them
-            defensible, so the next person who asks gets your wording rather than a
-            fresh guess.
-          </p>
-        </div>
-        <button className="secondaryButton" type="button" onClick={() => void refresh(tab)} disabled={loading}>
-          {loading ? "Reading…" : "Refresh"}
-        </button>
-      </header>
+      <PageHeader icon={<MessagesSquare />} eyebrow="Knowledge worth keeping" title="Answers" lede="Your best answers, with the evidence behind them. Review once, find them when you need them." actions={<button className="ui-btn" type="button" onClick={() => void refresh(tab)} disabled={loading}>{loading ? "Reading…" : "Refresh"}</button>} />
 
       {error ? (
         <Notice kind="error" title="Couldn't read the answer bank" action="Retry" onAction={() => void refresh(tab)} onDismiss={() => setError(null)}>
@@ -142,15 +152,16 @@ export function AnswerBank() {
         </Notice>
       ) : null}
 
-      <div className="answerTabs" role="tablist">
+      <div className="workspace-toolbar"><label className="workspace-search"><Search size={16} aria-hidden="true" /><input type="search" aria-label="Search answers" placeholder="Find an answer, topic, or phrase…" value={query} onChange={(event) => setQuery(event.target.value)} /></label><small>{loading ? "Reading your answers…" : `${visible.length} ${visible.length === 1 ? "answer" : "answers"} in this view`}</small></div>
+
+      <div className="answerTabs" role="group" aria-label="Answer status">
         {(Object.keys(TAB_LABEL) as Tab[]).map((name) => (
           <button
             key={name}
-            role="tab"
             type="button"
-            aria-selected={tab === name}
+            aria-pressed={tab === name}
             className={tab === name ? "selected" : ""}
-            onClick={() => { setTab(name); setEntityFilter(null); }}
+            onClick={() => { if (name !== tab) { setAtoms([]); setTab(name); setLoading(true); } setEntityFilter(null); }}
           >
             {TAB_LABEL[name]}
           </button>
@@ -166,6 +177,7 @@ export function AnswerBank() {
               key={tag.entity}
               type="button"
               data-tone={toneFor(tag.entity)}
+              aria-pressed={entityFilter === tag.entity}
               className={entityFilter === tag.entity ? "selected" : ""}
               onClick={() => setEntityFilter(entityFilter === tag.entity ? null : tag.entity)}
             >
@@ -175,21 +187,24 @@ export function AnswerBank() {
         </div>
       ) : null}
 
-      {!loading && !visible.length ? (
-        <section className="settingsSection">
-          <p className="sectionLede">
-            {tab === "pending"
+      {!loading && !error && !visible.length ? (
+        <section className="workspace-empty">
+          <MessagesSquare aria-hidden="true" />
+          <h2>{query.trim() || entityFilter ? "No matching answers" : tab === "pending" ? "Your review queue is clear" : tab === "active" ? "A home for your best answers" : "Nothing retired yet"}</h2>
+          <p>
+            {query.trim() || entityFilter ? "Try a different phrase or clear your filters to see everything in this view." : tab === "pending"
               ? "Nothing waiting. Answers are offered here after a run that cited its sources — deliberately rarely, so this stays worth opening."
               : tab === "active"
                 ? "The bank is empty. Answer something well with sources behind it, and it will be offered here."
                 : "Nothing has been retired yet. When a newer answer replaces one, the old one lands here with a pointer to its replacement."}
           </p>
+          {query.trim() || entityFilter ? <button className="ui-btn" type="button" onClick={() => { setQuery(""); setEntityFilter(null); }}>Clear filters</button> : null}
         </section>
       ) : null}
 
-      {loading && !visible.length ? <Skeleton rows={3} height={150} /> : null}
+      {loading ? <Skeleton rows={3} height={150} /> : null}
 
-      {visible.map((atom) => {
+      {(loading ? [] : visible).map((atom) => {
         // Dedupe: a source cited twice in one run should show once, and it
         // keeps React's keys unique.
         const paraphrases = [...new Set(parseList(atom.paraphrases_json))];
@@ -263,21 +278,22 @@ export function AnswerBank() {
             ) : null}
 
             <div className="answerActions">
+              <button className="ui-btn is-quiet is-sm" type="button" onClick={() => { void copyAnswer(atom.answer); }}><Copy size={14} aria-hidden="true" />Copy answer</button>
               {atom.status === "pending" ? (
                 <>
-                  <button className="primaryButton" type="button" disabled={busy === atom.id} onClick={() => void decide(atom, "active")}>
+                  <button className="primaryButton" type="button" disabled={busy !== null} onClick={() => void decide(atom, "active")}>
                     {chosen.size ? `Keep, retire ${chosen.size}` : "Keep"}
                   </button>
-                  <button className="secondaryButton" type="button" disabled={busy === atom.id} onClick={() => void decide(atom, "rejected")}>
+                  <button className="secondaryButton" type="button" disabled={busy !== null} onClick={() => void decide(atom, "rejected")}>
                     Discard
                   </button>
                 </>
               ) : atom.status === "active" ? (
-                <button className="secondaryButton" type="button" disabled={busy === atom.id} onClick={() => void decide(atom, "superseded")}>
+                <button className="secondaryButton" type="button" disabled={busy !== null} onClick={() => void decide(atom, "superseded")}>
                   Retire
                 </button>
               ) : (
-                <button className="secondaryButton" type="button" disabled={busy === atom.id} onClick={() => void decide(atom, "active")}>
+                <button className="secondaryButton" type="button" disabled={busy !== null} onClick={() => void decide(atom, "active")}>
                   Bring back
                 </button>
               )}

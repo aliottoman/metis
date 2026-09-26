@@ -13,8 +13,19 @@ export function readTheme(): ThemeChoice {
     const raw = window.localStorage.getItem(THEME_KEY);
     return raw === "light" || raw === "dark" ? raw : "system";
   } catch {
-    return "system";
+    // The choice still works for this visit if browser storage is blocked.
+    const current = typeof document === "undefined" ? null : document.documentElement.getAttribute("data-theme");
+    return current === "light" || current === "dark" ? current : "system";
   }
+}
+
+/** Storage events come from other windows; update this window without writing back. */
+export function syncThemeFromStorage(event: Pick<StorageEvent, "key">): void {
+  if (event.key !== THEME_KEY && event.key !== null) return;
+  const choice = readTheme();
+  if (choice === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", choice);
+  window.dispatchEvent(new Event(THEME_CHANGED_EVENT));
 }
 
 export function applyTheme(choice: ThemeChoice): void {

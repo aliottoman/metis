@@ -26,6 +26,7 @@ import {
   Sun,
   Users,
   Wrench,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -35,7 +36,9 @@ import { ShortcutsSheet, isTyping } from "@/components/shortcuts-sheet";
 import { StatusDot } from "@/components/ui/status";
 import { listConversations } from "@/lib/api";
 import { freshToken } from "@/lib/token";
+import { syncThemeFromStorage } from "@/lib/theme";
 import { usePoll } from "@/hooks/use-poll";
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { useRouteTransitions } from "@/lib/route-transition";
 import { watchRun } from "@/lib/run-watch";
 import {
@@ -67,6 +70,7 @@ const GROUPS: Group[] = [
     items: [
       { href: "/today", label: "Today", icon: Sun },
       { href: "/", label: "Chat", icon: MessageSquare },
+      { href: "/assets", label: "Assets", icon: Package },
       { href: "/customers", label: "Customers", icon: Users },
     ],
   },
@@ -85,7 +89,6 @@ const GROUPS: Group[] = [
     label: "Library",
     collapsible: true,
     items: [
-      { href: "/assets", label: "Assets", icon: Package },
       { href: "/knowledge", label: "Knowledge", icon: BookOpen },
       { href: "/answers", label: "Answers", icon: MessageSquareQuote },
       { href: "/memory", label: "Memory", icon: Brain },
@@ -163,26 +166,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const assetWorkspace = pathname.startsWith("/assets/");
+  const assetFocused = assetWorkspace && searchParams.get("focus") === "1";
   const activeConversation = searchParams.get("conversation");
   const narrow = useMedia("(max-width: 720px)");
   const medium = useMedia("(max-width: 1080px)");
 
-  const [collapsedChoice, setCollapsedChoice] = useStoredFlag("metis.railCollapsed", false);
+  const [collapsedChoice, setCollapsedChoice] = useStoredFlag("metis.railCollapsed", medium);
   const [libraryOpen, setLibraryOpen] = useStoredFlag("metis.libraryOpen", false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [connected, setConnected] = useState(true);
+  const [connected, setConnected] = useState<boolean | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
   useRouteTransitions();
+  useEffect(() => {
+    window.addEventListener("storage", syncThemeFromStorage);
+    return () => window.removeEventListener("storage", syncThemeFromStorage);
+  }, []);
   const [indicators, setIndicators] = useState<Record<string, ConversationRunIndicator>>({});
   const [pill, setPill] = useState<{ top: number; visible: boolean }>({ top: 0, visible: false });
   const navRef = useRef<HTMLElement>(null);
   const railRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLButtonElement>(null);
 
-  // Folded by choice on a wide screen, by necessity on a medium one, and
-  // never on a phone, where the rail is a drawer instead.
-  const collapsed = !narrow && (medium || collapsedChoice);
+  // Start compact on a medium screen, but respect an explicit expansion.
+  // On a phone the rail is a drawer instead.
+  const collapsed = !narrow && collapsedChoice;
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  useDialogFocus(railRef, narrow && drawerOpen, closeDrawer);
 
   // The active pill slides to whichever link is current. Measured after
   // layout so it follows the rail folding and the Library opening too.
@@ -214,25 +225,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (GROUPS[2].items.some((item) => isActive(item.href, pathname))) setLibraryOpen(true);
   }, [pathname, setLibraryOpen]);
 
-  useEffect(() => setDrawerOpen(false), [pathname, activeConversation]);
-
-  // The drawer is a modal surface on a phone: focus goes in, Escape brings it out.
-  useEffect(() => {
-    const rail = railRef.current;
-    if (!rail) return;
-    rail.inert = narrow && !drawerOpen;
-    if (!narrow || !drawerOpen) return;
-    const previous = document.activeElement as HTMLElement | null;
-    window.requestAnimationFrame(() => rail.querySelector<HTMLElement>("a, button")?.focus());
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDrawerOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      (previous ?? menuRef.current)?.focus();
-    };
-  }, [drawerOpen, narrow]);
+  useEffect(() => setDrawerOpen(false), [pathname, searchParams]);
 
   // Runs keep going when Chat is not the visible page. The shell stays mounted
   // across navigation, so it owns the background check and turns completion
@@ -310,6 +303,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
       const meta = event.metaKey || event.ctrlKey;
       // ⌘⇧K belongs to the page (Customers searches records with it).
       if (meta && !event.shiftKey && event.key.toLowerCase() === "k") {
@@ -342,6 +336,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         href={item.href}
         className={`rail-link${active ? " is-active" : ""}`}
         aria-current={active ? "page" : undefined}
+        aria-label={item.label}
         title={collapsed ? item.label : undefined}
       >
         <Icon size={18} strokeWidth={1.6} aria-hidden="true" />
@@ -354,7 +349,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className={`shell${collapsed ? " is-collapsed" : ""}${drawerOpen ? " is-drawer-open" : ""}`}>
+    <div className={`shell${collapsed ? " is-collapsed" : ""}${drawerOpen ? " is-drawer-open" : ""}${assetFocused ? " is-asset-focused" : ""}`}>
+      <a className="skip-link" href="#main-content">Skip to content</a>
+      <span className="shell-mobile-brand" aria-hidden="true">Metis</span>
       <button
         ref={menuRef}
         className="ui-btn shell-menu"
@@ -368,10 +365,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </button>
       <button className="shell-scrim" type="button" tabIndex={-1} aria-hidden="true" onClick={() => setDrawerOpen(false)} />
 
-      <aside ref={railRef} id="metis-rail" className="rail" aria-label="Main navigation">
+      <aside ref={railRef} id="metis-rail" className="rail" aria-label="Main navigation" role={narrow && drawerOpen ? "dialog" : undefined} aria-modal={narrow && drawerOpen ? true : undefined} inert={narrow && !drawerOpen}>
         <div className="rail-top">
           <Link href="/today" className="rail-brand" aria-label="Metis">
-            <MetisCompanion size={30} energy="expressive" />
+            <MetisCompanion size={30} />
             <strong>Metis</strong>
           </Link>
           {!narrow ? (
@@ -385,7 +382,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               {collapsed ? <PanelLeftOpen size={16} strokeWidth={1.8} aria-hidden="true" /> : <PanelLeftClose size={16} strokeWidth={1.8} aria-hidden="true" />}
             </button>
-          ) : null}
+          ) : (
+            <button type="button" className="rail-toggle" aria-label="Close navigation" onClick={closeDrawer}><X size={18} aria-hidden="true" /></button>
+          )}
         </div>
 
         <button
@@ -393,6 +392,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           type="button"
           onClick={() => router.push(`/?new=${freshToken()}`)}
           title="New chat · ⌘N"
+          aria-label="New chat"
         >
           <Plus size={16} strokeWidth={2} aria-hidden="true" />
           <span>New chat</span>
@@ -415,7 +415,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <span>{group.label}</span>
                   <ChevronDown size={14} aria-hidden="true" />
                 </button>
-                <div id={`rail-group-${group.id}`} className={`rail-collapsible${libraryOpen ? " is-open" : ""}`}>
+                <div id={`rail-group-${group.id}`} className={`rail-collapsible${libraryOpen ? " is-open" : ""}`} inert={!libraryOpen}>
                   <div>{group.items.map(link)}</div>
                 </div>
               </div>
@@ -430,23 +430,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <div className="rail-foot">
           {link(SETTINGS)}
-          <button type="button" className="rail-help" onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts (?)">
+          <button type="button" className="rail-help" onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <kbd aria-hidden="true">?</kbd>
             <span>Shortcuts</span>
           </button>
           <span
             className="rail-status"
             role="status"
-            title={connected ? "Metis is connected · private by default" : "Metis is offline"}
+            title={connected === null ? "Checking connection" : connected ? "Connected to your local Metis service" : "Metis is offline — check Settings"}
           >
             <StatusDot state={connected ? "live" : "stopped"} />
-            <span>{connected ? "Private by default" : "Offline"}</span>
+            <span>{connected === null ? "Connecting…" : connected ? "Local service connected" : "Service offline"}</span>
           </span>
         </div>
       </aside>
 
-      <main className="appMain">
-        <div key={pathname} className="pane-view">
+      <main id="main-content" tabIndex={-1} className={`appMain${pathname === "/" ? " is-chat" : ""}${assetWorkspace ? " is-asset-workspace" : ""}`} inert={narrow && drawerOpen}>
+        <div key={pathname} className={`pane-view${pathname === "/" ? " is-chat" : ""}${assetWorkspace ? " is-asset-workspace" : ""}`}>
           {children}
         </div>
       </main>

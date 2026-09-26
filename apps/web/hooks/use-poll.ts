@@ -6,8 +6,12 @@
 
 import { useEffect, useRef } from "react";
 
+import { createPollRunner } from "@/lib/poll";
+
 export function usePoll(tick: () => void | Promise<unknown>, ms: number, active = true): void {
   const latest = useRef(tick);
+  const runner = useRef<ReturnType<typeof createPollRunner> | null>(null);
+  if (runner.current === null) runner.current = createPollRunner(() => latest.current());
   useEffect(() => {
     latest.current = tick;
   }, [tick]);
@@ -21,11 +25,11 @@ export function usePoll(tick: () => void | Promise<unknown>, ms: number, active 
     };
     const start = () => {
       stop();
-      timer = window.setInterval(() => void latest.current(), ms);
+      timer = window.setInterval(() => void runner.current?.(), ms);
     };
     const onVisibility = () => {
       if (document.visibilityState === "visible") {
-        void latest.current();
+        void runner.current?.();
         start();
       } else {
         stop();
