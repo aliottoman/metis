@@ -158,7 +158,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--env-file",
-        default="/Users/aliottoman/Developer/metis/.env",
+        default=str(ROOT / ".env"),
         help="Local Metis configuration file (its contents are never printed)",
     )
     parser.add_argument("--output", default="/private/tmp/metis-chat-routing-live.json")

@@ -11,8 +11,10 @@ export function markdownLinkParts(token: string): { label: string; target: strin
 /** Resolve attached-source downloads without moving app navigation off-origin. */
 export function markdownHref(raw: string, apiBase: string): string | null {
   const href = raw.trim();
-  if (/^\/api\/v1\/uploads\/upl_[a-f0-9]{20}$/.test(href)) {
-    return `${apiBase.replace(/\/$/, "")}${href}`;
+  if (href.startsWith("/api/v1/uploads/")) {
+    return /^\/api\/v1\/uploads\/upl_[a-f0-9]{32}$/.test(href)
+      ? `${apiBase.replace(/\/$/, "")}${href}`
+      : null;
   }
   if (/^(https?:|mailto:)/i.test(href) || href.startsWith("#")) return href;
   if (href.startsWith("/") && !href.startsWith("//") && !href.includes("\\")) return href;

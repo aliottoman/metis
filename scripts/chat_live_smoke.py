@@ -174,7 +174,7 @@ def _run_turn(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env-file", default="/Users/aliottoman/Developer/metis/.env")
+    parser.add_argument("--env-file", default=str(ROOT / ".env"))
     parser.add_argument("--output", default="/private/tmp/metis-chat-live-smoke.json")
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument(

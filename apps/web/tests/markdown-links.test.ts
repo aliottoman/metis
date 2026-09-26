@@ -4,7 +4,7 @@ import test from "node:test";
 import { MARKDOWN_LINK_TOKEN_SOURCE, markdownHref, markdownLinkParts, splitCitedSources } from "../lib/markdown-links.ts";
 
 test("attached-document citations open on the configured API origin", () => {
-  const path = `/api/v1/uploads/upl_${"a".repeat(20)}`;
+  const path = `/api/v1/uploads/upl_${"a".repeat(32)}`;
   assert.equal(markdownHref(path, "http://127.0.0.1:8000"), `http://127.0.0.1:8000${path}`);
   assert.equal(markdownHref(path, "http://localhost:8001/"), `http://localhost:8001${path}`);
   assert.equal(markdownHref(path, ""), path);
@@ -17,20 +17,31 @@ test("customer, meeting, and conversation sources remain app navigation", () => 
 });
 
 test("a malformed upload link cannot become another API request", () => {
-  for (const href of ["/api/v1/uploads/../settings", "/api/v1/uploads/upl_wrong", "/api/v1/settings"]) {
-    assert.equal(markdownHref(href, "http://127.0.0.1:8000"), href);
+  for (const href of [
+    "/api/v1/uploads/../settings",
+    "/api/v1/uploads/upl_wrong",
+    `/api/v1/uploads/upl_${"a".repeat(20)}`,
+    `/api/v1/uploads/upl_${"a".repeat(31)}`,
+    `/api/v1/uploads/upl_${"a".repeat(33)}`,
+    `/api/v1/uploads/upl_${"g".repeat(32)}`,
+    `/api/v1/uploads/upl_${"A".repeat(32)}`,
+    `/api/v1/uploads/upl_${"a".repeat(32)}?download=1`,
+  ]) {
+    assert.equal(markdownHref(href, "http://127.0.0.1:8000"), null);
   }
+  assert.equal(markdownHref("/api/v1/settings", "http://127.0.0.1:8000"), "/api/v1/settings");
   for (const href of ["javascript:alert(1)", "//example.com", "/\\example.com"]) {
     assert.equal(markdownHref(href, "http://127.0.0.1:8000"), null);
   }
 });
 
 test("final cited sources are separated for inline citation links", () => {
-  assert.deepEqual(splitCitedSources("A fact [2].\n\n**Sources**\n[2] NASA — [nasa.gov](https://www.nasa.gov/page)\n[4] Notes — [document](/api/v1/uploads/upl_aaaaaaaaaaaaaaaaaaaa)\n"), {
+  const uploadPath = `/api/v1/uploads/upl_${"a".repeat(32)}`;
+  assert.deepEqual(splitCitedSources(`A fact [2].\n\n**Sources**\n[2] NASA — [nasa.gov](https://www.nasa.gov/page)\n[4] Notes — [document](${uploadPath})\n`), {
     body: "A fact [2].",
     sources: [
       { number: 2, content: "NASA — [nasa.gov](https://www.nasa.gov/page)" },
-      { number: 4, content: "Notes — [document](/api/v1/uploads/upl_aaaaaaaaaaaaaaaaaaaa)" },
+      { number: 4, content: `Notes — [document](${uploadPath})` },
     ],
   });
 });
