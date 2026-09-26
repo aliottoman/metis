@@ -58,7 +58,7 @@ class _LoggedWeb:
                     {
                         "title": item.source_label,
                         "url": item.source_url,
-                        "excerpt": item.text[:1800],
+                        "excerpt": item.text[:4000],
                     }
                     for item in result
                 ],
@@ -83,7 +83,9 @@ def _timestamp(item: dict[str, Any]) -> datetime:
     return datetime.fromisoformat(str(item["timestamp"]).replace("Z", "+00:00"))
 
 
-def _run_turn(client: TestClient, key: str, question: str, *, timeout: float) -> dict[str, Any]:
+def _run_turn(
+    client: TestClient, key: str, question: str, *, timeout: float
+) -> dict[str, Any]:
     runtime = client.app.state.runtime
     web = _LoggedWeb(runtime.control_plane.web)
     runtime.control_plane.web = web
@@ -98,7 +100,12 @@ def _run_turn(client: TestClient, key: str, question: str, *, timeout: float) ->
     run: dict[str, Any] = {}
     while time.monotonic() < deadline:
         run = client.get(f"/api/v1/runs/{run_id}").json()
-        if run["status"] in {"completed", "failed", "awaiting_approval", "awaiting_input"}:
+        if run["status"] in {
+            "completed",
+            "failed",
+            "awaiting_approval",
+            "awaiting_input",
+        }:
             break
         time.sleep(0.1)
     total_seconds = round(time.monotonic() - started, 3)
@@ -106,7 +113,9 @@ def _run_turn(client: TestClient, key: str, question: str, *, timeout: float) ->
     events = _events(stream)
     messages = client.get(f"/api/v1/conversations/{conversation_id}/messages").json()
     assistant = [item["content"] for item in messages if item["role"] == "assistant"]
-    first_delta = next((item for item in events if item.get("type") == "message.delta"), None)
+    first_delta = next(
+        (item for item in events if item.get("type") == "message.delta"), None
+    )
     first_event = events[0] if events else None
     first_token_seconds = (
         round((_timestamp(first_delta) - _timestamp(first_event)).total_seconds(), 3)
@@ -115,9 +124,15 @@ def _run_turn(client: TestClient, key: str, question: str, *, timeout: float) ->
     )
     answer = assistant[-1] if assistant else ""
     milestone_types = {
-        "run.started", "evidence.planned", "evidence.reviewed",
-        "context.retrieved", "plan.created", "policy.evaluated",
-        "message.delta", "model.response", "answer.grounding_reviewed",
+        "run.started",
+        "evidence.planned",
+        "evidence.reviewed",
+        "context.retrieved",
+        "plan.created",
+        "policy.evaluated",
+        "message.delta",
+        "model.response",
+        "answer.grounding_reviewed",
         "run.completed",
     }
     milestones: list[dict[str, Any]] = []
@@ -144,10 +159,12 @@ def _run_turn(client: TestClient, key: str, question: str, *, timeout: float) ->
         "total_seconds": total_seconds,
         "first_answer_token_seconds": first_token_seconds,
         "evidence_plan": _event_payloads(events, "evidence.planned"),
+        "evidence_plan_errors": _event_payloads(events, "evidence.plan_failed"),
         "evidence_review": _event_payloads(events, "evidence.reviewed"),
         "context_retrieved": _event_payloads(events, "context.retrieved"),
         "web_calls": web.calls,
         "model_calls": _event_payloads(events, "model.response"),
+        "run_failures": _event_payloads(events, "run.failed"),
         "event_types": [item.get("type", "") for item in events],
         "milestones": milestones,
         "answer": answer,
@@ -160,11 +177,15 @@ def main() -> int:
     parser.add_argument("--env-file", default="/Users/aliottoman/Developer/metis/.env")
     parser.add_argument("--output", default="/private/tmp/metis-chat-live-smoke.json")
     parser.add_argument("--timeout", type=float, default=180)
-    parser.add_argument("--only", nargs="*", default=[], help="Run only named question IDs")
+    parser.add_argument(
+        "--only", nargs="*", default=[], help="Run only named question IDs"
+    )
     args = parser.parse_args()
     output = Path(args.output).expanduser()
     env_file = Path(args.env_file).expanduser()
-    with tempfile.TemporaryDirectory(prefix="metis-chat-smoke-", dir="/private/tmp") as temp:
+    with tempfile.TemporaryDirectory(
+        prefix="metis-chat-smoke-", dir="/private/tmp"
+    ) as temp:
         scratch = Path(temp)
         settings = Settings(
             _env_file=env_file,

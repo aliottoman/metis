@@ -58,6 +58,7 @@ def test_clinepass_defaults_have_role_specific_safety_ladders(tmp_path) -> None:
     store.save("split", None, provider="cline")
 
     aliases = store.resolve_aliases()
+    assert aliases["_cline_chat_model"] == "cline-pass/mimo-v2.6-flash"
     planners = json.loads(aliases["_chain_planner"])
     coders = json.loads(aliases["_fallbacks_coder"])
     assert [item["model"] for item in planners] == [
@@ -70,6 +71,23 @@ def test_clinepass_defaults_have_role_specific_safety_ladders(tmp_path) -> None:
     ]
     advertised = set(store.load().cline_models)
     assert {item["model"] for item in planners + coders} <= advertised
+
+
+def test_cline_chat_model_setting_overrides_only_chat_alias(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("WAQIL_CLINE_CHAT_MODEL", "cline-pass/mimo-v2.5")
+    settings = _settings(tmp_path)
+    settings.cline_api_key = "subscription-key"
+    store = ModelPreferenceStore(settings)
+    store.save("split", None, provider="cline")
+
+    aliases = store.resolve_aliases()
+    assert aliases["_cline_chat_model"] == "cline-pass/mimo-v2.5"
+    assert json.loads(aliases["_chain_planner"])[0] == {
+        "provider": "cline",
+        "model": "cline-pass/qwen3.7-plus",
+    }
 
 
 @pytest.mark.parametrize(
@@ -119,7 +137,9 @@ def test_an_explicit_cline_planner_chain_is_never_rewritten(tmp_path) -> None:
         },
     )
 
-    assert json.loads(store.resolve_aliases()["_chain_planner"]) == [
+    aliases = store.resolve_aliases()
+    assert "_cline_chat_model" not in aliases
+    assert json.loads(aliases["_chain_planner"]) == [
         {"provider": "cline", "model": "cline-pass/qwen3.7-max"}
     ]
 
@@ -151,6 +171,7 @@ def test_pinned_cline_model_reaches_chat_and_planner_chain(tmp_path) -> None:
 
     aliases = store.resolve_aliases()
     assert aliases["_cline_model"] == "cline-pass/mimo-v2.5"
+    assert "_cline_chat_model" not in aliases
     assert aliases["_provider"] == "cline"
     assert json.loads(aliases["_chain_planner"])[0] == {
         "provider": "cline",
