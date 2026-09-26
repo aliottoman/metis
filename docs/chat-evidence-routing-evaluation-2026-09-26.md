@@ -148,3 +148,56 @@ remaining answer-model delay.
   The source planner changes what evidence it gets, not what writes are
   authorized. Cline SDK features such as native search should be qualified in
   that policy before enabling them there.
+
+## Follow-up: model speed and Cline native search
+
+These are disposable probes, not changes to the running app or a basis for a
+global model switch. All research turns used the same PR branch and temporary
+Metis data. A short synthetic answer looked much faster on MiMo, but full turns
+varied widely:
+
+| Full turn | Qwen 3.7 Plus | MiMo 2.5 |
+| --- | ---: | ---: |
+| Stable question | 18.94 s | 23.23 s |
+| SDK 0.0.83 question | 37.02 s | 69.87 s |
+| Current Dubai weather | 33.85 s | 46.33 s |
+
+MiMo 2.5 did answer the exact reported Cline question in 26.64 seconds with an
+SDK changelog citation, compared with the earlier 50.85-second Qwen run. On the
+three matched questions Qwen was faster overall, and both models had weak
+weather sourcing. MiMo 2.6 Flash routed six synthetic cases and started a
+short answer quickly, but missed the SDK changelog in the exact Cline question.
+`cline-pass/deepseek-v4-flash` and `cline-pass/kimi-k2.6` returned model-not-found
+from the current gateway, so they were removed from Metis's advertised list;
+the live-verified `cline-pass/mimo-v2.6-flash` was added. The default remains
+Qwen pending a larger quality and latency comparison.
+
+The live saved preference also combined the Cline provider with a pinned Ollama
+model ID, `gpt-oss:120b-cloud`. Cline's direct chat provider ignored that pin;
+the UI could therefore claim a model selection that never reached Cline. The
+branch now passes valid Cline pins to the gateway and presents an incompatible
+old pin as split mode. It rejects new mismatched pins at save time.
+
+An isolated ClineCore 0.0.86 research pilot confirmed ClinePass can invoke its
+provider-native `web_search`. With Qwen 3.7 Plus, a search-only run spent 34.8
+seconds on eight searches and returned no answer. A second run allowed only
+read-only fetching of official Cline GitHub pages, spent 50.5 seconds on six
+searches and five fetch attempts, and reached its five-iteration limit without
+an answer. The fetched SDK changelog did include the requested 0.0.83 feature.
+These results do not make native search a reliable or faster replacement for
+the current host research path. A separate read-only Cline research lane needs
+more model and prompt evaluation before it can serve user chat.
+
+## Optional production search backend
+
+The branch now supports Brave's LLM Context API when
+`WAQIL_BRAVE_SEARCH_API_KEY` is configured. Its linked, extracted passages are
+used directly as source evidence, so ordinary results do not need an extra
+page fetch. User-supplied URLs keep the same validated direct-read path. With
+no key, Metis continues to use DuckDuckGo HTML. A configured Brave error is
+surfaced as a web retrieval failure rather than silently falling back to HTML.
+Brave's [API documentation](https://api-dashboard.search.brave.com/documentation/services/llm-context)
+defines the endpoint and response shape. The account currently has no Brave
+search key, so only mocked contract tests have run; source quality and latency
+need a live, key-backed comparison before treating it as qualified. This
+adapter also does not yet give the answer model an iterative search/open loop.

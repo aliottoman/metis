@@ -22,6 +22,7 @@ from .contracts import KnowledgeSnippetV1
 from .prompt_scope import user_instruction
 
 _SEARCH_ENDPOINT = "https://html.duckduckgo.com/html/?q={query}"
+_BRAVE_CONTEXT_ENDPOINT = "https://api.search.brave.com/res/v1/llm/context"
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -549,6 +550,22 @@ class WebResearch:
             trust_env=False,
             timeout=self.settings.web_fetch_timeout_seconds,
         ) as client:
+            # Brave returns extracted passages with their source URLs. Keep
+            # those passages as evidence directly: fetching every result again
+            # would add latency and can replace a useful excerpt with page chrome.
+            # Direct user URLs still go through the host's validated page reader.
+            if not urls and self.settings.brave_search_api_key.strip():
+                if queries is None:
+                    focused = _release_search_query(instruction)
+                    brave_queries = (
+                        [focused, instruction] if focused and focused != instruction
+                        else [instruction]
+                    )
+                else:
+                    brave_queries = queries
+                return await self._brave_search_queries(
+                    client, brave_queries, focus_terms=focus_terms
+                )
             found = [(url, "", "") for url in urls]
             if not urls:
                 if queries is not None:
@@ -601,6 +618,155 @@ class WebResearch:
                     score=round(0.95 - rank * 0.05, 2),
                 )
             )
+        return snippets
+
+    async def _brave_context_query(
+        self, client: httpx.AsyncClient, query: str
+    ) -> list[tuple[str, str, str]]:
+        """Read linked source passages from Brave's LLM Context API."""
+        maximum_urls = self.settings.web_search_max_results
+        response = await client.post(
+            _BRAVE_CONTEXT_ENDPOINT,
+            json={
+                "q": query,
+                "count": max(10, maximum_urls * 3),
+                "maximum_number_of_urls": maximum_urls,
+                "maximum_number_of_tokens": max(2048, maximum_urls * 1024),
+                "maximum_number_of_tokens_per_url": 1024,
+                "maximum_number_of_snippets": maximum_urls * 4,
+            },
+            headers={
+                "Accept": "application/json",
+                "X-Subscription-Token": self.settings.brave_search_api_key.strip(),
+            },
+            timeout=self.settings.brave_search_timeout_seconds,
+        )
+        if response.is_redirect:
+            raise ValueError("Brave Search unexpectedly redirected the request")
+        response.raise_for_status()
+        if len(response.content) > _MAX_DOWNLOAD_BYTES:
+            raise ValueError("Brave Search returned an oversized response")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ValueError("Brave Search returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("Brave Search returned an invalid response")
+        grounding = payload.get("grounding")
+        if grounding is None:
+            return []
+        if not isinstance(grounding, dict):
+            raise ValueError("Brave Search returned invalid grounding")
+        generic = grounding.get("generic") or []
+        if not isinstance(generic, list):
+            raise ValueError("Brave Search returned invalid grounding")
+        results: list[tuple[str, str, str]] = []
+        for item in generic[: maximum_urls * 3]:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if not isinstance(url, str) or not _public_url(url):
+                continue
+            title = item.get("title")
+            snippets = item.get("snippets")
+            if not isinstance(snippets, list):
+                continue
+            passages = [
+                text.strip()[: self.settings.web_page_max_chars]
+                for text in snippets[:12]
+                if isinstance(text, str) and text.strip()
+            ]
+            if not passages:
+                continue
+            results.append((url, str(title or "")[:200], "\n\n".join(passages)))
+        return results
+
+    async def _brave_search_queries(
+        self,
+        client: httpx.AsyncClient,
+        queries: list[str],
+        *,
+        focus_terms: list[str] | None,
+    ) -> list[KnowledgeSnippetV1]:
+        """Search bounded queries and keep only public, cited passages."""
+        normalized: list[str] = []
+        seen_queries: set[str] = set()
+        for raw in queries:
+            if not isinstance(raw, str):
+                continue
+            query = " ".join(raw.split())[:300]
+            if query and query.casefold() not in seen_queries:
+                normalized.append(query)
+                seen_queries.add(query.casefold())
+            if len(normalized) >= _MAX_SEARCH_QUERIES:
+                break
+        if not normalized:
+            return []
+        # All queries are already public-only in Auto. A configured Brave
+        # failure is surfaced to the graph instead of silently switching engines.
+        batches = await asyncio.gather(
+            *(self._brave_context_query(client, query) for query in normalized)
+        )
+        merged: dict[str, tuple[str, list[str]]] = {}
+        for rank in range(max((len(batch) for batch in batches), default=0)):
+            for batch in batches:
+                if rank >= len(batch):
+                    continue
+                url, title, passage = batch[rank]
+                if url in merged:
+                    old_title, passages = merged[url]
+                    if passage not in passages:
+                        passages.append(passage)
+                    merged[url] = (old_title or title, passages)
+                else:
+                    merged[url] = (title, [passage])
+        candidates = [
+            (url, title, "\n\n".join(passages))
+            for url, (title, passages) in merged.items()
+        ]
+        query_text = " ".join(normalized)
+        if _MODEL_RELEASE_INTENT.search(query_text) or _VERSION.search(query_text):
+            query_subjects = {
+                token for token in re.findall(r"[a-z0-9]+", query_text.casefold())
+                if len(token) >= 3 and token not in _GENERIC_QUERY_WORDS
+            }
+            wants_sdk = bool(re.search(r"\bsdk\b", query_text, re.IGNORECASE))
+            candidates.sort(
+                key=lambda item: _model_result_priority(
+                    item, query_subjects=query_subjects, wants_sdk=wants_sdk
+                )
+            )
+        allowed = await asyncio.gather(
+            *(_public_dns(url) for url, _, _ in candidates)
+        )
+        snippets: list[KnowledgeSnippetV1] = []
+        for (url, title, passage), public in zip(candidates, allowed):
+            if not public:
+                continue
+            label = title or urlsplit(url).netloc
+            text = _page_excerpt(
+                passage,
+                url=url,
+                title=label,
+                focus_terms=focus_terms,
+                limit=self.settings.web_page_max_chars,
+            )
+            if not text.strip():
+                continue
+            snippets.append(
+                KnowledgeSnippetV1(
+                    source_label=label[:200],
+                    provider="web",
+                    rel_path=url,
+                    source_url=url,
+                    symbol=None,
+                    start_line=None,
+                    text=text,
+                    score=round(0.95 - len(snippets) * 0.05, 2),
+                )
+            )
+            if len(snippets) >= self.settings.web_search_max_results:
+                break
         return snippets
 
     async def _search_queries(

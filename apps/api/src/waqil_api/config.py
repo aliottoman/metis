@@ -497,6 +497,10 @@ class Settings(BaseSettings):
     # Auto that clearly need current information. Private-context questions
     # stay local in Auto unless the user explicitly asks for the web.
     web_research_enabled: bool = True
+    # Optional Brave Search LLM Context. Without WAQIL_BRAVE_SEARCH_API_KEY,
+    # the existing keyless DuckDuckGo search remains available.
+    brave_search_api_key: str = ""
+    brave_search_timeout_seconds: float = Field(default=15.0, ge=2.0, le=30.0)
     web_search_max_results: int = Field(default=4, ge=1, le=8)
     web_fetch_timeout_seconds: float = Field(default=8.0, ge=2.0, le=30.0)
     # Per-page prompt budget. Four pages at this cap stay well inside every

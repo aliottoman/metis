@@ -772,3 +772,145 @@ def test_factual_fast_path_keeps_mutation_requests_on_planner() -> None:
     assert not _direct_fast_path_reason(
         {"prompt": "What is this package? Install it now.", "model_aliases": {}}
     )
+
+async def test_brave_context_uses_cited_passages_without_refetching(monkeypatch) -> None:
+    async def public_dns(url: str) -> bool:
+        return url == "https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md"
+
+    monkeypatch.setattr(web_research, "_public_dns", public_dns)
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "grounding": {
+                    "generic": [
+                        {
+                            "url": "http://127.0.0.1/private",
+                            "title": "Internal",
+                            "snippets": ["Must never enter the answer"],
+                        },
+                        {
+                            "url": "https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md",
+                            "title": "Cline SDK changelog",
+                            "snippets": [
+                                "## 0.0.83 Provider-native web search is enabled by default.",
+                                "Supported provider and model combinations only.",
+                            ],
+                        },
+                        {
+                            "url": "https://not-public.example.com/page",
+                            "title": "Unsafe DNS",
+                            "snippets": ["Must also be dropped"],
+                        },
+                    ]
+                }
+            },
+        )
+
+    async def no_page_fetch(self, client, url):
+        raise AssertionError("Brave passages must be used without a page refetch")
+
+    monkeypatch.setattr(WebResearch, "_read_page", no_page_fetch)
+    settings = Settings(brave_search_api_key="test-brave-key")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        results = await WebResearch(settings)._brave_search_queries(
+            client,
+            ["Cline SDK 0.0.83 native web search"],
+            focus_terms=["native web search"],
+        )
+    assert len(requests) == 1
+    assert str(requests[0].url) == "https://api.search.brave.com/res/v1/llm/context"
+    assert requests[0].headers["x-subscription-token"] == "test-brave-key"
+    assert json.loads(requests[0].content)["q"] == "Cline SDK 0.0.83 native web search"
+    assert [item.source_url for item in results] == [
+        "https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md"
+    ]
+    assert results[0].provider == "web"
+    assert "Provider-native web search" in results[0].text
+    assert "Supported provider" in results[0].text
+
+
+async def test_brave_configured_error_does_not_silently_use_ddg() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(401))
+    ) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await WebResearch(Settings(brave_search_api_key="wrong-key"))._brave_search_queries(
+                client, ["Cline SDK changelog"], focus_terms=None
+            )
+
+
+async def test_brave_empty_grounding_returns_no_sources() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"grounding": {"generic": []}})
+        )
+    ) as client:
+        results = await WebResearch(Settings(brave_search_api_key="test-key"))._brave_search_queries(
+            client, ["Unknown public topic"], focus_terms=None
+        )
+    assert results == []
+
+
+async def test_brave_key_keeps_direct_user_url_path(monkeypatch) -> None:
+    async def public_dns(url: str) -> bool:
+        return True
+
+    async def no_brave_search(self, client, queries, *, focus_terms):
+        raise AssertionError("User-supplied URLs bypass search")
+
+    async def read_page(self, client, url):
+        return url, "Official article", "The directly requested source text."
+
+    monkeypatch.setattr(web_research, "_public_dns", public_dns)
+    monkeypatch.setattr(WebResearch, "_brave_search_queries", no_brave_search)
+    monkeypatch.setattr(WebResearch, "_read_page", read_page)
+    results = await WebResearch(Settings(brave_search_api_key="test-key")).retrieve(
+        "Read https://example.com/official", queries=["unused public query"]
+    )
+    assert [item.source_url for item in results] == ["https://example.com/official"]
+
+
+async def test_brave_auto_empty_queries_do_not_search_raw_prompt(monkeypatch) -> None:
+    async def no_brave_search(self, client, queries, *, focus_terms):
+        raise AssertionError("Empty model queries must not issue a search")
+
+    monkeypatch.setattr(WebResearch, "_brave_context_query", no_brave_search)
+    results = await WebResearch(Settings(brave_search_api_key="test-key")).retrieve(
+        "My secret customer notes", queries=[]
+    )
+    assert results == []
+
+async def test_configured_brave_uses_only_planned_public_queries(monkeypatch) -> None:
+    seen_queries: list[str] = []
+
+    async def brave_context(self, client, query):
+        seen_queries.append(query)
+        return [
+            (
+                "https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md",
+                "Cline SDK changelog",
+                "## 0.0.83 Native web search is enabled by default.",
+            )
+        ]
+
+    async def public_dns(url: str) -> bool:
+        return True
+
+    async def no_page_fetch(self, client, url):
+        raise AssertionError("Brave context is already extracted")
+
+    monkeypatch.setattr(web_research, "_public_dns", public_dns)
+    monkeypatch.setattr(WebResearch, "_brave_context_query", brave_context)
+    monkeypatch.setattr(WebResearch, "_read_page", no_page_fetch)
+    prompt = "Compare my secret customer notes with new Cline SDK features"
+    results = await WebResearch(Settings(brave_search_api_key="test-key")).retrieve(
+        prompt, queries=["Cline SDK changelog"]
+    )
+    assert seen_queries == ["Cline SDK changelog"]
+    assert [item.source_url for item in results] == [
+        "https://github.com/cline/cline/blob/main/sdk/CHANGELOG.md"
+    ]

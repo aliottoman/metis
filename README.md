@@ -228,14 +228,13 @@ run ends. Copy and Retry sit on every settled message, and a streaming answer
 only follows the scroll when you are already at the foot of the thread, so
 scrolling up to re-read is never undone by the next token.
 
-The **Sources** menu offers Auto, Notion, and Web. Auto searches the live web
-when a question clearly needs current public information, asks to browse, or
-includes a public URL; private workspace questions use local sources. Web
-always searches, and Notion limits the answer to synced Notion evidence. Web
-answers cite numbered sources, with inline citations linking to the clickable
-source list. Search currently uses a keyless DuckDuckGo HTML endpoint, which
-can fail when its markup or availability changes; a supported search API is
-the next step for production reliability.
+The **Sources** menu offers Auto, Notion, and Web. Auto plans whether a turn
+needs current public information, private workspace knowledge, both, or
+neither. Web always searches, and Notion limits the answer to synced Notion
+evidence. Web answers cite numbered sources, with inline citations linking to
+the clickable source list. Set `WAQIL_BRAVE_SEARCH_API_KEY` to use Brave LLM
+Context for linked, extracted web passages. Without a key, search uses the
+keyless DuckDuckGo HTML endpoint, whose markup and availability can change.
 
 The current ClineCore sidecar is limited to project coding and does not power
 chat web retrieval. Metis pins Cline SDK 0.0.86. Native provider web search is
