@@ -270,7 +270,11 @@ def test_attached_document_is_citable_alongside_strong_retrieval(settings) -> No
     # a lone index line is easy for a smaller model to lose track of.
     assert "--- [2] launch-brief.md (untrusted attachment) ---" in prompt
     assert "**Sources**" in content
-    assert "[2] Attached document — launch-brief.md" in content
+    assert re.search(
+        r"\[2\] Attached document — \[launch-brief\.md\]"
+        r"\(/api/v1/uploads/upl_[a-f0-9]{32}\)",
+        content,
+    )
     verdict = _event_payload(events, "answer.grounding_reviewed")
     assert verdict["has_attachments"] is True
     assert verdict["cited"] is True
